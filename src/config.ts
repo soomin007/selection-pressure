@@ -3,11 +3,12 @@
 //
 // 논리 해상도 ≠ 실제 픽셀. resolution=DPR + autoDensity(main.ts) 로 폰의 실제
 // 픽셀 밀도만큼 선명하게 렌더된다. 여기 숫자는 "좌표 공간 + 비율"만 정한다.
-// 540×1170 = 6:13 → 1080×2340 같은 길쭉한 폰에 빈틈없이 꽉 찬다.
+// 9:16 채택 — 모바일 브라우저는 주소창/내비게이션 바가 위아래를 먹어 실사용 영역이
+// 9:16 에 가깝다. (길쭉한 폰이면 위아래에 약간의 레터박스가 생길 수 있음)
 
 /** 논리 해상도 — 모든 시뮬/렌더 좌표는 이 기준. 실제 픽셀은 viewport 가 맞춘다. */
 export const LOGICAL_WIDTH = 540;
-export const LOGICAL_HEIGHT = 1170;
+export const LOGICAL_HEIGHT = 960;
 
 export const COLORS = {
   bg: 0x0b0e14,

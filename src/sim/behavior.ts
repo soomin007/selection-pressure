@@ -1,0 +1,118 @@
+// 규칙기반 개체 행동 (기획서 §3.3). ML 아님 — 게놈 × 단순 규칙 × 환경.
+// Phase 1 규칙: 채집(먹이로 이동) · 허기(에너지 소모) · 죽음 · 단순 번식.
+// 무리짓기(boids)·도망·전투·식성(육식)은 Phase 1 후반/Phase 2.
+//
+// 결정론 유지: 모든 무작위는 world.rng 만 쓰고, 개체는 항상 같은 순서로 처리된다.
+
+import type { World } from "@/sim/world";
+import type { Entity } from "@/sim/entity";
+import type { Food } from "@/sim/food";
+import { createEntity } from "@/sim/entity";
+import { SIM } from "@/sim/params";
+
+export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
+  const t = e.genome.traits;
+  const maxSpeed = SIM.maxSpeedBase * (0.4 + t.speed);
+  const vision = SIM.visionBase * (0.4 + t.vision);
+  const drain = SIM.metabolismDrain * (0.5 + t.metabolism);
+  const maxAge = SIM.baseMaxAge * (1.2 - 0.5 * t.metabolism);
+
+  // 1) 감지: 시야 안에서 가장 가까운 먹이
+  const target = nearestFood(e, world, vision * vision);
+
+  // 2) 이동: 먹이가 있으면 그쪽으로, 없으면 배회
+  if (target) {
+    const dx = target.x - e.x;
+    const dy = target.y - e.y;
+    const d = Math.hypot(dx, dy) || 1;
+    e.vx = (dx / d) * maxSpeed;
+    e.vy = (dy / d) * maxSpeed;
+  } else {
+    const speed = Math.hypot(e.vx, e.vy);
+    const cruise = maxSpeed * 0.5;
+    if (speed < 0.001) {
+      const a = world.rng.range(0, Math.PI * 2);
+      e.vx = Math.cos(a) * cruise;
+      e.vy = Math.sin(a) * cruise;
+    } else {
+      const a = Math.atan2(e.vy, e.vx) + world.rng.range(-SIM.wanderTurn, SIM.wanderTurn);
+      e.vx = Math.cos(a) * cruise;
+      e.vy = Math.sin(a) * cruise;
+    }
+  }
+
+  e.x += e.vx;
+  e.y += e.vy;
+
+  // 벽에서 반사
+  if (e.x < 0) {
+    e.x = 0;
+    e.vx = -e.vx;
+  } else if (e.x > world.width) {
+    e.x = world.width;
+    e.vx = -e.vx;
+  }
+  if (e.y < 0) {
+    e.y = 0;
+    e.vy = -e.vy;
+  } else if (e.y > world.height) {
+    e.y = world.height;
+    e.vy = -e.vy;
+  }
+
+  // 3) 섭취: 먹이에 닿으면 먹는다
+  if (target && target.available) {
+    const dx = target.x - e.x;
+    const dy = target.y - e.y;
+    if (dx * dx + dy * dy <= SIM.eatRadius * SIM.eatRadius) {
+      e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy);
+      target.available = false;
+      target.regrowTimer = SIM.foodRegrowTicks;
+    }
+  }
+
+  // 4) 허기 + 노화
+  e.energy -= drain;
+  e.age += 1;
+
+  // 5) 죽음
+  if (e.energy <= 0 || e.age >= maxAge) {
+    e.alive = false;
+    return;
+  }
+
+  // 6) 번식 (에너지 충분 + 확률, 상한 미만)
+  if (
+    world.entities.length + newborns.length < SIM.populationCap &&
+    e.energy >= SIM.reproduceThreshold &&
+    world.rng.chance(SIM.reproduceRate * (0.3 + t.fertility))
+  ) {
+    const childEnergy = e.energy * 0.5;
+    e.energy -= childEnergy;
+    newborns.push(
+      createEntity(
+        world.nextId(),
+        e.x + world.rng.range(-6, 6),
+        e.y + world.rng.range(-6, 6),
+        e.genome,
+        childEnergy,
+      ),
+    );
+  }
+}
+
+function nearestFood(e: Entity, world: World, maxDist2: number): Food | null {
+  let best = maxDist2;
+  let found: Food | null = null;
+  for (const f of world.food) {
+    if (!f.available) continue;
+    const dx = f.x - e.x;
+    const dy = f.y - e.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < best) {
+      best = d2;
+      found = f;
+    }
+  }
+  return found;
+}
