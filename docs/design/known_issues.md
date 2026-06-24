@@ -14,4 +14,10 @@
 
 ---
 
-(아직 기록된 항목 없음)
+### GitHub Pages 첫 배포 시 configure-pages 권한 에러
+- 증상: `actions/configure-pages@v5` 가 "Resource not accessible by integration" 로 실패,
+  Pages 사이트 생성 안 됨.
+- 원인: 워크플로 기본 `GITHUB_TOKEN` 권한으로는 Pages 사이트를 처음 만들지 못함.
+- 재발 방지책: 레포 생성 직후 사용자 토큰으로 Pages 를 먼저 활성화한다 →
+  `gh api --method POST repos/<owner>/<repo>/pages -f build_type=workflow`
+  (Git Bash 는 leading slash 를 경로로 오인하니 슬래시 없이). 그 후 워크플로 재실행.
