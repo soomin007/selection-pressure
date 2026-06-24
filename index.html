@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- 모바일·세로 우선. 확대/축소 막아서 게임 캔버스가 뷰포트를 그대로 채우게 한다. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b0e14" />
+    <title>적자생존</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0b0e14;
+        /* 데스크톱에선 캔버스를 중앙에 두고 좌우 레터박스만 생긴다. */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        /* 폰 주소창/노치 영역 대응 */
+        touch-action: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #app {
+        line-height: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+# 의존성
+node_modules/
+
+# 빌드 산출물
+dist/
+*.local
+
+# 동시 세션 작업 조율판 (로컬 실시간 공유, 절대 커밋하지 않음)
+ACTIVE_WORK.md
+
+# 에디터/OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# 로그
+*.log
+npm-debug.log*
+
+# 환경 변수
+.env
+.env.*
+!.env.example
