@@ -12,6 +12,8 @@ export interface Species {
   isPlayer: boolean;
   color: number;
   initialCount: number;
+  /** 먹을 수 있는 먹이 종류(0..K-1). 종마다 달라 경쟁을 분할한다. 빈 배열 = 식물 안 먹음(순수 육식). */
+  foodKinds: number[];
 }
 
 export function isCarnivore(genome: Genome): boolean {
@@ -19,7 +21,8 @@ export function isCarnivore(genome: Genome): boolean {
 }
 
 export function makePlayerSpecies(genome: Genome, initialCount: number): Species {
-  return { id: 0, name: "내 종", genome, isPlayer: true, color: 0x6cc24a, initialCount };
+  // 내 종(잡식)은 일반종 — 모든 먹이 종류를 먹는다(전문 야생종 사이의 틈새).
+  return { id: 0, name: "내 종", genome, isPlayer: true, color: 0x6cc24a, initialCount, foodKinds: [0, 1, 2] };
 }
 
 interface Archetype {
@@ -27,51 +30,58 @@ interface Archetype {
   color: number;
   initialCount: number;
   traits: Partial<Traits>;
+  foodKinds: number[];
 }
 
 // 야생 아키타입 6종. 같은 먹이를 두고 똑같이 경쟁하면 한둘만 남으므로(경쟁 배제),
 // "생존 전략"을 서로 다르게 둔다 — 다산형 / 저대사 장수형 / 잡식 / 포식자 등.
 const WILD_ARCHETYPES: readonly Archetype[] = [
   {
-    // 초식 경쟁자 — 무난한 초식, 무리 지음.
+    // 초식 경쟁자 — 0번 먹이 전문.
     name: "초식 경쟁자",
     color: 0x46a6c8,
     initialCount: 12,
+    foodKinds: [0],
     traits: { diet: 0.15, fertility: 0.5, speed: 0.4, vision: 0.4, metabolism: 0.45, attack: 0.3, herding: 0.6 },
   },
   {
-    // 들풀 무리 — 약간 빠르고 큰 무리.
+    // 들풀 무리 — 1번 먹이 전문. 약간 빠르고 큰 무리.
     name: "들풀 무리",
     color: 0x9a7ad6,
     initialCount: 12,
+    foodKinds: [1],
     traits: { diet: 0.22, fertility: 0.48, speed: 0.46, vision: 0.45, metabolism: 0.5, attack: 0.28, herding: 0.6 },
   },
   {
-    // 작은 풀벌레 — 다산형(r전략): 약하지만 빨리 불어나 잡아먹혀도 버틴다(먹이사슬 바닥).
+    // 작은 풀벌레 — 2번 먹이 전문. 다산형(r전략): 약하지만 빨리 불어나 잡아먹혀도 버틴다.
     name: "작은 풀벌레",
     color: 0xd6c24a,
     initialCount: 16,
+    foodKinds: [2],
     traits: { diet: 0.12, fertility: 0.78, speed: 0.32, vision: 0.3, metabolism: 0.42, attack: 0.12, herding: 0.72 },
   },
   {
-    // 느린 거북 — 저대사 장수형(K전략): 느리고 적게 낳지만 에너지를 거의 안 써 오래 버틴다.
+    // 느린 거북 — 0·2번 먹이. 저대사 장수형(K전략): 느리고 적게 낳지만 에너지를 거의 안 써 오래 버틴다.
     name: "느린 거북",
     color: 0x5fae6a,
     initialCount: 9,
+    foodKinds: [0, 2],
     traits: { diet: 0.26, fertility: 0.36, speed: 0.22, vision: 0.34, metabolism: 0.28, attack: 0.52, herding: 0.3 },
   },
   {
-    // 잡식 청소부 — 식물도 먹고 약한 사냥도 한다. 먹이 유연성으로 틈새 생존.
+    // 잡식 청소부 — 모든 먹이 + 약한 사냥. 먹이 유연성으로 틈새 생존.
     name: "잡식 청소부",
     color: 0xc88a4a,
     initialCount: 8,
+    foodKinds: [0, 1, 2],
     traits: { diet: 0.5, fertility: 0.46, speed: 0.5, vision: 0.5, metabolism: 0.5, attack: 0.4, herding: 0.32 },
   },
   {
-    // 포식자 — 빠르고 사납다(육식). 먹잇감이 많아야 유지된다(붐버스트).
+    // 포식자 — 식물 안 먹음(육식). 먹잇감이 많아야 유지된다(붐버스트).
     name: "포식자",
     color: 0xe0653a,
     initialCount: 4,
+    foodKinds: [],
     traits: { diet: 0.85, fertility: 0.3, speed: 0.66, vision: 0.6, metabolism: 0.5, attack: 0.7, herding: 0.4 },
   },
 ];
@@ -95,6 +105,7 @@ export function generateWildSpecies(rng: Rng): Species[] {
       isPlayer: false,
       color: arch.color,
       initialCount: arch.initialCount,
+      foodKinds: arch.foodKinds.slice(),
     });
   }
   return out;

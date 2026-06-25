@@ -194,6 +194,10 @@ function chooseGoal(
 ): Vec | null {
   const keep2 = (vision * SIM.targetKeepFactor) ** 2;
 
+  // 식성으로 못 먹게 된 목표는 버린다(예: 드래프트로 육식이 되면 식물 목표 해제).
+  if (!canHunt) e.targetPrey = null;
+  if (!canGraze) e.targetFood = null;
+
   // 1) 기존 목표 유지 (조금 더 멀어져도 commit — 진동 방지)
   if (e.targetPrey) {
     const p = e.targetPrey;
@@ -247,8 +251,10 @@ function wanderDesired(e: Entity, world: World, maxSpeed: number): Vec {
 function nearestFood(e: Entity, world: World, maxDist2: number): Food | null {
   let best = maxDist2;
   let found: Food | null = null;
+  const kinds = e.species.foodKinds;
   for (const f of world.food) {
     if (!f.available) continue;
+    if (!kinds.includes(f.kind)) continue; // 이 종이 못 먹는 먹이 종류는 건너뛴다(먹이 분할)
     const dx = f.x - e.x;
     const dy = f.y - e.y;
     const d2 = dx * dx + dy * dy;

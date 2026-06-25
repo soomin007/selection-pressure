@@ -7,7 +7,13 @@ export const SIM = {
 
   // --- 초기 배치 ---
   initialEntities: 36,
-  foodPatches: 160, // 여러 초식종이 나눠 먹어도 공존하도록 넉넉히
+  foodPatches: 192, // 여러 초식종이 나눠 먹어도 공존하도록 넉넉히 (먹이 종류로 분할되므로 종류당 ~64)
+  foodKindCount: 3, // 먹이 종류 수 — 종마다 먹는 종류가 달라 경쟁을 분할(공존)
+
+  // --- 야생 이주(immigration) — 다양성 바닥. 멸종한/적은 야생종을 주기적으로 소수 보충 ---
+  immigrationInterval: 300, // 약 10초마다 점검
+  immigrationFloor: 4, // 야생종이 이 수 미만이면
+  immigrationBatch: 3, // 이만큼 맵 밖에서 들어온다(이주)
 
   // --- 에너지 ---
   startEnergy: 55,

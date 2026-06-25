@@ -106,6 +106,8 @@ export class World {
       }
     }
     if (hasDead) this.entities = this.entities.filter((e) => e.alive);
+
+    this.maybeImmigrate();
   }
 
   get population(): number {
@@ -155,7 +157,31 @@ export class World {
       const cy = Math.floor(cell / env.cols);
       const x = Math.min(this.width, (cx + this.rng.unit()) * env.cellSize);
       const y = Math.min(this.height, (cy + this.rng.unit()) * env.cellSize);
-      this.food.push(createFood(x, y));
+      const kind = this.rng.int(0, SIM.foodKindCount - 1);
+      this.food.push(createFood(x, y, kind));
+    }
+  }
+
+  /** 야생 이주 — 멸종했거나 적은 야생종을 주기적으로 소수 보충(다양성 바닥). 내 종은 제외. */
+  private maybeImmigrate(): void {
+    if (this.tick % SIM.immigrationInterval !== 0) return;
+    if (this.entities.length >= SIM.populationCap) return;
+    const counts = new Map<number, number>();
+    for (const e of this.entities) counts.set(e.species.id, (counts.get(e.species.id) ?? 0) + 1);
+    for (const sp of this.species) {
+      if (sp.isPlayer) continue;
+      if ((counts.get(sp.id) ?? 0) >= SIM.immigrationFloor) continue;
+      for (let k = 0; k < SIM.immigrationBatch; k++) {
+        this.entities.push(
+          createEntity(
+            this.nextId(),
+            this.rng.range(0, this.width),
+            this.rng.range(0, this.height),
+            sp,
+            SIM.startEnergy,
+          ),
+        );
+      }
     }
   }
 

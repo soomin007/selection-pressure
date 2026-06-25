@@ -80,7 +80,8 @@ export class WorldView {
     this.foodG.clear();
     for (const f of world.food) {
       if (!f.available) continue;
-      this.foodG.circle(f.x, f.y, 4).fill({ color: 0x9bee5a, alpha: 1 });
+      // 먹이 종류별 색(자연스러운 식물색) — 종마다 먹는 먹이가 다름을 한눈에.
+      this.foodG.circle(f.x, f.y, 4).fill({ color: FOOD_COLORS[f.kind] ?? 0x9bee5a, alpha: 1 });
     }
 
     // 생물 스프라이트 풀 — sim(30/s)과 화면(60fps) 사이를 prev→현재로 보간해 드득거림을 없앤다.
@@ -176,6 +177,9 @@ export class WorldView {
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });
   }
 }
+
+// 먹이 종류별 색 — 모두 식물처럼 자연스럽되 구분되게(연두 / 청록 / 노랑풀).
+const FOOD_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
 
 function clamp255(v: number): number {
   const n = Math.round(v);

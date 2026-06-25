@@ -142,13 +142,21 @@ describe("종 다양성", () => {
     expect(w.species.filter((s) => s.isPlayer).length).toBe(1);
   });
 
-  it("한 단계(750틱) 지나도 여러 종이 공존한다(영역 스폰으로 경쟁 배제 완화)", () => {
-    // 예전엔 비슷한 초식종끼리 같은 먹이를 두고 다퉈 금방 1~2종만 남았다.
+  it("먹이가 여러 종류로 나뉜다(경쟁 분할)", () => {
     const w = new World("env-1", W, H, defaultGenome());
-    for (let i = 0; i < 750; i++) w.step();
+    const kinds = new Set<number>();
+    for (const f of w.food) kinds.add(f.kind);
+    expect(kinds.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it("먹이 분할 + 이주로 오래(2000틱) 지나도 여러 종이 공존한다", () => {
+    // 예전엔 같은 먹이를 두고 다퉈 금방 1~2종만 남았다. 먹이 종류를 나누고(전문종 공존),
+    // 적은 야생종을 주기적으로 보충(이주)해 다양성이 무너지지 않는다.
+    const w = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 2000; i++) w.step();
     const alive = new Set<number>();
     for (const e of w.entities) alive.add(e.species.id);
-    expect(alive.size).toBeGreaterThanOrEqual(4);
+    expect(alive.size).toBeGreaterThanOrEqual(5);
   });
 });
 
