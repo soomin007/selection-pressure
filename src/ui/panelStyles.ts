@@ -42,6 +42,14 @@ export function ensurePanelStyles(): void {
     font-size: 16px; font-weight: 800; cursor: pointer; touch-action: auto;
   }
   .ui-btn-primary:active { background: #5aa83d; }
+
+  /* 데스크톱: 가로 레이아웃 — 카드를 한 줄로, 패널은 떠 있는 넓은 바. */
+  body[data-layout="desktop"] .ui-root {
+    width: min(94%, 900px); bottom: 18px; border-radius: 16px; padding: 18px 20px;
+  }
+  body[data-layout="desktop"] .ui-cards { flex-direction: row; }
+  body[data-layout="desktop"] .ui-card { flex: 1 1 0; min-width: 0; }
+  body[data-layout="desktop"] .ui-result { width: min(520px, 90%); }
   `;
   document.head.appendChild(style);
 }

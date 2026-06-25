@@ -1,10 +1,10 @@
-// 부트스트랩. PixiJS v8 앱 + scale-to-fit 뷰포트 + 게임 상태기계(Phase 4).
+// 부트스트랩. PixiJS v8 앱 + scale-to-fit 뷰포트 + 게임 상태기계.
 //
-// Game 이 런/라운드 상태를 갖고, 관전 중에만 시뮬을 진행한다.
+// 코어 시뮬은 동일. 모바일(세로)/데스크톱(가로)은 논리 해상도와 UI 만 다르다(chooseLayout).
 // 드래프트/결과는 HTML 오버레이로, 월드/HUD 는 Pixi 로 그린다.
 
 import { Application } from "pixi.js";
-import { LOGICAL_WIDTH, LOGICAL_HEIGHT, COLORS } from "@/config";
+import { chooseLayout, COLORS } from "@/config";
 import { createViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
 import { Hud } from "@/render/hud";
@@ -13,10 +13,13 @@ import { createDraftPanel } from "@/ui/draftPanel";
 import { createResultPanel } from "@/ui/resultPanel";
 
 async function boot(): Promise<void> {
+  const layout = chooseLayout();
+  document.body.dataset.layout = layout.isDesktop ? "desktop" : "mobile";
+
   const app = new Application();
   await app.init({
-    width: LOGICAL_WIDTH,
-    height: LOGICAL_HEIGHT,
+    width: layout.width,
+    height: layout.height,
     background: COLORS.bg,
     antialias: true,
     resolution: window.devicePixelRatio || 1,
@@ -26,16 +29,17 @@ async function boot(): Promise<void> {
   const mount = document.getElementById("app");
   if (!mount) throw new Error("#app 마운트 지점을 찾을 수 없습니다.");
   mount.appendChild(app.canvas);
-  createViewport(app.canvas, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+  createViewport(app.canvas, layout.width, layout.height);
 
-  const view = new WorldView();
+  const view = new WorldView(app.renderer);
   const hud = new Hud();
   app.stage.addChild(view.container);
   app.stage.addChild(hud.container);
 
-  const game = new Game(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+  const game = new Game(layout.width, layout.height);
   const draft = createDraftPanel((i) => {
     game.pickCard(i);
+    view.refreshSpecies(game.world); // 고른 형질을 내 종 모습에 반영
     draft.hide();
   });
   const result = createResultPanel(() => {
@@ -51,6 +55,7 @@ async function boot(): Promise<void> {
   };
   game.onWorldChanged = (world) => {
     view.drawEnvironment(world.environment);
+    view.refreshSpecies(world);
     hud.reset();
   };
 
@@ -66,7 +71,8 @@ async function boot(): Promise<void> {
     const env = game.environmentSummary();
     const s = `${game.stageNumber}/${game.totalStages}`;
     if (game.phase === "draft") return `단계 ${s} · 카드 선택 · ${env}`;
-    if (game.phase === "watch") return `단계 ${s} · ${game.stageLabel} · ${game.secondsLeft}초 · ${env}`;
+    if (game.phase === "watch")
+      return `단계 ${s} · ${game.stageLabel} · ${game.secondsLeft}초 · ${env}`;
     return env;
   }
 }

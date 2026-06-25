@@ -1,6 +1,6 @@
 // 최소 HUD — 실시간 개체 수/먹이/틱 + 개체 수 추이 그래프.
 // 추이 그래프(스파크라인)는 천천히 변하는 효과를 폰에서 눈으로 잡게 해준다(가독성, §7).
-// 본격 연출(死因·하이라이트·카메라)은 Phase 6.
+// 본격 연출(사망 원인·하이라이트·카메라)은 Phase 6.
 
 import { Container, Graphics, Text, TextStyle } from "pixi.js";
 import type { World } from "@/sim/world";

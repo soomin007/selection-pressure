@@ -1,14 +1,27 @@
-// 전역 상수. 모바일·세로 우선 + 고정 논리 해상도(scale-to-fit 의 기준).
-// 폰에서 꽉 차고, 데스크톱에선 좌우 레터박스만 생긴다.
+// 전역 상수 + 레이아웃 선택. 코어 시뮬은 동일하고, 모바일/데스크톱은 논리 해상도와 UI 만 다르다.
 //
-// 논리 해상도 ≠ 실제 픽셀. resolution=DPR + autoDensity(main.ts) 로 폰의 실제
-// 픽셀 밀도만큼 선명하게 렌더된다. 여기 숫자는 "좌표 공간 + 비율"만 정한다.
-// 9:16 채택 — 모바일 브라우저는 주소창/내비게이션 바가 위아래를 먹어 실사용 영역이
-// 9:16 에 가깝다. (길쭉한 폰이면 위아래에 약간의 레터박스가 생길 수 있음)
+// 논리 해상도 ≠ 실제 픽셀. resolution=DPR + autoDensity(main.ts) 로 선명하게 렌더된다.
+// 모바일: 세로 9:16(브라우저 주소창 감안). 데스크톱: 가로(넓은 부감). 면적은 비슷해 밸런스 유지.
 
-/** 논리 해상도 — 모든 시뮬/렌더 좌표는 이 기준. 실제 픽셀은 viewport 가 맞춘다. */
-export const LOGICAL_WIDTH = 540;
-export const LOGICAL_HEIGHT = 960;
+export interface Layout {
+  width: number;
+  height: number;
+  isDesktop: boolean;
+}
+
+const MOBILE: Layout = { width: 540, height: 960, isDesktop: false };
+const DESKTOP: Layout = { width: 960, height: 600, isDesktop: true };
+
+/** 창 비율로 모바일/데스크톱 레이아웃을 고른다. (가로로 넓으면 데스크톱) */
+export function chooseLayout(): Layout {
+  const landscape = window.innerWidth > window.innerHeight;
+  const wide = window.innerWidth >= 760;
+  return landscape && wide ? { ...DESKTOP } : { ...MOBILE };
+}
+
+// 하위 호환용 기본값(모바일).
+export const LOGICAL_WIDTH = MOBILE.width;
+export const LOGICAL_HEIGHT = MOBILE.height;
 
 export const COLORS = {
   bg: 0x0b0e14,
