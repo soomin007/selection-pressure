@@ -8,6 +8,7 @@ import type { World } from "@/sim/world";
 import type { Environment } from "@/sim/environment";
 import type { Genome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
+import { DEBUG } from "@/debug";
 
 export class WorldView {
   readonly container = new Container();
@@ -75,8 +76,13 @@ export class WorldView {
     }
   }
 
-  sync(world: World, alpha = 1): void {
+  sync(world: World, alpha = 1, dtMS = 1000 / 60): void {
     this.frame += 1;
+    // 디버그 토글 반영(?nointerp 면 보간 끔 = 현재 위치로 스냅). 평소엔 alpha 그대로.
+    const interp = DEBUG.noInterp ? 1 : alpha;
+    // 회전 이징을 프레임률 독립으로 — 120Hz 폰에서 한 스텝당 더 많은 프레임이 들어가
+    // 회전이 빠르게 노이즈를 쫓던 떨림을 없앤다(60fps 1프레임 = ROTATE_EASE_60).
+    const rotK = 1 - Math.pow(1 - ROTATE_EASE_60, dtMS / (1000 / 60));
     this.foodG.clear();
     for (const f of world.food) {
       if (!f.available) continue;
@@ -89,8 +95,8 @@ export class WorldView {
     const ringPulse = 0.5 + 0.5 * Math.sin((this.frame % 70) / 70 * Math.PI * 2);
     let i = 0;
     for (const e of world.entities) {
-      const rx = e.prevX + (e.x - e.prevX) * alpha;
-      const ry = e.prevY + (e.y - e.prevY) * alpha;
+      const rx = e.prevX + (e.x - e.prevX) * interp;
+      const ry = e.prevY + (e.y - e.prevY) * interp;
 
       // 내 종 강조: 스프라이트 아래 은은한 고리(폰에서 "내 무리"가 한눈에).
       if (e.species.isPlayer) {
@@ -110,20 +116,26 @@ export class WorldView {
       sp.texture = this.speciesTex.get(e.species.id) ?? Texture.WHITE;
       sp.x = rx;
       sp.y = ry;
-      // 회전은 진행 방향으로 향하되 60fps 로 부드럽게 이징 — 30스텝 단위 회전 스냅(떨림)을 없앤다.
-      // 느린 종은 이동이 작아 방향 노이즈가 크므로, 이징이 특히 중요하다.
-      const dx = e.x - e.prevX;
-      const dy = e.y - e.prevY;
-      let ang = this.angle.get(e.id);
-      if (ang === undefined) ang = Math.atan2(dy, dx);
-      else if (Math.abs(dx) + Math.abs(dy) > 0.06) {
-        let diff = Math.atan2(dy, dx) - ang;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        ang += diff * 0.2;
+      // 회전은 진행 방향으로 향하되 프레임률 독립으로 부드럽게 이징.
+      // 충분히 움직일 때(ROTATE_MIN_STEP 초과)만 방향을 갱신해, 느린 종이 미세 변위의
+      // 방향 노이즈를 쫓아 제자리에서 몸을 떠는 걸 막는다. ?norot 면 회전을 고정한다.
+      if (DEBUG.freezeRotation) {
+        sp.rotation = 0;
+      } else {
+        const dx = e.x - e.prevX;
+        const dy = e.y - e.prevY;
+        const moved = Math.hypot(dx, dy);
+        let ang = this.angle.get(e.id);
+        if (ang === undefined) ang = moved > 0 ? Math.atan2(dy, dx) : 0;
+        else if (moved > ROTATE_MIN_STEP) {
+          let diff = Math.atan2(dy, dx) - ang;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          ang += diff * rotK;
+        }
+        this.angle.set(e.id, ang);
+        sp.rotation = ang;
       }
-      this.angle.set(e.id, ang);
-      sp.rotation = ang;
       const energy = Math.max(0, Math.min(1, e.energy / SIM.maxEnergy));
       sp.alpha = 0.5 + 0.5 * energy;
       sp.visible = true;
@@ -142,8 +154,8 @@ export class WorldView {
     this.bossG.clear();
     const boss = world.boss;
     if (boss) {
-      const bx = boss.prevX + (boss.x - boss.prevX) * alpha;
-      const by = boss.prevY + (boss.y - boss.prevY) * alpha;
+      const bx = boss.prevX + (boss.x - boss.prevX) * interp;
+      const by = boss.prevY + (boss.y - boss.prevY) * interp;
       if (boss.auraRadius > 0) {
         this.bossG.circle(bx, by, boss.auraRadius).fill({ color: 0xc060e0, alpha: 0.18 });
       }
@@ -180,6 +192,12 @@ export class WorldView {
 
 // 먹이 종류별 색 — 모두 식물처럼 자연스럽되 구분되게(연두 / 청록 / 노랑풀).
 const FOOD_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
+
+// 회전 떨림 방지: 이만큼(px/스텝)보다 실제로 더 움직일 때만 진행 방향을 갱신한다.
+// (느린 종은 미세 변위의 방향이 노이즈라, 낮으면 제자리에서 몸이 떤다.)
+const ROTATE_MIN_STEP = 0.35;
+// 회전 이징 기준 계수(60fps 1프레임당 0.2). 실제론 dt 로 프레임률 독립 보정해서 쓴다.
+const ROTATE_EASE_60 = 0.2;
 
 function clamp255(v: number): number {
   const n = Math.round(v);

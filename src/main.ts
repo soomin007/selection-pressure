@@ -3,8 +3,9 @@
 // 코어 시뮬은 동일. 모바일(세로)/데스크톱(가로)은 논리 해상도와 UI 만 다르다(chooseLayout).
 // 월드는 스케일 컨테이너(root)에, HUD/UI 는 화면 픽셀 그대로(선명).
 
-import { Application, Container, Graphics } from "pixi.js";
+import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
 import { chooseLayout, COLORS } from "@/config";
+import { DEBUG, DEBUG_ACTIVE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
 import { Hud } from "@/render/hud";
@@ -128,6 +129,16 @@ async function boot(): Promise<void> {
   game.start(); // 로비 진입
   lobby.show();
 
+  // 떨림 진단 배지 — ?norot/?nointerp/?showalpha 중 하나라도 켜졌을 때만 화면 우상단에 표시.
+  let debugText: Text | null = null;
+  if (DEBUG_ACTIVE) {
+    debugText = new Text({
+      text: "",
+      style: new TextStyle({ fill: 0xffe08a, fontSize: 16, fontWeight: "700" }),
+    });
+    app.stage.addChild(debugText);
+  }
+
   // 카메라(보스 추적 줌) + 하이라이트 이벤트 감지 상태
   let camX = layout.width / 2;
   let camY = layout.height / 2;
@@ -139,13 +150,21 @@ async function boot(): Promise<void> {
 
   app.ticker.add((ticker) => {
     game.update(ticker.deltaMS);
-    view.sync(game.world, game.interpAlpha);
+    view.sync(game.world, game.interpAlpha, ticker.deltaMS);
     hud.sync(game.world, statusLine());
     buildPanel.setVisible(game.phase === "draft" || game.phase === "watch");
 
     updateCamera(ticker.deltaMS);
     detectEvents();
     highlights.update(ticker.deltaMS, app.screen.width);
+
+    if (debugText) {
+      let txt = `디버그: ${debugLabel()}`;
+      if (DEBUG.showAlpha) txt += `  α=${game.interpAlpha.toFixed(2)}`;
+      debugText.text = txt;
+      debugText.x = app.screen.width - debugText.width - 12;
+      debugText.y = 12;
+    }
 
     prevPhase = game.phase;
   });
