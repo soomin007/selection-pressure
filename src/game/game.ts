@@ -14,7 +14,7 @@ import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { buildRunReport } from "@/game/runReport";
 
-export type Phase = "draft" | "watch" | "result";
+export type Phase = "lobby" | "draft" | "watch" | "result";
 export type RunResult = "win" | "lose";
 type ExtinctionType = "cold" | "famine" | "heat";
 
@@ -26,7 +26,9 @@ export class Game {
 
   genome: Genome;
   world: World;
-  phase: Phase = "draft";
+  phase: Phase = "lobby";
+  paused = false; // 멈춤 버튼
+  speed = 1; // 관전 배속 1/2/3
   result: RunResult | null = null;
   draftCards: Card[] = [];
 
@@ -47,6 +49,7 @@ export class Game {
   private draftRng: Rng;
   private stageRng: Rng;
   private acc = 0;
+  private ambientAcc = 0;
 
   // main 이 설정하는 훅
   onDraft: ((cards: Card[], preview: string) => void) | null = null;
@@ -59,19 +62,32 @@ export class Game {
     this.genome = defaultGenome();
     this.draftRng = new Rng("draft-0");
     this.stageRng = new Rng("stage-0");
-    this.world = this.makeWorld();
-    this.setupRun();
+    this.world = this.makeWorld(); // 로비 배경용 환경(앞에서 잔잔히 돌아감)
   }
 
+  /** 부트 시 1회 — 로비 화면. 배경 월드만 보여준다. */
   start(): void {
+    this.phase = "lobby";
+    this.onWorldChanged?.(this.world);
+  }
+
+  /** "게임 시작"/"새 런" — 실제 런 시작(시작 식성 선택부터). */
+  beginRun(): void {
+    this.paused = false;
+    this.setupRun();
     this.onWorldChanged?.(this.world);
     this.onDraft?.(this.draftCards, this.preview);
   }
 
-  newRun(): void {
-    this.setupRun();
+  /** 멈춤 메뉴 "로비로" — 런을 버리고 로비로 돌아간다. */
+  toLobby(): void {
+    this.paused = false;
+    this.result = null;
+    this.envSeed += 1;
+    this.genome = defaultGenome();
+    this.world = this.makeWorld();
+    this.phase = "lobby";
     this.onWorldChanged?.(this.world);
-    this.onDraft?.(this.draftCards, this.preview);
   }
 
   pickCard(index: number): void {
@@ -88,22 +104,40 @@ export class Game {
   }
 
   update(deltaMS: number): void {
+    if (this.paused) return;
+    const stepMs = 1000 / SIM.stepsPerSecond;
+
+    // 로비: 배경 월드를 잔잔히(1x) 돌려 생동감만 준다.
+    if (this.phase === "lobby") {
+      this.ambientAcc += deltaMS;
+      let g = 0;
+      while (this.ambientAcc >= stepMs && g < 5) {
+        this.world.step();
+        this.ambientAcc -= stepMs;
+        g += 1;
+      }
+      if (this.ambientAcc > stepMs) this.ambientAcc = 0;
+      return;
+    }
+
     if (this.phase !== "watch") return;
     this.acc += deltaMS;
-    const stepMs = 1000 / SIM.stepsPerSecond;
     let guard = 0;
     while (this.acc >= stepMs && guard < 5) {
-      this.world.step();
-      this.stageTicksLeft -= 1;
       this.acc -= stepMs;
       guard += 1;
-      if (this.world.playerPopulation === 0) {
-        this.finishStage(false);
-        return;
-      }
-      if (this.stageTicksLeft <= 0) {
-        this.finishStage(true);
-        return;
+      // 배속만큼 한 번에 여러 스텝 진행.
+      for (let s = 0; s < this.speed; s++) {
+        this.world.step();
+        this.stageTicksLeft -= 1;
+        if (this.world.playerPopulation === 0) {
+          this.finishStage(false);
+          return;
+        }
+        if (this.stageTicksLeft <= 0) {
+          this.finishStage(true);
+          return;
+        }
       }
     }
     if (this.acc > stepMs) this.acc = 0;
