@@ -7,6 +7,7 @@
 import { Container, Graphics } from "pixi.js";
 import type { World } from "@/sim/world";
 import type { Environment } from "@/sim/environment";
+import type { Entity } from "@/sim/entity";
 import { SIM } from "@/sim/params";
 
 export class WorldView {
@@ -55,12 +56,7 @@ export class WorldView {
     }
 
     this.entityG.clear();
-    for (const e of world.entities) {
-      // 종마다 색이 다르다(내 종=초록). 에너지가 많을수록 밝게(건강 가독성, §7).
-      const t = Math.max(0, Math.min(1, e.energy / SIM.maxEnergy));
-      const r = e.species.isPlayer ? 4.5 : e.genome.traits.diet > 0.5 ? 4.5 : 3.5;
-      this.entityG.circle(e.x, e.y, r).fill({ color: e.species.color, alpha: 0.45 + 0.55 * t });
-    }
+    for (const e of world.entities) drawCreature(this.entityG, e);
 
     // 보스 + 위험 반경 (어디가 죽음의 영역인지 읽혀야 한다, §7)
     this.bossG.clear();
@@ -98,4 +94,35 @@ export class WorldView {
 function clamp255(v: number): number {
   const n = Math.round(v);
   return n < 0 ? 0 : n > 255 ? 255 : n;
+}
+
+// 한 개체를 그린다. 식성으로 모양이 갈린다(초식=원, 잡식=마름모, 육식=삼각형, 진행 방향).
+// 크기는 공격력으로 약간 커진다. 색은 종 색, 밝기는 에너지(건강 가독성, §7).
+// 나중에 이 함수만 형질 기반 스프라이트/형태 렌더로 바꾸면 된다(구조적으로 분리해 둠).
+function drawCreature(g: Graphics, e: Entity): void {
+  const t = e.genome.traits;
+  const energy = Math.max(0, Math.min(1, e.energy / SIM.maxEnergy));
+  const alpha = 0.45 + 0.55 * energy;
+  const size = 3.6 + t.attack * 2.2;
+  const color = e.species.color;
+
+  if (t.diet > SIM.dietGrazeMax) {
+    // 육식 = 진행 방향을 향한 삼각형
+    const ang = Math.atan2(e.vy, e.vx);
+    const s = size + 1;
+    const p1 = [e.x + Math.cos(ang) * s, e.y + Math.sin(ang) * s];
+    const p2 = [e.x + Math.cos(ang + 2.5) * s, e.y + Math.sin(ang + 2.5) * s];
+    const p3 = [e.x + Math.cos(ang - 2.5) * s, e.y + Math.sin(ang - 2.5) * s];
+    g.poly([p1[0] ?? 0, p1[1] ?? 0, p2[0] ?? 0, p2[1] ?? 0, p3[0] ?? 0, p3[1] ?? 0]).fill({
+      color,
+      alpha,
+    });
+  } else if (t.diet > SIM.dietHuntMin) {
+    // 잡식 = 마름모
+    const s = size;
+    g.poly([e.x, e.y - s, e.x + s, e.y, e.x, e.y + s, e.x - s, e.y]).fill({ color, alpha });
+  } else {
+    // 초식 = 원
+    g.circle(e.x, e.y, size).fill({ color, alpha });
+  }
 }

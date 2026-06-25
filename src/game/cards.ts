@@ -1,7 +1,8 @@
 // 카드 = 종 게놈에 누적 적용되는 형질 변화. 런 내 영구, 런 종료 시 리셋(로그라이크).
 // 매 라운드 풀에서 무작위 3장 후보(운 요소). 트레이드오프 카드로 "특화 vs 헷지" 결정을 만든다.
-// 문구는 쉬운 말로 (UI 규칙). 현재 행동에 연결된 형질(속도/시야/대사/번식력)만 다룬다.
-// 공격력/무리/식성 카드는 그 행동이 붙는 Phase 5 에서 추가.
+// 문구는 쉬운 말로 (UI 규칙).
+//
+// effects = 누적 가감. set = 절대값 지정(시작 식성 선택용). 둘 다 적용 후 [0,1] 클램프.
 
 import type { Rng } from "@/sim/rng";
 import type { Genome, Traits } from "@/sim/genome";
@@ -11,7 +12,33 @@ export interface Card {
   name: string;
   desc: string;
   effects: Partial<Record<keyof Traits, number>>;
+  set?: Partial<Record<keyof Traits, number>>;
 }
+
+// 런 첫 드래프트 — 시작 식성을 정한다. (반대 형질을 나중에 얻으면 잡식이 된다)
+export const DIET_CHOICE_CARDS: readonly Card[] = [
+  {
+    id: "start_herb",
+    name: "초식 동물",
+    desc: "식물을 먹습니다. 다툼을 피하고 수로 버팁니다.",
+    set: { diet: 0.2 },
+    effects: { fertility: 0.06 },
+  },
+  {
+    id: "start_omni",
+    name: "잡식 동물",
+    desc: "식물도 먹고 사냥도 합니다. 균형 잡힌 시작.",
+    set: { diet: 0.5 },
+    effects: { vision: 0.07 },
+  },
+  {
+    id: "start_carn",
+    name: "육식 동물",
+    desc: "주로 사냥합니다. 모자라면 식물도 먹습니다.",
+    set: { diet: 0.65 },
+    effects: { attack: 0.12 },
+  },
+];
 
 export const CARD_POOL: readonly Card[] = [
   // 단일 형질
@@ -145,8 +172,13 @@ export function drawCards(rng: Rng, n: number): Card[] {
   return pool.slice(0, count);
 }
 
-/** 카드 효과를 게놈에 그 자리에서 누적 적용 + [0,1] 클램프. (공유 게놈이라 즉시 반영) */
+/** 카드 효과를 게놈에 그 자리에서 적용 + [0,1] 클램프. (공유 게놈이라 즉시 반영) */
 export function applyCard(genome: Genome, card: Card): void {
+  if (card.set) {
+    for (const key of Object.keys(card.set) as (keyof Traits)[]) {
+      genome.traits[key] = clamp01(card.set[key] ?? genome.traits[key]);
+    }
+  }
   for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
     const delta = card.effects[key] ?? 0;
     genome.traits[key] = clamp01(genome.traits[key] + delta);

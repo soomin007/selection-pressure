@@ -33,8 +33,8 @@ interface Preset extends Omit<Boss, "type" | "name" | "x" | "y"> {
 const PRESETS: Record<BossType, Preset> = {
   chaser: {
     name: "빠른 추격자",
-    speed: 3.2,
-    killRadius: 18,
+    speed: 2.9,
+    killRadius: 16,
     visionFlee: 0,
     auraRadius: 0,
     globalKillRate: 0,
@@ -71,7 +71,7 @@ const PRESETS: Record<BossType, Preset> = {
     visionFlee: 0,
     auraRadius: 230,
     globalKillRate: 0,
-    globalDrain: 0.42, // ×(0.3+metabolism): 대사 높을수록 더 빨림
+    globalDrain: 0.3, // ×(0.3+metabolism): 대사 높을수록 더 빨림 (건강한 무리는 카운터 없이도 버티게)
     threat: "온 땅의 에너지를 계속 빨아들입니다.",
     counter: "대사가 낮아야 덜 빨리고 견딥니다.",
   },

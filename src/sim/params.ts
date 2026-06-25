@@ -34,6 +34,8 @@ export const SIM = {
   huddleWarmth: 0.55, // 보온 시 추위 소모 최대 감소율 (×herding×이웃비율)
 
   // --- 다종/포식 (Phase: 야생종) ---
+  dietHuntMin: 0.35, // diet 가 이보다 크면 사냥 가능(잡식/육식)
+  dietGrazeMax: 0.7, // diet 가 이보다 작으면 식물 섭취 가능(초식/잡식)
   gridCellSize: 80, // 개체 공간 격자 한 칸(이웃 질의)
   predatorSenseRange: 78, // 이 안에 (나보다 센) 포식자가 있으면 도망친다
   attackRange: 12, // 사냥 시 닿았다고 보는 거리

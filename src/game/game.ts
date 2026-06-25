@@ -8,10 +8,10 @@
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, type Genome } from "@/sim/genome";
-import { drawCards, applyCard, type Card } from "@/game/cards";
+import { drawCards, applyCard, DIET_CHOICE_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, type StageKind } from "@/game/config";
 import { SIM } from "@/sim/params";
-import { createBoss, bossPreview, bossName, pickBossType, type BossType } from "@/sim/boss";
+import { createBoss, bossPreview, bossName, BOSS_TYPES, type BossType } from "@/sim/boss";
 
 export type Phase = "draft" | "watch" | "result";
 export type RunResult = "win" | "lose";
@@ -38,6 +38,8 @@ export class Game {
   private stageTicksLeft = 0;
   private pendingBoss: BossType | null = null;
   private pendingExtinction: ExtinctionType | null = null;
+  private firstChoice = true; // 런 첫 드래프트 = 시작 식성 선택
+  private bossQueue: BossType[] = []; // 한 런의 보스들(서로 다른 종류)
 
   private runIndex = 0;
   private envSeed = 0;
@@ -75,7 +77,13 @@ export class Game {
     if (this.phase !== "draft") return;
     const card = this.draftCards[index];
     if (card) applyCard(this.genome, card);
-    this.beginStage();
+    if (this.firstChoice) {
+      // 시작 식성을 골랐으니 곧장 첫 채집 단계로.
+      this.firstChoice = false;
+      this.beginStage();
+    } else {
+      this.beginStage();
+    }
   }
 
   update(deltaMS: number): void {
@@ -135,8 +143,10 @@ export class Game {
     this.genome = defaultGenome();
     this.stageIndex = 0;
     this.result = null;
+    this.firstChoice = true;
     this.draftRng = new Rng(`draft-${this.runIndex}`);
     this.stageRng = new Rng(`stage-${this.runIndex}`);
+    this.bossQueue = shuffle(BOSS_TYPES, this.stageRng); // 한 런의 보스는 서로 다른 종류
     this.world = this.makeWorld();
     this.beginDraft();
   }
@@ -151,14 +161,22 @@ export class Game {
 
   private beginDraft(): void {
     this.phase = "draft";
+    this.pendingBoss = null;
+    this.pendingExtinction = null;
+
+    // 런 첫 드래프트는 시작 식성 선택.
+    if (this.firstChoice) {
+      this.draftCards = DIET_CHOICE_CARDS.slice();
+      this.preview = "당신의 종은 무엇을 먹나요? 시작 식성을 고르세요. (반대 형질을 얻으면 잡식이 됩니다)";
+      return;
+    }
+
     this.draftCards = drawCards(this.draftRng, 3);
 
     // 다가오는 단계의 위협을 미리 정하고 예고를 만든다(전투 전 예고, §4.2).
     const kind = this.currentKind();
-    this.pendingBoss = null;
-    this.pendingExtinction = null;
     if (kind === "boss") {
-      this.pendingBoss = pickBossType(this.stageRng);
+      this.pendingBoss = this.bossQueue.shift() ?? this.stageRng.pick(BOSS_TYPES);
       this.preview = `다가오는 위협 — ${bossPreview(this.pendingBoss)}`;
     } else if (kind === "extinction") {
       this.pendingExtinction = this.stageRng.pick(EXTINCTION_TYPES);
@@ -236,6 +254,18 @@ export class Game {
   }
 }
 
+function shuffle(types: readonly BossType[], rng: Rng): BossType[] {
+  const out = types.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = rng.int(0, i);
+    const a = out[i] as BossType;
+    const b = out[j] as BossType;
+    out[i] = b;
+    out[j] = a;
+  }
+  return out;
+}
+
 function extinctionName(type: ExtinctionType): string {
   return type === "cold" ? "혹독한 추위" : type === "famine" ? "대가뭄" : "폭염";
 }
@@ -249,6 +279,6 @@ function extinctionPreview(type: ExtinctionType): string {
 
 function applyExtinction(world: World, type: ExtinctionType): void {
   if (type === "cold") world.globalCold = 1.3;
-  else if (type === "famine") world.foodRegrowMultiplier = 2.5;
+  else if (type === "famine") world.foodRegrowMultiplier = 3.6;
   else world.heat = 0.9;
 }

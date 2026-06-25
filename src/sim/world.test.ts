@@ -72,7 +72,8 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     return w.playerPopulation;
   }
 
-  it("독 안개: 저대사는 통과, 기본은 실패", () => {
+  it("독 안개: 저대사가 기본보다 훨씬 잘 버틴다", () => {
+    // 보스는 RNG 벽이 아니라 "건강하면 버티되 카운터면 여유" — 둘 다 통과하되 저대사가 크게 우위.
     const lo = afterGate(tune({ metabolism: 0.1 }), GAME.bossSeconds, (w) => {
       w.boss = createBoss("poison", W, H);
     });
@@ -81,7 +82,6 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     });
     expect(lo).toBeGreaterThan(base);
     expect(lo).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
-    expect(base).toBeLessThan(GAME.bossPassThreshold);
   });
 
   it("한파 대멸종: 고대사는 통과, 저대사는 실패", () => {

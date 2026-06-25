@@ -14,7 +14,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const vision = SIM.visionBase * (0.4 + t.vision);
   const drain = SIM.metabolismDrain * (0.5 + t.metabolism);
   const maxAge = SIM.baseMaxAge;
-  const carnivore = t.diet > 0.5;
+  // 식성 구간: 초식(<0.35) 식물만 / 잡식(0.35~0.7) 둘 다 / 육식(>0.7) 사냥만.
+  const canHunt = t.diet > SIM.dietHuntMin;
+  const canGraze = t.diet < SIM.dietGrazeMax;
 
   // 0) 위협 회피: 즉사 보스 또는 (나보다 센) 포식자가 가까우면 도망(속도가 생명).
   let fleeing = false;
@@ -37,8 +39,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       e.y,
       SIM.predatorSenseRange,
       (p) =>
-        p.alive && p !== e && p.species.id !== e.species.id && p.genome.traits.diet > 0.5 &&
-        p.genome.traits.attack >= t.attack,
+        p.alive && p !== e && p.species.id !== e.species.id &&
+        p.genome.traits.diet > SIM.dietHuntMin && p.genome.traits.attack >= t.attack,
     );
     if (predator) {
       const dx = e.x - predator.x;
@@ -50,22 +52,30 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     }
   }
 
-  // 1) 목표 선택 + 이동 (도망 중이 아니면)
+  // 1) 목표 선택 + 이동 (도망 중이 아니면). 잡식은 먹잇감과 식물 중 가까운 쪽으로.
   let food: Food | null = null;
   let prey: Entity | null = null;
   if (!fleeing) {
-    if (carnivore) {
+    if (canHunt) {
       prey = world.grid.nearestMatching(
         e.x,
         e.y,
         vision,
         (p) => p.alive && p !== e && p.species.id !== e.species.id,
       );
-      steerOrWander(e, world, maxSpeed, prey ? prey.x : null, prey ? prey.y : null);
-    } else {
-      food = nearestFood(e, world, vision * vision);
-      steerOrWander(e, world, maxSpeed, food ? food.x : null, food ? food.y : null);
     }
+    if (canGraze) {
+      food = nearestFood(e, world, vision * vision);
+    }
+    if (prey && food) {
+      const pd = (prey.x - e.x) ** 2 + (prey.y - e.y) ** 2;
+      const fd = (food.x - e.x) ** 2 + (food.y - e.y) ** 2;
+      if (pd <= fd) food = null;
+      else prey = null;
+    }
+    const tx = prey ? prey.x : food ? food.x : null;
+    const ty = prey ? prey.y : food ? food.y : null;
+    steerOrWander(e, world, maxSpeed, tx, ty);
   }
 
   // 1b) 무리 이동(cohesion): 도망 중이 아니고 무리 성향이 있으면 무게중심으로 끌린다.
@@ -99,7 +109,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   }
 
   // 2) 섭취 / 사냥
-  if (!fleeing && carnivore && prey && prey.alive) {
+  if (!fleeing && prey && prey.alive) {
     const dx = prey.x - e.x;
     const dy = prey.y - e.y;
     if (dx * dx + dy * dy <= SIM.attackRange * SIM.attackRange) {
@@ -113,7 +123,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.predationEnergy);
       }
     }
-  } else if (!fleeing && !carnivore && food && food.available) {
+  } else if (!fleeing && food && food.available) {
     const dx = food.x - e.x;
     const dy = food.y - e.y;
     if (dx * dx + dy * dy <= SIM.eatRadius * SIM.eatRadius) {
