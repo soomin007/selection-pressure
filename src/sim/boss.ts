@@ -120,14 +120,20 @@ export function stepBoss(boss: Boss, world: World): void {
       if (!e.alive) continue;
       const dx = e.x - boss.x;
       const dy = e.y - boss.y;
-      if (dx * dx + dy * dy < killR2) e.alive = false;
+      if (dx * dx + dy * dy < killR2) {
+        e.alive = false;
+        world.recordDeath(e.species, "boss");
+      }
     }
   }
 
   if (boss.globalKillRate > 0) {
     for (const e of world.entities) {
       if (!e.alive) continue;
-      if (world.rng.unit() < boss.globalKillRate) e.alive = false;
+      if (world.rng.unit() < boss.globalKillRate) {
+        e.alive = false;
+        world.recordDeath(e.species, "boss");
+      }
     }
   }
 
@@ -135,7 +141,10 @@ export function stepBoss(boss: Boss, world: World): void {
     for (const e of world.entities) {
       if (!e.alive) continue;
       e.energy -= boss.globalDrain * (0.3 + e.genome.traits.metabolism);
-      if (e.energy <= 0) e.alive = false;
+      if (e.energy <= 0) {
+        e.alive = false;
+        world.recordDeath(e.species, "boss");
+      }
     }
   }
 }

@@ -2,7 +2,7 @@
 // 다종 생태계: 초식은 식물을, 육식은 다른 종을 먹는다. 포식자는 피하고(속도), 사냥은 공격력으로.
 // 무리 성향은 모임(cohesion) + 보온(huddle). 결정론: 무작위는 world.rng 만, 처리 순서 고정.
 
-import type { World } from "@/sim/world";
+import type { World, DeathCause } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
 import type { Food } from "@/sim/food";
 import { createEntity } from "@/sim/entity";
@@ -120,6 +120,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       );
       if (world.rng.chance(chance)) {
         prey.alive = false;
+        world.recordDeath(prey.species, "predation");
         e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.predationEnergy);
       }
     }
@@ -143,9 +144,18 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   e.energy -= drain + coldDrain + heatDrain;
   e.age += 1;
 
-  // 4) 죽음
-  if (e.energy <= 0 || e.age >= maxAge) {
+  // 4) 죽음 (사망 원인 집계, §7). 추위/폭염 소모가 기본 대사 소모보다 크면 그쪽으로 귀속.
+  if (e.energy <= 0) {
+    let cause: DeathCause = "starve";
+    if (coldDrain >= heatDrain && coldDrain > drain) cause = "cold";
+    else if (heatDrain > coldDrain && heatDrain > drain) cause = "heat";
     e.alive = false;
+    world.recordDeath(e.species, cause);
+    return;
+  }
+  if (e.age >= maxAge) {
+    e.alive = false;
+    world.recordDeath(e.species, "age");
     return;
   }
 

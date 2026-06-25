@@ -15,6 +15,14 @@ import { stepEntity } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
 import { SIM } from "@/sim/params";
 
+/** 한 마리가 죽은 이유 (가독성 §7: "왜 내 종이 죽었나"). 사람이 읽는 한글 라벨은 game 층에서. */
+export type DeathCause = "starve" | "cold" | "heat" | "age" | "boss" | "predation";
+export type DeathTally = Record<DeathCause, number>;
+
+export function emptyDeathTally(): DeathTally {
+  return { starve: 0, cold: 0, heat: 0, age: 0, boss: 0, predation: 0 };
+}
+
 export class World {
   readonly width: number;
   readonly height: number;
@@ -35,6 +43,9 @@ export class World {
   globalCold = 0; // 대멸종 한파
   heat = 0; // 대멸종 폭염
   foodRegrowMultiplier = 1; // 대멸종 대가뭄
+
+  /** 내 종이 무엇에 죽었나 — 런 내내 누적(정산 가독성, §7). World 는 런마다 새로 만들어지므로 런 단위 집계. */
+  readonly deaths: DeathTally = emptyDeathTally();
 
   private idCounter = 0;
 
@@ -96,6 +107,12 @@ export class World {
     let count = 0;
     for (const e of this.entities) if (e.species.isPlayer) count += 1;
     return count;
+  }
+
+  /** 죽음 1건 집계. 정산은 "왜 내 종이 죽었나"가 핵심이라 내 종만 센다. (rng 미사용 → 결정론 유지) */
+  recordDeath(species: Species, cause: DeathCause): void {
+    if (!species.isPlayer) return;
+    this.deaths[cause] += 1;
   }
 
   get availableFood(): number {

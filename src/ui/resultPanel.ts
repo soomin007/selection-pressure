@@ -33,7 +33,19 @@ export function createResultPanel(onNewRun: () => void): ResultPanel {
   const show = (win: boolean, text: string): void => {
     heading.textContent = win ? "승리" : "멸종";
     heading.style.color = win ? "#6cc24a" : "#e0604a";
-    summary.textContent = text;
+    // 본문은 빈 줄(\n\n)로 나뉜 문단들. 폰에서 "왜 졌나"가 또렷하게 읽히도록 문단별로 나눠 그린다.
+    summary.replaceChildren();
+    const blocks = text.split("\n\n");
+    blocks.forEach((block, i) => {
+      const p = document.createElement("div");
+      p.textContent = block;
+      if (i > 0) p.style.marginTop = "10px";
+      if (block.startsWith("사망 원인")) {
+        p.style.color = "#ffba8a"; // 사망 원인 줄은 눈에 띄게
+        p.style.fontWeight = "600";
+      }
+      summary.appendChild(p);
+    });
     root.style.display = "block";
   };
 

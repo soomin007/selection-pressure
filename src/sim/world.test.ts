@@ -107,6 +107,33 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
   });
 });
 
+describe("Phase 6 — 사망 원인 집계", () => {
+  it("같은 시드 + 같은 게놈이면 사망 원인 집계도 결정론적", () => {
+    const a = new World("env-1", W, H, defaultGenome());
+    const b = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 1500; i++) {
+      a.step();
+      b.step();
+    }
+    expect(a.deaths).toEqual(b.deaths);
+  });
+
+  it("죽음이 생기면 어떤 원인으로든 집계된다 (내 종 기준)", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 1500; i++) w.step();
+    const total = Object.values(w.deaths).reduce((s, n) => s + n, 0);
+    expect(total).toBeGreaterThan(0);
+  });
+
+  it("보스(추격자)는 보스 사망으로 집계된다", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 600; i++) w.step();
+    w.boss = createBoss("chaser", W, H);
+    for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) w.step();
+    expect(w.deaths.boss).toBeGreaterThan(0);
+  });
+});
+
 describe("World 생존 sanity", () => {
   it("기본 게놈 + 여러 환경에서 멸종하지도 폭발하지도 않는다", () => {
     for (const seed of ["env-1", "s1", "s2", "s3", "s4"]) {

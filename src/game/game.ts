@@ -12,6 +12,7 @@ import { drawCards, applyCard, DIET_CHOICE_CARDS, type Card } from "@/game/cards
 import { GAME, SCHEDULE, type StageKind } from "@/game/config";
 import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, BOSS_TYPES, type BossType } from "@/sim/boss";
+import { buildRunReport } from "@/game/runReport";
 
 export type Phase = "draft" | "watch" | "result";
 export type RunResult = "win" | "lose";
@@ -246,6 +247,11 @@ export class Game {
   }
 
   private buildSummary(result: RunResult): string {
+    // 승패 한 줄 + "이 종은 어떤 종이었나" + 사망 원인 집계를 합쳐 정산 본문을 만든다(가독성, §7).
+    return buildRunReport(this.baseSummary(result), this.genome, this.world.deaths);
+  }
+
+  private baseSummary(result: RunResult): string {
     if (result === "win") return "대멸종을 견뎌내고 정점에 올랐습니다.";
     const kind = this.currentKind();
     if (kind === "boss") return `${this.stageLabel} 관문을 넘지 못했습니다.`;
