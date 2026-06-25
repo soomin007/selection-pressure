@@ -13,6 +13,8 @@ import { createDraftPanel } from "@/ui/draftPanel";
 import { createResultPanel } from "@/ui/resultPanel";
 import { createLobby } from "@/ui/lobby";
 import { createControls } from "@/ui/controls";
+import { createBuildPanel } from "@/ui/buildPanel";
+import { describeSpecies } from "@/game/runReport";
 import { Highlights } from "@/render/highlights";
 
 async function boot(): Promise<void> {
@@ -46,20 +48,29 @@ async function boot(): Promise<void> {
 
   const game = new Game(layout.width, layout.height);
 
+  const buildPanel = createBuildPanel();
+  const refreshBuild = (): void => {
+    buildPanel.setData({ headline: describeSpecies(game.genome), cards: game.pickedCardNames });
+  };
+  refreshBuild();
+
   const draft = createDraftPanel((i) => {
     game.pickCard(i);
+    refreshBuild(); // 방금 고른 카드를 빌드 패널에 반영
     view.refreshSpecies(game.world); // 고른 형질을 내 종 모습에 반영
     draft.hide();
   });
   const result = createResultPanel(() => {
     result.hide();
     game.beginRun();
+    refreshBuild();
     view.refreshSpecies(game.world);
     controls.setVisible(true);
   });
   const lobby = createLobby(() => {
     lobby.hide();
     game.beginRun();
+    refreshBuild();
     view.refreshSpecies(game.world);
     controls.setVisible(true);
   });
@@ -120,6 +131,7 @@ async function boot(): Promise<void> {
     game.update(ticker.deltaMS);
     view.sync(game.world, game.interpAlpha);
     hud.sync(game.world, statusLine());
+    buildPanel.setVisible(game.phase === "draft" || game.phase === "watch");
 
     updateCamera(ticker.deltaMS);
     detectEvents();

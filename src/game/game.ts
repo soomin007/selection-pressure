@@ -31,6 +31,8 @@ export class Game {
   speed = 1; // 관전 배속 1/2/3
   result: RunResult | null = null;
   draftCards: Card[] = [];
+  /** 이번 런에서 고른 카드 이름들(시작 식성 포함) — 화면에 "내가 무엇을 골랐나" 상시 표시용. */
+  pickedCardNames: string[] = [];
 
   /** 드래프트에 표시할 다가오는 위협 예고. */
   preview = "";
@@ -93,7 +95,10 @@ export class Game {
   pickCard(index: number): void {
     if (this.phase !== "draft") return;
     const card = this.draftCards[index];
-    if (card) applyCard(this.genome, card);
+    if (card) {
+      applyCard(this.genome, card);
+      this.pickedCardNames.push(card.name);
+    }
     if (this.firstChoice) {
       // 시작 식성을 골랐으니 곧장 첫 채집 단계로.
       this.firstChoice = false;
@@ -183,6 +188,7 @@ export class Game {
     this.runIndex += 1;
     this.envSeed += 1;
     this.genome = defaultGenome();
+    this.pickedCardNames = [];
     this.stageIndex = 0;
     this.result = null;
     this.firstChoice = true;
