@@ -3,9 +3,9 @@
 // 코어 시뮬은 동일. 모바일(세로)/데스크톱(가로)은 논리 해상도와 UI 만 다르다(chooseLayout).
 // 드래프트/결과는 HTML 오버레이로, 월드/HUD 는 Pixi 로 그린다.
 
-import { Application } from "pixi.js";
+import { Application, Container } from "pixi.js";
 import { chooseLayout, COLORS } from "@/config";
-import { createViewport } from "@/render/viewport";
+import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
 import { Hud } from "@/render/hud";
 import { Game } from "@/game/game";
@@ -18,8 +18,7 @@ async function boot(): Promise<void> {
 
   const app = new Application();
   await app.init({
-    width: layout.width,
-    height: layout.height,
+    resizeTo: window, // 창 실제 픽셀로 렌더 → 선명
     background: COLORS.bg,
     antialias: true,
     resolution: window.devicePixelRatio || 1,
@@ -29,12 +28,16 @@ async function boot(): Promise<void> {
   const mount = document.getElementById("app");
   if (!mount) throw new Error("#app 마운트 지점을 찾을 수 없습니다.");
   mount.appendChild(app.canvas);
-  createViewport(app.canvas, layout.width, layout.height);
+
+  // 논리 좌표(layout) → 화면. root 컨테이너를 비율 맞춰 스케일·중앙배치(레터박스).
+  const root = new Container();
+  app.stage.addChild(root);
+  setupViewport(app, root, layout.width, layout.height);
 
   const view = new WorldView(app.renderer);
   const hud = new Hud();
-  app.stage.addChild(view.container);
-  app.stage.addChild(hud.container);
+  root.addChild(view.container);
+  root.addChild(hud.container);
 
   const game = new Game(layout.width, layout.height);
   const draft = createDraftPanel((i) => {

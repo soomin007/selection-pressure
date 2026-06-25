@@ -174,7 +174,8 @@ function makeCreatureTexture(renderer: Renderer, genome: Genome, color: number):
   g.circle(len * 0.5, -wid * 0.35, eye).fill({ color: 0xffffff });
   g.circle(len * 0.5 + eye * 0.3, -wid * 0.35, eye * 0.55).fill({ color: 0x0a0a0a });
 
-  const tex = renderer.generateTexture(g);
+  // 고해상도로 생성(작은 스프라이트가 뭉개지지 않게 슈퍼샘플).
+  const tex = renderer.generateTexture({ target: g, resolution: 3, antialias: true });
   g.destroy();
   return tex;
 }
