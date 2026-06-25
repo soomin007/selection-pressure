@@ -52,6 +52,10 @@ async function boot(): Promise<void> {
 
   const game = new Game(layout.width, layout.height);
 
+  // 디버그: URL 에 ?seed=… 가 있으면 그 시드로 고정(맵·카드·보스 완전 재현). 없으면 런마다 랜덤.
+  const seedParam = new URLSearchParams(window.location.search).get("seed");
+  if (seedParam) game.fixedSeed = seedParam;
+
   const buildPanel = createBuildPanel();
   const refreshBuild = (): void => {
     buildPanel.setData({ headline: describeSpecies(game.genome), cards: game.pickedCardNames });
@@ -117,6 +121,8 @@ async function boot(): Promise<void> {
     view.drawEnvironment(world.environment);
     view.refreshSpecies(world);
     hud.reset();
+    // 재현용: 이 맵의 시드를 콘솔에 남긴다(?seed=… 로 다시 불러올 수 있음).
+    console.info(`[seed] ${game.seed}  (재현: ?seed=${game.seed})`);
   };
 
   game.start(); // 로비 진입

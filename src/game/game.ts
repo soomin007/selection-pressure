@@ -46,8 +46,11 @@ export class Game {
   private firstChoice = true; // 런 첫 드래프트 = 시작 식성 선택
   private bossQueue: BossType[] = []; // 한 런의 보스들(서로 다른 종류)
 
-  private runIndex = 0;
-  private envSeed = 0;
+  /** 디버그용 고정 시드(URL ?seed=). null 이면 런마다 랜덤(맵·카드·보스가 매번 다름). */
+  fixedSeed: string | null = null;
+  /** 이번 런/로비의 시드. 맵·드래프트·보스가 모두 여기서 파생 → 같은 시드면 완전 재현. */
+  private currentSeed = "lobby";
+
   private draftRng: Rng;
   private stageRng: Rng;
   private acc = 0;
@@ -64,7 +67,13 @@ export class Game {
     this.genome = defaultGenome();
     this.draftRng = new Rng("draft-0");
     this.stageRng = new Rng("stage-0");
-    this.world = this.makeWorld(); // 로비 배경용 환경(앞에서 잔잔히 돌아감)
+    this.currentSeed = randomSeed(); // 로비 배경 맵도 매번 다르게
+    this.world = this.makeWorld();
+  }
+
+  /** 이번 런/로비의 시드(재현용으로 복사 가능). */
+  get seed(): string {
+    return this.currentSeed;
   }
 
   /** 부트 시 1회 — 로비 화면. 배경 월드만 보여준다. */
@@ -85,7 +94,7 @@ export class Game {
   toLobby(): void {
     this.paused = false;
     this.result = null;
-    this.envSeed += 1;
+    this.currentSeed = randomSeed();
     this.genome = defaultGenome();
     this.world = this.makeWorld();
     this.phase = "lobby";
@@ -181,26 +190,26 @@ export class Game {
     f /= n;
     const temp = c > 0.58 ? "추운 땅" : c < 0.42 ? "따뜻한 땅" : "온화한 땅";
     const fert = f > 0.55 ? "비옥함" : f < 0.4 ? "척박함" : "보통";
-    return `${temp} · ${fert}`;
+    return `${temp} · 먹이 ${fert}`;
   }
 
   private setupRun(): void {
-    this.runIndex += 1;
-    this.envSeed += 1;
+    // 시드 하나에서 맵·드래프트·보스를 모두 파생. 기본은 랜덤(매 런 다름), 고정 시드면 완전 재현.
+    this.currentSeed = this.fixedSeed ?? randomSeed();
     this.genome = defaultGenome();
     this.pickedCardNames = [];
     this.stageIndex = 0;
     this.result = null;
     this.firstChoice = true;
-    this.draftRng = new Rng(`draft-${this.runIndex}`);
-    this.stageRng = new Rng(`stage-${this.runIndex}`);
+    this.draftRng = new Rng(`${this.currentSeed}-draft`);
+    this.stageRng = new Rng(`${this.currentSeed}-stage`);
     this.bossQueue = shuffle(BOSS_TYPES, this.stageRng); // 한 런의 보스는 서로 다른 종류
     this.world = this.makeWorld();
     this.beginDraft();
   }
 
   private makeWorld(): World {
-    return new World(`env-${this.envSeed}`, this.width, this.height, this.genome);
+    return new World(`${this.currentSeed}-env`, this.width, this.height, this.genome);
   }
 
   private currentKind(): StageKind {
@@ -305,6 +314,11 @@ export class Game {
     if (kind === "extinction") return "대멸종을 견디지 못했습니다.";
     return `${this.stageNumber}단계에서 멸종했습니다.`;
   }
+}
+
+// 런 시드를 무작위로 하나 뽑는다(게임 층이라 Math.random 사용 가능 — sim 결정론과 무관).
+function randomSeed(): string {
+  return "r" + Math.floor(Math.random() * 0xffffffff).toString(36);
 }
 
 function shuffle(types: readonly BossType[], rng: Rng): BossType[] {
