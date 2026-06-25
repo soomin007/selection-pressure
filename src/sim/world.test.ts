@@ -62,13 +62,14 @@ describe("Phase 3 — 환경이 결과를 가른다", () => {
   });
 });
 
-describe("Phase 5 — 보스/대멸종이 형질을 거른다", () => {
+describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", () => {
+  // 내 종 기준. 한 forage 라운드로 성장시킨 뒤 게이트를 적용한다.
   function afterGate(genome: Genome, seconds: number, apply: (w: World) => void): number {
     const w = new World("env-1", W, H, genome);
-    for (let i = 0; i < 900; i++) w.step(); // 개체군 형성
+    for (let i = 0; i < 750; i++) w.step();
     apply(w);
     for (let i = 0; i < seconds * SIM.stepsPerSecond; i++) w.step();
-    return w.population;
+    return w.playerPopulation;
   }
 
   it("독 안개: 저대사는 통과, 기본은 실패", () => {
@@ -78,6 +79,7 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다", () => {
     const base = afterGate(defaultGenome(), GAME.bossSeconds, (w) => {
       w.boss = createBoss("poison", W, H);
     });
+    expect(lo).toBeGreaterThan(base);
     expect(lo).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
     expect(base).toBeLessThan(GAME.bossPassThreshold);
   });
@@ -91,6 +93,17 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다", () => {
     });
     expect(hi).toBeGreaterThanOrEqual(GAME.extinctionPassThreshold);
     expect(lo).toBeLessThan(GAME.extinctionPassThreshold);
+  });
+
+  it("폭염 대멸종: 저대사는 통과, 고대사는 실패", () => {
+    const lo = afterGate(tune({ metabolism: 0.1 }), GAME.extinctionSeconds, (w) => {
+      w.heat = 0.9;
+    });
+    const hi = afterGate(tune({ metabolism: 0.9 }), GAME.extinctionSeconds, (w) => {
+      w.heat = 0.9;
+    });
+    expect(lo).toBeGreaterThanOrEqual(GAME.extinctionPassThreshold);
+    expect(hi).toBeLessThan(GAME.extinctionPassThreshold);
   });
 });
 

@@ -88,7 +88,7 @@ export class Game {
       this.stageTicksLeft -= 1;
       this.acc -= stepMs;
       guard += 1;
-      if (this.world.population === 0) {
+      if (this.world.playerPopulation === 0) {
         this.finishStage(false);
         return;
       }
@@ -196,8 +196,9 @@ export class Game {
     }
 
     let passed = true;
-    if (kind === "boss") passed = this.world.population >= GAME.bossPassThreshold;
-    else if (kind === "extinction") passed = this.world.population >= GAME.extinctionPassThreshold;
+    if (kind === "boss") passed = this.world.playerPopulation >= GAME.bossPassThreshold;
+    else if (kind === "extinction")
+      passed = this.world.playerPopulation >= GAME.extinctionPassThreshold;
 
     if (!passed) {
       this.endRun("lose");

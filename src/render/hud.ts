@@ -49,14 +49,15 @@ export class Hud {
   }
 
   sync(world: World, statusText: string): void {
-    this.stat.text = `개체 수 ${world.population}   먹이 ${world.availableFood}`;
+    const mine = world.playerPopulation;
+    this.stat.text = `내 종 ${mine}   야생 ${world.population - mine}`;
     this.notice.text = statusText;
 
     this.frame += 1;
     if (this.frame % SAMPLE_EVERY === 0) {
-      this.history.push(world.population);
+      this.history.push(mine);
       if (this.history.length > MAX_SAMPLES) this.history.shift();
-      if (world.population > this.maxSeen) this.maxSeen = world.population;
+      if (mine > this.maxSeen) this.maxSeen = mine;
     }
     this.drawGraph();
   }

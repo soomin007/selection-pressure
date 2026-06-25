@@ -6,13 +6,13 @@ export const SIM = {
   stepsPerSecond: 30,
 
   // --- 초기 배치 ---
-  initialEntities: 40,
-  foodPatches: 64, // 희소하게 → 시야/속도가 먹이 선점에 의미를 갖는다
+  initialEntities: 36,
+  foodPatches: 160, // 여러 초식종이 나눠 먹어도 공존하도록 넉넉히
 
   // --- 에너지 ---
   startEnergy: 55,
   maxEnergy: 100,
-  foodEnergy: 36, // 먹이 하나를 먹을 때 얻는 에너지 (희소한 대신 개당 가치 ↑)
+  foodEnergy: 33, // 먹이 하나를 먹을 때 얻는 에너지
   foodRegrowTicks: 240, // 먹힌 먹이가 다시 자라기까지 (약 8초)
 
   // --- 번식 ---
@@ -28,11 +28,18 @@ export const SIM = {
   fleeRadiusPad: 46, // 즉사 반경 + 이만큼 안에 들면 보스에서 도망친다
   heatPenalty: 0.34, // 폭염 시 추가 소모 (틱당, ×heat×metabolism) — 폭염=저대사 유리
 
-  // --- 무리 성향 herding (셀 격자로 O(n) 근사) ---
-  herdCellSize: 90, // 무리 격자 한 칸(이웃 범위)
+  // --- 무리 성향 herding ---
   herdCohesion: 0.35, // 무게중심으로 끌리는 비율 (×herding)
   huddleFull: 5, // 이웃이 이만큼이면 보온 효과 최대
   huddleWarmth: 0.55, // 보온 시 추위 소모 최대 감소율 (×herding×이웃비율)
+
+  // --- 다종/포식 (Phase: 야생종) ---
+  gridCellSize: 80, // 개체 공간 격자 한 칸(이웃 질의)
+  predatorSenseRange: 78, // 이 안에 (나보다 센) 포식자가 있으면 도망친다
+  attackRange: 12, // 사냥 시 닿았다고 보는 거리
+  predationEnergy: 36, // 사냥 성공 시 얻는 에너지 (너무 높으면 포식자가 생태계를 붕괴)
+  killChanceBias: 0.5, // 기본 사냥 성공 확률
+  killChanceScale: 1.3, // (내 공격력 - 상대 공격력) 당 확률 가감
 
   // --- 행동/형질 스케일 ---
   eatRadius: 9,

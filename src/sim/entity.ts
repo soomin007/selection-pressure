@@ -1,6 +1,7 @@
-// 개체(Entity) — 한 마리. 게놈은 종 전체가 공유하므로 참조만 갖는다.
+// 개체(Entity) — 한 마리. 어떤 종(Species)에 속하며, 게놈은 그 종이 공유한다.
 
 import type { Genome } from "@/sim/genome";
+import type { Species } from "@/sim/species";
 
 export interface Entity {
   id: number;
@@ -10,7 +11,8 @@ export interface Entity {
   vy: number;
   energy: number;
   age: number; // 살아온 틱 수
-  genome: Genome; // 종 게놈 참조 (한 런 = 한 종)
+  species: Species; // 소속 종
+  genome: Genome; // = species.genome (편의 참조)
   alive: boolean;
 }
 
@@ -18,8 +20,8 @@ export function createEntity(
   id: number,
   x: number,
   y: number,
-  genome: Genome,
+  species: Species,
   energy: number,
 ): Entity {
-  return { id, x, y, vx: 0, vy: 0, energy, age: 0, genome, alive: true };
+  return { id, x, y, vx: 0, vy: 0, energy, age: 0, species, genome: species.genome, alive: true };
 }

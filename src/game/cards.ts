@@ -100,6 +100,32 @@ export const CARD_POOL: readonly Card[] = [
     desc: "추위에 아주 강하고 번식도 늘지만 에너지를 많이 씁니다.",
     effects: { metabolism: 0.2, fertility: 0.05 },
   },
+
+  // 공격성·식성 (다종 생태계)
+  {
+    id: "fangs",
+    name: "송곳니",
+    desc: "공격력이 늡니다. 사냥에 강하고 포식자에 덜 쫓깁니다.",
+    effects: { attack: 0.18 },
+  },
+  {
+    id: "savage",
+    name: "사나운 이빨",
+    desc: "공격력이 크게 늘고 조금 빨라집니다.",
+    effects: { attack: 0.24, speed: 0.05 },
+  },
+  {
+    id: "predator",
+    name: "포식 본능",
+    desc: "육식으로 기웁니다. 다른 종을 사냥해 먹습니다.",
+    effects: { diet: 0.22, attack: 0.06 },
+  },
+  {
+    id: "grazer",
+    name: "초식 본능",
+    desc: "초식으로 기웁니다. 식물을 먹고 다툼을 피합니다.",
+    effects: { diet: -0.22, fertility: 0.05 },
+  },
 ];
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);

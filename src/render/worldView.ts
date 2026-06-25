@@ -8,7 +8,6 @@ import { Container, Graphics } from "pixi.js";
 import type { World } from "@/sim/world";
 import type { Environment } from "@/sim/environment";
 import { SIM } from "@/sim/params";
-import { COLORS } from "@/config";
 
 export class WorldView {
   readonly container = new Container();
@@ -57,9 +56,10 @@ export class WorldView {
 
     this.entityG.clear();
     for (const e of world.entities) {
-      // 에너지가 많을수록 밝게 → "건강한지"가 한눈에 읽힌다 (가독성, §7)
+      // 종마다 색이 다르다(내 종=초록). 에너지가 많을수록 밝게(건강 가독성, §7).
       const t = Math.max(0, Math.min(1, e.energy / SIM.maxEnergy));
-      this.entityG.circle(e.x, e.y, 4).fill({ color: COLORS.accent, alpha: 0.4 + 0.6 * t });
+      const r = e.species.isPlayer ? 4.5 : e.genome.traits.diet > 0.5 ? 4.5 : 3.5;
+      this.entityG.circle(e.x, e.y, r).fill({ color: e.species.color, alpha: 0.45 + 0.55 * t });
     }
 
     // 보스 + 위험 반경 (어디가 죽음의 영역인지 읽혀야 한다, §7)
