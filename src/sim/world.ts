@@ -161,16 +161,16 @@ export class World {
 
   private spawnEntities(): void {
     for (const sp of this.species) {
+      // 야생종은 고유한 영역(보금자리)에 모여 태어난다 — 환경 비옥도 차이 + 무리 성향과 맞물려
+      // 경쟁 배제를 늦춰 더 많은 종이 공존한다. 내 종(주인공)은 맵 전체에 넓게 퍼뜨린다.
+      const homeX = this.rng.range(0.14, 0.86) * this.width;
+      const homeY = this.rng.range(0.14, 0.86) * this.height;
+      // 야생종은 좁은 영역에 모여 태어나(영역화 → 공존), 내 종(주인공)은 맵 전체에 얇게 퍼진다.
+      const spread = sp.isPlayer ? Math.max(this.width, this.height) : 72;
       for (let i = 0; i < sp.initialCount; i++) {
-        this.entities.push(
-          createEntity(
-            this.nextId(),
-            this.rng.range(0, this.width),
-            this.rng.range(0, this.height),
-            sp,
-            SIM.startEnergy,
-          ),
-        );
+        const x = Math.max(0, Math.min(this.width, homeX + this.rng.range(-spread, spread)));
+        const y = Math.max(0, Math.min(this.height, homeY + this.rng.range(-spread, spread)));
+        this.entities.push(createEntity(this.nextId(), x, y, sp, SIM.startEnergy));
       }
     }
   }

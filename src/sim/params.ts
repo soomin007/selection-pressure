@@ -27,7 +27,7 @@ export const SIM = {
 
   // --- 보스/대멸종 (Phase 5) ---
   fleeRadiusPad: 46, // 즉사 반경 + 이만큼 안에 들면 보스에서 도망친다
-  heatPenalty: 0.34, // 폭염 시 추가 소모 (틱당, ×heat×metabolism) — 폭염=저대사 유리
+  heatPenalty: 0.46, // 폭염 시 추가 소모 (틱당, ×heat×metabolism) — 폭염=저대사 유리. 폭염은 대멸종 때만이라 평상시 영향 없음. 고대사를 확실히 솎는 필터
 
   // --- 무리 성향 herding ---
   herdCohesion: 0.35, // 무게중심으로 끌리는 비율 (×herding)

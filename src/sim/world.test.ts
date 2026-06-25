@@ -135,6 +135,23 @@ describe("Phase 6 — 사망 원인 집계", () => {
   });
 });
 
+describe("종 다양성", () => {
+  it("내 종 + 야생 6종 = 7종으로 시작한다", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    expect(w.species.length).toBe(7);
+    expect(w.species.filter((s) => s.isPlayer).length).toBe(1);
+  });
+
+  it("한 단계(750틱) 지나도 여러 종이 공존한다(영역 스폰으로 경쟁 배제 완화)", () => {
+    // 예전엔 비슷한 초식종끼리 같은 먹이를 두고 다퉈 금방 1~2종만 남았다.
+    const w = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 750; i++) w.step();
+    const alive = new Set<number>();
+    for (const e of w.entities) alive.add(e.species.id);
+    expect(alive.size).toBeGreaterThanOrEqual(4);
+  });
+});
+
 describe("자연스러운 이동 — 목표 고정(hysteresis)", () => {
   it("쫓는 먹이 목표를 매 틱 갈아치우지 않는다(제자리 떨림 방지)", () => {
     // 매 틱 nearest 를 새로 고르면 목표가 진동해 제자리에서 드득드득 떤다.
