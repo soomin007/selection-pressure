@@ -20,6 +20,10 @@ export const SIM = {
   reproduceRate: 0.01, // 틱당 기본 번식 확률 (×(0.3+fertility))
   populationCap: 600, // 폭주 방지 안전 상한 (도달 시 번식 중단)
 
+  // --- 환경 (Phase 3) ---
+  cellSize: 60, // 환경 격자 한 칸 픽셀 (540×960 → 9×16칸)
+  coldPenalty: 0.3, // 추운 칸 추가 소모 (틱당, ×coldness×(1-metabolism)) — 추운 맵=고대사 유리
+
   // --- 행동/형질 스케일 ---
   eatRadius: 9,
   metabolismDrain: 0.13, // 틱당 에너지 소모 (×(0.5+metabolism))

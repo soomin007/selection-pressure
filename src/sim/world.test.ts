@@ -50,9 +50,19 @@ describe("Phase 2 — 게놈이 결과를 가른다", () => {
   });
 });
 
+describe("Phase 3 — 환경이 결과를 가른다", () => {
+  it("같은 게놈도 환경(맵)에 따라 생존 결과가 갈린다", () => {
+    const pops = ["m1", "m2", "m3", "m4", "m5", "m6"].map((s) =>
+      runPop(s, defaultGenome(), 1500),
+    );
+    const spread = Math.max(...pops) - Math.min(...pops);
+    expect(spread).toBeGreaterThan(8);
+  });
+});
+
 describe("World 생존 sanity", () => {
   it("기본 게놈 + 여러 환경에서 멸종하지도 폭발하지도 않는다", () => {
-    for (const seed of ["s1", "s2", "s3", "s4"]) {
+    for (const seed of ["env-1", "s1", "s2", "s3", "s4"]) {
       const w = new World(seed, W, H, defaultGenome());
       for (let i = 0; i < 2000; i++) w.step();
       expect(w.population).toBeGreaterThan(0);

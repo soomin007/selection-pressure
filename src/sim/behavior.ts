@@ -15,7 +15,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const maxSpeed = SIM.maxSpeedBase * (0.4 + t.speed);
   const vision = SIM.visionBase * (0.4 + t.vision);
   const drain = SIM.metabolismDrain * (0.5 + t.metabolism);
-  const maxAge = SIM.baseMaxAge * (1.2 - 0.5 * t.metabolism);
+  // 수명은 대사와 분리(§3.1: 대사 = 소모/내한성). 고대사가 이중 페널티를 받지 않게.
+  const maxAge = SIM.baseMaxAge;
 
   // 1) 감지: 시야 안에서 가장 가까운 먹이
   const target = nearestFood(e, world, vision * vision);
@@ -71,8 +72,10 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     }
   }
 
-  // 4) 허기 + 노화
-  e.energy -= drain;
+  // 4) 허기 + 노화 (추운 칸은 저대사 개체에 추가 소모 = 보온 실패)
+  const env = world.environment.sampleAt(e.x, e.y);
+  const coldDrain = SIM.coldPenalty * env.coldness * (1 - t.metabolism);
+  e.energy -= drain + coldDrain;
   e.age += 1;
 
   // 5) 죽음

@@ -5,6 +5,7 @@ import { Rng } from "@/sim/rng";
 import type { Genome } from "@/sim/genome";
 import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
+import { Environment } from "@/sim/environment";
 import { stepEntity } from "@/sim/behavior";
 import { SIM } from "@/sim/params";
 
@@ -18,6 +19,8 @@ export class World {
    * 이 객체의 traits 를 살아있는 중에 바꾸면 모든 개체에 즉시 반영된다.
    */
   readonly genome: Genome;
+  /** 절차 환경 (추위/비옥도 필드). 환경 시드로 결정. */
+  readonly environment: Environment;
 
   entities: Entity[] = [];
   food: Food[] = [];
@@ -30,6 +33,7 @@ export class World {
     this.height = height;
     this.rng = new Rng(seed);
     this.genome = genome;
+    this.environment = Environment.generate(this.rng, width, height, SIM.cellSize);
     this.spawnFood();
     this.spawnEntities();
   }
@@ -79,8 +83,30 @@ export class World {
   }
 
   private spawnFood(): void {
-    for (let i = 0; i < SIM.foodPatches; i++) {
-      this.food.push(createFood(this.rng.range(0, this.width), this.rng.range(0, this.height)));
+    // 비옥한 칸일수록 먹이가 더 많이 놓이도록 가중 추첨한다.
+    const env = this.environment;
+    const weights: number[] = [];
+    let total = 0;
+    for (let i = 0; i < env.fertility.length; i++) {
+      const w = 0.15 + (env.fertility[i] ?? 0);
+      weights.push(w);
+      total += w;
+    }
+    for (let n = 0; n < SIM.foodPatches; n++) {
+      let r = this.rng.range(0, total);
+      let cell = 0;
+      for (let i = 0; i < weights.length; i++) {
+        r -= weights[i] ?? 0;
+        if (r <= 0) {
+          cell = i;
+          break;
+        }
+      }
+      const cx = cell % env.cols;
+      const cy = Math.floor(cell / env.cols);
+      const x = Math.min(this.width, (cx + this.rng.unit()) * env.cellSize);
+      const y = Math.min(this.height, (cy + this.rng.unit()) * env.cellSize);
+      this.food.push(createFood(x, y));
     }
   }
 

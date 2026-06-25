@@ -38,9 +38,17 @@ async function boot(): Promise<void> {
   // 종 게놈(중립 기본값에서 시작)과 환경 시드를 분리 보관.
   const genome = defaultGenome();
   let envSeed = 1;
-  const makeWorld = (): World => new World(`env-${envSeed}`, LOGICAL_WIDTH, LOGICAL_HEIGHT, genome);
-  let world = makeWorld();
+  let world = new World(`env-${envSeed}`, LOGICAL_WIDTH, LOGICAL_HEIGHT, genome);
   let extinctTicks = 0;
+
+  // 새 런 시작: 월드 교체 + 환경 배경 다시 그리기 + 추이 그래프 리셋.
+  const startWorld = (): void => {
+    world = new World(`env-${envSeed}`, LOGICAL_WIDTH, LOGICAL_HEIGHT, genome);
+    view.drawEnvironment(world.environment);
+    hud.reset();
+    extinctTicks = 0;
+  };
+  view.drawEnvironment(world.environment);
 
   createTraitPanel({
     genome,
@@ -49,13 +57,11 @@ async function boot(): Promise<void> {
       genome.traits[trait] = value;
     },
     onRestartSameEnv: () => {
-      world = makeWorld();
-      extinctTicks = 0;
+      startWorld();
     },
     onNewEnv: () => {
       envSeed += 1;
-      world = makeWorld();
-      extinctTicks = 0;
+      startWorld();
     },
   });
 
@@ -76,8 +82,7 @@ async function boot(): Promise<void> {
     if (world.population === 0) {
       extinctTicks += 1;
       if (extinctTicks > SIM.stepsPerSecond * 2) {
-        world = makeWorld();
-        extinctTicks = 0;
+        startWorld();
       }
     } else {
       extinctTicks = 0;
