@@ -48,9 +48,9 @@ export class Hud {
     this.frame = 0;
   }
 
-  sync(world: World): void {
-    this.stat.text = `개체 수 ${world.population}   먹이 ${world.availableFood}   틱 ${world.tick}`;
-    this.notice.text = world.population === 0 ? "멸종했습니다. 다시 시작합니다." : "";
+  sync(world: World, statusText: string): void {
+    this.stat.text = `개체 수 ${world.population}   먹이 ${world.availableFood}`;
+    this.notice.text = statusText;
 
     this.frame += 1;
     if (this.frame % SAMPLE_EVERY === 0) {
