@@ -153,6 +153,50 @@ export const CARD_POOL: readonly Card[] = [
     desc: "초식으로 기웁니다. 식물을 먹고 다툼을 피합니다.",
     effects: { diet: -0.22, fertility: 0.05 },
   },
+
+  // 특화 진화 — 큰 변화 + 뚜렷한 대가. 빌드 정체성을 만든다(드래프트가 매번 다르게).
+  {
+    id: "cheetah",
+    name: "치타의 다리",
+    desc: "엄청나게 빨라지지만 번식이 줍니다.",
+    effects: { speed: 0.28, fertility: -0.1 },
+  },
+  {
+    id: "great_fangs",
+    name: "거대 송곳니",
+    desc: "공격력이 크게 늘지만 굼떠집니다.",
+    effects: { attack: 0.26, speed: -0.08 },
+  },
+  {
+    id: "ambush",
+    name: "매복 사냥꾼",
+    desc: "멀리서 보고 덮칩니다. 시야와 공격력이 함께 늡니다.",
+    effects: { vision: 0.14, attack: 0.14 },
+  },
+  {
+    id: "locust",
+    name: "메뚜기 떼",
+    desc: "폭발적으로 불어납니다. 대신 한 마리는 약해집니다.",
+    effects: { fertility: 0.28, attack: -0.06 },
+  },
+  {
+    id: "thick_fur",
+    name: "두꺼운 털가죽",
+    desc: "추위에 아주 강하고 함께 모입니다.",
+    effects: { metabolism: 0.16, herding: 0.12 },
+  },
+  {
+    id: "all_rounder",
+    name: "균형 진화",
+    desc: "속도·시야·번식이 고루 조금씩 늡니다.",
+    effects: { speed: 0.08, vision: 0.08, fertility: 0.08 },
+  },
+  {
+    id: "ascetic",
+    name: "고행자",
+    desc: "에너지를 거의 안 쓰고 멀리 봅니다. 대신 느립니다.",
+    effects: { metabolism: -0.2, vision: 0.1, speed: -0.06 },
+  },
 ];
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
