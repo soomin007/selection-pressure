@@ -6,7 +6,7 @@ import { TRAIT_LABELS, type Traits } from "@/sim/genome";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 
 export interface DraftPanel {
-  show: (cards: Card[]) => void;
+  show: (cards: Card[], preview: string) => void;
   hide: () => void;
 }
 
@@ -16,6 +16,10 @@ export function createDraftPanel(onPick: (index: number) => void): DraftPanel {
   const root = document.createElement("div");
   root.className = "ui-root ui-draft";
   root.style.display = "none";
+
+  const previewBox = document.createElement("div");
+  previewBox.className = "ui-preview";
+  root.appendChild(previewBox);
 
   const title = document.createElement("div");
   title.className = "ui-title";
@@ -28,7 +32,8 @@ export function createDraftPanel(onPick: (index: number) => void): DraftPanel {
 
   document.body.appendChild(root);
 
-  const show = (cards: Card[]): void => {
+  const show = (cards: Card[], preview: string): void => {
+    previewBox.textContent = preview;
     list.replaceChildren();
     cards.forEach((card, i) => {
       const btn = document.createElement("button");

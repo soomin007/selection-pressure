@@ -14,6 +14,11 @@ export function ensurePanelStyles(): void {
     box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.5);
     z-index: 10; touch-action: auto; user-select: none;
   }
+  .ui-preview {
+    font-size: 13.5px; line-height: 1.5; color: #ffd27a;
+    background: #1a1410; border: 1px solid #3a2c18; border-radius: 10px;
+    padding: 10px 12px; margin-bottom: 12px;
+  }
   .ui-title { font-size: 17px; font-weight: 700; margin-bottom: 12px; text-align: center; }
 
   .ui-cards { display: flex; flex-direction: column; gap: 10px; }

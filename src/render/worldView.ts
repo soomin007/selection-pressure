@@ -15,11 +15,13 @@ export class WorldView {
   private readonly envG = new Graphics();
   private readonly foodG = new Graphics();
   private readonly entityG = new Graphics();
+  private readonly bossG = new Graphics();
 
   constructor() {
     this.container.addChild(this.envG);
     this.container.addChild(this.foodG);
     this.container.addChild(this.entityG);
+    this.container.addChild(this.bossG);
   }
 
   /** 런이 바뀔 때 한 번 호출. 환경 배경을 다시 그린다. */
@@ -56,6 +58,19 @@ export class WorldView {
       // 에너지가 많을수록 밝게 → "건강한지"가 한눈에 읽힌다 (가독성, §7)
       const t = Math.max(0, Math.min(1, e.energy / SIM.maxEnergy));
       this.entityG.circle(e.x, e.y, 4).fill({ color: COLORS.accent, alpha: 0.35 + 0.65 * t });
+    }
+
+    // 보스 + 위험 반경을 눈에 띄게 (어디가 죽음의 영역인지 읽혀야 한다, §7)
+    this.bossG.clear();
+    const boss = world.boss;
+    if (boss) {
+      if (boss.auraRadius > 0) {
+        this.bossG.circle(boss.x, boss.y, boss.auraRadius).fill({ color: 0xb050d0, alpha: 0.16 });
+      }
+      if (boss.killRadius > 0) {
+        this.bossG.circle(boss.x, boss.y, boss.killRadius).fill({ color: 0xe0402a, alpha: 0.28 });
+      }
+      this.bossG.circle(boss.x, boss.y, 9).fill({ color: 0xff5535, alpha: 1 });
     }
   }
 }

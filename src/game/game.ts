@@ -1,19 +1,23 @@
 // 게임 상태기계 (런/라운드). 한 런 = 한 혈통의 일생.
-//   [드래프트] 카드 3장 중 1장 → [관전] 라운드 시간만큼 시뮬 → 반복 → (Phase 5: 보스)
-// 개체군은 라운드를 가로질러 이어진다. 멸종하면 그 자리에서 런 종료(패배).
-//
-// 환경은 런 시작 때 한 번 생성(런 내 고정), 런마다 새 환경(로그라이크 변주).
-// 게놈은 런 내 누적, 새 런에서 중립값으로 리셋.
+// 런은 단계 계획(SCHEDULE)을 따른다. 각 단계 앞에 드래프트가 붙는다.
+//   forage     채집 라운드 (그냥 살아남고 수를 불린다)
+//   boss       보스 게이트 (버티기: 끝까지 기준 개체 수 생존하면 통과)
+//   extinction 대멸종 피날레 (환경 적합도 필터: 통과하면 승리)
+// 멸종(개체 0)하면 그 자리에서 패배. 게놈은 런 내 누적, 새 런에서 리셋.
 
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, type Genome } from "@/sim/genome";
 import { drawCards, applyCard, type Card } from "@/game/cards";
-import { GAME } from "@/game/config";
+import { GAME, SCHEDULE, type StageKind } from "@/game/config";
 import { SIM } from "@/sim/params";
+import { createBoss, bossPreview, bossName, pickBossType, type BossType } from "@/sim/boss";
 
 export type Phase = "draft" | "watch" | "result";
 export type RunResult = "win" | "lose";
+type ExtinctionType = "cold" | "famine" | "heat";
+
+const EXTINCTION_TYPES: readonly ExtinctionType[] = ["cold", "famine", "heat"];
 
 export class Game {
   readonly width: number;
@@ -22,52 +26,58 @@ export class Game {
   genome: Genome;
   world: World;
   phase: Phase = "draft";
-  round = 1;
-  roundTicksLeft = 0;
-  draftCards: Card[] = [];
   result: RunResult | null = null;
+  draftCards: Card[] = [];
 
-  // main 이 설정하는 훅 (UI/렌더 연결)
-  onDraft: ((cards: Card[]) => void) | null = null;
-  onResult: ((result: RunResult, summary: string) => void) | null = null;
-  onWorldChanged: ((world: World) => void) | null = null;
+  /** 드래프트에 표시할 다가오는 위협 예고. */
+  preview = "";
+  /** 관전 중 상단에 표시할 현재 단계 라벨. */
+  stageLabel = "";
+
+  private stageIndex = 0;
+  private stageTicksLeft = 0;
+  private pendingBoss: BossType | null = null;
+  private pendingExtinction: ExtinctionType | null = null;
 
   private runIndex = 0;
   private envSeed = 0;
   private draftRng: Rng;
+  private stageRng: Rng;
   private acc = 0;
+
+  // main 이 설정하는 훅
+  onDraft: ((cards: Card[], preview: string) => void) | null = null;
+  onResult: ((result: RunResult, summary: string) => void) | null = null;
+  onWorldChanged: ((world: World) => void) | null = null;
 
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
     this.genome = defaultGenome();
     this.draftRng = new Rng("draft-0");
+    this.stageRng = new Rng("stage-0");
     this.world = this.makeWorld();
     this.setupRun();
   }
 
-  /** 최초 시작: 초기 훅을 한 번 쏴서 UI/배경을 맞춘다. */
   start(): void {
     this.onWorldChanged?.(this.world);
-    this.onDraft?.(this.draftCards);
+    this.onDraft?.(this.draftCards, this.preview);
   }
 
-  /** 결과 화면에서 새 런 시작. */
   newRun(): void {
     this.setupRun();
     this.onWorldChanged?.(this.world);
-    this.onDraft?.(this.draftCards);
+    this.onDraft?.(this.draftCards, this.preview);
   }
 
-  /** 드래프트에서 카드 선택. */
   pickCard(index: number): void {
     if (this.phase !== "draft") return;
     const card = this.draftCards[index];
     if (card) applyCard(this.genome, card);
-    this.beginWatch();
+    this.beginStage();
   }
 
-  /** 매 프레임 호출 (관전 중에만 시뮬 진행). */
   update(deltaMS: number): void {
     if (this.phase !== "watch") return;
     this.acc += deltaMS;
@@ -75,15 +85,15 @@ export class Game {
     let guard = 0;
     while (this.acc >= stepMs && guard < 5) {
       this.world.step();
-      this.roundTicksLeft -= 1;
+      this.stageTicksLeft -= 1;
       this.acc -= stepMs;
       guard += 1;
       if (this.world.population === 0) {
-        this.endRun("lose");
+        this.finishStage(false);
         return;
       }
-      if (this.roundTicksLeft <= 0) {
-        this.endRound();
+      if (this.stageTicksLeft <= 0) {
+        this.finishStage(true);
         return;
       }
     }
@@ -91,10 +101,18 @@ export class Game {
   }
 
   get secondsLeft(): number {
-    return Math.max(0, Math.ceil(this.roundTicksLeft / SIM.stepsPerSecond));
+    return Math.max(0, Math.ceil(this.stageTicksLeft / SIM.stepsPerSecond));
   }
 
-  /** 현재 환경을 쉬운 말로 요약 (드래프트 판단용, 가독성 §4.2/§7). */
+  get stageNumber(): number {
+    return this.stageIndex + 1;
+  }
+
+  get totalStages(): number {
+    return SCHEDULE.length;
+  }
+
+  /** 현재 환경을 쉬운 말로 요약 (가독성 §4.2/§7). */
   environmentSummary(): string {
     const env = this.world.environment;
     let c = 0;
@@ -115,46 +133,121 @@ export class Game {
     this.runIndex += 1;
     this.envSeed += 1;
     this.genome = defaultGenome();
-    this.round = 1;
+    this.stageIndex = 0;
     this.result = null;
     this.draftRng = new Rng(`draft-${this.runIndex}`);
+    this.stageRng = new Rng(`stage-${this.runIndex}`);
     this.world = this.makeWorld();
-    this.beginDraftInternal();
+    this.beginDraft();
   }
 
   private makeWorld(): World {
     return new World(`env-${this.envSeed}`, this.width, this.height, this.genome);
   }
 
-  private beginDraftInternal(): void {
+  private currentKind(): StageKind {
+    return SCHEDULE[this.stageIndex] ?? "forage";
+  }
+
+  private beginDraft(): void {
     this.phase = "draft";
     this.draftCards = drawCards(this.draftRng, 3);
-  }
 
-  private beginWatch(): void {
-    this.phase = "watch";
-    this.roundTicksLeft = GAME.roundSeconds * SIM.stepsPerSecond;
-    this.acc = 0;
-  }
-
-  private endRound(): void {
-    if (this.round >= GAME.roundsPerRun) {
-      // Phase 5 에서 여기 보스 게이트가 들어간다. 지금은 완주 = 승리.
-      this.endRun("win");
+    // 다가오는 단계의 위협을 미리 정하고 예고를 만든다(전투 전 예고, §4.2).
+    const kind = this.currentKind();
+    this.pendingBoss = null;
+    this.pendingExtinction = null;
+    if (kind === "boss") {
+      this.pendingBoss = pickBossType(this.stageRng);
+      this.preview = `다가오는 위협 — ${bossPreview(this.pendingBoss)}`;
+    } else if (kind === "extinction") {
+      this.pendingExtinction = this.stageRng.pick(EXTINCTION_TYPES);
+      this.preview = `대멸종이 다가옵니다 — ${extinctionPreview(this.pendingExtinction)}`;
     } else {
-      this.round += 1;
-      this.beginDraftInternal();
-      this.onDraft?.(this.draftCards);
+      this.preview = "위협 없음 · 채집 라운드입니다.";
     }
+  }
+
+  private beginStage(): void {
+    this.phase = "watch";
+    this.acc = 0;
+    const kind = this.currentKind();
+    if (kind === "boss" && this.pendingBoss) {
+      this.world.boss = createBoss(this.pendingBoss, this.width, this.height);
+      this.stageLabel = `보스 · ${bossName(this.pendingBoss)}`;
+      this.stageTicksLeft = GAME.bossSeconds * SIM.stepsPerSecond;
+    } else if (kind === "extinction" && this.pendingExtinction) {
+      applyExtinction(this.world, this.pendingExtinction);
+      this.stageLabel = `대멸종 · ${extinctionName(this.pendingExtinction)}`;
+      this.stageTicksLeft = GAME.extinctionSeconds * SIM.stepsPerSecond;
+    } else {
+      this.stageLabel = "채집";
+      this.stageTicksLeft = GAME.roundSeconds * SIM.stepsPerSecond;
+    }
+  }
+
+  private finishStage(survivedTimer: boolean): void {
+    const kind = this.currentKind();
+    this.clearStageState();
+
+    if (!survivedTimer) {
+      this.endRun("lose");
+      return;
+    }
+
+    let passed = true;
+    if (kind === "boss") passed = this.world.population >= GAME.bossPassThreshold;
+    else if (kind === "extinction") passed = this.world.population >= GAME.extinctionPassThreshold;
+
+    if (!passed) {
+      this.endRun("lose");
+      return;
+    }
+
+    this.stageIndex += 1;
+    if (this.stageIndex >= SCHEDULE.length) {
+      this.endRun("win");
+      return;
+    }
+    this.beginDraft();
+    this.onDraft?.(this.draftCards, this.preview);
+  }
+
+  private clearStageState(): void {
+    this.world.boss = null;
+    this.world.globalCold = 0;
+    this.world.heat = 0;
+    this.world.foodRegrowMultiplier = 1;
   }
 
   private endRun(result: RunResult): void {
     this.phase = "result";
     this.result = result;
-    const summary =
-      result === "win"
-        ? `${GAME.roundsPerRun}라운드를 끝까지 살아남았습니다.`
-        : `${this.round}라운드에서 멸종했습니다.`;
-    this.onResult?.(result, summary);
+    this.onResult?.(result, this.buildSummary(result));
   }
+
+  private buildSummary(result: RunResult): string {
+    if (result === "win") return "대멸종을 견뎌내고 정점에 올랐습니다.";
+    const kind = this.currentKind();
+    if (kind === "boss") return `${this.stageLabel} 관문을 넘지 못했습니다.`;
+    if (kind === "extinction") return "대멸종을 견디지 못했습니다.";
+    return `${this.stageNumber}단계에서 멸종했습니다.`;
+  }
+}
+
+function extinctionName(type: ExtinctionType): string {
+  return type === "cold" ? "혹독한 추위" : type === "famine" ? "대가뭄" : "폭염";
+}
+
+function extinctionPreview(type: ExtinctionType): string {
+  if (type === "cold") return "혹독한 추위가 닥칩니다. 대사가 낮으면 얼어 죽습니다(뜨거운 피가 유리).";
+  if (type === "famine")
+    return "대가뭄이 옵니다. 먹이가 다시 자라지 않습니다. 에너지를 아끼고 수가 많아야 버팁니다.";
+  return "폭염이 옵니다. 대사가 높으면 타 죽습니다(느린 대사가 유리).";
+}
+
+function applyExtinction(world: World, type: ExtinctionType): void {
+  if (type === "cold") world.globalCold = 1.3;
+  else if (type === "famine") world.foodRegrowMultiplier = 2.5;
+  else world.heat = 0.9;
 }

@@ -9,7 +9,6 @@ import { createViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
 import { Hud } from "@/render/hud";
 import { Game } from "@/game/game";
-import { GAME } from "@/game/config";
 import { createDraftPanel } from "@/ui/draftPanel";
 import { createResultPanel } from "@/ui/resultPanel";
 
@@ -44,8 +43,8 @@ async function boot(): Promise<void> {
     game.newRun();
   });
 
-  game.onDraft = (cards) => {
-    draft.show(cards);
+  game.onDraft = (cards, preview) => {
+    draft.show(cards, preview);
   };
   game.onResult = (res, summary) => {
     result.show(res === "win", summary);
@@ -65,9 +64,9 @@ async function boot(): Promise<void> {
 
   function statusLine(): string {
     const env = game.environmentSummary();
-    const r = `라운드 ${game.round}/${GAME.roundsPerRun}`;
-    if (game.phase === "draft") return `${r} · 카드 선택 · ${env}`;
-    if (game.phase === "watch") return `${r} · 관전 ${game.secondsLeft}초 · ${env}`;
+    const s = `${game.stageNumber}/${game.totalStages}`;
+    if (game.phase === "draft") return `단계 ${s} · 카드 선택 · ${env}`;
+    if (game.phase === "watch") return `단계 ${s} · ${game.stageLabel} · ${game.secondsLeft}초 · ${env}`;
     return env;
   }
 }

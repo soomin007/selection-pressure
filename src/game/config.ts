@@ -2,6 +2,14 @@
 // (참고: Everything is Crab ≈ 20분/보스3 → 모바일 호흡에 맞게 축소)
 
 export const GAME = {
-  roundSeconds: 25, // 한 관전 라운드 길이(초)
-  roundsPerRun: 6, // 보스 전까지 드래프트 라운드 수
+  roundSeconds: 25, // 채집 라운드 길이(초)
+  bossSeconds: 20, // 보스 게이트 관전 길이(초)
+  extinctionSeconds: 24, // 대멸종 피날레 길이(초)
+  bossPassThreshold: 8, // 보스 끝까지 이 개체 수 이상 생존하면 통과
+  extinctionPassThreshold: 12, // 대멸종 끝까지 이 개체 수 이상 생존하면 통과(승리)
 } as const;
+
+// 한 런의 라운드 계획. 각 단계 앞에는 드래프트가 붙는다.
+//   forage = 채집 라운드, boss = 보스 게이트, extinction = 대멸종 피날레
+export const SCHEDULE = ["forage", "forage", "boss", "forage", "boss", "extinction"] as const;
+export type StageKind = (typeof SCHEDULE)[number];

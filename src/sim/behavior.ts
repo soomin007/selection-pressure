@@ -18,11 +18,30 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 수명은 대사와 분리(§3.1: 대사 = 소모/내한성). 고대사가 이중 페널티를 받지 않게.
   const maxAge = SIM.baseMaxAge;
 
-  // 1) 감지: 시야 안에서 가장 가까운 먹이
-  const target = nearestFood(e, world, vision * vision);
+  // 0) 보스 회피: 즉사형 보스가 가까우면 먹이를 무시하고 반대로 도망친다(속도가 생명).
+  let fleeing = false;
+  const boss = world.boss;
+  if (boss && boss.killRadius > 0) {
+    const bdx = e.x - boss.x;
+    const bdy = e.y - boss.y;
+    const bd2 = bdx * bdx + bdy * bdy;
+    // titan 은 시야가 높을수록 도망 반경이 커진다(일찍 보고 피함).
+    const fr = boss.killRadius + SIM.fleeRadiusPad + boss.visionFlee * t.vision;
+    if (bd2 < fr * fr) {
+      const bd = Math.sqrt(bd2) || 1;
+      e.vx = (bdx / bd) * maxSpeed;
+      e.vy = (bdy / bd) * maxSpeed;
+      fleeing = true;
+    }
+  }
 
-  // 2) 이동: 먹이가 있으면 그쪽으로, 없으면 배회
-  if (target) {
+  // 1) 감지: 시야 안에서 가장 가까운 먹이 (도망 중엔 생략)
+  const target = fleeing ? null : nearestFood(e, world, vision * vision);
+
+  // 2) 이동: 도망 중이면 위에서 정함. 아니면 먹이로, 없으면 배회.
+  if (fleeing) {
+    // 속도 이미 설정됨
+  } else if (target) {
     const dx = target.x - e.x;
     const dy = target.y - e.y;
     const d = Math.hypot(dx, dy) || 1;
@@ -68,14 +87,16 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     if (dx * dx + dy * dy <= SIM.eatRadius * SIM.eatRadius) {
       e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy);
       target.available = false;
-      target.regrowTimer = SIM.foodRegrowTicks;
+      target.regrowTimer = Math.round(SIM.foodRegrowTicks * world.foodRegrowMultiplier);
     }
   }
 
-  // 4) 허기 + 노화 (추운 칸은 저대사 개체에 추가 소모 = 보온 실패)
+  // 4) 허기 + 노화. 추위(저대사 불리) + 폭염(고대사 불리)은 추가 소모.
   const env = world.environment.sampleAt(e.x, e.y);
-  const coldDrain = SIM.coldPenalty * env.coldness * (1 - t.metabolism);
-  e.energy -= drain + coldDrain;
+  // 맵 추위(coldness≤1) + 대멸종 한파(globalCold). 한파는 캡 없이 가중된다.
+  const coldDrain = SIM.coldPenalty * (env.coldness + world.globalCold) * (1 - t.metabolism);
+  const heatDrain = SIM.heatPenalty * world.heat * t.metabolism;
+  e.energy -= drain + coldDrain + heatDrain;
   e.age += 1;
 
   // 5) 죽음

@@ -24,6 +24,10 @@ export const SIM = {
   cellSize: 60, // 환경 격자 한 칸 픽셀 (540×960 → 9×16칸)
   coldPenalty: 0.3, // 추운 칸 추가 소모 (틱당, ×coldness×(1-metabolism)) — 추운 맵=고대사 유리
 
+  // --- 보스/대멸종 (Phase 5) ---
+  fleeRadiusPad: 46, // 즉사 반경 + 이만큼 안에 들면 보스에서 도망친다
+  heatPenalty: 0.34, // 폭염 시 추가 소모 (틱당, ×heat×metabolism) — 폭염=저대사 유리
+
   // --- 행동/형질 스케일 ---
   eatRadius: 9,
   metabolismDrain: 0.13, // 틱당 에너지 소모 (×(0.5+metabolism))

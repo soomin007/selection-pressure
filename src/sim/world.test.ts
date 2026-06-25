@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { World } from "@/sim/world";
 import { SIM } from "@/sim/params";
+import { GAME } from "@/game/config";
+import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
 import { Rng } from "@/sim/rng";
 
@@ -57,6 +59,38 @@ describe("Phase 3 — 환경이 결과를 가른다", () => {
     );
     const spread = Math.max(...pops) - Math.min(...pops);
     expect(spread).toBeGreaterThan(8);
+  });
+});
+
+describe("Phase 5 — 보스/대멸종이 형질을 거른다", () => {
+  function afterGate(genome: Genome, seconds: number, apply: (w: World) => void): number {
+    const w = new World("env-1", W, H, genome);
+    for (let i = 0; i < 900; i++) w.step(); // 개체군 형성
+    apply(w);
+    for (let i = 0; i < seconds * SIM.stepsPerSecond; i++) w.step();
+    return w.population;
+  }
+
+  it("독 안개: 저대사는 통과, 기본은 실패", () => {
+    const lo = afterGate(tune({ metabolism: 0.1 }), GAME.bossSeconds, (w) => {
+      w.boss = createBoss("poison", W, H);
+    });
+    const base = afterGate(defaultGenome(), GAME.bossSeconds, (w) => {
+      w.boss = createBoss("poison", W, H);
+    });
+    expect(lo).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
+    expect(base).toBeLessThan(GAME.bossPassThreshold);
+  });
+
+  it("한파 대멸종: 고대사는 통과, 저대사는 실패", () => {
+    const hi = afterGate(tune({ metabolism: 0.9 }), GAME.extinctionSeconds, (w) => {
+      w.globalCold = 1.3;
+    });
+    const lo = afterGate(tune({ metabolism: 0.1 }), GAME.extinctionSeconds, (w) => {
+      w.globalCold = 1.3;
+    });
+    expect(hi).toBeGreaterThanOrEqual(GAME.extinctionPassThreshold);
+    expect(lo).toBeLessThan(GAME.extinctionPassThreshold);
   });
 });
 

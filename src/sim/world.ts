@@ -7,6 +7,7 @@ import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
 import { Environment } from "@/sim/environment";
 import { stepEntity } from "@/sim/behavior";
+import { stepBoss, type Boss } from "@/sim/boss";
 import { SIM } from "@/sim/params";
 
 export class World {
@@ -25,6 +26,12 @@ export class World {
   entities: Entity[] = [];
   food: Food[] = [];
   tick = 0;
+
+  // Phase 5 단계 상태 (Game 이 설정/해제). 기본값은 평상시(영향 없음).
+  boss: Boss | null = null;
+  globalCold = 0; // 대멸종 한파: 모든 칸에 더해지는 추위
+  heat = 0; // 대멸종 폭염: 고대사일수록 추가 소모
+  foodRegrowMultiplier = 1; // 대멸종 대가뭄: 먹이 재생이 이 배수만큼 느려짐
 
   private idCounter = 0;
 
@@ -51,7 +58,10 @@ export class World {
       stepEntity(e, this, newborns);
     }
 
-    // 먹이 재생
+    // 보스 (있을 때만)
+    if (this.boss) stepBoss(this.boss, this);
+
+    // 먹이 재생 (대가뭄이면 regrowTimer 가 길어 느리게 자란다)
     for (const f of this.food) {
       if (f.available) continue;
       f.regrowTimer -= 1;
