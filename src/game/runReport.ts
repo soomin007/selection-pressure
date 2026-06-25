@@ -77,6 +77,33 @@ export function formatDeaths(deaths: DeathTally): string {
   return rows.map((r) => `${DEATH_LABELS[r.c]} ${r.n}`).join(" · ");
 }
 
+/** 사망 원인 문단을 식별하는 머리말. buildRunReport(포맷)과 parseDeathLine(역파싱)이 공유. */
+export const DEATH_LINE_PREFIX = "사망 원인 — ";
+
+export interface DeathRow {
+  label: string;
+  count: number;
+}
+
+/**
+ * 결과 화면이 막대로 다시 그릴 수 있도록 사망 원인 문단을 행 목록으로 되돌린다.
+ * (resultPanel 은 문자열만 받으므로, 포맷/역파싱을 이 파일 한곳에서 계약으로 묶어 둔다.)
+ * 사망 원인 문단이 아니면 빈 배열.
+ */
+export function parseDeathLine(block: string): DeathRow[] {
+  if (!block.startsWith(DEATH_LINE_PREFIX)) return [];
+  const body = block.slice(DEATH_LINE_PREFIX.length);
+  const rows: DeathRow[] = [];
+  for (const seg of body.split(" · ")) {
+    const sp = seg.lastIndexOf(" "); // 라벨엔 공백이 없으니 마지막 공백이 수와의 경계
+    if (sp < 0) continue;
+    const label = seg.slice(0, sp);
+    const count = Number(seg.slice(sp + 1));
+    if (label && Number.isFinite(count)) rows.push({ label, count });
+  }
+  return rows;
+}
+
 /**
  * 결과 화면 본문 텍스트를 만든다. 문단은 빈 줄(\n\n)로 구분 — resultPanel 이 또렷하게 나눠 그린다.
  *   1) 승패 한 줄(baseSummary)
@@ -91,7 +118,7 @@ export function buildRunReport(baseSummary: string, genome: Genome, deaths: Deat
   parts.push(speciesLine);
 
   const dead = formatDeaths(deaths);
-  if (dead) parts.push(`사망 원인 — ${dead}`);
+  if (dead) parts.push(`${DEATH_LINE_PREFIX}${dead}`);
 
   return parts.join("\n\n");
 }

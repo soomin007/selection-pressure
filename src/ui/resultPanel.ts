@@ -1,6 +1,18 @@
 // 결과 UI — 런 종료(승리/멸종) 화면 + 새 런 버튼. 캔버스 위 HTML 오버레이.
+// 사망 원인 문단은 텍스트 대신 비례 막대로 그린다 — "무엇이 내 종을 죽였나"가 폰에서 한눈에 읽히게(§7).
 
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { parseDeathLine, type DeathRow } from "@/game/runReport";
+
+// 사망 원인별 색 — 게임 화면의 시각 언어와 맞춘다(추위=파랑/폭염·잡아먹힘=빨강 계열/보스=보라 등).
+const DEATH_COLOR: Record<string, string> = {
+  추위: "#5a8cff",
+  폭염: "#ff6a3a",
+  굶음: "#c9a23a",
+  잡아먹힘: "#e0604a",
+  보스: "#c060e0",
+  노화: "#7aa86a",
+};
 
 export interface ResultPanel {
   show: (win: boolean, summary: string) => void;
@@ -33,18 +45,14 @@ export function createResultPanel(onNewRun: () => void): ResultPanel {
   const show = (win: boolean, text: string): void => {
     heading.textContent = win ? "승리" : "멸종";
     heading.style.color = win ? "#6cc24a" : "#e0604a";
-    // 본문은 빈 줄(\n\n)로 나뉜 문단들. 폰에서 "왜 졌나"가 또렷하게 읽히도록 문단별로 나눠 그린다.
+    // 본문은 빈 줄(\n\n)로 나뉜 문단들. 사망 원인 문단은 막대로, 나머지는 텍스트로 그린다.
     summary.replaceChildren();
     const blocks = text.split("\n\n");
     blocks.forEach((block, i) => {
-      const p = document.createElement("div");
-      p.textContent = block;
-      if (i > 0) p.style.marginTop = "10px";
-      if (block.startsWith("사망 원인")) {
-        p.style.color = "#ffba8a"; // 사망 원인 줄은 눈에 띄게
-        p.style.fontWeight = "600";
-      }
-      summary.appendChild(p);
+      const rows = parseDeathLine(block);
+      const el = rows.length > 0 ? deathBars(rows) : textBlock(block);
+      if (i > 0) el.style.marginTop = "12px";
+      summary.appendChild(el);
     });
     root.style.display = "block";
   };
@@ -54,4 +62,50 @@ export function createResultPanel(onNewRun: () => void): ResultPanel {
   };
 
   return { show, hide };
+}
+
+/** 일반 문단 한 줄. */
+function textBlock(text: string): HTMLDivElement {
+  const p = document.createElement("div");
+  p.textContent = text;
+  return p;
+}
+
+/** 사망 원인 막대 묶음 — 라벨 + 비례 막대(색=원인) + 수. 많이 죽은 원인이 길고 또렷하다. */
+function deathBars(rows: DeathRow[]): HTMLDivElement {
+  const wrap = document.createElement("div");
+
+  const title = document.createElement("div");
+  title.textContent = "사망 원인";
+  title.style.cssText = "color:#ffba8a; font-weight:600; margin-bottom:6px;";
+  wrap.appendChild(title);
+
+  const max = Math.max(1, ...rows.map((r) => r.count));
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex; align-items:center; gap:8px; margin-top:5px;";
+
+    const label = document.createElement("span");
+    label.textContent = r.label;
+    label.style.cssText = "width:62px; flex:none; font-size:13px; color:#b6bdca;";
+
+    const track = document.createElement("span");
+    track.style.cssText =
+      "flex:1; height:11px; background:#222a38; border-radius:6px; overflow:hidden;";
+    const fill = document.createElement("span");
+    const pct = Math.round((r.count / max) * 100);
+    fill.style.cssText =
+      `display:block; height:100%; width:${pct}%; border-radius:6px; ` +
+      `background:${DEATH_COLOR[r.label] ?? "#8a93a6"};`;
+    track.appendChild(fill);
+
+    const num = document.createElement("span");
+    num.textContent = String(r.count);
+    num.style.cssText =
+      "width:34px; flex:none; text-align:right; font-size:13px; font-variant-numeric:tabular-nums;";
+
+    row.append(label, track, num);
+    wrap.appendChild(row);
+  }
+  return wrap;
 }

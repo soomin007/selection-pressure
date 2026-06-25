@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { describeSpecies, formatDeaths, buildRunReport } from "@/game/runReport";
+import {
+  describeSpecies,
+  formatDeaths,
+  buildRunReport,
+  parseDeathLine,
+  DEATH_LINE_PREFIX,
+} from "@/game/runReport";
 import { defaultGenome, type Genome } from "@/sim/genome";
 import { emptyDeathTally, type DeathTally } from "@/sim/world";
 
@@ -62,5 +68,33 @@ describe("buildRunReport", () => {
   it("죽음이 없으면 사망 원인 문단을 넣지 않는다", () => {
     const report = buildRunReport("승리", defaultGenome(), emptyDeathTally());
     expect(report).not.toContain("사망 원인");
+  });
+});
+
+describe("parseDeathLine — 결과 화면 막대용 역파싱", () => {
+  it("사망 원인 문단이 아니면 빈 배열", () => {
+    expect(parseDeathLine("이 종은 균형 잡힌 잡식성이었습니다.")).toEqual([]);
+    expect(parseDeathLine("4단계에서 멸종했습니다.")).toEqual([]);
+  });
+
+  it("buildRunReport 가 만든 사망 원인 문단을 행으로 되돌린다 (포맷↔파싱 왕복)", () => {
+    const report = buildRunReport(
+      "멸종",
+      defaultGenome(),
+      tally({ cold: 41, starve: 18, predation: 7 }),
+    );
+    const deathBlock = report.split("\n\n").find((b) => b.startsWith(DEATH_LINE_PREFIX));
+    expect(deathBlock).toBeDefined();
+    expect(parseDeathLine(deathBlock ?? "")).toEqual([
+      { label: "추위", count: 41 },
+      { label: "굶음", count: 18 },
+      { label: "잡아먹힘", count: 7 },
+    ]);
+  });
+
+  it("공백 없는 라벨(잡아먹힘)도 수와 안전히 분리", () => {
+    expect(parseDeathLine(`${DEATH_LINE_PREFIX}잡아먹힘 12`)).toEqual([
+      { label: "잡아먹힘", count: 12 },
+    ]);
   });
 });
