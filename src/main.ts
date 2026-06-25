@@ -3,7 +3,7 @@
 // 코어 시뮬은 동일. 모바일(세로)/데스크톱(가로)은 논리 해상도와 UI 만 다르다(chooseLayout).
 // 월드는 스케일 컨테이너(root)에, HUD/UI 는 화면 픽셀 그대로(선명).
 
-import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
+import { Application, Container, Graphics } from "pixi.js";
 import { chooseLayout, COLORS } from "@/config";
 import { DEBUG, DEBUG_ACTIVE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
@@ -129,14 +129,17 @@ async function boot(): Promise<void> {
   game.start(); // 로비 진입
   lobby.show();
 
-  // 떨림 진단 배지 — ?norot/?nointerp/?showalpha 중 하나라도 켜졌을 때만 화면 우상단에 표시.
-  let debugText: Text | null = null;
+  // 떨림 진단 배지 — 디버그 파라미터(?norot/?nointerp/?showalpha/?dz/?rotk)가 있을 때만 표시.
+  // HTML 오버레이로 좌하단·높은 z-index 에 둬서, 우상단 패널들에 가리지 않고 dz 값이 보이게 한다.
+  let debugBadge: HTMLDivElement | null = null;
   if (DEBUG_ACTIVE) {
-    debugText = new Text({
-      text: "",
-      style: new TextStyle({ fill: 0xffe08a, fontSize: 16, fontWeight: "700" }),
-    });
-    app.stage.addChild(debugText);
+    debugBadge = document.createElement("div");
+    debugBadge.style.cssText =
+      "position:fixed; left:8px; bottom:8px; z-index:30; padding:6px 9px;" +
+      "background:rgba(11,14,20,0.9); border:1px solid #4a4030; border-radius:8px;" +
+      "color:#ffe08a; font-family:system-ui,-apple-system,sans-serif; font-size:13px;" +
+      "font-weight:700; pointer-events:none; user-select:none;";
+    document.body.appendChild(debugBadge);
   }
 
   // 카메라(보스 추적 줌) + 하이라이트 이벤트 감지 상태
@@ -158,12 +161,10 @@ async function boot(): Promise<void> {
     detectEvents();
     highlights.update(ticker.deltaMS, app.screen.width);
 
-    if (debugText) {
+    if (debugBadge) {
       let txt = `디버그: ${debugLabel()}`;
       if (DEBUG.showAlpha) txt += `  α=${game.interpAlpha.toFixed(2)}`;
-      debugText.text = txt;
-      debugText.x = app.screen.width - debugText.width - 12;
-      debugText.y = 12;
+      debugBadge.textContent = txt;
     }
 
     prevPhase = game.phase;

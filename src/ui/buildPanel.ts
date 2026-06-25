@@ -13,8 +13,9 @@ export interface BuildPanel {
 
 export function createBuildPanel(): BuildPanel {
   const root = document.createElement("div");
+  // 컨트롤바(우상단 top:12 높이 42)와 안 겹치게 그 아래로 내린다(모바일 겹침 해소).
   root.style.cssText =
-    "position:fixed; top:8px; right:8px; width:138px; box-sizing:border-box; padding:8px 10px;" +
+    "position:fixed; top:62px; right:12px; width:138px; box-sizing:border-box; padding:8px 10px;" +
     "background:rgba(11,14,20,0.82); border:1px solid #2a3346; border-radius:10px;" +
     "color:#dfe6ee; font-family:system-ui,-apple-system,sans-serif; font-size:12px; line-height:1.4;" +
     "z-index:9; pointer-events:none; user-select:none; display:none;";
