@@ -1,9 +1,9 @@
-// 최소 HUD — 실시간 개체 수/먹이/틱 + 개체 수 추이 그래프.
-// 추이 그래프(스파크라인)는 천천히 변하는 효과를 폰에서 눈으로 잡게 해준다(가독성, §7).
-// 본격 연출(사망 원인·하이라이트·카메라)은 Phase 6.
+// 최소 HUD — 실시간 개체 수/먹이 + 개체 수 추이 그래프 + 최근 사망 원인 피드.
+// 추이 그래프와 사망 피드는 "왜 줄어드나"를 관전 중에 바로 읽게 해준다(가독성, §7).
 
 import { Container, Graphics, Text, TextStyle } from "pixi.js";
 import type { World } from "@/sim/world";
+import type { DeathCause, DeathTally } from "@/sim/world";
 import { COLORS } from "@/config";
 
 const GRAPH_X = 16;
@@ -12,16 +12,28 @@ const GRAPH_W = 220;
 const GRAPH_H = 54;
 const SAMPLE_EVERY = 8; // 프레임마다 너무 촘촘하지 않게
 const MAX_SAMPLES = 170; // 약 23초 분량(8프레임/60fps × 170)
+const DEATH_INTERVAL = 48; // 사망 피드 갱신 주기(프레임)
+
+const CAUSE_LABEL: Record<DeathCause, string> = {
+  starve: "굶음",
+  cold: "추위",
+  heat: "더위",
+  age: "노화",
+  boss: "보스",
+  predation: "잡아먹힘",
+};
 
 export class Hud {
   readonly container = new Container();
   private readonly stat: Text;
   private readonly notice: Text;
+  private readonly deathFeed: Text;
   private readonly graph = new Graphics();
 
   private history: number[] = [];
   private maxSeen = 1;
   private frame = 0;
+  private prevDeaths: DeathTally | null = null;
 
   constructor() {
     this.stat = new Text({
@@ -36,16 +48,25 @@ export class Hud {
     });
     this.notice.position.set(16, 44);
 
+    this.deathFeed = new Text({
+      text: "",
+      style: new TextStyle({ fill: 0xffba8a, fontSize: 15 }),
+    });
+    this.deathFeed.position.set(GRAPH_X, GRAPH_Y + GRAPH_H + 8);
+
     this.container.addChild(this.graph);
     this.container.addChild(this.stat);
     this.container.addChild(this.notice);
+    this.container.addChild(this.deathFeed);
   }
 
-  /** 런이 바뀌면 추이를 리셋한다. */
+  /** 런이 바뀌면 추이·사망 피드를 리셋한다. */
   reset(): void {
     this.history = [];
     this.maxSeen = 1;
     this.frame = 0;
+    this.prevDeaths = null;
+    this.deathFeed.text = "";
   }
 
   sync(world: World, statusText: string): void {
@@ -59,7 +80,25 @@ export class Hud {
       if (this.history.length > MAX_SAMPLES) this.history.shift();
       if (mine > this.maxSeen) this.maxSeen = mine;
     }
+    if (this.frame % DEATH_INTERVAL === 0) this.updateDeathFeed(world.deaths);
     this.drawGraph();
+  }
+
+  /** 최근 구간에 내 종이 어떤 원인으로 죽었는지 한 줄로. */
+  private updateDeathFeed(deaths: DeathTally): void {
+    if (!this.prevDeaths) {
+      this.prevDeaths = { ...deaths };
+      this.deathFeed.text = "";
+      return;
+    }
+    const parts: string[] = [];
+    for (const cause of Object.keys(deaths) as DeathCause[]) {
+      const delta = deaths[cause] - this.prevDeaths[cause];
+      if (delta > 0) parts.push(`${CAUSE_LABEL[cause]} ${delta}`);
+    }
+    this.prevDeaths = { ...deaths };
+    parts.sort((a, b) => Number(b.split(" ")[1]) - Number(a.split(" ")[1]));
+    this.deathFeed.text = parts.length ? `최근 사망  ${parts.join("  ·  ")}` : "";
   }
 
   private drawGraph(): void {

@@ -20,6 +20,7 @@ export class WorldView {
 
   private readonly pool: Sprite[] = [];
   private readonly speciesTex = new Map<number, Texture>();
+  private frame = 0;
 
   constructor(renderer: Renderer) {
     this.renderer = renderer;
@@ -28,6 +29,17 @@ export class WorldView {
     this.container.addChild(this.creatureLayer);
     this.container.addChild(this.bossG);
     this.container.addChild(this.overlayG);
+  }
+
+  /** 카메라 — 초점(fx,fy)을 화면 중앙에 두고 zoom 배율로. 세계 밖이 안 보이게 클램프. */
+  setCamera(fx: number, fy: number, zoom: number, worldW: number, worldH: number): void {
+    const halfW = worldW / (2 * zoom);
+    const halfH = worldH / (2 * zoom);
+    const cx = clampRange(fx, halfW, worldW - halfW);
+    const cy = clampRange(fy, halfH, worldH - halfH);
+    this.container.scale.set(zoom);
+    this.container.pivot.set(cx, cy);
+    this.container.position.set(worldW / 2, worldH / 2);
   }
 
   /** 런이 바뀌거나 내 종 게놈이 바뀌면 호출 — 종별 스프라이트 텍스처를 다시 만든다. */
@@ -60,6 +72,7 @@ export class WorldView {
   }
 
   sync(world: World): void {
+    this.frame += 1;
     this.foodG.clear();
     for (const f of world.food) {
       if (!f.available) continue;
@@ -97,6 +110,11 @@ export class WorldView {
       if (boss.killRadius > 0) {
         this.bossG.circle(boss.x, boss.y, boss.killRadius).fill({ color: 0xe0402a, alpha: 0.3 });
       }
+      // 주목 펄스 — "여기 위험" 시선 유도(가독성, §7)
+      const pulse = (this.frame % 60) / 60;
+      this.bossG
+        .circle(boss.x, boss.y, 16 + pulse * 26)
+        .stroke({ color: 0xff5535, width: 2.5, alpha: 0.55 * (1 - pulse) });
       this.bossG.circle(boss.x, boss.y, 14).fill({ color: 0xff5535, alpha: 1 });
       this.bossG.circle(boss.x, boss.y, 14).stroke({ color: 0x3a0d06, width: 3 });
     }
@@ -122,6 +140,11 @@ export class WorldView {
 function clamp255(v: number): number {
   const n = Math.round(v);
   return n < 0 ? 0 : n > 255 ? 255 : n;
+}
+
+function clampRange(v: number, lo: number, hi: number): number {
+  if (lo > hi) return (lo + hi) / 2; // zoom 이 1 이하라 범위가 뒤집히면 중앙
+  return v < lo ? lo : v > hi ? hi : v;
 }
 
 function darken(color: number, f: number): number {

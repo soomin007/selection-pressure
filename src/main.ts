@@ -13,6 +13,7 @@ import { createDraftPanel } from "@/ui/draftPanel";
 import { createResultPanel } from "@/ui/resultPanel";
 import { createLobby } from "@/ui/lobby";
 import { createControls } from "@/ui/controls";
+import { Highlights } from "@/render/highlights";
 
 async function boot(): Promise<void> {
   const layout = chooseLayout();
@@ -38,8 +39,10 @@ async function boot(): Promise<void> {
 
   const view = new WorldView(app.renderer);
   const hud = new Hud();
+  const highlights = new Highlights();
   root.addChild(view.container);
   app.stage.addChild(hud.container); // ← root(스케일) 밖 = 네이티브 해상도
+  app.stage.addChild(highlights.container);
 
   const game = new Game(layout.width, layout.height);
 
@@ -104,11 +107,62 @@ async function boot(): Promise<void> {
   game.start(); // 로비 진입
   lobby.show();
 
+  // 카메라(보스 추적 줌) + 하이라이트 이벤트 감지 상태
+  let camX = layout.width / 2;
+  let camY = layout.height / 2;
+  let camZoom = 1;
+  let prevBoss = false;
+  let prevExt = "";
+  let prevLowWarn = false;
+  let prevPhase = game.phase;
+
   app.ticker.add((ticker) => {
     game.update(ticker.deltaMS);
     view.sync(game.world);
     hud.sync(game.world, statusLine());
+
+    updateCamera(ticker.deltaMS);
+    detectEvents();
+    highlights.update(ticker.deltaMS, app.screen.width);
+
+    prevPhase = game.phase;
   });
+
+  function updateCamera(dtMS: number): void {
+    const boss = game.world.boss;
+    const focusBoss = game.phase === "watch" && boss !== null;
+    const tz = focusBoss ? 1.35 : 1;
+    const tx = focusBoss && boss ? boss.x : layout.width / 2;
+    const ty = focusBoss && boss ? boss.y : layout.height / 2;
+    const k = Math.min(1, (dtMS / 1000) * 3.5); // 시간 기반 이징
+    camX += (tx - camX) * k;
+    camY += (ty - camY) * k;
+    camZoom += (tz - camZoom) * k;
+    view.setCamera(camX, camY, camZoom, layout.width, layout.height);
+  }
+
+  function detectEvents(): void {
+    const w = game.world;
+    const bossNow = w.boss !== null;
+    if (bossNow && !prevBoss && w.boss) highlights.flash(`${w.boss.name} 등장`, 0xff6a4a);
+    // 보스 단계를 통과하면(보스 있던 watch → draft) 알린다.
+    if (prevPhase === "watch" && game.phase === "draft" && prevBoss && !bossNow) {
+      highlights.flash("관문 통과", 0x6cc24a);
+    }
+    prevBoss = bossNow;
+
+    const ext = w.globalCold > 0 ? "한파" : w.heat > 0 ? "폭염" : w.foodRegrowMultiplier > 1 ? "대가뭄" : "";
+    if (ext && ext !== prevExt) highlights.flash(`대멸종 — ${ext}`, 0x8ab4ff);
+    prevExt = ext;
+
+    const pop = w.playerPopulation;
+    if (game.phase === "watch" && pop > 0 && pop <= 5) {
+      if (!prevLowWarn) highlights.flash("멸종 위기!", 0xffba3a);
+      prevLowWarn = true;
+    } else if (pop > 9) {
+      prevLowWarn = false;
+    }
+  }
 
   function statusLine(): string {
     if (game.phase === "lobby") return "";
