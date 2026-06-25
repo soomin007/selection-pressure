@@ -118,7 +118,7 @@ async function boot(): Promise<void> {
 
   app.ticker.add((ticker) => {
     game.update(ticker.deltaMS);
-    view.sync(game.world);
+    view.sync(game.world, game.interpAlpha);
     hud.sync(game.world, statusLine());
 
     updateCamera(ticker.deltaMS);

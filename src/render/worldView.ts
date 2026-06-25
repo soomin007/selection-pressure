@@ -14,6 +14,7 @@ export class WorldView {
   private readonly renderer: Renderer;
   private readonly envG = new Graphics();
   private readonly foodG = new Graphics();
+  private readonly playerG = new Graphics(); // 내 종 강조(스프라이트 아래 빛나는 고리)
   private readonly creatureLayer = new Container();
   private readonly bossG = new Graphics();
   private readonly overlayG = new Graphics();
@@ -26,6 +27,7 @@ export class WorldView {
     this.renderer = renderer;
     this.container.addChild(this.envG);
     this.container.addChild(this.foodG);
+    this.container.addChild(this.playerG);
     this.container.addChild(this.creatureLayer);
     this.container.addChild(this.bossG);
     this.container.addChild(this.overlayG);
@@ -71,7 +73,7 @@ export class WorldView {
     }
   }
 
-  sync(world: World): void {
+  sync(world: World, alpha = 1): void {
     this.frame += 1;
     this.foodG.clear();
     for (const f of world.food) {
@@ -79,9 +81,22 @@ export class WorldView {
       this.foodG.circle(f.x, f.y, 4).fill({ color: 0x9bee5a, alpha: 1 });
     }
 
-    // 생물 스프라이트 풀
+    // 생물 스프라이트 풀 — sim(30/s)과 화면(60fps) 사이를 prev→현재로 보간해 드득거림을 없앤다.
+    this.playerG.clear();
+    const ringPulse = 0.5 + 0.5 * Math.sin((this.frame % 70) / 70 * Math.PI * 2);
     let i = 0;
     for (const e of world.entities) {
+      const rx = e.prevX + (e.x - e.prevX) * alpha;
+      const ry = e.prevY + (e.y - e.prevY) * alpha;
+
+      // 내 종 강조: 스프라이트 아래 은은한 고리(폰에서 "내 무리"가 한눈에).
+      if (e.species.isPlayer) {
+        this.playerG.circle(rx, ry, 13).fill({ color: 0x6cff7a, alpha: 0.1 });
+        this.playerG
+          .circle(rx, ry, 12.5)
+          .stroke({ color: 0xaaffb0, width: 1.6, alpha: 0.35 + 0.25 * ringPulse });
+      }
+
       let sp = this.pool[i];
       if (!sp) {
         sp = new Sprite();
@@ -90,9 +105,12 @@ export class WorldView {
         this.pool.push(sp);
       }
       sp.texture = this.speciesTex.get(e.species.id) ?? Texture.WHITE;
-      sp.x = e.x;
-      sp.y = e.y;
-      if (Math.abs(e.vx) + Math.abs(e.vy) > 0.01) sp.rotation = Math.atan2(e.vy, e.vx);
+      sp.x = rx;
+      sp.y = ry;
+      // 회전은 이번 스텝의 이동 방향(prev→현재)으로 — 스텝 사이 일정해 떨리지 않는다.
+      const dx = e.x - e.prevX;
+      const dy = e.y - e.prevY;
+      if (Math.abs(dx) + Math.abs(dy) > 0.05) sp.rotation = Math.atan2(dy, dx);
       const energy = Math.max(0, Math.min(1, e.energy / SIM.maxEnergy));
       sp.alpha = 0.5 + 0.5 * energy;
       sp.visible = true;
@@ -100,40 +118,43 @@ export class WorldView {
     }
     for (; i < this.pool.length; i++) this.pool[i]!.visible = false;
 
-    // 보스 + 위험 반경
+    // 보스 + 위험 반경 (보스도 보간)
     this.bossG.clear();
     const boss = world.boss;
     if (boss) {
+      const bx = boss.prevX + (boss.x - boss.prevX) * alpha;
+      const by = boss.prevY + (boss.y - boss.prevY) * alpha;
       if (boss.auraRadius > 0) {
-        this.bossG.circle(boss.x, boss.y, boss.auraRadius).fill({ color: 0xc060e0, alpha: 0.18 });
+        this.bossG.circle(bx, by, boss.auraRadius).fill({ color: 0xc060e0, alpha: 0.18 });
       }
       if (boss.killRadius > 0) {
-        this.bossG.circle(boss.x, boss.y, boss.killRadius).fill({ color: 0xe0402a, alpha: 0.3 });
+        this.bossG.circle(bx, by, boss.killRadius).fill({ color: 0xe0402a, alpha: 0.3 });
       }
       // 주목 펄스 — "여기 위험" 시선 유도(가독성, §7)
       const pulse = (this.frame % 60) / 60;
       this.bossG
-        .circle(boss.x, boss.y, 16 + pulse * 26)
+        .circle(bx, by, 16 + pulse * 26)
         .stroke({ color: 0xff5535, width: 2.5, alpha: 0.55 * (1 - pulse) });
-      this.bossG.circle(boss.x, boss.y, 14).fill({ color: 0xff5535, alpha: 1 });
-      this.bossG.circle(boss.x, boss.y, 14).stroke({ color: 0x3a0d06, width: 3 });
+      this.bossG.circle(bx, by, 14).fill({ color: 0xff5535, alpha: 1 });
+      this.bossG.circle(bx, by, 14).stroke({ color: 0x3a0d06, width: 3 });
     }
 
     // 대멸종 화면 틴트
     this.overlayG.clear();
     let tint = 0;
-    let alpha = 0;
+    let tintAlpha = 0;
     if (world.globalCold > 0) {
       tint = 0x3a6cff;
-      alpha = 0.16;
+      tintAlpha = 0.16;
     } else if (world.heat > 0) {
       tint = 0xff5a2a;
-      alpha = 0.16;
+      tintAlpha = 0.16;
     } else if (world.foodRegrowMultiplier > 1) {
       tint = 0x8a6a3a;
-      alpha = 0.14;
+      tintAlpha = 0.14;
     }
-    if (alpha > 0) this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha });
+    if (tintAlpha > 0)
+      this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });
   }
 }
 

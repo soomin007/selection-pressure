@@ -71,6 +71,16 @@ export class World {
     this.tick += 1;
     this.grid.rebuild(this.entities);
 
+    // 렌더 보간용: 이번 스텝 이동 전 위치를 기록(화면이 prev→현재 사이를 메운다).
+    for (const e of this.entities) {
+      e.prevX = e.x;
+      e.prevY = e.y;
+    }
+    if (this.boss) {
+      this.boss.prevX = this.boss.x;
+      this.boss.prevY = this.boss.y;
+    }
+
     const newborns: Entity[] = [];
     for (const e of this.entities) {
       if (!e.alive) continue;

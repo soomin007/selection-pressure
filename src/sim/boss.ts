@@ -16,6 +16,8 @@ export interface Boss {
   name: string;
   x: number;
   y: number;
+  prevX: number; // 직전 스텝 위치 (렌더 보간용)
+  prevY: number;
   speed: number;
   killRadius: number; // 닿으면 즉사하는 반경 (0 = 없음)
   visionFlee: number; // 도망 반경에 시야를 곱해 더하는 정도(titan: 시야가 카운터)
@@ -24,7 +26,7 @@ export interface Boss {
   globalDrain: number; // 매 틱 전역 에너지 흡수 (×(0.3+metabolism)) (poison)
 }
 
-interface Preset extends Omit<Boss, "type" | "name" | "x" | "y"> {
+interface Preset extends Omit<Boss, "type" | "name" | "x" | "y" | "prevX" | "prevY"> {
   name: string;
   threat: string;
   counter: string;
@@ -82,11 +84,15 @@ export const BOSS_TYPES: readonly BossType[] = ["chaser", "swarm", "poison"];
 
 export function createBoss(type: BossType, width: number, height: number): Boss {
   const p = PRESETS[type];
+  const x = width * 0.5;
+  const y = height * 0.22;
   return {
     type,
     name: p.name,
-    x: width * 0.5,
-    y: height * 0.22,
+    x,
+    y,
+    prevX: x,
+    prevY: y,
     speed: p.speed,
     killRadius: p.killRadius,
     visionFlee: p.visionFlee,

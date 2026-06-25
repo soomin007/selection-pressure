@@ -147,6 +147,13 @@ export class Game {
     return Math.max(0, Math.ceil(this.stageTicksLeft / SIM.stepsPerSecond));
   }
 
+  /** 렌더 보간 비율 [0,1) — 다음 스텝까지 얼마나 왔나(화면 60fps 가 sim 30/s 사이를 메운다). */
+  get interpAlpha(): number {
+    const stepMs = 1000 / SIM.stepsPerSecond;
+    const a = this.phase === "lobby" ? this.ambientAcc : this.acc;
+    return Math.min(1, Math.max(0, a / stepMs));
+  }
+
   get stageNumber(): number {
     return this.stageIndex + 1;
   }
