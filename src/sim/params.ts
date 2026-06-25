@@ -23,6 +23,7 @@ export const SIM = {
   // --- 환경 (Phase 3) ---
   cellSize: 60, // 환경 격자 한 칸 픽셀 (540×960 → 9×16칸)
   coldPenalty: 0.3, // 추운 칸 추가 소모 (틱당, ×coldness×(1-metabolism)) — 추운 맵=고대사 유리
+  globalColdLethality: 1.7, // 대멸종 한파(globalCold)는 평상시 추위보다 이만큼 더 매섭다(클라이맥스 필터)
 
   // --- 보스/대멸종 (Phase 5) ---
   fleeRadiusPad: 46, // 즉사 반경 + 이만큼 안에 들면 보스에서 도망친다
@@ -50,4 +51,12 @@ export const SIM = {
   visionBase: 130, // 시야 반경 (×(0.4+vision))
   wanderTurn: 0.5, // 먹이가 안 보일 때 헤딩 흔들림(라디안)
   baseMaxAge: 1700, // 수명 (×(1.2-0.5*metabolism)) → 대사 높으면 단명
+
+  // --- 이동/조향 (자연스러운 움직임) ---
+  // 속도 벡터를 목표 방향으로 "한 번에" 꺾지 않고 매 틱 이 비율만큼만 보간한다(관성).
+  // 낮을수록 부드러운 곡선·관성이 크다. 높을수록 민첩하지만 떨림에 가깝다.
+  steerTurn: 0.18, // 평상시 조향 민감도
+  fleeTurn: 0.55, // 도망칠 땐 빠르게 방향 전환(생존)
+  cruiseFactor: 0.6, // 목표 없을 때 순항 속도 비율 (×maxSpeed) — 멈추지 않고 떠돈다
+  targetKeepFactor: 1.2, // 쫓던 목표를 유지하는 시야 배수(약간 더 멀어져도 commit) — 목표 진동 방지
 } as const;

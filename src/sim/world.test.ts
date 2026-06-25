@@ -5,6 +5,7 @@ import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
 import { Rng } from "@/sim/rng";
+import type { Food } from "@/sim/food";
 
 const W = 540;
 const H = 960;
@@ -131,6 +132,30 @@ describe("Phase 6 — 사망 원인 집계", () => {
     w.boss = createBoss("chaser", W, H);
     for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) w.step();
     expect(w.deaths.boss).toBeGreaterThan(0);
+  });
+});
+
+describe("자연스러운 이동 — 목표 고정(hysteresis)", () => {
+  it("쫓는 먹이 목표를 매 틱 갈아치우지 않는다(제자리 떨림 방지)", () => {
+    // 매 틱 nearest 를 새로 고르면 목표가 진동해 제자리에서 드득드득 떤다.
+    // 목표를 유지(commit)하므로, 같은 목표를 이어가는 경우가 갈아타는 경우보다 압도적으로 많아야 한다.
+    const w = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 200; i++) w.step(); // 자리 잡기
+    const prev = new Map<number, Food | null>();
+    let kept = 0;
+    let switched = 0;
+    for (let s = 0; s < 200; s++) {
+      for (const e of w.entities) {
+        const before = prev.get(e.id);
+        if (before && e.targetFood) {
+          if (before === e.targetFood) kept += 1;
+          else switched += 1; // null↔값(먹은 뒤 재탐색)은 세지 않음 — 진짜 목표 교체만
+        }
+        prev.set(e.id, e.targetFood);
+      }
+      w.step();
+    }
+    expect(kept).toBeGreaterThan(switched * 3);
   });
 });
 
