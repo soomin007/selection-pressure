@@ -35,14 +35,52 @@ export class World {
 
   private idCounter = 0;
 
+  // 무리(herding) 격자: 매 틱 개체 밀도/무게중심을 모아 cohesion·huddle 을 O(n)으로.
+  private readonly herdCols: number;
+  private readonly herdRows: number;
+  private readonly herdCount: number[];
+  private readonly herdSumX: number[];
+  private readonly herdSumY: number[];
+
   constructor(seed: string | number, width: number, height: number, genome: Genome) {
     this.width = width;
     this.height = height;
     this.rng = new Rng(seed);
     this.genome = genome;
     this.environment = Environment.generate(this.rng, width, height, SIM.cellSize);
+    this.herdCols = Math.max(1, Math.ceil(width / SIM.herdCellSize));
+    this.herdRows = Math.max(1, Math.ceil(height / SIM.herdCellSize));
+    const cells = this.herdCols * this.herdRows;
+    this.herdCount = new Array<number>(cells).fill(0);
+    this.herdSumX = new Array<number>(cells).fill(0);
+    this.herdSumY = new Array<number>(cells).fill(0);
     this.spawnFood();
     this.spawnEntities();
+  }
+
+  /** (x,y) 가 속한 무리 칸의 이웃 수와 무게중심. behavior 가 cohesion·huddle 에 쓴다. */
+  herdAt(x: number, y: number): { count: number; comX: number; comY: number } {
+    const cx = clampIndex(Math.floor(x / SIM.herdCellSize), this.herdCols);
+    const cy = clampIndex(Math.floor(y / SIM.herdCellSize), this.herdRows);
+    const i = cy * this.herdCols + cx;
+    const count = this.herdCount[i] ?? 0;
+    if (count <= 0) return { count: 0, comX: x, comY: y };
+    return { count, comX: (this.herdSumX[i] ?? 0) / count, comY: (this.herdSumY[i] ?? 0) / count };
+  }
+
+  private rebuildHerdGrid(): void {
+    this.herdCount.fill(0);
+    this.herdSumX.fill(0);
+    this.herdSumY.fill(0);
+    for (const e of this.entities) {
+      if (!e.alive) continue;
+      const cx = clampIndex(Math.floor(e.x / SIM.herdCellSize), this.herdCols);
+      const cy = clampIndex(Math.floor(e.y / SIM.herdCellSize), this.herdRows);
+      const i = cy * this.herdCols + cx;
+      this.herdCount[i] = (this.herdCount[i] ?? 0) + 1;
+      this.herdSumX[i] = (this.herdSumX[i] ?? 0) + e.x;
+      this.herdSumY[i] = (this.herdSumY[i] ?? 0) + e.y;
+    }
   }
 
   nextId(): number {
@@ -51,6 +89,8 @@ export class World {
 
   step(): void {
     this.tick += 1;
+
+    this.rebuildHerdGrid();
 
     const newborns: Entity[] = [];
     for (const e of this.entities) {
@@ -133,4 +173,8 @@ export class World {
       );
     }
   }
+}
+
+function clampIndex(i: number, n: number): number {
+  return i < 0 ? 0 : i >= n ? n - 1 : i;
 }

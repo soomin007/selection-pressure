@@ -61,6 +61,21 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     }
   }
 
+  // 2b) 무리 이동(cohesion): 도망 중이 아니면 무리 무게중심으로 약간 끌린다.
+  if (!fleeing && t.herding > 0.01) {
+    const herd = world.herdAt(e.x, e.y);
+    if (herd.count > 1) {
+      const hdx = herd.comX - e.x;
+      const hdy = herd.comY - e.y;
+      const hd = Math.hypot(hdx, hdy);
+      if (hd > 1) {
+        const w = SIM.herdCohesion * t.herding;
+        e.vx = e.vx * (1 - w) + (hdx / hd) * maxSpeed * w;
+        e.vy = e.vy * (1 - w) + (hdy / hd) * maxSpeed * w;
+      }
+    }
+  }
+
   e.x += e.vx;
   e.y += e.vy;
 
@@ -93,8 +108,13 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
 
   // 4) 허기 + 노화. 추위(저대사 불리) + 폭염(고대사 불리)은 추가 소모.
   const env = world.environment.sampleAt(e.x, e.y);
+  // 무리 보온(huddle): 이웃이 많고 무리 성향이 높을수록 추위 소모가 준다.
+  const herd = world.herdAt(e.x, e.y);
+  const huddle = Math.min(1, (herd.count - 1) / SIM.huddleFull) * t.herding;
+  const warmthFactor = 1 - SIM.huddleWarmth * huddle;
   // 맵 추위(coldness≤1) + 대멸종 한파(globalCold). 한파는 캡 없이 가중된다.
-  const coldDrain = SIM.coldPenalty * (env.coldness + world.globalCold) * (1 - t.metabolism);
+  const coldDrain =
+    SIM.coldPenalty * (env.coldness + world.globalCold) * (1 - t.metabolism) * warmthFactor;
   const heatDrain = SIM.heatPenalty * world.heat * t.metabolism;
   e.energy -= drain + coldDrain + heatDrain;
   e.age += 1;

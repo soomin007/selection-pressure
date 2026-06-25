@@ -28,6 +28,12 @@ export const SIM = {
   fleeRadiusPad: 46, // 즉사 반경 + 이만큼 안에 들면 보스에서 도망친다
   heatPenalty: 0.34, // 폭염 시 추가 소모 (틱당, ×heat×metabolism) — 폭염=저대사 유리
 
+  // --- 무리 성향 herding (셀 격자로 O(n) 근사) ---
+  herdCellSize: 90, // 무리 격자 한 칸(이웃 범위)
+  herdCohesion: 0.35, // 무게중심으로 끌리는 비율 (×herding)
+  huddleFull: 5, // 이웃이 이만큼이면 보온 효과 최대
+  huddleWarmth: 0.55, // 보온 시 추위 소모 최대 감소율 (×herding×이웃비율)
+
   // --- 행동/형질 스케일 ---
   eatRadius: 9,
   metabolismDrain: 0.13, // 틱당 에너지 소모 (×(0.5+metabolism))
