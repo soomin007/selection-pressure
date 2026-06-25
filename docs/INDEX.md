@@ -19,6 +19,6 @@
 | `sim/` | 시뮬레이션 로직 (게놈·RNG·환경·개체·유틸 AI) | **순수 TS. Pixi import 금지. 결정론.** |
 | `render/` | PixiJS 렌더링 (sim 상태를 읽어 그림) | Pixi 는 여기서만 |
 | `game/` | 런 구조·카드 드래프트·메타 루프 (Phase 4+) | |
-| `ui/` | UI 컴포넌트 (인구수·死因·보스 예고 등, Phase 6) | |
+| `ui/` | HTML 오버레이 UI. `traitPanel.ts`(Phase 2 형질 슬라이더). 보스 예고 등은 Phase 5~6 | |
 
 진입점: `src/main.ts`. 전역 상수: `src/config.ts`.

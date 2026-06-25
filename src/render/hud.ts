@@ -29,6 +29,6 @@ export class Hud {
 
   sync(world: World): void {
     this.stat.text = `개체 수 ${world.population}   먹이 ${world.availableFood}   틱 ${world.tick}`;
-    this.notice.text = world.population === 0 ? "멸종했습니다. 새 종으로 다시 시작합니다." : "";
+    this.notice.text = world.population === 0 ? "멸종했습니다. 다시 시작합니다." : "";
   }
 }

@@ -2,7 +2,7 @@
 // (게놈 + 환경 시드) → 같은 step 횟수면 항상 같은 결과. (기획서 §3.4)
 
 import { Rng } from "@/sim/rng";
-import { randomGenome, type Genome } from "@/sim/genome";
+import type { Genome } from "@/sim/genome";
 import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
 import { stepEntity } from "@/sim/behavior";
@@ -12,7 +12,11 @@ export class World {
   readonly width: number;
   readonly height: number;
   readonly rng: Rng;
-  /** 종 게놈 — 모든 개체가 공유 (한 런 = 한 종). Phase 2 에서 카드로 변형. */
+  /**
+   * 종 게놈 — 모든 개체가 공유 (한 런 = 한 종). 외부에서 주입한다.
+   * 환경 시드와 분리되어 있어 "같은 맵 + 다른 형질" 비교가 공정하다 (§3.4).
+   * 이 객체의 traits 를 살아있는 중에 바꾸면 모든 개체에 즉시 반영된다.
+   */
   readonly genome: Genome;
 
   entities: Entity[] = [];
@@ -21,11 +25,11 @@ export class World {
 
   private idCounter = 0;
 
-  constructor(seed: string | number, width: number, height: number) {
+  constructor(seed: string | number, width: number, height: number, genome: Genome) {
     this.width = width;
     this.height = height;
     this.rng = new Rng(seed);
-    this.genome = randomGenome(this.rng);
+    this.genome = genome;
     this.spawnFood();
     this.spawnEntities();
   }

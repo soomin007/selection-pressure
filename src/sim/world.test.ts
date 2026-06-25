@@ -1,20 +1,30 @@
 import { describe, it, expect } from "vitest";
 import { World } from "@/sim/world";
 import { SIM } from "@/sim/params";
+import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
+import { Rng } from "@/sim/rng";
 
 const W = 540;
 const H = 960;
 
 function snapshot(world: World): string {
   // 위치/에너지까지 포함한 전체 상태 지문 (결정론 검증용)
-  const ents = world.entities.map((e) => `${e.id}:${e.x.toFixed(3)},${e.y.toFixed(3)},${e.energy.toFixed(3)}`);
+  const ents = world.entities.map(
+    (e) => `${e.id}:${e.x.toFixed(3)},${e.y.toFixed(3)},${e.energy.toFixed(3)}`,
+  );
   return `t${world.tick}|p${world.population}|${ents.join(";")}`;
 }
 
+function runPop(seed: string, genome: Genome, steps: number): number {
+  const w = new World(seed, W, H, genome);
+  for (let i = 0; i < steps; i++) w.step();
+  return w.population;
+}
+
 describe("World 결정론", () => {
-  it("같은 시드 + 같은 스텝 수 → 완전히 같은 상태", () => {
-    const a = new World("run-1", W, H);
-    const b = new World("run-1", W, H);
+  it("같은 환경 시드 + 같은 게놈 → 완전히 같은 상태", () => {
+    const a = new World("env-1", W, H, defaultGenome());
+    const b = new World("env-1", W, H, defaultGenome());
     for (let i = 0; i < 600; i++) {
       a.step();
       b.step();
@@ -22,24 +32,54 @@ describe("World 결정론", () => {
     expect(snapshot(a)).toEqual(snapshot(b));
   });
 
-  it("다른 시드 → 다른 전개", () => {
-    const a = new World("run-A", W, H);
-    const b = new World("run-B", W, H);
-    for (let i = 0; i < 300; i++) {
-      a.step();
-      b.step();
-    }
-    expect(snapshot(a)).not.toEqual(snapshot(b));
+  it("다른 환경 시드 → 다른 전개", () => {
+    expect(snapshot(stepN("env-A", defaultGenome(), 300))).not.toEqual(
+      snapshot(stepN("env-B", defaultGenome(), 300)),
+    );
+  });
+});
+
+describe("Phase 2 — 게놈이 결과를 가른다", () => {
+  it("같은 환경, 형질만 다르면 생존 결과가 달라진다", () => {
+    // 시야 넓고 빠른 종 vs 시야 좁고 느린 종 (같은 맵)
+    const sharp = tune({ speed: 0.9, vision: 0.9, metabolism: 0.4, fertility: 0.6 });
+    const dull = tune({ speed: 0.2, vision: 0.15, metabolism: 0.7, fertility: 0.3 });
+    const sharpPop = runPop("env-cmp", sharp, 1500);
+    const dullPop = runPop("env-cmp", dull, 1500);
+    expect(sharpPop).not.toEqual(dullPop);
   });
 });
 
 describe("World 생존 sanity", () => {
-  it("여러 시드에서 멸종하지도 폭발하지도 않는다", () => {
+  it("기본 게놈 + 여러 환경에서 멸종하지도 폭발하지도 않는다", () => {
     for (const seed of ["s1", "s2", "s3", "s4"]) {
-      const w = new World(seed, W, H);
+      const w = new World(seed, W, H, defaultGenome());
       for (let i = 0; i < 2000; i++) w.step();
       expect(w.population).toBeGreaterThan(0);
       expect(w.population).toBeLessThan(SIM.populationCap);
     }
   });
+
+  it("무작위 게놈도 대체로 한참 생존한다", () => {
+    const w = new World("rnd", W, H, randomGenome(new Rng("species-x")));
+    for (let i = 0; i < 1000; i++) w.step();
+    expect(w.population).toBeGreaterThanOrEqual(0); // 멸종 자체는 유효한 결과
+    expect(w.population).toBeLessThan(SIM.populationCap);
+  });
 });
+
+function stepN(seed: string, genome: Genome, steps: number): World {
+  const w = new World(seed, W, H, genome);
+  for (let i = 0; i < steps; i++) w.step();
+  return w;
+}
+
+/** 일부 형질만 지정하고 나머지는 0.5 인 게놈. */
+function tune(partial: Partial<Genome["traits"]>): Genome {
+  const g = defaultGenome();
+  for (const key of Object.keys(partial) as (keyof Genome["traits"])[]) {
+    const v = partial[key];
+    if (v !== undefined) g.traits[key] = v;
+  }
+  return g;
+}

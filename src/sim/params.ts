@@ -7,13 +7,13 @@ export const SIM = {
 
   // --- 초기 배치 ---
   initialEntities: 40,
-  foodPatches: 90,
+  foodPatches: 64, // 희소하게 → 시야/속도가 먹이 선점에 의미를 갖는다
 
   // --- 에너지 ---
   startEnergy: 55,
   maxEnergy: 100,
-  foodEnergy: 30, // 먹이 하나를 먹을 때 얻는 에너지
-  foodRegrowTicks: 260, // 먹힌 먹이가 다시 자라기까지 (약 8.7초)
+  foodEnergy: 36, // 먹이 하나를 먹을 때 얻는 에너지 (희소한 대신 개당 가치 ↑)
+  foodRegrowTicks: 240, // 먹힌 먹이가 다시 자라기까지 (약 8초)
 
   // --- 번식 ---
   reproduceThreshold: 78, // 이 에너지 이상이어야 번식

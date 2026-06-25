@@ -1,7 +1,8 @@
-// 부트스트랩. PixiJS v8 앱 + scale-to-fit 뷰포트 + Phase 1 시뮬 루프.
+// 부트스트랩. PixiJS v8 앱 + scale-to-fit 뷰포트 + 시뮬 루프 + 형질 패널(Phase 2).
 //
-// 고정 타임스텝: 프레임률과 무관하게 시뮬을 같은 간격으로 진행한다(결정론, §3.4).
-// 멸종하면 잠시 뒤 새 시드로 다시 시작 — 폰으로 가만히 봐도 살아있게.
+// 환경 시드와 게놈을 분리해서 들고 있다가 World 에 함께 주입한다.
+// 슬라이더는 공유 게놈을 그 자리에서 수정 → 현재 무리에 즉시 반영.
+// "같은 환경에서 다시" 는 같은 envSeed + 현재 게놈으로 새 World (공정 비교).
 
 import { Application } from "pixi.js";
 import { LOGICAL_WIDTH, LOGICAL_HEIGHT, COLORS } from "@/config";
@@ -9,6 +10,8 @@ import { createViewport } from "@/render/viewport";
 import { World } from "@/sim/world";
 import { WorldView } from "@/render/worldView";
 import { Hud } from "@/render/hud";
+import { createTraitPanel } from "@/ui/traitPanel";
+import { defaultGenome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 
 async function boot(): Promise<void> {
@@ -32,16 +35,35 @@ async function boot(): Promise<void> {
   app.stage.addChild(view.container);
   app.stage.addChild(hud.container);
 
-  let runIndex = 1;
-  let world = new World(`run-${runIndex}`, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+  // 종 게놈(중립 기본값에서 시작)과 환경 시드를 분리 보관.
+  const genome = defaultGenome();
+  let envSeed = 1;
+  const makeWorld = (): World => new World(`env-${envSeed}`, LOGICAL_WIDTH, LOGICAL_HEIGHT, genome);
+  let world = makeWorld();
   let extinctTicks = 0;
+
+  createTraitPanel({
+    genome,
+    onLiveChange: (trait, value) => {
+      // 공유 게놈을 직접 수정 → 살아있는 무리에 즉시 적용.
+      genome.traits[trait] = value;
+    },
+    onRestartSameEnv: () => {
+      world = makeWorld();
+      extinctTicks = 0;
+    },
+    onNewEnv: () => {
+      envSeed += 1;
+      world = makeWorld();
+      extinctTicks = 0;
+    },
+  });
 
   const stepMs = 1000 / SIM.stepsPerSecond;
   let acc = 0;
 
   app.ticker.add((ticker) => {
     acc += ticker.deltaMS;
-    // 한 프레임에 최대 5스텝만 (탭 전환 등으로 밀렸을 때 폭주 방지)
     let guard = 0;
     while (acc >= stepMs && guard < 5) {
       world.step();
@@ -50,12 +72,11 @@ async function boot(): Promise<void> {
     }
     if (acc > stepMs) acc = 0;
 
-    // 멸종 → 잠깐 보여주고 새 런 시작
+    // 멸종하면 잠깐 보여주고 같은 환경 + 같은 형질로 다시 (실험 정체성 유지).
     if (world.population === 0) {
       extinctTicks += 1;
       if (extinctTicks > SIM.stepsPerSecond * 2) {
-        runIndex += 1;
-        world = new World(`run-${runIndex}`, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+        world = makeWorld();
         extinctTicks = 0;
       }
     } else {
