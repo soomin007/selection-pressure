@@ -8,7 +8,7 @@ import type { World } from "@/sim/world";
 import type { Environment } from "@/sim/environment";
 import type { Genome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
-import { DEBUG } from "@/debug";
+import { DEBUG, TUNE } from "@/debug";
 
 export class WorldView {
   readonly container = new Container();
@@ -81,8 +81,8 @@ export class WorldView {
     // 디버그 토글 반영(?nointerp 면 보간 끔 = 현재 위치로 스냅). 평소엔 alpha 그대로.
     const interp = DEBUG.noInterp ? 1 : alpha;
     // 회전 이징을 프레임률 독립으로 — 120Hz 폰에서 한 스텝당 더 많은 프레임이 들어가
-    // 회전이 빠르게 노이즈를 쫓던 떨림을 없앤다(60fps 1프레임 = ROTATE_EASE_60).
-    const rotK = 1 - Math.pow(1 - ROTATE_EASE_60, dtMS / (1000 / 60));
+    // 회전이 빠르게 노이즈를 쫓던 떨림을 없앤다(60fps 1프레임 = TUNE.rotEase).
+    const rotK = 1 - Math.pow(1 - TUNE.rotEase, dtMS / (1000 / 60));
     this.foodG.clear();
     for (const f of world.food) {
       if (!f.available) continue;
@@ -116,9 +116,10 @@ export class WorldView {
       sp.texture = this.speciesTex.get(e.species.id) ?? Texture.WHITE;
       sp.x = rx;
       sp.y = ry;
-      // 회전은 진행 방향으로 향하되 프레임률 독립으로 부드럽게 이징.
-      // 충분히 움직일 때(ROTATE_MIN_STEP 초과)만 방향을 갱신해, 느린 종이 미세 변위의
-      // 방향 노이즈를 쫓아 제자리에서 몸을 떠는 걸 막는다. ?norot 면 회전을 고정한다.
+      // 회전: 진행 방향으로 향하되 "방향을 굳힌다". 좁은 각도(데드존) 안의 변화는 무시하고,
+      // 데드존을 넘는 진짜 방향 전환만 프레임률 독립으로 부드럽게 이징한다.
+      // 매 스텝 회전 목표가 미세하게 흔들려도(전 종 공통) 데드존 안이면 안 돌아 떨림이 사라진다.
+      // ?norot 면 회전 고정, ?dz/?rotk 로 데드존·이징을 폰에서 즉시 튜닝.
       if (DEBUG.freezeRotation) {
         sp.rotation = 0;
       } else {
@@ -131,7 +132,7 @@ export class WorldView {
           let diff = Math.atan2(dy, dx) - ang;
           while (diff > Math.PI) diff -= Math.PI * 2;
           while (diff < -Math.PI) diff += Math.PI * 2;
-          ang += diff * rotK;
+          if (Math.abs(diff) > TUNE.headingDeadzone) ang += diff * rotK;
         }
         this.angle.set(e.id, ang);
         sp.rotation = ang;
@@ -196,8 +197,6 @@ const FOOD_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
 // 회전 떨림 방지: 이만큼(px/스텝)보다 실제로 더 움직일 때만 진행 방향을 갱신한다.
 // (느린 종은 미세 변위의 방향이 노이즈라, 낮으면 제자리에서 몸이 떤다.)
 const ROTATE_MIN_STEP = 0.35;
-// 회전 이징 기준 계수(60fps 1프레임당 0.2). 실제론 dt 로 프레임률 독립 보정해서 쓴다.
-const ROTATE_EASE_60 = 0.2;
 
 function clamp255(v: number): number {
   const n = Math.round(v);
