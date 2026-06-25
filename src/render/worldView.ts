@@ -21,6 +21,7 @@ export class WorldView {
 
   private readonly pool: Sprite[] = [];
   private readonly speciesTex = new Map<number, Texture>();
+  private readonly angle = new Map<number, number>(); // 개체별 부드러운 회전각(스냅 떨림 제거)
   private frame = 0;
 
   constructor(renderer: Renderer) {
@@ -48,6 +49,7 @@ export class WorldView {
   refreshSpecies(world: World): void {
     for (const tex of this.speciesTex.values()) tex.destroy(true);
     this.speciesTex.clear();
+    this.angle.clear();
     for (const sp of world.species) {
       this.speciesTex.set(sp.id, makeCreatureTexture(this.renderer, sp.genome, sp.color));
     }
@@ -107,16 +109,33 @@ export class WorldView {
       sp.texture = this.speciesTex.get(e.species.id) ?? Texture.WHITE;
       sp.x = rx;
       sp.y = ry;
-      // 회전은 이번 스텝의 이동 방향(prev→현재)으로 — 스텝 사이 일정해 떨리지 않는다.
+      // 회전은 진행 방향으로 향하되 60fps 로 부드럽게 이징 — 30스텝 단위 회전 스냅(떨림)을 없앤다.
+      // 느린 종은 이동이 작아 방향 노이즈가 크므로, 이징이 특히 중요하다.
       const dx = e.x - e.prevX;
       const dy = e.y - e.prevY;
-      if (Math.abs(dx) + Math.abs(dy) > 0.05) sp.rotation = Math.atan2(dy, dx);
+      let ang = this.angle.get(e.id);
+      if (ang === undefined) ang = Math.atan2(dy, dx);
+      else if (Math.abs(dx) + Math.abs(dy) > 0.06) {
+        let diff = Math.atan2(dy, dx) - ang;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        ang += diff * 0.2;
+      }
+      this.angle.set(e.id, ang);
+      sp.rotation = ang;
       const energy = Math.max(0, Math.min(1, e.energy / SIM.maxEnergy));
       sp.alpha = 0.5 + 0.5 * energy;
       sp.visible = true;
       i++;
     }
     for (; i < this.pool.length; i++) this.pool[i]!.visible = false;
+
+    // 죽은 개체의 회전각 캐시 정리(메모리 누수 방지).
+    if (this.angle.size > this.pool.length + 96) {
+      const live = new Set<number>();
+      for (const e of world.entities) live.add(e.id);
+      for (const id of this.angle.keys()) if (!live.has(id)) this.angle.delete(id);
+    }
 
     // 보스 + 위험 반경 (보스도 보간)
     this.bossG.clear();

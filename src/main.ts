@@ -3,7 +3,7 @@
 // 코어 시뮬은 동일. 모바일(세로)/데스크톱(가로)은 논리 해상도와 UI 만 다르다(chooseLayout).
 // 월드는 스케일 컨테이너(root)에, HUD/UI 는 화면 픽셀 그대로(선명).
 
-import { Application, Container } from "pixi.js";
+import { Application, Container, Graphics } from "pixi.js";
 import { chooseLayout, COLORS } from "@/config";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
@@ -43,6 +43,10 @@ async function boot(): Promise<void> {
   const hud = new Hud();
   const highlights = new Highlights();
   root.addChild(view.container);
+  // 월드를 논리 사각형으로 클리핑 — 가장자리 생물이 레터박스 밖으로 삐져나오지 않게.
+  const worldMask = new Graphics().rect(0, 0, layout.width, layout.height).fill(0xffffff);
+  root.addChild(worldMask);
+  view.container.mask = worldMask;
   app.stage.addChild(hud.container); // ← root(스케일) 밖 = 네이티브 해상도
   app.stage.addChild(highlights.container);
 
