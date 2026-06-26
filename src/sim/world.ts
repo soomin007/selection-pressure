@@ -16,11 +16,11 @@ import { stepBoss, type Boss } from "@/sim/boss";
 import { SIM } from "@/sim/params";
 
 /** 한 마리가 죽은 이유 (가독성 §7: "왜 내 종이 죽었나"). 사람이 읽는 한글 라벨은 game 층에서. */
-export type DeathCause = "starve" | "cold" | "heat" | "age" | "boss" | "predation";
+export type DeathCause = "starve" | "cold" | "heat" | "age" | "boss" | "predation" | "plague";
 export type DeathTally = Record<DeathCause, number>;
 
 export function emptyDeathTally(): DeathTally {
-  return { starve: 0, cold: 0, heat: 0, age: 0, boss: 0, predation: 0 };
+  return { starve: 0, cold: 0, heat: 0, age: 0, boss: 0, predation: 0, plague: 0 };
 }
 
 /** 화면 연출용 1회성 사건(전 종, 위치 포함). 렌더가 매 프레임 읽고 비운다. rng 미사용 → 결정론 무관. */
@@ -51,6 +51,7 @@ export class World {
   globalCold = 0; // 대멸종 한파
   heat = 0; // 대멸종 폭염
   foodRegrowMultiplier = 1; // 대멸종 대가뭄
+  plagueRate = 0; // 대멸종 대역병 (매 틱 솎임 확률 — 번식/수로 메워야 버틴다)
 
   /** 내 종이 무엇에 죽었나 — 런 내내 누적(정산 가독성, §7). World 는 런마다 새로 만들어지므로 런 단위 집계. */
   readonly deaths: DeathTally = emptyDeathTally();
@@ -99,6 +100,20 @@ export class World {
     }
 
     if (this.boss) stepBoss(this.boss, this);
+
+    // 대역병: 매 틱 일부를 솎되, 번식이 왕성한 종일수록(회복력) 덜 솎인다 → 번식력이 카운터.
+    // (평범한 솎임은 건강→대사로 흘러 저대사가 간접 우위가 되므로, 번식력으로 직접 게이팅.)
+    if (this.plagueRate > 0) {
+      for (const e of this.entities) {
+        if (!e.alive) continue;
+        const rate = this.plagueRate * (1 - SIM.plagueFertilityResist * e.genome.traits.fertility);
+        if (rate > 0 && this.rng.unit() < rate) {
+          e.alive = false;
+          this.recordDeath(e.species, "plague");
+          this.emit("death", e.x, e.y);
+        }
+      }
+    }
 
     // 먹이 재생 (대가뭄이면 regrowTimer 가 길어 느리게)
     for (const f of this.food) {

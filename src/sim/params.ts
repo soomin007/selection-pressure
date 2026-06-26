@@ -30,6 +30,7 @@ export const SIM = {
   cellSize: 60, // 환경 격자 한 칸 픽셀 (540×960 → 9×16칸)
   coldPenalty: 0.3, // 추운 칸 추가 소모 (틱당, ×coldness×(1-metabolism)) — 추운 맵=고대사 유리
   globalColdLethality: 1.7, // 대멸종 한파(globalCold)는 평상시 추위보다 이만큼 더 매섭다(클라이맥스 필터)
+  plagueFertilityResist: 0.9, // 대역병 솎임을 번식력으로 저항: rate ×= 1 - this×fertility (번식력 카운터)
 
   // --- 보스/대멸종 (Phase 5) ---
   fleeRadiusPad: 46, // 즉사 반경 + 이만큼 안에 들면 보스에서 도망친다

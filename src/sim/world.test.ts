@@ -130,6 +130,17 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     expect(lo).toBeGreaterThanOrEqual(GAME.extinctionPassThreshold);
     expect(hi).toBeLessThan(GAME.extinctionPassThreshold);
   });
+
+  it("대역병 대멸종: 번식력이 높으면 통과, 낮으면 실패", () => {
+    const hi = afterGate(tune({ fertility: 0.9 }), GAME.extinctionSeconds, (w) => {
+      w.plagueRate = 0.005;
+    });
+    const lo = afterGate(tune({ fertility: 0.1 }), GAME.extinctionSeconds, (w) => {
+      w.plagueRate = 0.005;
+    });
+    expect(hi).toBeGreaterThanOrEqual(GAME.extinctionPassThreshold);
+    expect(lo).toBeLessThan(GAME.extinctionPassThreshold);
+  });
 });
 
 describe("Phase 6 — 사망 원인 집계", () => {

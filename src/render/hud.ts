@@ -40,6 +40,7 @@ const CAUSE_LABEL: Record<DeathCause, string> = {
   age: "노화",
   boss: "보스",
   predation: "잡아먹힘",
+  plague: "역병",
 };
 
 export class Hud {

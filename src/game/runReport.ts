@@ -13,6 +13,7 @@ const DEATH_LABELS: Record<DeathCause, string> = {
   heat: "폭염",
   starve: "굶음",
   age: "노화",
+  plague: "역병",
 };
 
 /** 형질이 높을 때/낮을 때의 한 단어 묘사 (식성 diet 는 명사라 제외). */

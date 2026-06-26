@@ -204,6 +204,9 @@ export class WorldView {
     } else if (world.foodRegrowMultiplier > 1) {
       tint = 0x8a6a3a;
       tintAlpha = 0.14;
+    } else if (world.plagueRate > 0) {
+      tint = 0x5a7a3a; // 병색(칙칙한 녹황)
+      tintAlpha = 0.16;
     }
     if (tintAlpha > 0)
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });

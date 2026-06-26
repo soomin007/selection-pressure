@@ -16,9 +16,9 @@ import { buildRunReport } from "@/game/runReport";
 
 export type Phase = "lobby" | "draft" | "watch" | "result";
 export type RunResult = "win" | "lose";
-type ExtinctionType = "cold" | "famine" | "heat";
+type ExtinctionType = "cold" | "famine" | "heat" | "plague";
 
-const EXTINCTION_TYPES: readonly ExtinctionType[] = ["cold", "famine", "heat"];
+const EXTINCTION_TYPES: readonly ExtinctionType[] = ["cold", "famine", "heat", "plague"];
 
 export class Game {
   readonly width: number;
@@ -294,6 +294,7 @@ export class Game {
     this.world.globalCold = 0;
     this.world.heat = 0;
     this.world.foodRegrowMultiplier = 1;
+    this.world.plagueRate = 0;
   }
 
   private endRun(result: RunResult): void {
@@ -334,18 +335,24 @@ function shuffle(types: readonly BossType[], rng: Rng): BossType[] {
 }
 
 function extinctionName(type: ExtinctionType): string {
-  return type === "cold" ? "혹독한 추위" : type === "famine" ? "대가뭄" : "폭염";
+  if (type === "cold") return "혹독한 추위";
+  if (type === "famine") return "대가뭄";
+  if (type === "plague") return "대역병";
+  return "폭염";
 }
 
 function extinctionPreview(type: ExtinctionType): string {
   if (type === "cold") return "혹독한 추위가 닥칩니다. 대사가 낮으면 얼어 죽습니다(뜨거운 피가 유리).";
   if (type === "famine")
     return "대가뭄이 옵니다. 먹이가 다시 자라지 않습니다. 에너지를 아끼고 수가 많아야 버팁니다.";
+  if (type === "plague")
+    return "대역병이 번집니다. 번식이 더디면 회복하지 못해 스러집니다(번식력이 높아야 유리).";
   return "폭염이 옵니다. 대사가 높으면 타 죽습니다(느린 대사가 유리).";
 }
 
 function applyExtinction(world: World, type: ExtinctionType): void {
   if (type === "cold") world.globalCold = 1.3;
   else if (type === "famine") world.foodRegrowMultiplier = 3.6;
+  else if (type === "plague") world.plagueRate = 0.005;
   else world.heat = 0.9;
 }
