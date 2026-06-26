@@ -17,10 +17,10 @@ const DEATH_INTERVAL = 48; // 사망 피드 갱신 주기(프레임)
 
 // 종/먹이 색 범례 — 좌측 그래프·사망피드 아래에 고정(HUD 는 화면 픽셀 공간이라 좌측 고정 좌표).
 const LEGEND_X = 16;
-const LEGEND_Y = 172;
-const LEGEND_W = 154;
-const LEGEND_PAD = 8;
-const LEGEND_ROW = 19;
+const LEGEND_Y = 168;
+const LEGEND_W = 150;
+const LEGEND_PAD = 7;
+const LEGEND_ROW = 18;
 const LEGEND_SWATCH = 6; // 색 동그라미 반지름
 
 // worldView.ts 의 FOOD_COLORS 와 동기화 유지(먹이 종류별 색: 연두 / 청록 / 노랑풀).
@@ -113,7 +113,8 @@ export class Hud {
     }
     if (this.frame % DEATH_INTERVAL === 0) this.updateDeathFeed(world.deaths);
     this.updateLegend(world.species);
-    this.legend.visible = statusText !== ""; // 로비에선 숨김(빈 상태줄 = 로비)
+    // 범례는 관전 중에만 — 로비(빈 상태줄)·드래프트(카드 선택)에선 숨겨 패널과 안 겹치게.
+    this.legend.visible = statusText !== "" && !statusText.includes("카드 선택");
     this.drawGraph();
   }
 
@@ -204,6 +205,10 @@ export class Hud {
     y += LEGEND_ROW;
 
     // 배경 패널 — legendBgG 는 첫 자식이라 항상 텍스트·동그라미 뒤에 렌더된다.
-    this.legendBgG.roundRect(0, 0, LEGEND_W, y + 2, 8).fill({ color: 0x121722, alpha: 0.62 });
+    // 어두운 월드에 묻히지 않게 불투명도↑ + 옅은 테두리로 또렷하게.
+    this.legendBgG
+      .roundRect(0, 0, LEGEND_W, y + 2, 8)
+      .fill({ color: 0x0c1018, alpha: 0.88 })
+      .stroke({ color: 0x3b465c, width: 1, alpha: 0.95 });
   }
 }
