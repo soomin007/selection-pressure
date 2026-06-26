@@ -26,6 +26,11 @@ const LEGEND_SWATCH = 6; // 색 동그라미 반지름
 // worldView.ts 의 FOOD_COLORS 와 동기화 유지(먹이 종류별 색: 연두 / 청록 / 노랑풀).
 const FOOD_LEGEND_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
 
+// HUD 글자가 다채로운 월드(밝은 환경 칸·생물) 위에서도 읽히게 — 어두운 외곽선 + 옅은 그림자(자막처럼).
+// 배경 패널 없이 글자 자체에 대비를 줘 월드를 덜 가린다.
+const HUD_STROKE = { color: 0x0a0d12, width: 3 };
+const HUD_SHADOW = { color: 0x000000, alpha: 0.55, blur: 4, angle: Math.PI / 4, distance: 2 };
+
 const CAUSE_LABEL: Record<DeathCause, string> = {
   starve: "굶음",
   cold: "추위",
@@ -63,19 +68,36 @@ export class Hud {
   constructor() {
     this.stat = new Text({
       text: "",
-      style: new TextStyle({ fill: COLORS.text, fontSize: 22, fontWeight: "600" }),
+      style: new TextStyle({
+        fill: 0xffffff,
+        fontSize: 22,
+        fontWeight: "700",
+        stroke: { ...HUD_STROKE },
+        dropShadow: { ...HUD_SHADOW },
+      }),
     });
     this.stat.position.set(16, 14);
 
     this.notice = new Text({
       text: "",
-      style: new TextStyle({ fill: COLORS.textDim, fontSize: 17, lineHeight: 20 }),
+      style: new TextStyle({
+        fill: 0xccd3df, // 어두운 textDim 대신 밝게 — 밝은 환경 칸 위에서도 읽히게
+        fontSize: 17,
+        lineHeight: 20,
+        stroke: { ...HUD_STROKE },
+        dropShadow: { ...HUD_SHADOW },
+      }),
     });
     this.notice.position.set(16, 44);
 
     this.deathFeed = new Text({
       text: "",
-      style: new TextStyle({ fill: 0xffba8a, fontSize: 15 }),
+      style: new TextStyle({
+        fill: 0xffba8a,
+        fontSize: 15,
+        stroke: { ...HUD_STROKE },
+        dropShadow: { ...HUD_SHADOW },
+      }),
     });
     this.deathFeed.position.set(GRAPH_X, GRAPH_Y + GRAPH_H + 8);
 
@@ -146,7 +168,10 @@ export class Hud {
 
   private drawGraph(): void {
     this.graph.clear();
-    this.graph.rect(GRAPH_X, GRAPH_Y, GRAPH_W, GRAPH_H).fill({ color: 0x121722, alpha: 0.55 });
+    this.graph
+      .rect(GRAPH_X, GRAPH_Y, GRAPH_W, GRAPH_H)
+      .fill({ color: 0x0c1018, alpha: 0.72 })
+      .stroke({ color: 0x2a3346, width: 1, alpha: 0.85 });
     if (this.history.length < 2) return;
 
     const n = this.history.length;
