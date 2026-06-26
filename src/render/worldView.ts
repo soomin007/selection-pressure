@@ -23,6 +23,7 @@ export class WorldView {
   private readonly pool: Sprite[] = [];
   private readonly speciesTex = new Map<number, Texture>();
   private readonly angle = new Map<number, number>(); // 개체별 부드러운 회전각(스냅 떨림 제거)
+  private readonly dispPos = new Map<number, { x: number; y: number }>(); // 렌더 전용 위치 평활(고주파 떨림 제거)
   private frame = 0;
 
   constructor(renderer: Renderer) {
@@ -51,6 +52,7 @@ export class WorldView {
     for (const tex of this.speciesTex.values()) tex.destroy(true);
     this.speciesTex.clear();
     this.angle.clear();
+    this.dispPos.clear();
     for (const sp of world.species) {
       this.speciesTex.set(sp.id, makeCreatureTexture(this.renderer, sp.genome, sp.color));
     }
@@ -83,6 +85,10 @@ export class WorldView {
     // 회전 이징을 프레임률 독립으로 — 120Hz 폰에서 한 스텝당 더 많은 프레임이 들어가
     // 회전이 빠르게 노이즈를 쫓던 떨림을 없앤다(60fps 1프레임 = TUNE.rotEase).
     const rotK = 1 - Math.pow(1 - TUNE.rotEase, dtMS / (1000 / 60));
+    // 위치 평활 계수(프레임률 독립). sim 의 고주파 떨림(먹이 재타깃 등 방향 급변)을 화면에서만
+    // 부드럽게 한다 — 어떤 sim 파라미터로도 못 잡는 본질적 떨림이라 렌더에서 흡수. smooth=1 이면 끔.
+    const smoothK =
+      TUNE.renderSmooth >= 1 ? 1 : 1 - Math.pow(1 - TUNE.renderSmooth, dtMS / (1000 / 60));
     this.foodG.clear();
     for (const f of world.food) {
       if (!f.available) continue;
@@ -95,8 +101,20 @@ export class WorldView {
     const ringPulse = 0.5 + 0.5 * Math.sin((this.frame % 70) / 70 * Math.PI * 2);
     let i = 0;
     for (const e of world.entities) {
-      const rx = e.prevX + (e.x - e.prevX) * interp;
-      const ry = e.prevY + (e.y - e.prevY) * interp;
+      // 보간 위치(목표) → 렌더 전용 저역통과로 평활. 약 50ms 지연이라 관전엔 무해하고,
+      // 제자리 떨림/먹이 앞 급정거 같은 고주파 진동을 흡수한다.
+      const tx = e.prevX + (e.x - e.prevX) * interp;
+      const ty = e.prevY + (e.y - e.prevY) * interp;
+      let dp = this.dispPos.get(e.id);
+      if (!dp) {
+        dp = { x: tx, y: ty };
+        this.dispPos.set(e.id, dp);
+      } else {
+        dp.x += (tx - dp.x) * smoothK;
+        dp.y += (ty - dp.y) * smoothK;
+      }
+      const rx = dp.x;
+      const ry = dp.y;
 
       // 내 종 강조: 스프라이트 아래 은은한 고리(폰에서 "내 무리"가 한눈에).
       if (e.species.isPlayer) {
@@ -149,6 +167,7 @@ export class WorldView {
       const live = new Set<number>();
       for (const e of world.entities) live.add(e.id);
       for (const id of this.angle.keys()) if (!live.has(id)) this.angle.delete(id);
+      for (const id of this.dispPos.keys()) if (!live.has(id)) this.dispPos.delete(id);
     }
 
     // 보스 + 위험 반경 (보스도 보간)
