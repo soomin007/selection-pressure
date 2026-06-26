@@ -15,6 +15,7 @@ import { createResultPanel } from "@/ui/resultPanel";
 import { createLobby } from "@/ui/lobby";
 import { createControls } from "@/ui/controls";
 import { createBuildPanel } from "@/ui/buildPanel";
+import { createGlossary } from "@/ui/glossary";
 import { describeSpecies } from "@/game/runReport";
 import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
@@ -66,6 +67,8 @@ async function boot(): Promise<void> {
   };
   refreshBuild();
 
+  const glossary = createGlossary(); // 용어 사전(로비·일시정지에서 열기)
+
   const draft = createDraftPanel((i) => {
     game.pickCard(i);
     refreshBuild(); // 방금 고른 카드를 빌드 패널에 반영
@@ -85,7 +88,7 @@ async function boot(): Promise<void> {
     refreshBuild();
     view.refreshSpecies(game.world);
     controls.setVisible(true);
-  });
+  }, () => glossary.show());
   const controls = createControls({
     onPauseToggle: () => {
       game.paused = !game.paused;
@@ -112,6 +115,7 @@ async function boot(): Promise<void> {
       game.toLobby();
       lobby.show();
     },
+    onGlossary: () => glossary.show(),
   });
 
   game.onDraft = (cards, preview) => {

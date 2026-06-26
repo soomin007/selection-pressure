@@ -9,6 +9,7 @@ export interface ControlsCallbacks {
   onResume: () => void;
   onRestart: () => void;
   onLobby: () => void;
+  onGlossary: () => void;
 }
 
 export interface Controls {
@@ -49,11 +50,13 @@ export function createControls(cb: ControlsCallbacks): Controls {
 
   const resume = button("이어하기", "pause-btn primary", cb.onResume);
   const restart = button("처음부터", "pause-btn", cb.onRestart);
+  const glossary = button("용어 사전", "pause-btn", cb.onGlossary);
   const lobby = button("로비로", "pause-btn", cb.onLobby);
 
   menu.appendChild(menuTitle);
   menu.appendChild(resume);
   menu.appendChild(restart);
+  menu.appendChild(glossary);
   menu.appendChild(lobby);
   document.body.appendChild(menu);
 
