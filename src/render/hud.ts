@@ -68,6 +68,9 @@ export class Hud {
     fontWeight: "600",
   });
   private readonly legendItemStyle = new TextStyle({ fill: COLORS.text, fontSize: 14 });
+  // 종별 실시간 개체 수(행 우측). 행은 구성이 바뀔 때만 다시 그리고, 수 텍스트만 매 프레임 갱신한다.
+  private readonly legendCountStyle = new TextStyle({ fill: 0xbcc6d4, fontSize: 13, fontWeight: "600" });
+  private legendCounts: { id: number; text: Text }[] = [];
 
   constructor() {
     this.stat = new Text({
@@ -137,6 +140,7 @@ export class Hud {
     }
     if (this.frame % DEATH_INTERVAL === 0) this.updateDeathFeed(world.deaths);
     this.updateLegend(world.species);
+    if (this.frame % 6 === 0) this.updateLegendCounts(world); // 종별 실시간 수(가볍게 6프레임마다)
     // 범례는 관전 중에만 — 로비(빈 상태줄)·드래프트(카드 선택)에선 숨겨 패널과 안 겹치게.
     this.legend.visible = statusText !== "" && !statusText.includes("카드 선택");
     this.drawGraph();
@@ -175,6 +179,17 @@ export class Hud {
     this.graph.stroke({ color: COLORS.accent, width: 2, alpha: 0.95 });
   }
 
+  /** 종별 실시간 개체 수를 행 우측에 갱신(텍스트만 — 행 재생성 없이 가볍게). */
+  private updateLegendCounts(world: World): void {
+    if (this.legendCounts.length === 0) return;
+    const counts = new Map<number, number>();
+    for (const e of world.entities) counts.set(e.species.id, (counts.get(e.species.id) ?? 0) + 1);
+    for (const lc of this.legendCounts) {
+      const next = String(counts.get(lc.id) ?? 0);
+      if (lc.text.text !== next) lc.text.text = next; // 바뀔 때만 재렌더
+    }
+  }
+
   /** 종(색+이름)·먹이 색 범례를 그린다. 종 구성이 바뀔 때만 다시 그려 가볍다. */
   private updateLegend(species: readonly Species[]): void {
     // 접힘 상태도 시그니처에 포함 → 토글 시 다시 그린다.
@@ -190,6 +205,7 @@ export class Hud {
     this.legend.addChild(this.legendG);
     this.legendBgG.clear();
     this.legendG.clear();
+    this.legendCounts = []; // 이전 수 텍스트는 위 removeChildren 에서 파괴됨 → 새로 모은다
     if (species.length === 0) {
       this.legend.hitArea = new Rectangle(0, 0, 0, 0);
       return;
@@ -217,6 +233,12 @@ export class Hud {
         const label = new Text({ text: sp.name, style: this.legendItemStyle });
         label.position.set(LEGEND_PAD + LEGEND_SWATCH * 2 + 6, y);
         this.legend.addChild(label);
+        // 행 우측에 실시간 개체 수(우측 정렬). updateLegendCounts 가 매 프레임 .text 만 갱신.
+        const countText = new Text({ text: "", style: this.legendCountStyle });
+        countText.anchor.set(1, 0);
+        countText.position.set(LEGEND_W - LEGEND_PAD, y);
+        this.legend.addChild(countText);
+        this.legendCounts.push({ id: sp.id, text: countText });
         y += LEGEND_ROW;
       }
 
