@@ -13,7 +13,7 @@ interface Particle {
   life: number; // 수명(ms)
 }
 
-const LIFE: Record<VisualEventKind, number> = { birth: 520, death: 640, kill: 460 };
+const LIFE: Record<VisualEventKind, number> = { birth: 640, death: 760, kill: 560 };
 
 export class Effects {
   readonly container = new Container();
@@ -52,21 +52,22 @@ export class Effects {
 function drawParticle(g: Graphics, p: Particle, t: number): void {
   const fade = 1 - t; // 1→0 으로 옅어짐
   if (p.kind === "birth") {
-    // 탄생 — 작은 점에서 초록 링이 퍼지며 사라짐
-    g.circle(p.x, p.y, 3 + t * 9).stroke({ color: 0x9bff8a, width: 2, alpha: 0.85 * fade });
-    g.circle(p.x, p.y, 2).fill({ color: 0xe0ffd0, alpha: 0.9 * fade });
+    // 탄생 — 작은 점에서 초록 링이 퍼지며 사라짐 + 환한 속심
+    g.circle(p.x, p.y, 4 + t * 15).stroke({ color: 0x9bff8a, width: 2.5, alpha: 0.9 * fade });
+    g.circle(p.x, p.y, 3.5 * fade + 1).fill({ color: 0xe6ffd6, alpha: 0.95 * fade });
   } else if (p.kind === "death") {
-    // 자연사 — 회색 원이 살짝 커지며 옅어짐(조용히 스러짐)
-    g.circle(p.x, p.y, 4 + t * 7).fill({ color: 0x8a909c, alpha: 0.5 * fade });
+    // 자연사 — 회색 원이 커지며 옅어짐(조용히 스러짐) + 옅은 테두리
+    g.circle(p.x, p.y, 5 + t * 11).fill({ color: 0x8a909c, alpha: 0.6 * fade });
+    g.circle(p.x, p.y, 5 + t * 11).stroke({ color: 0xb6bdca, width: 1.5, alpha: 0.5 * fade });
   } else {
-    // 잡아먹힘/즉사 — 빨간 링 + 사방으로 튀는 짧은 선(터짐)
-    const reach = 6 + t * 13;
-    g.circle(p.x, p.y, 3 + t * 5).stroke({ color: 0xff5a3a, width: 2, alpha: 0.85 * fade });
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      g.moveTo(p.x + Math.cos(a) * reach * 0.5, p.y + Math.sin(a) * reach * 0.5)
+    // 잡아먹힘/즉사 — 빨간 링 + 사방으로 튀는 선(터짐). 크고 또렷하게.
+    const reach = 9 + t * 20;
+    g.circle(p.x, p.y, 4 + t * 8).stroke({ color: 0xff5a3a, width: 2.5, alpha: 0.95 * fade });
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2;
+      g.moveTo(p.x + Math.cos(a) * reach * 0.45, p.y + Math.sin(a) * reach * 0.45)
         .lineTo(p.x + Math.cos(a) * reach, p.y + Math.sin(a) * reach)
-        .stroke({ color: 0xff8a5a, width: 1.5, alpha: 0.8 * fade });
+        .stroke({ color: 0xff8a5a, width: 2, alpha: 0.9 * fade });
     }
   }
 }
