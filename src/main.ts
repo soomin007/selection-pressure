@@ -210,9 +210,10 @@ async function boot(): Promise<void> {
     if (game.phase === "lobby") return "";
     const env = game.environmentSummary();
     const s = `${game.stageNumber}/${game.totalStages}`;
-    if (game.phase === "draft") return `단계 ${s} · 카드 선택 · ${env}`;
+    // 모바일에서 한 줄이 길어 잘리던 문제 → 2줄(단계·시간 / 환경)로 나눈다.
+    if (game.phase === "draft") return `단계 ${s} · 카드 선택\n${env}`;
     if (game.phase === "watch")
-      return `단계 ${s} · ${game.stageLabel} · ${game.secondsLeft}초${game.paused ? " (멈춤)" : ""} · ${env}`;
+      return `단계 ${s} · ${game.stageLabel}\n${game.secondsLeft}초${game.paused ? " (멈춤)" : ""} · ${env}`;
     return env;
   }
 }

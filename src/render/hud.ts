@@ -1,14 +1,14 @@
 // 최소 HUD — 실시간 개체 수/먹이 + 개체 수 추이 그래프 + 최근 사망 원인 피드.
 // 추이 그래프와 사망 피드는 "왜 줄어드나"를 관전 중에 바로 읽게 해준다(가독성, §7).
 
-import { Container, Graphics, Text, TextStyle } from "pixi.js";
+import { Container, Graphics, Rectangle, Text, TextStyle } from "pixi.js";
 import type { World } from "@/sim/world";
 import type { DeathCause, DeathTally } from "@/sim/world";
 import type { Species } from "@/sim/species";
 import { COLORS } from "@/config";
 
 const GRAPH_X = 16;
-const GRAPH_Y = 80;
+const GRAPH_Y = 96; // 상태줄이 2줄이 되어 그래프를 아래로 내림
 const GRAPH_W = 220;
 const GRAPH_H = 54;
 const SAMPLE_EVERY = 8; // 프레임마다 너무 촘촘하지 않게
@@ -17,7 +17,7 @@ const DEATH_INTERVAL = 48; // 사망 피드 갱신 주기(프레임)
 
 // 종/먹이 색 범례 — 좌측 그래프·사망피드 아래에 고정(HUD 는 화면 픽셀 공간이라 좌측 고정 좌표).
 const LEGEND_X = 16;
-const LEGEND_Y = 168;
+const LEGEND_Y = 180;
 const LEGEND_W = 150;
 const LEGEND_PAD = 7;
 const LEGEND_ROW = 18;
@@ -52,6 +52,7 @@ export class Hud {
   private readonly legendBgG = new Graphics();
   private readonly legendG = new Graphics();
   private legendSig = "";
+  private legendOpen = true; // 탭으로 접기/펴기(기본 펼침)
   private readonly legendTitleStyle = new TextStyle({
     fill: COLORS.textDim,
     fontSize: 13,
@@ -68,7 +69,7 @@ export class Hud {
 
     this.notice = new Text({
       text: "",
-      style: new TextStyle({ fill: COLORS.textDim, fontSize: 20 }),
+      style: new TextStyle({ fill: COLORS.textDim, fontSize: 17, lineHeight: 20 }),
     });
     this.notice.position.set(16, 44);
 
@@ -88,6 +89,14 @@ export class Hud {
     this.legend.addChild(this.legendBgG);
     this.legend.addChild(this.legendG);
     this.container.addChild(this.legend);
+
+    // 범례를 탭하면 접기/펴기. (HUD 컨테이너는 자식 이벤트 통과용 passive)
+    this.container.eventMode = "passive";
+    this.legend.eventMode = "static";
+    this.legend.cursor = "pointer";
+    this.legend.on("pointertap", () => {
+      this.legendOpen = !this.legendOpen;
+    });
   }
 
   /** 런이 바뀌면 추이·사망 피드를 리셋한다. */
@@ -153,7 +162,8 @@ export class Hud {
 
   /** 종(색+이름)·먹이 색 범례를 그린다. 종 구성이 바뀔 때만 다시 그려 가볍다. */
   private updateLegend(species: readonly Species[]): void {
-    const sig = species.map((s) => `${s.id}:${s.color}`).join(",");
+    // 접힘 상태도 시그니처에 포함 → 토글 시 다시 그린다.
+    const sig = `${this.legendOpen ? 1 : 0}|${species.map((s) => `${s.id}:${s.color}`).join(",")}`;
     if (sig === this.legendSig) return;
     this.legendSig = sig;
 
@@ -165,50 +175,62 @@ export class Hud {
     this.legend.addChild(this.legendG);
     this.legendBgG.clear();
     this.legendG.clear();
-    if (species.length === 0) return;
+    if (species.length === 0) {
+      this.legend.hitArea = new Rectangle(0, 0, 0, 0);
+      return;
+    }
 
+    // 헤더(탭으로 접기/펴기 — 화살표로 상태 표시).
     let y = LEGEND_PAD;
-    const title = new Text({ text: "종 안내", style: this.legendTitleStyle });
-    title.position.set(LEGEND_PAD, y);
-    this.legend.addChild(title);
+    const header = new Text({
+      text: this.legendOpen ? "종 안내 ▾" : "종 안내 ▸",
+      style: this.legendTitleStyle,
+    });
+    header.position.set(LEGEND_PAD, y);
+    this.legend.addChild(header);
     y += 18;
 
-    for (const sp of species) {
-      const cx = LEGEND_PAD + LEGEND_SWATCH;
-      const cy = y + LEGEND_ROW / 2;
-      this.legendG.circle(cx, cy, LEGEND_SWATCH).fill({ color: sp.color });
-      if (sp.isPlayer) {
-        // 화면 속 내 종 초록 고리와 맞춰 범례에서도 내 종임을 표시.
-        this.legendG.circle(cx, cy, LEGEND_SWATCH + 2).stroke({ color: 0xaaffb0, width: 1.5 });
+    if (this.legendOpen) {
+      for (const sp of species) {
+        const cx = LEGEND_PAD + LEGEND_SWATCH;
+        const cy = y + LEGEND_ROW / 2;
+        this.legendG.circle(cx, cy, LEGEND_SWATCH).fill({ color: sp.color });
+        if (sp.isPlayer) {
+          // 화면 속 내 종 초록 고리와 맞춰 범례에서도 내 종임을 표시.
+          this.legendG.circle(cx, cy, LEGEND_SWATCH + 2).stroke({ color: 0xaaffb0, width: 1.5 });
+        }
+        const label = new Text({ text: sp.name, style: this.legendItemStyle });
+        label.position.set(LEGEND_PAD + LEGEND_SWATCH * 2 + 6, y);
+        this.legend.addChild(label);
+        y += LEGEND_ROW;
       }
-      const label = new Text({ text: sp.name, style: this.legendItemStyle });
-      label.position.set(LEGEND_PAD + LEGEND_SWATCH * 2 + 6, y);
-      this.legend.addChild(label);
+
+      // 구분선 + 먹이 색(흩어진 색점들이 먹이임을 한눈에).
+      y += 4;
+      this.legendG
+        .moveTo(LEGEND_PAD, y)
+        .lineTo(LEGEND_W - LEGEND_PAD, y)
+        .stroke({ color: 0x3a4150, width: 1 });
+      y += 8;
+      const foodLabel = new Text({ text: "먹이", style: this.legendTitleStyle });
+      foodLabel.position.set(LEGEND_PAD, y);
+      this.legend.addChild(foodLabel);
+      let fx = LEGEND_PAD + 44;
+      for (const col of FOOD_LEGEND_COLORS) {
+        this.legendG.circle(fx, y + 7, 5).fill({ color: col });
+        fx += 22;
+      }
       y += LEGEND_ROW;
     }
 
-    // 구분선 + 먹이 색(흩어진 색점들이 먹이임을 한눈에).
-    y += 4;
-    this.legendG
-      .moveTo(LEGEND_PAD, y)
-      .lineTo(LEGEND_W - LEGEND_PAD, y)
-      .stroke({ color: 0x3a4150, width: 1 });
-    y += 8;
-    const foodLabel = new Text({ text: "먹이", style: this.legendTitleStyle });
-    foodLabel.position.set(LEGEND_PAD, y);
-    this.legend.addChild(foodLabel);
-    let fx = LEGEND_PAD + 44;
-    for (const col of FOOD_LEGEND_COLORS) {
-      this.legendG.circle(fx, y + 7, 5).fill({ color: col });
-      fx += 22;
-    }
-    y += LEGEND_ROW;
-
-    // 배경 패널 — legendBgG 는 첫 자식이라 항상 텍스트·동그라미 뒤에 렌더된다.
+    // 배경 패널 — 접힘이면 헤더만(좁은 칩). legendBgG 는 첫 자식이라 항상 뒤에 렌더된다.
     // 어두운 월드에 묻히지 않게 불투명도↑ + 옅은 테두리로 또렷하게.
+    const w = this.legendOpen ? LEGEND_W : 96;
+    const h = y + 2;
     this.legendBgG
-      .roundRect(0, 0, LEGEND_W, y + 2, 8)
+      .roundRect(0, 0, w, h, 8)
       .fill({ color: 0x0c1018, alpha: 0.88 })
       .stroke({ color: 0x3b465c, width: 1, alpha: 0.95 });
+    this.legend.hitArea = new Rectangle(0, 0, w, h);
   }
 }

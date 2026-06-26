@@ -20,17 +20,40 @@ export function createBuildPanel(): BuildPanel {
     "color:#dfe6ee; font-family:system-ui,-apple-system,sans-serif; font-size:12px; line-height:1.4;" +
     "z-index:9; pointer-events:none; user-select:none; display:none;";
 
-  const title = document.createElement("div");
+  // 헤더(탭하면 접기/펴기). 헤더만 클릭 가능(pointer-events:auto), 본문 영역은 터치 통과.
+  const header = document.createElement("div");
+  header.style.cssText =
+    "display:flex; align-items:center; justify-content:space-between; gap:6px;" +
+    "cursor:pointer; pointer-events:auto;";
+  const title = document.createElement("span");
   title.textContent = "선택한 형질";
-  title.style.cssText = "font-weight:700; font-size:12px; color:#aeb7c4; margin-bottom:5px;";
+  title.style.cssText = "font-weight:700; font-size:12px; color:#aeb7c4;";
+  const arrow = document.createElement("span");
+  arrow.style.cssText = "font-size:11px; color:#aeb7c4;";
+  header.append(title, arrow);
+
+  const body = document.createElement("div");
+  body.style.cssText = "margin-top:5px;";
 
   const headline = document.createElement("div");
   headline.style.cssText =
     "color:#9bffa0; font-weight:700; font-size:12.5px; margin-bottom:6px; word-break:keep-all;";
 
   const list = document.createElement("div");
+  body.append(headline, list);
 
-  root.append(title, headline, list);
+  let collapsed = false;
+  const applyCollapsed = (): void => {
+    body.style.display = collapsed ? "none" : "block";
+    arrow.textContent = collapsed ? "▸" : "▾";
+  };
+  header.addEventListener("click", () => {
+    collapsed = !collapsed;
+    applyCollapsed();
+  });
+  applyCollapsed();
+
+  root.append(header, body);
   document.body.appendChild(root);
 
   const setData = (data: BuildData): void => {
