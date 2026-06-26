@@ -85,6 +85,30 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     expect(lo).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
   });
 
+  it("약탈자: 공격력이 높으면 통과, 낮으면 실패", () => {
+    const hi = afterGate(tune({ attack: 0.9 }), GAME.bossSeconds, (w) => {
+      w.boss = createBoss("raider", W, H);
+    });
+    const lo = afterGate(tune({ attack: 0.1 }), GAME.bossSeconds, (w) => {
+      w.boss = createBoss("raider", W, H);
+    });
+    expect(hi).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
+    expect(lo).toBeLessThan(GAME.bossPassThreshold);
+    expect(hi).toBeGreaterThan(lo);
+  });
+
+  it("외톨이 사냥꾼: 무리 성향이 높으면 통과, 낮으면 실패", () => {
+    const hi = afterGate(tune({ herding: 0.9 }), GAME.bossSeconds, (w) => {
+      w.boss = createBoss("isolation", W, H);
+    });
+    const lo = afterGate(tune({ herding: 0.1 }), GAME.bossSeconds, (w) => {
+      w.boss = createBoss("isolation", W, H);
+    });
+    expect(hi).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
+    expect(lo).toBeLessThan(GAME.bossPassThreshold);
+    expect(hi).toBeGreaterThan(lo);
+  });
+
   it("한파 대멸종: 고대사는 통과, 저대사는 실패", () => {
     const hi = afterGate(tune({ metabolism: 0.9 }), GAME.extinctionSeconds, (w) => {
       w.globalCold = 1.3;

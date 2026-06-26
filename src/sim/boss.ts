@@ -9,7 +9,7 @@
 import type { World } from "@/sim/world";
 import type { Rng } from "@/sim/rng";
 
-export type BossType = "chaser" | "swarm" | "poison" | "titan";
+export type BossType = "chaser" | "swarm" | "poison" | "titan" | "raider" | "isolation";
 
 export interface Boss {
   type: BossType;
@@ -22,8 +22,10 @@ export interface Boss {
   killRadius: number; // 닿으면 즉사하는 반경 (0 = 없음)
   visionFlee: number; // 도망 반경에 시야를 곱해 더하는 정도(titan: 시야가 카운터)
   auraRadius: number; // 시각용 위험 반경(독 안개)
-  globalKillRate: number; // 매 틱 개체가 솎일 확률(swarm)
+  globalKillRate: number; // 매 틱 개체가 솎일 확률(swarm/raider/isolation 의 기본값)
   globalDrain: number; // 매 틱 전역 에너지 흡수 (×(0.3+metabolism)) (poison)
+  cullAttackResist: number; // 솎기를 공격력으로 저항(raider): rate ×= 1 - this×attack
+  cullGroupResist: number; // 솎기를 무리 성향으로 저항(isolation): rate ×= 1 - this×herding
 }
 
 interface Preset extends Omit<Boss, "type" | "name" | "x" | "y" | "prevX" | "prevY"> {
@@ -41,6 +43,8 @@ const PRESETS: Record<BossType, Preset> = {
     auraRadius: 0,
     globalKillRate: 0,
     globalDrain: 0,
+    cullAttackResist: 0,
+    cullGroupResist: 0,
     threat: "아주 빠르게 쫓아와 닿으면 잡아먹습니다.",
     counter: "속도가 높아야 도망칠 수 있습니다.",
   },
@@ -52,6 +56,8 @@ const PRESETS: Record<BossType, Preset> = {
     auraRadius: 0,
     globalKillRate: 0,
     globalDrain: 0,
+    cullAttackResist: 0,
+    cullGroupResist: 0,
     threat: "느리지만 거대해 가까이 가면 잡아먹습니다.",
     counter: "시야가 넓어야 일찍 보고 피합니다.",
   },
@@ -63,6 +69,8 @@ const PRESETS: Record<BossType, Preset> = {
     auraRadius: 0,
     globalKillRate: 0.0024, // 매 틱 약 0.24% 솎임 (건강한 큰 무리만 버틴다)
     globalDrain: 0,
+    cullAttackResist: 0,
+    cullGroupResist: 0,
     threat: "쉴 새 없이 개체를 하나씩 솎아냅니다.",
     counter: "개체 수가 많고 건강해야 버팁니다.",
   },
@@ -74,13 +82,41 @@ const PRESETS: Record<BossType, Preset> = {
     auraRadius: 230,
     globalKillRate: 0,
     globalDrain: 0.3, // ×(0.3+metabolism): 대사 높을수록 더 빨림 (건강한 무리는 카운터 없이도 버티게)
+    cullAttackResist: 0,
+    cullGroupResist: 0,
     threat: "온 땅의 에너지를 계속 빨아들입니다.",
     counter: "대사가 낮아야 덜 빨리고 견딥니다.",
+  },
+  raider: {
+    name: "약탈자 무리",
+    speed: 2.2,
+    killRadius: 0,
+    visionFlee: 0,
+    auraRadius: 0,
+    globalKillRate: 0.006, // 기본 솎임이 매섭되, 공격력으로 맞서 싸워 줄인다
+    globalDrain: 0,
+    cullAttackResist: 0.92, // 공격력 높을수록 거의 안 솎임
+    cullGroupResist: 0,
+    threat: "사방에서 약탈자가 달려들어 약한 개체부터 쓰러뜨립니다.",
+    counter: "공격력(이빨·뿔)이 높아야 맞서 싸워 버팁니다.",
+  },
+  isolation: {
+    name: "외톨이 사냥꾼",
+    speed: 2.4,
+    killRadius: 0,
+    visionFlee: 0,
+    auraRadius: 0,
+    globalKillRate: 0.006, // 외톨이는 매섭게 솎이되, 무리에 섞이면 안전
+    globalDrain: 0,
+    cullAttackResist: 0,
+    cullGroupResist: 0.9, // 이웃이 많을수록 거의 안 솎임
+    threat: "무리에서 떨어진 외톨이부터 노려 하나씩 잡아갑니다.",
+    counter: "무리 성향이 높아 함께 뭉쳐 다녀야 안전합니다.",
   },
 };
 
 // titan(거대 포식자)은 느려서 누구나 쉽게 도망 → 위협이 안 됨. 풀에서 제외(프리셋은 보존).
-export const BOSS_TYPES: readonly BossType[] = ["chaser", "swarm", "poison"];
+export const BOSS_TYPES: readonly BossType[] = ["chaser", "swarm", "poison", "raider", "isolation"];
 
 export function createBoss(type: BossType, width: number, height: number): Boss {
   const p = PRESETS[type];
@@ -99,6 +135,8 @@ export function createBoss(type: BossType, width: number, height: number): Boss 
     auraRadius: p.auraRadius,
     globalKillRate: p.globalKillRate,
     globalDrain: p.globalDrain,
+    cullAttackResist: p.cullAttackResist,
+    cullGroupResist: p.cullGroupResist,
   };
 }
 
@@ -137,7 +175,12 @@ export function stepBoss(boss: Boss, world: World): void {
   if (boss.globalKillRate > 0) {
     for (const e of world.entities) {
       if (!e.alive) continue;
-      if (world.rng.unit() < boss.globalKillRate) {
+      let rate = boss.globalKillRate;
+      // 약탈자: 공격력이 높으면 맞서 싸워 덜 솎인다.
+      if (boss.cullAttackResist > 0) rate *= 1 - boss.cullAttackResist * e.genome.traits.attack;
+      // 외톨이 사냥꾼: 무리 성향이 높을수록(함께 뭉쳐 다녀) 덜 솎인다.
+      if (boss.cullGroupResist > 0) rate *= 1 - boss.cullGroupResist * e.genome.traits.herding;
+      if (rate > 0 && world.rng.unit() < rate) {
         e.alive = false;
         world.recordDeath(e.species, "boss");
         world.emit("kill", e.x, e.y);
