@@ -55,7 +55,7 @@ export const SIM = {
   metabolismDrain: 0.13, // 틱당 에너지 소모 (×(0.5+metabolism))
   maxSpeedBase: 1.7, // 최대 속도 (×(0.4+speed))
   visionBase: 130, // 시야 반경 (×(0.4+vision))
-  wanderTurn: 0.5, // 먹이가 안 보일 때 헤딩 흔들림(라디안)
+  wanderTurn: 0.15, // 먹이가 안 보일 때 헤딩을 매 틱 흔드는 폭(라디안). 크면 제자리 떨림 → 작게 누적
   baseMaxAge: 1700, // 수명 (×(1.2-0.5*metabolism)) → 대사 높으면 단명
 
   // --- 이동/조향 (자연스러운 움직임) ---

@@ -21,6 +21,9 @@ export interface Entity {
   // 쫓는 목표 (런타임 상태, 직렬화 안 함). 매 틱 재탐색 대신 commit 을 유지해 목표 진동을 없앤다.
   targetFood: Food | null;
   targetPrey: Entity | null;
+  // 배회(wander) 헤딩 (런타임, 직렬화 안 함). 매 틱 방향을 새로 추첨하면 제자리 떨림이 되므로,
+  // 헤딩을 개체에 보존하고 조금씩만 흔들어 부드럽게 떠돈다.
+  wanderAngle: number;
 }
 
 export function createEntity(
@@ -45,5 +48,7 @@ export function createEntity(
     prevY: y,
     targetFood: null,
     targetPrey: null,
+    // 초기 헤딩을 id 로 결정론적으로 분산(같은 시드면 동일). 처음 배회 때 방향이 한쪽으로 쏠리지 않게.
+    wanderAngle: ((id % 360) * Math.PI) / 180,
   };
 }

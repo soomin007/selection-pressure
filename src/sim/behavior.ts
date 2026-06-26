@@ -237,15 +237,13 @@ function chooseGoal(
   return null;
 }
 
-/** 목표가 없을 때: 진행 방향을 조금씩 틀며 순항(멈추지 않고 자연스럽게 떠돈다). */
+/** 목표가 없을 때: 보존된 헤딩을 조금씩 흔들며 순항(멈추지 않고 부드럽게 떠돈다). */
 function wanderDesired(e: Entity, world: World, maxSpeed: number): Vec {
   const cruise = maxSpeed * SIM.cruiseFactor;
-  const speed = Math.hypot(e.vx, e.vy);
-  const heading =
-    speed < 0.001
-      ? world.rng.range(0, Math.PI * 2)
-      : Math.atan2(e.vy, e.vx) + world.rng.range(-SIM.wanderTurn, SIM.wanderTurn);
-  return { x: Math.cos(heading) * cruise, y: Math.sin(heading) * cruise };
+  // 헤딩을 개체에 보존해 조금씩만 흔든다 — 매 틱 큰 난수로 재추첨하거나 노이즈 큰 속도 방향에
+  // 기대면 느린 종이 제자리에서 떤다(부들거림). 작은 누적 흔들림이라야 부드러운 떠돌기가 된다.
+  e.wanderAngle += world.rng.range(-SIM.wanderTurn, SIM.wanderTurn);
+  return { x: Math.cos(e.wanderAngle) * cruise, y: Math.sin(e.wanderAngle) * cruise };
 }
 
 function nearestFood(e: Entity, world: World, maxDist2: number): Food | null {
