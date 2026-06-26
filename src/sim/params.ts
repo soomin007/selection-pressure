@@ -37,6 +37,10 @@ export const SIM = {
 
   // --- 무리 성향 herding ---
   herdCohesion: 0.35, // 무게중심으로 끌리는 비율 (×herding)
+  // 무리 안(무게중심에서 가까움)에선 cohesion 을 끈다 — COM 이 격자 양자화로 매 틱 튀어, 늘 적용하면
+  // 무리 종이 제자리에서 떤다. 충분히 벗어난 낙오자만 서서히(램프) 끌어당겨 경계 떨림도 없앤다.
+  herdComfortRadius: 20, // 무게중심에서 이 거리 안이면 cohesion 0
+  herdComfortRamp: 26, // comfortRadius ~ +ramp 사이에서 cohesion 0→최대
   huddleFull: 5, // 이웃이 이만큼이면 보온 효과 최대
   huddleWarmth: 0.55, // 보온 시 추위 소모 최대 감소율 (×herding×이웃비율)
 

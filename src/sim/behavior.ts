@@ -51,13 +51,17 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     } else {
       desired = wanderDesired(e, world, maxSpeed);
     }
-    // 무리 cohesion: 무게중심 방향을 섞되, 무게중심 근처에선 감속(오버슈트 진동 방지).
+    // 무리 cohesion: 무리에서 충분히 벗어났을 때만 무게중심으로 끌어당긴다.
+    // 무리 안(comfort)에선 cohesion 0 — COM 이 격자 양자화로 매 틱 튀어, 늘 적용하면 무리 종이
+    // 제자리에서 떤다. 벗어난 정도에 비례해 서서히 세져(램프) 경계에서의 떨림도 없앤다.
     if (nb && nb.count > 1) {
       const hdx = nb.comX - e.x;
       const hdy = nb.comY - e.y;
-      if (Math.hypot(hdx, hdy) > 1) {
-        const w = SIM.herdCohesion * t.herding;
-        const herd = toward(hdx, hdy, maxSpeed, SIM.arriveRadius);
+      const hd = Math.hypot(hdx, hdy);
+      if (hd > SIM.herdComfortRadius) {
+        const pull = Math.min(1, (hd - SIM.herdComfortRadius) / SIM.herdComfortRamp);
+        const w = SIM.herdCohesion * t.herding * pull;
+        const herd = scaleTo(hdx, hdy, maxSpeed);
         desired = {
           x: desired.x * (1 - w) + herd.x * w,
           y: desired.y * (1 - w) + herd.y * w,
