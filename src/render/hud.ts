@@ -1,5 +1,5 @@
-// 최소 HUD — 실시간 개체 수/먹이 + 개체 수 추이 그래프 + 최근 사망 원인 피드.
-// 추이 그래프와 사망 피드는 "왜 줄어드나"를 관전 중에 바로 읽게 해준다(가독성, §7).
+// 최소 HUD — 정보 박스(내 종/야생 수 · 단계·시간·환경, 죽을 때만 사망 알림) + 종/먹이 색 범례(접이식).
+// 모바일은 꼭 필요한 것만 보이게: 추이 그래프는 뺐고, 범례·형질 패널은 기본 접힘(작은 칩).
 
 import { Container, Graphics, Rectangle, Text, TextStyle } from "pixi.js";
 import type { World } from "@/sim/world";
@@ -7,17 +7,11 @@ import type { DeathCause, DeathTally } from "@/sim/world";
 import type { Species } from "@/sim/species";
 import { COLORS } from "@/config";
 
-const GRAPH_X = 16;
-const GRAPH_Y = 96; // 상태줄이 2줄이 되어 그래프를 아래로 내림
-const GRAPH_W = 220;
-const GRAPH_H = 54;
-const SAMPLE_EVERY = 8; // 프레임마다 너무 촘촘하지 않게
-const MAX_SAMPLES = 170; // 약 23초 분량(8프레임/60fps × 170)
-const DEATH_INTERVAL = 48; // 사망 피드 갱신 주기(프레임)
+const DEATH_INTERVAL = 48; // 사망 알림 갱신 주기(프레임)
 
-// 종/먹이 색 범례 — 좌측 그래프·사망피드 아래에 고정(HUD 는 화면 픽셀 공간이라 좌측 고정 좌표).
+// 종/먹이 색 범례 — 정보 박스 아래에 고정(HUD 는 화면 픽셀 공간이라 좌측 고정 좌표). 기본 접힘.
 const LEGEND_X = 16;
-const LEGEND_Y = 190;
+const LEGEND_Y = 116;
 const LEGEND_W = 150;
 const LEGEND_PAD = 7;
 const LEGEND_ROW = 18;
@@ -26,12 +20,12 @@ const LEGEND_SWATCH = 6; // 색 동그라미 반지름
 // worldView.ts 의 FOOD_COLORS 와 동기화 유지(먹이 종류별 색: 연두 / 청록 / 노랑풀).
 const FOOD_LEGEND_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
 
-// 통합 정보 박스 — 내 종 수·상태줄·추이 그래프·사망 피드를 한 박스에 담는다(글자에 그림자 X).
-// 박스 하나로 합쳐 박스 개수를 줄이고, 다채로운 월드 위에서도 글자가 읽히게.
+// 정보 박스 — 내 종/야생 수 + 단계·시간·환경(+ 죽을 때만 사망 알림 한 줄). 꼭 필요한 것만 슬림하게.
 const PANEL_X = 8;
 const PANEL_Y = 8;
-const PANEL_W = 236;
-const PANEL_H = 176;
+const PANEL_W = 232;
+const PANEL_H = 80; // 기본(내 종 + 상태 2줄)
+const PANEL_H_DEATH = 100; // 사망 알림 한 줄이 더 있을 때
 
 const CAUSE_LABEL: Record<DeathCause, string> = {
   starve: "굶음",
@@ -48,11 +42,7 @@ export class Hud {
   private readonly stat: Text;
   private readonly notice: Text;
   private readonly deathFeed: Text;
-  private readonly graph = new Graphics();
-
   private readonly panelBg = new Graphics();
-  private history: number[] = [];
-  private maxSeen = 1;
   private frame = 0;
   private prevDeaths: DeathTally | null = null;
 
@@ -61,7 +51,7 @@ export class Hud {
   private readonly legendBgG = new Graphics();
   private readonly legendG = new Graphics();
   private legendSig = "";
-  private legendOpen = true; // 탭으로 접기/펴기(기본 펼침)
+  private legendOpen = false; // 탭으로 접기/펴기(기본 접힘 — 모바일 클러터 최소화)
   private readonly legendTitleStyle = new TextStyle({
     fill: COLORS.textDim,
     fontSize: 13,
@@ -87,20 +77,16 @@ export class Hud {
 
     this.deathFeed = new Text({
       text: "",
-      style: new TextStyle({ fill: 0xffba8a, fontSize: 15 }),
+      style: new TextStyle({ fill: 0xffba8a, fontSize: 13 }),
     });
-    this.deathFeed.position.set(GRAPH_X, GRAPH_Y + GRAPH_H + 8);
+    this.deathFeed.position.set(16, 86);
 
-    // 통합 정보 박스(맨 뒤) — 글자·그래프의 공용 배경. 고정 크기라 한 번만 그린다.
-    this.panelBg
-      .roundRect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 10)
-      .fill({ color: 0x0c1018, alpha: 0.88 })
-      .stroke({ color: 0x3b465c, width: 1, alpha: 0.95 });
+    // 정보 박스(맨 뒤) — 글자의 공용 배경. 사망 알림 유무에 따라 높이만 다시 그린다(drawPanel).
     this.container.addChild(this.panelBg);
-    this.container.addChild(this.graph);
     this.container.addChild(this.stat);
     this.container.addChild(this.notice);
     this.container.addChild(this.deathFeed);
+    this.drawPanel();
 
     // 범례: 배경(맨 뒤) → 색 동그라미/구분선 → 이름 텍스트(updateLegend 에서 추가) 순.
     this.legend.position.set(LEGEND_X, LEGEND_Y);
@@ -119,11 +105,10 @@ export class Hud {
 
   /** 런이 바뀌면 추이·사망 피드를 리셋한다. */
   reset(): void {
-    this.history = [];
-    this.maxSeen = 1;
     this.frame = 0;
     this.prevDeaths = null;
     this.deathFeed.text = "";
+    this.drawPanel();
     this.legendSig = ""; // 새 런에서 종 구성이 바뀌면 다시 그리도록
   }
 
@@ -133,24 +118,26 @@ export class Hud {
     this.notice.text = statusText;
 
     this.frame += 1;
-    if (this.frame % SAMPLE_EVERY === 0) {
-      this.history.push(mine);
-      if (this.history.length > MAX_SAMPLES) this.history.shift();
-      if (mine > this.maxSeen) this.maxSeen = mine;
-    }
     if (this.frame % DEATH_INTERVAL === 0) this.updateDeathFeed(world.deaths);
     this.updateLegend(world.species);
     if (this.frame % 6 === 0) this.updateLegendCounts(world); // 종별 실시간 수(가볍게 6프레임마다)
-    // 범례는 관전 중에만 — 로비(빈 상태줄)·드래프트(카드 선택)에선 숨겨 패널과 안 겹치게.
-    this.legend.visible = statusText !== "" && !statusText.includes("카드 선택");
-    this.drawGraph();
+
+    // 로비(빈 상태줄)에선 정보 박스도 숨김. 범례는 관전 중에만(드래프트="카드 선택" 제외).
+    const notLobby = statusText !== "";
+    const onWatch = notLobby && !statusText.includes("카드 선택");
+    this.panelBg.visible = notLobby;
+    this.stat.visible = notLobby;
+    this.notice.visible = notLobby;
+    this.deathFeed.visible = notLobby;
+    this.legend.visible = onWatch;
   }
 
-  /** 최근 구간에 내 종이 어떤 원인으로 죽었는지 한 줄로. */
+  /** 최근 구간에 내 종이 어떤 원인으로 죽었는지 한 줄로(죽을 때만 잠깐). */
   private updateDeathFeed(deaths: DeathTally): void {
     if (!this.prevDeaths) {
       this.prevDeaths = { ...deaths };
       this.deathFeed.text = "";
+      this.drawPanel();
       return;
     }
     const parts: string[] = [];
@@ -160,23 +147,19 @@ export class Hud {
     }
     this.prevDeaths = { ...deaths };
     parts.sort((a, b) => Number(b.split(" ")[1]) - Number(a.split(" ")[1]));
-    this.deathFeed.text = parts.length ? `최근 사망  ${parts.join("  ·  ")}` : "";
+    // 박스가 좁으니 상위 2개 원인만(가독성). 사망 알림이 있으면 박스가 한 줄 늘어난다.
+    this.deathFeed.text = parts.length ? `사망  ${parts.slice(0, 2).join("  ·  ")}` : "";
+    this.drawPanel();
   }
 
-  private drawGraph(): void {
-    // 배경은 통합 정보 박스(panelBg)가 담당 — 여기선 추이선만 그린다(박스 안의 스파크라인).
-    this.graph.clear();
-    if (this.history.length < 2) return;
-
-    const n = this.history.length;
-    const scaleY = (v: number): number => GRAPH_Y + GRAPH_H - (v / this.maxSeen) * (GRAPH_H - 6) - 3;
-    const scaleX = (i: number): number => GRAPH_X + (i / (MAX_SAMPLES - 1)) * GRAPH_W;
-
-    this.graph.moveTo(scaleX(0), scaleY(this.history[0] ?? 0));
-    for (let i = 1; i < n; i++) {
-      this.graph.lineTo(scaleX(i), scaleY(this.history[i] ?? 0));
-    }
-    this.graph.stroke({ color: COLORS.accent, width: 2, alpha: 0.95 });
+  /** 정보 박스 배경 — 사망 알림 한 줄 유무에 따라 높이가 달라진다. */
+  private drawPanel(): void {
+    const h = this.deathFeed.text ? PANEL_H_DEATH : PANEL_H;
+    this.panelBg.clear();
+    this.panelBg
+      .roundRect(PANEL_X, PANEL_Y, PANEL_W, h, 10)
+      .fill({ color: 0x0c1018, alpha: 0.88 })
+      .stroke({ color: 0x3b465c, width: 1, alpha: 0.95 });
   }
 
   /** 종별 실시간 개체 수를 행 우측에 갱신(텍스트만 — 행 재생성 없이 가볍게). */

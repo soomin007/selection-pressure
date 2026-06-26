@@ -42,10 +42,11 @@ export function createBuildPanel(): BuildPanel {
   const list = document.createElement("div");
   body.append(headline, list);
 
-  let collapsed = false;
+  let collapsed = true; // 기본 접힘(모바일 클러터 최소화). 탭하면 펼침.
   const applyCollapsed = (): void => {
     body.style.display = collapsed ? "none" : "block";
     arrow.textContent = collapsed ? "▸" : "▾";
+    root.style.width = collapsed ? "auto" : "138px"; // 접으면 칩처럼 폭만 차지
   };
   header.addEventListener("click", () => {
     collapsed = !collapsed;
