@@ -67,7 +67,8 @@ export const SIM = {
   // 낮을수록 부드러운 곡선·관성이 크다. 높을수록 민첩하지만 떨림에 가깝다.
   steerTurn: 0.18, // 평상시 조향 민감도
   fleeTurn: 0.55, // 도망칠 땐 빠르게 방향 전환(생존)
-  cruiseFactor: 0.6, // 목표 없을 때 순항 속도 비율 (×maxSpeed) — 멈추지 않고 떠돈다
-  arriveRadius: 18, // 목표 이 거리 안에서 선형 감속(도착) — 지나쳐 진동하는 오버슈트(제자리 떨림) 방지
+  cruiseFactor: 0.45, // 목표 없을 때 순항 속도 비율 (×maxSpeed) — 멈추지 않되 차분히 떠돈다
+  arriveRadius: 18, // 먹이로 갈 때 이 거리 안에서 선형 감속(도착) — 지나쳐 진동하는 오버슈트 방지
+  huntArriveRadius: 14, // 사냥은 표적이 움직이므로 더 짧게(공격 사거리 부근) 감속 — 추격력 보존 + 와리가리 제거
   targetKeepFactor: 1.2, // 쫓던 목표를 유지하는 시야 배수(약간 더 멀어져도 commit) — 목표 진동 방지
 } as const;

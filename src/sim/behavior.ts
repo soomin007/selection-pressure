@@ -44,10 +44,11 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   } else {
     const goal = chooseGoal(e, world, vision, canHunt, canGraze);
     if (goal) {
-      // 먹이(식물)로 갈 땐 도착 감속(arrive) — 가까울수록 속도를 줄여 목표를 지나쳐 진동하는
-      // 오버슈트(제자리 떨림)를 없앤다. 사냥(움직이는 표적)은 전속 유지 — 포식 밸런스 보존.
-      const arriving = e.targetFood !== null && e.targetPrey === null;
-      desired = toward(goal.x - e.x, goal.y - e.y, maxSpeed, arriving ? SIM.arriveRadius : 0);
+      // 먹이/먹잇감 모두 도착 감속(arrive) — 가까울수록 속도를 줄여 목표를 지나쳐 되돌아가는
+      // 오버슈트(와리가리)를 없앤다. 사냥은 표적이 움직이므로 더 짧은 반경(공격 사거리 부근에서만
+      // 감속)이라 추격력은 보존된다.
+      const r = e.targetPrey !== null ? SIM.huntArriveRadius : SIM.arriveRadius;
+      desired = toward(goal.x - e.x, goal.y - e.y, maxSpeed, r);
     } else {
       desired = wanderDesired(e, world, maxSpeed);
     }
