@@ -17,7 +17,7 @@ const DEATH_INTERVAL = 48; // 사망 피드 갱신 주기(프레임)
 
 // 종/먹이 색 범례 — 좌측 그래프·사망피드 아래에 고정(HUD 는 화면 픽셀 공간이라 좌측 고정 좌표).
 const LEGEND_X = 16;
-const LEGEND_Y = 180;
+const LEGEND_Y = 190;
 const LEGEND_W = 150;
 const LEGEND_PAD = 7;
 const LEGEND_ROW = 18;
@@ -26,10 +26,12 @@ const LEGEND_SWATCH = 6; // 색 동그라미 반지름
 // worldView.ts 의 FOOD_COLORS 와 동기화 유지(먹이 종류별 색: 연두 / 청록 / 노랑풀).
 const FOOD_LEGEND_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
 
-// HUD 글자가 다채로운 월드(밝은 환경 칸·생물) 위에서도 읽히게 — 어두운 외곽선 + 옅은 그림자(자막처럼).
-// 배경 패널 없이 글자 자체에 대비를 줘 월드를 덜 가린다.
-const HUD_STROKE = { color: 0x0a0d12, width: 3 };
-const HUD_SHADOW = { color: 0x000000, alpha: 0.55, blur: 4, angle: Math.PI / 4, distance: 2 };
+// 통합 정보 박스 — 내 종 수·상태줄·추이 그래프·사망 피드를 한 박스에 담는다(글자에 그림자 X).
+// 박스 하나로 합쳐 박스 개수를 줄이고, 다채로운 월드 위에서도 글자가 읽히게.
+const PANEL_X = 8;
+const PANEL_Y = 8;
+const PANEL_W = 236;
+const PANEL_H = 176;
 
 const CAUSE_LABEL: Record<DeathCause, string> = {
   starve: "굶음",
@@ -47,6 +49,7 @@ export class Hud {
   private readonly deathFeed: Text;
   private readonly graph = new Graphics();
 
+  private readonly panelBg = new Graphics();
   private history: number[] = [];
   private maxSeen = 1;
   private frame = 0;
@@ -68,39 +71,28 @@ export class Hud {
   constructor() {
     this.stat = new Text({
       text: "",
-      style: new TextStyle({
-        fill: 0xffffff,
-        fontSize: 22,
-        fontWeight: "700",
-        stroke: { ...HUD_STROKE },
-        dropShadow: { ...HUD_SHADOW },
-      }),
+      style: new TextStyle({ fill: 0xffffff, fontSize: 22, fontWeight: "700" }),
     });
     this.stat.position.set(16, 14);
 
     this.notice = new Text({
       text: "",
-      style: new TextStyle({
-        fill: 0xccd3df, // 어두운 textDim 대신 밝게 — 밝은 환경 칸 위에서도 읽히게
-        fontSize: 17,
-        lineHeight: 20,
-        stroke: { ...HUD_STROKE },
-        dropShadow: { ...HUD_SHADOW },
-      }),
+      style: new TextStyle({ fill: 0xccd3df, fontSize: 17, lineHeight: 20 }),
     });
     this.notice.position.set(16, 44);
 
     this.deathFeed = new Text({
       text: "",
-      style: new TextStyle({
-        fill: 0xffba8a,
-        fontSize: 15,
-        stroke: { ...HUD_STROKE },
-        dropShadow: { ...HUD_SHADOW },
-      }),
+      style: new TextStyle({ fill: 0xffba8a, fontSize: 15 }),
     });
     this.deathFeed.position.set(GRAPH_X, GRAPH_Y + GRAPH_H + 8);
 
+    // 통합 정보 박스(맨 뒤) — 글자·그래프의 공용 배경. 고정 크기라 한 번만 그린다.
+    this.panelBg
+      .roundRect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 10)
+      .fill({ color: 0x0c1018, alpha: 0.88 })
+      .stroke({ color: 0x3b465c, width: 1, alpha: 0.95 });
+    this.container.addChild(this.panelBg);
     this.container.addChild(this.graph);
     this.container.addChild(this.stat);
     this.container.addChild(this.notice);
@@ -167,11 +159,8 @@ export class Hud {
   }
 
   private drawGraph(): void {
+    // 배경은 통합 정보 박스(panelBg)가 담당 — 여기선 추이선만 그린다(박스 안의 스파크라인).
     this.graph.clear();
-    this.graph
-      .rect(GRAPH_X, GRAPH_Y, GRAPH_W, GRAPH_H)
-      .fill({ color: 0x0c1018, alpha: 0.72 })
-      .stroke({ color: 0x2a3346, width: 1, alpha: 0.85 });
     if (this.history.length < 2) return;
 
     const n = this.history.length;
