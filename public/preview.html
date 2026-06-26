@@ -90,31 +90,47 @@
       .device .cap span {
         color: #6b7589;
       }
-      /* 폰: 베젤 느낌 */
-      .phone {
-        padding: 12px;
-        background: #05070b;
-        border: 1px solid #222a3a;
-        border-radius: 32px;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+      .device .cap b {
+        color: #cfe0ff;
       }
-      .phone iframe {
-        width: 390px;
-        height: 844px;
+      /* 스크린: 내부 iframe 은 실제 기기 CSS 크기, 화면엔 transform 으로 축소만(비율 보존). */
+      .screen {
+        overflow: hidden;
+        background: #0b0e14;
+      }
+      .screen iframe {
         border: 0;
-        border-radius: 22px;
         background: #0b0e14;
         display: block;
+        transform-origin: 0 0; /* 좌상단 기준 축소 */
       }
-      /* 데스크톱: 창 느낌(타이틀바) */
+      /* 폰: 390×844 CSS 를 0.9 로 표시 → 351×760 */
+      .phone {
+        padding: 11px;
+        background: #05070b;
+        border: 1px solid #222a3a;
+        border-radius: 30px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+      }
+      .phone .screen {
+        width: 351px;
+        height: 760px;
+        border-radius: 20px;
+      }
+      .phone .screen iframe {
+        width: 390px;
+        height: 844px;
+        transform: scale(0.9);
+      }
+      /* 데스크톱: 1440×810 CSS(실제 데스크톱 비율) 를 0.52 로 표시 → 749×421 */
       .desk {
         border: 1px solid #222a3a;
-        border-radius: 12px;
+        border-radius: 10px;
         overflow: hidden;
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
       }
       .desk .bar {
-        height: 26px;
+        height: 24px;
         background: #161c28;
         display: flex;
         align-items: center;
@@ -122,25 +138,27 @@
         padding: 0 10px;
       }
       .desk .bar i {
-        width: 10px;
-        height: 10px;
+        width: 9px;
+        height: 9px;
         border-radius: 50%;
         background: #3a4458;
         display: inline-block;
       }
-      .desk iframe {
-        width: 960px;
-        height: 600px;
-        border: 0;
-        background: #0b0e14;
-        display: block;
+      .desk .screen {
+        width: 749px;
+        height: 421px;
+      }
+      .desk .screen iframe {
+        width: 1440px;
+        height: 810px;
+        transform: scale(0.52);
       }
     </style>
   </head>
   <body>
     <header>
       <h1>적자생존 — 동시 미리보기</h1>
-      <span class="hint">같은 시드로 폰·데스크톱을 나란히. 한 화면에서 둘 다 확인.</span>
+      <span class="hint">실제 기기 크기로 렌더 후 축소만 표시 → 실제 플레이와 같은 비율. 같은 시드로 비교.</span>
       <div class="controls">
         <label for="seed">시드</label>
         <input id="seed" value="preview" />
@@ -150,14 +168,14 @@
     </header>
     <main>
       <div class="device">
-        <div class="cap">📱 모바일 <span>(390×844, 세로)</span></div>
-        <div class="phone"><iframe id="mobile" scrolling="no" title="모바일"></iframe></div>
+        <div class="cap">📱 <b>모바일</b> <span>390×844 CSS · 실제 비율(90% 축소 표시)</span></div>
+        <div class="phone"><div class="screen"><iframe id="mobile" scrolling="no" title="모바일"></iframe></div></div>
       </div>
       <div class="device">
-        <div class="cap">🖥 데스크톱 <span>(960×600, 가로)</span></div>
+        <div class="cap">🖥 <b>데스크톱</b> <span>1440×810 CSS · 실제 비율(52% 축소 표시)</span></div>
         <div class="desk">
           <div class="bar"><i></i><i></i><i></i></div>
-          <iframe id="desktop" scrolling="no" title="데스크톱"></iframe>
+          <div class="screen"><iframe id="desktop" scrolling="no" title="데스크톱"></iframe></div>
         </div>
       </div>
     </main>
