@@ -122,7 +122,7 @@
         height: 844px;
         transform: scale(0.9);
       }
-      /* 데스크톱: 1440×810 CSS(실제 데스크톱 비율) 를 0.52 로 표시 → 749×421 */
+      /* 데스크톱: 1920×1080 CSS(실제 모니터) 를 0.704 로 표시 → 1352×760 (폰과 같은 높이) */
       .desk {
         border: 1px solid #222a3a;
         border-radius: 10px;
@@ -145,13 +145,13 @@
         display: inline-block;
       }
       .desk .screen {
-        width: 749px;
-        height: 421px;
+        width: 1352px;
+        height: 760px;
       }
       .desk .screen iframe {
-        width: 1440px;
-        height: 810px;
-        transform: scale(0.52);
+        width: 1920px;
+        height: 1080px;
+        transform: scale(0.704);
       }
     </style>
   </head>
@@ -172,7 +172,7 @@
         <div class="phone"><div class="screen"><iframe id="mobile" scrolling="no" title="모바일"></iframe></div></div>
       </div>
       <div class="device">
-        <div class="cap">🖥 <b>데스크톱</b> <span>1440×810 CSS · 실제 비율(52% 축소 표시)</span></div>
+        <div class="cap">🖥 <b>데스크톱</b> <span>1920×1080 CSS · 실제 비율(70% 축소 표시)</span></div>
         <div class="desk">
           <div class="bar"><i></i><i></i><i></i></div>
           <div class="screen"><iframe id="desktop" scrolling="no" title="데스크톱"></iframe></div>
