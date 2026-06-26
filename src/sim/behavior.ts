@@ -43,16 +43,21 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     turn = SIM.fleeTurn; // 도망은 빠르게 반응(생존)
   } else {
     const goal = chooseGoal(e, world, vision, canHunt, canGraze);
-    desired = goal
-      ? scaleTo(goal.x - e.x, goal.y - e.y, maxSpeed)
-      : wanderDesired(e, world, maxSpeed);
-    // 무리 cohesion: 무게중심 방향을 desired 에 섞는다(분리된 블렌드 대신).
+    if (goal) {
+      // 먹이(식물)로 갈 땐 도착 감속(arrive) — 가까울수록 속도를 줄여 목표를 지나쳐 진동하는
+      // 오버슈트(제자리 떨림)를 없앤다. 사냥(움직이는 표적)은 전속 유지 — 포식 밸런스 보존.
+      const arriving = e.targetFood !== null && e.targetPrey === null;
+      desired = toward(goal.x - e.x, goal.y - e.y, maxSpeed, arriving ? SIM.arriveRadius : 0);
+    } else {
+      desired = wanderDesired(e, world, maxSpeed);
+    }
+    // 무리 cohesion: 무게중심 방향을 섞되, 무게중심 근처에선 감속(오버슈트 진동 방지).
     if (nb && nb.count > 1) {
       const hdx = nb.comX - e.x;
       const hdy = nb.comY - e.y;
       if (Math.hypot(hdx, hdy) > 1) {
         const w = SIM.herdCohesion * t.herding;
-        const herd = scaleTo(hdx, hdy, maxSpeed);
+        const herd = toward(hdx, hdy, maxSpeed, SIM.arriveRadius);
         desired = {
           x: desired.x * (1 - w) + herd.x * w,
           y: desired.y * (1 - w) + herd.y * w,
@@ -269,6 +274,17 @@ function scaleTo(dx: number, dy: number, len: number): Vec {
   const d = Math.hypot(dx, dy);
   if (d < 1e-6) return { x: 0, y: 0 };
   return { x: (dx / d) * len, y: (dy / d) * len };
+}
+
+/**
+ * (dx,dy) 방향으로 향하는 desired 속도. arriveRadius>0 이면 그 거리 안에서 선형 감속(도착)해
+ * 목표를 지나쳐 진동하는 오버슈트를 없앤다. arriveRadius=0 이면 전속(scaleTo 와 동일).
+ */
+function toward(dx: number, dy: number, maxSpeed: number, arriveRadius: number): Vec {
+  const d = Math.hypot(dx, dy);
+  if (d < 1e-6) return { x: 0, y: 0 };
+  const speed = arriveRadius > 0 ? maxSpeed * Math.min(1, d / arriveRadius) : maxSpeed;
+  return { x: (dx / d) * speed, y: (dy / d) * speed };
 }
 
 function dist2(a: { x: number; y: number }, b: { x: number; y: number }): number {

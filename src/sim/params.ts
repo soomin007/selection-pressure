@@ -64,5 +64,6 @@ export const SIM = {
   steerTurn: 0.18, // 평상시 조향 민감도
   fleeTurn: 0.55, // 도망칠 땐 빠르게 방향 전환(생존)
   cruiseFactor: 0.6, // 목표 없을 때 순항 속도 비율 (×maxSpeed) — 멈추지 않고 떠돈다
+  arriveRadius: 18, // 목표 이 거리 안에서 선형 감속(도착) — 지나쳐 진동하는 오버슈트(제자리 떨림) 방지
   targetKeepFactor: 1.2, // 쫓던 목표를 유지하는 시야 배수(약간 더 멀어져도 commit) — 목표 진동 방지
 } as const;
