@@ -1,5 +1,5 @@
 // 최소 HUD — 정보 박스(내 종/야생 수 · 단계·시간·환경, 죽을 때만 사망 알림) + 종/먹이 색 범례(접이식).
-// 모바일은 꼭 필요한 것만 보이게: 추이 그래프는 뺐고, 범례·형질 패널은 기본 접힘(작은 칩).
+// 레이아웃별 최적화: 모바일은 슬림(그래프 X, 패널 접힘), 데스크톱은 추이 그래프 포함 + 패널 펼침.
 
 import { Container, Graphics, Rectangle, Text, TextStyle } from "pixi.js";
 import type { World } from "@/sim/world";
@@ -9,23 +9,36 @@ import { COLORS } from "@/config";
 
 const DEATH_INTERVAL = 48; // 사망 알림 갱신 주기(프레임)
 
-// 종/먹이 색 범례 — 정보 박스 아래에 고정(HUD 는 화면 픽셀 공간이라 좌측 고정 좌표). 기본 접힘.
+// 종/먹이 색 범례 — 정보 박스 아래. Y 는 레이아웃별(데스크톱 박스가 더 길다).
 const LEGEND_X = 16;
-const LEGEND_Y = 116;
 const LEGEND_W = 150;
 const LEGEND_PAD = 7;
 const LEGEND_ROW = 18;
 const LEGEND_SWATCH = 6; // 색 동그라미 반지름
+const LEGEND_Y_MOBILE = 116;
+const LEGEND_Y_DESKTOP = 168;
 
 // worldView.ts 의 FOOD_COLORS 와 동기화 유지(먹이 종류별 색: 연두 / 청록 / 노랑풀).
 const FOOD_LEGEND_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
 
-// 정보 박스 — 내 종/야생 수 + 단계·시간·환경(+ 죽을 때만 사망 알림 한 줄). 꼭 필요한 것만 슬림하게.
+// 정보 박스 — 모바일은 슬림(내 종+상태), 데스크톱은 추이 그래프까지. 사망 알림은 죽을 때만 한 줄 추가.
 const PANEL_X = 8;
 const PANEL_Y = 8;
-const PANEL_W = 232;
-const PANEL_H = 80; // 기본(내 종 + 상태 2줄)
-const PANEL_H_DEATH = 100; // 사망 알림 한 줄이 더 있을 때
+const PANEL_W = 236;
+const PANEL_H_MOBILE = 82;
+const PANEL_H_MOBILE_DEATH = 104;
+const PANEL_H_DESKTOP = 134; // stat + 상태 2줄 + 추이 그래프
+const PANEL_H_DESKTOP_DEATH = 156;
+const DEATH_Y_MOBILE = 88;
+const DEATH_Y_DESKTOP = 140; // 그래프 아래
+
+// 추이 그래프(데스크톱 전용) — 정보 박스 안 스파크라인.
+const GRAPH_X = 16;
+const GRAPH_Y = 88;
+const GRAPH_W = 210;
+const GRAPH_H = 46;
+const SAMPLE_EVERY = 8; // 프레임마다 너무 촘촘하지 않게
+const MAX_SAMPLES = 150;
 
 const CAUSE_LABEL: Record<DeathCause, string> = {
   starve: "굶음",
@@ -39,10 +52,15 @@ const CAUSE_LABEL: Record<DeathCause, string> = {
 
 export class Hud {
   readonly container = new Container();
+  private readonly isDesktop =
+    typeof document !== "undefined" && document.body?.dataset.layout === "desktop";
   private readonly stat: Text;
   private readonly notice: Text;
   private readonly deathFeed: Text;
   private readonly panelBg = new Graphics();
+  private readonly graph = new Graphics(); // 추이 그래프(데스크톱 전용)
+  private history: number[] = [];
+  private maxSeen = 1;
   private frame = 0;
   private prevDeaths: DeathTally | null = null;
 
@@ -52,8 +70,7 @@ export class Hud {
   private readonly legendG = new Graphics();
   private legendSig = "";
   // 레이아웃별 기본값: 데스크톱은 펼침(공간 여유), 모바일은 접힘(클러터 최소화). 탭으로 토글.
-  private legendOpen =
-    typeof document !== "undefined" && document.body?.dataset.layout === "desktop";
+  private legendOpen = this.isDesktop;
   private readonly legendTitleStyle = new TextStyle({
     fill: COLORS.textDim,
     fontSize: 13,
@@ -81,17 +98,18 @@ export class Hud {
       text: "",
       style: new TextStyle({ fill: 0xffba8a, fontSize: 13 }),
     });
-    this.deathFeed.position.set(16, 86);
+    this.deathFeed.position.set(16, this.isDesktop ? DEATH_Y_DESKTOP : DEATH_Y_MOBILE);
 
-    // 정보 박스(맨 뒤) — 글자의 공용 배경. 사망 알림 유무에 따라 높이만 다시 그린다(drawPanel).
+    // 정보 박스(맨 뒤) — 글자·그래프의 공용 배경. 사망 알림 유무에 따라 높이만 다시 그린다(drawPanel).
     this.container.addChild(this.panelBg);
+    if (this.isDesktop) this.container.addChild(this.graph); // 추이 그래프는 데스크톱만
     this.container.addChild(this.stat);
     this.container.addChild(this.notice);
     this.container.addChild(this.deathFeed);
     this.drawPanel();
 
     // 범례: 배경(맨 뒤) → 색 동그라미/구분선 → 이름 텍스트(updateLegend 에서 추가) 순.
-    this.legend.position.set(LEGEND_X, LEGEND_Y);
+    this.legend.position.set(LEGEND_X, this.isDesktop ? LEGEND_Y_DESKTOP : LEGEND_Y_MOBILE);
     this.legend.addChild(this.legendBgG);
     this.legend.addChild(this.legendG);
     this.container.addChild(this.legend);
@@ -107,6 +125,8 @@ export class Hud {
 
   /** 런이 바뀌면 추이·사망 피드를 리셋한다. */
   reset(): void {
+    this.history = [];
+    this.maxSeen = 1;
     this.frame = 0;
     this.prevDeaths = null;
     this.deathFeed.text = "";
@@ -120,6 +140,11 @@ export class Hud {
     this.notice.text = statusText;
 
     this.frame += 1;
+    if (this.isDesktop && this.frame % SAMPLE_EVERY === 0) {
+      this.history.push(mine);
+      if (this.history.length > MAX_SAMPLES) this.history.shift();
+      if (mine > this.maxSeen) this.maxSeen = mine;
+    }
     if (this.frame % DEATH_INTERVAL === 0) this.updateDeathFeed(world.deaths);
     this.updateLegend(world.species);
     if (this.frame % 6 === 0) this.updateLegendCounts(world); // 종별 실시간 수(가볍게 6프레임마다)
@@ -128,10 +153,12 @@ export class Hud {
     const notLobby = statusText !== "";
     const onWatch = notLobby && !statusText.includes("카드 선택");
     this.panelBg.visible = notLobby;
+    this.graph.visible = notLobby; // 그래프는 데스크톱만 컨테이너에 있음
     this.stat.visible = notLobby;
     this.notice.visible = notLobby;
     this.deathFeed.visible = notLobby;
     this.legend.visible = onWatch;
+    this.drawGraph();
   }
 
   /** 최근 구간에 내 종이 어떤 원인으로 죽었는지 한 줄로(죽을 때만 잠깐). */
@@ -154,14 +181,34 @@ export class Hud {
     this.drawPanel();
   }
 
-  /** 정보 박스 배경 — 사망 알림 한 줄 유무에 따라 높이가 달라진다. */
+  /** 정보 박스 배경 — 레이아웃(데스크톱은 그래프 포함) + 사망 알림 유무에 따라 높이가 달라진다. */
   private drawPanel(): void {
-    const h = this.deathFeed.text ? PANEL_H_DEATH : PANEL_H;
+    const hasDeath = this.deathFeed.text !== "";
+    const h = this.isDesktop
+      ? hasDeath
+        ? PANEL_H_DESKTOP_DEATH
+        : PANEL_H_DESKTOP
+      : hasDeath
+        ? PANEL_H_MOBILE_DEATH
+        : PANEL_H_MOBILE;
     this.panelBg.clear();
     this.panelBg
       .roundRect(PANEL_X, PANEL_Y, PANEL_W, h, 10)
       .fill({ color: 0x0c1018, alpha: 0.88 })
       .stroke({ color: 0x3b465c, width: 1, alpha: 0.95 });
+  }
+
+  /** 추이 그래프(데스크톱 전용) — 정보 박스 안 스파크라인. */
+  private drawGraph(): void {
+    if (!this.isDesktop) return;
+    this.graph.clear();
+    if (this.history.length < 2) return;
+    const n = this.history.length;
+    const scaleY = (v: number): number => GRAPH_Y + GRAPH_H - (v / this.maxSeen) * (GRAPH_H - 6) - 3;
+    const scaleX = (i: number): number => GRAPH_X + (i / (MAX_SAMPLES - 1)) * GRAPH_W;
+    this.graph.moveTo(scaleX(0), scaleY(this.history[0] ?? 0));
+    for (let i = 1; i < n; i++) this.graph.lineTo(scaleX(i), scaleY(this.history[i] ?? 0));
+    this.graph.stroke({ color: COLORS.accent, width: 2, alpha: 0.95 });
   }
 
   /** 종별 실시간 개체 수를 행 우측에 갱신(텍스트만 — 행 재생성 없이 가볍게). */

@@ -7,7 +7,7 @@ export function ensurePanelStyles(): void {
   style.textContent = `
   .ui-root {
     position: fixed; left: 50%; bottom: 0; transform: translateX(-50%);
-    width: min(100%, 520px); box-sizing: border-box; padding: 16px;
+    width: min(100%, 500px); box-sizing: border-box; padding: 11px 12px;
     background: rgba(11, 14, 20, 0.94); color: #e6e6e6;
     font-family: system-ui, -apple-system, sans-serif;
     border-top-left-radius: 16px; border-top-right-radius: 16px;
@@ -15,22 +15,22 @@ export function ensurePanelStyles(): void {
     z-index: 10; touch-action: auto; user-select: none;
   }
   .ui-preview {
-    font-size: 13.5px; line-height: 1.5; color: #ffd27a;
-    background: #1a1410; border: 1px solid #3a2c18; border-radius: 10px;
-    padding: 10px 12px; margin-bottom: 12px;
+    font-size: 12px; line-height: 1.4; color: #ffd27a;
+    background: #1a1410; border: 1px solid #3a2c18; border-radius: 9px;
+    padding: 7px 9px; margin-bottom: 8px;
   }
-  .ui-title { font-size: 17px; font-weight: 700; margin-bottom: 12px; text-align: center; }
+  .ui-title { font-size: 14px; font-weight: 700; margin-bottom: 8px; text-align: center; }
 
-  .ui-cards { display: flex; flex-direction: column; gap: 10px; }
+  .ui-cards { display: flex; flex-direction: column; gap: 7px; }
   .ui-card {
     text-align: left; width: 100%; box-sizing: border-box;
-    padding: 14px; border: 1px solid #2a3346; border-radius: 12px;
+    padding: 9px 11px; border: 1px solid #2a3346; border-radius: 10px;
     background: #161b26; color: #e6e6e6; cursor: pointer; touch-action: auto;
   }
   .ui-card:active { background: #20283a; }
-  .ui-card-name { font-size: 17px; font-weight: 700; }
-  .ui-card-desc { font-size: 13.5px; color: #b6bdca; margin-top: 4px; line-height: 1.45; }
-  .ui-card-eff { font-size: 13px; color: #6cc24a; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .ui-card-name { font-size: 14.5px; font-weight: 700; }
+  .ui-card-desc { font-size: 12px; color: #b6bdca; margin-top: 2px; line-height: 1.3; }
+  .ui-card-eff { font-size: 11.5px; color: #6cc24a; margin-top: 3px; font-variant-numeric: tabular-nums; }
 
   .ui-result { text-align: center; }
   .ui-result-heading { font-size: 34px; font-weight: 800; margin-bottom: 6px; }
@@ -87,7 +87,7 @@ export function ensurePanelStyles(): void {
 
   /* 데스크톱: 가로 레이아웃 — 카드를 한 줄로, 패널은 떠 있는 넓은 바. */
   body[data-layout="desktop"] .ui-root {
-    width: min(94%, 900px); bottom: 18px; border-radius: 16px; padding: 18px 20px;
+    width: min(88%, 760px); bottom: 16px; border-radius: 16px; padding: 13px 16px;
   }
   body[data-layout="desktop"] .ui-cards { flex-direction: row; }
   body[data-layout="desktop"] .ui-card { flex: 1 1 0; min-width: 0; }
