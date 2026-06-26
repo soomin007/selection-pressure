@@ -197,6 +197,18 @@ export const CARD_POOL: readonly Card[] = [
     desc: "에너지를 거의 안 쓰고 멀리 봅니다. 대신 느립니다.",
     effects: { metabolism: -0.2, vision: 0.1, speed: -0.06 },
   },
+  {
+    id: "phalanx",
+    name: "철벽 대형",
+    desc: "함께 뭉쳐 맞서 싸웁니다. 무리 성향과 공격력이 함께 크게 늡니다.",
+    effects: { herding: 0.22, attack: 0.12 },
+  },
+  {
+    id: "lone_warrior",
+    name: "독불장군",
+    desc: "홀로 강하게 싸웁니다. 공격력이 크게 늘지만 무리에서 떨어집니다.",
+    effects: { attack: 0.22, speed: 0.06, herding: -0.16 },
+  },
 ];
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
