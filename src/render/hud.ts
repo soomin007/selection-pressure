@@ -51,7 +51,9 @@ export class Hud {
   private readonly legendBgG = new Graphics();
   private readonly legendG = new Graphics();
   private legendSig = "";
-  private legendOpen = false; // 탭으로 접기/펴기(기본 접힘 — 모바일 클러터 최소화)
+  // 레이아웃별 기본값: 데스크톱은 펼침(공간 여유), 모바일은 접힘(클러터 최소화). 탭으로 토글.
+  private legendOpen =
+    typeof document !== "undefined" && document.body?.dataset.layout === "desktop";
   private readonly legendTitleStyle = new TextStyle({
     fill: COLORS.textDim,
     fontSize: 13,

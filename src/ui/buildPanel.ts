@@ -42,7 +42,8 @@ export function createBuildPanel(): BuildPanel {
   const list = document.createElement("div");
   body.append(headline, list);
 
-  let collapsed = true; // 기본 접힘(모바일 클러터 최소화). 탭하면 펼침.
+  // 레이아웃별 기본값: 데스크톱은 펼침(공간 여유), 모바일은 접힘(클러터 최소화). 탭으로 토글.
+  let collapsed = document.body.dataset.layout !== "desktop";
   const applyCollapsed = (): void => {
     body.style.display = collapsed ? "none" : "block";
     arrow.textContent = collapsed ? "▸" : "▾";
