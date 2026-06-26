@@ -100,6 +100,8 @@ export class WorldView {
     this.playerG.clear();
     const ringPulse = 0.5 + 0.5 * Math.sin((this.frame % 70) / 70 * Math.PI * 2);
     let i = 0;
+    let visionRings = 0; // 시야 반경은 일부 개체에만 옅게(클러터 없이 "얼마나 멀리 보는지" 감)
+    const playerVision = SIM.visionBase * (0.4 + world.playerSpecies.genome.traits.vision);
     for (const e of world.entities) {
       // 보간 위치(목표) → 렌더 전용 저역통과로 평활. 약 50ms 지연이라 관전엔 무해하고,
       // 제자리 떨림/먹이 앞 급정거 같은 고주파 진동을 흡수한다.
@@ -118,6 +120,11 @@ export class WorldView {
 
       // 내 종 강조: 스프라이트 아래 은은한 고리(폰에서 "내 무리"가 한눈에).
       if (e.species.isPlayer) {
+        // 시야 반경(이 종이 먹이·위험을 얼마나 멀리 감지하는지) — 일부에만 옅은 파란 원으로.
+        if (visionRings < 14) {
+          this.playerG.circle(rx, ry, playerVision).stroke({ color: 0x7ec8ff, width: 1, alpha: 0.06 });
+          visionRings++;
+        }
         this.playerG.circle(rx, ry, 13).fill({ color: 0x6cff7a, alpha: 0.1 });
         this.playerG
           .circle(rx, ry, 12.5)
@@ -187,8 +194,22 @@ export class WorldView {
       this.bossG
         .circle(bx, by, 16 + pulse * 26)
         .stroke({ color: 0xff5535, width: 2.5, alpha: 0.55 * (1 - pulse) });
-      this.bossG.circle(bx, by, 14).fill({ color: 0xff5535, alpha: 1 });
-      this.bossG.circle(bx, by, 14).stroke({ color: 0x3a0d06, width: 3 });
+      if (boss.globalKillRate > 0) {
+        // 사나운 무리·약탈자·외톨이 사냥꾼 = 떼로 보이게. 작은 점 여러 개가 모여 일렁인다.
+        const n = 11;
+        for (let k = 0; k < n; k++) {
+          const a = (k / n) * Math.PI * 2 + this.frame * 0.04;
+          const rad = 11 + 7 * Math.sin(this.frame * 0.06 + k * 1.7);
+          const px = bx + Math.cos(a) * rad;
+          const py = by + Math.sin(a * 1.3) * rad;
+          this.bossG.circle(px, py, 4).fill({ color: 0xff5535, alpha: 0.95 });
+          this.bossG.circle(px, py, 4).stroke({ color: 0x3a0d06, width: 1.2 });
+        }
+      } else {
+        // 추격자·거대 포식자 = 단일 큰 개체.
+        this.bossG.circle(bx, by, 14).fill({ color: 0xff5535, alpha: 1 });
+        this.bossG.circle(bx, by, 14).stroke({ color: 0x3a0d06, width: 3 });
+      }
     }
 
     // 대멸종 화면 틴트
@@ -207,6 +228,9 @@ export class WorldView {
     } else if (world.plagueRate > 0) {
       tint = 0x5a7a3a; // 병색(칙칙한 녹황)
       tintAlpha = 0.16;
+    } else if (world.boss && world.boss.globalDrain > 0) {
+      tint = 0x6a9a4a; // 독 안개 — 독성은 사방에 퍼져 있다(전체 화면 안개). 못 벗어나니 대사가 카운터.
+      tintAlpha = 0.15;
     }
     if (tintAlpha > 0)
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });
