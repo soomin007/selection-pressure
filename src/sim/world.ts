@@ -23,6 +23,14 @@ export function emptyDeathTally(): DeathTally {
   return { starve: 0, cold: 0, heat: 0, age: 0, boss: 0, predation: 0 };
 }
 
+/** 화면 연출용 1회성 사건(전 종, 위치 포함). 렌더가 매 프레임 읽고 비운다. rng 미사용 → 결정론 무관. */
+export type VisualEventKind = "birth" | "death" | "kill";
+export interface VisualEvent {
+  kind: VisualEventKind;
+  x: number;
+  y: number;
+}
+
 export class World {
   readonly width: number;
   readonly height: number;
@@ -46,6 +54,9 @@ export class World {
 
   /** 내 종이 무엇에 죽었나 — 런 내내 누적(정산 가독성, §7). World 는 런마다 새로 만들어지므로 런 단위 집계. */
   readonly deaths: DeathTally = emptyDeathTally();
+
+  /** 이번 프레임 연출용 사건들(탄생/죽음/잡아먹힘). 렌더가 매 프레임 읽고 비운다(상한 넘으면 버림). */
+  readonly events: VisualEvent[] = [];
 
   private idCounter = 0;
 
@@ -125,6 +136,11 @@ export class World {
   recordDeath(species: Species, cause: DeathCause): void {
     if (!species.isPlayer) return;
     this.deaths[cause] += 1;
+  }
+
+  /** 연출용 사건 1건(전 종, 위치 포함). rng 미사용 → 결정론 무관. 상한을 두어 무한 증가 방지. */
+  emit(kind: VisualEventKind, x: number, y: number): void {
+    if (this.events.length < 300) this.events.push({ kind, x, y });
   }
 
   get availableFood(): number {

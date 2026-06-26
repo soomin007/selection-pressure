@@ -107,6 +107,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       if (world.rng.chance(chance)) {
         prey.alive = false;
         world.recordDeath(prey.species, "predation");
+        world.emit("kill", prey.x, prey.y); // 연출: 잡아먹힘(빨강 터짐)
         e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.predationEnergy);
         e.targetPrey = null;
       }
@@ -141,11 +142,13 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     else if (heatDrain > coldDrain && heatDrain > drain) cause = "heat";
     e.alive = false;
     world.recordDeath(e.species, cause);
+    world.emit("death", e.x, e.y); // 연출: 자연사(회색 흩어짐)
     return;
   }
   if (e.age >= maxAge) {
     e.alive = false;
     world.recordDeath(e.species, "age");
+    world.emit("death", e.x, e.y);
     return;
   }
 
@@ -157,15 +160,10 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   ) {
     const childEnergy = e.energy * 0.5;
     e.energy -= childEnergy;
-    newborns.push(
-      createEntity(
-        world.nextId(),
-        e.x + world.rng.range(-6, 6),
-        e.y + world.rng.range(-6, 6),
-        e.species,
-        childEnergy,
-      ),
-    );
+    const cx = e.x + world.rng.range(-6, 6);
+    const cy = e.y + world.rng.range(-6, 6);
+    newborns.push(createEntity(world.nextId(), cx, cy, e.species, childEnergy));
+    world.emit("birth", cx, cy); // 연출: 탄생(초록 반짝)
   }
 }
 

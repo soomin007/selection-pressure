@@ -17,6 +17,7 @@ import { createControls } from "@/ui/controls";
 import { createBuildPanel } from "@/ui/buildPanel";
 import { describeSpecies } from "@/game/runReport";
 import { Highlights } from "@/render/highlights";
+import { Effects } from "@/render/effects";
 
 async function boot(): Promise<void> {
   const layout = chooseLayout();
@@ -41,6 +42,8 @@ async function boot(): Promise<void> {
   setupViewport(app, root, layout.width, layout.height);
 
   const view = new WorldView(app.renderer);
+  const effects = new Effects();
+  view.container.addChild(effects.container); // 사건 연출(월드 좌표 → 카메라와 함께 움직임)
   const hud = new Hud();
   const highlights = new Highlights();
   root.addChild(view.container);
@@ -122,6 +125,7 @@ async function boot(): Promise<void> {
     view.drawEnvironment(world.environment);
     view.refreshSpecies(world);
     hud.reset();
+    effects.clear();
     // 재현용: 이 맵의 시드를 콘솔에 남긴다(?seed=… 로 다시 불러올 수 있음).
     console.info(`[seed] ${game.seed}  (재현: ?seed=${game.seed})`);
   };
@@ -154,6 +158,10 @@ async function boot(): Promise<void> {
   app.ticker.add((ticker) => {
     game.update(ticker.deltaMS);
     view.sync(game.world, game.interpAlpha, ticker.deltaMS);
+    // 사건 연출: sim 이 이번 프레임에 emit 한 사건(탄생/죽음/잡아먹힘)을 효과로 옮기고 비운다.
+    for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y);
+    game.world.events.length = 0;
+    effects.update(ticker.deltaMS);
     hud.sync(game.world, statusLine());
     buildPanel.setVisible(game.phase === "draft" || game.phase === "watch");
 

@@ -129,6 +129,7 @@ export function stepBoss(boss: Boss, world: World): void {
       if (dx * dx + dy * dy < killR2) {
         e.alive = false;
         world.recordDeath(e.species, "boss");
+        world.emit("kill", e.x, e.y); // 연출: 보스 즉사 반경
       }
     }
   }
@@ -139,6 +140,7 @@ export function stepBoss(boss: Boss, world: World): void {
       if (world.rng.unit() < boss.globalKillRate) {
         e.alive = false;
         world.recordDeath(e.species, "boss");
+        world.emit("kill", e.x, e.y);
       }
     }
   }
@@ -150,6 +152,7 @@ export function stepBoss(boss: Boss, world: World): void {
       if (e.energy <= 0) {
         e.alive = false;
         world.recordDeath(e.species, "boss");
+        world.emit("death", e.x, e.y); // 보스 기력 고갈 = 자연사 톤
       }
     }
   }
