@@ -11,6 +11,8 @@ export interface Glossary {
 interface Row {
   k: string;
   v: string;
+  bar?: number; // 0~1, 수치의 크기를 막대로 보여줌(실제 인게임 크기 비율). 범주형 행은 생략.
+  base?: boolean; // 기본값(0.5 또는 동급) 행 강조. "여기서 시작한다"가 보이게.
 }
 interface Entry {
   term: string;
@@ -92,20 +94,20 @@ const SECTIONS: readonly Section[] = [
         svg: SVG.speed,
         desc: "빨리 움직여 먹이를 먼저 차지하고, 추격자에게서 도망칩니다.",
         rows: [
-          { k: "0.0 (가장 느림)", v: "1초에 약 20" },
-          { k: "0.5 (기본)", v: "약 46" },
-          { k: "1.0 (가장 빠름)", v: "약 71 (3.5배)" },
+          { k: "0.0 (가장 느림)", v: "1초에 약 20", bar: 0.28 },
+          { k: "0.5 (기본)", v: "약 46", bar: 0.65, base: true },
+          { k: "1.0 (가장 빠름)", v: "약 71 (3.5배)", bar: 1 },
         ],
-        note: "거리는 화면 기준이며, 화면 너비는 540입니다.",
+        note: "막대는 가장 빠른 종(1.0) 대비 속도입니다. 거리는 화면 기준이며, 화면 너비는 540입니다.",
       },
       {
         term: "시야",
         svg: SVG.vision,
         desc: "먹이와 위험을 얼마나 멀리서 알아채는지 정합니다. 관전 중 내 종에 파란 원으로 보입니다.",
         rows: [
-          { k: "0.0", v: "반경 52" },
-          { k: "0.5 (기본)", v: "반경 117" },
-          { k: "1.0", v: "반경 182" },
+          { k: "0.0", v: "반경 52", bar: 0.29 },
+          { k: "0.5 (기본)", v: "반경 117", bar: 0.64, base: true },
+          { k: "1.0", v: "반경 182", bar: 1 },
         ],
         note: "화면 너비가 540이니, 시야 1.0이면 가로의 약 1/3을 봅니다.",
       },
@@ -114,9 +116,9 @@ const SECTIONS: readonly Section[] = [
         svg: SVG.metabolism,
         desc: "에너지를 쓰는 속도입니다. 높으면 자주 먹어야 하지만 추위에 강하고, 더위와 독에는 약합니다.",
         rows: [
-          { k: "0.0 (느린 대사)", v: "1틱에 0.065 소모, 추위에 약함" },
-          { k: "0.5 (기본)", v: "0.13 소모" },
-          { k: "1.0 (뜨거운 피)", v: "0.195 소모, 추위에 강함" },
+          { k: "0.0 (느린 대사)", v: "1틱에 0.065 소모, 추위에 약함", bar: 0.33 },
+          { k: "0.5 (기본)", v: "0.13 소모", bar: 0.67, base: true },
+          { k: "1.0 (뜨거운 피)", v: "0.195 소모, 추위에 강함", bar: 1 },
         ],
       },
       {
@@ -124,9 +126,9 @@ const SECTIONS: readonly Section[] = [
         svg: SVG.fertility,
         desc: "새끼를 얼마나 자주 치는지 정합니다. 잃은 수를 빨리 메웁니다.",
         rows: [
-          { k: "0.0", v: "1틱에 0.3% 확률" },
-          { k: "0.5 (기본)", v: "0.8%" },
-          { k: "1.0", v: "1.3% (약 4배)" },
+          { k: "0.0", v: "1틱에 0.3% 확률", bar: 0.23 },
+          { k: "0.5 (기본)", v: "0.8%", bar: 0.62, base: true },
+          { k: "1.0", v: "1.3% (약 4배)", bar: 1 },
         ],
         note: "에너지가 78 이상일 때만 새끼를 칩니다.",
       },
@@ -135,20 +137,22 @@ const SECTIONS: readonly Section[] = [
         svg: SVG.attack,
         desc: "사냥 성공률을 높이고, 나보다 약한 포식자는 무서워하지 않아 덜 쫓깁니다.",
         rows: [
-          { k: "상대와 같음", v: "사냥 성공 50%" },
-          { k: "상대보다 0.2 높음", v: "약 76%" },
-          { k: "상대보다 0.2 낮음", v: "약 24%" },
+          { k: "상대와 같음", v: "사냥 성공 50%", bar: 0.5, base: true },
+          { k: "상대보다 0.2 높음", v: "약 76%", bar: 0.76 },
+          { k: "상대보다 0.2 낮음", v: "약 24%", bar: 0.24 },
         ],
+        note: "막대는 사냥 성공 확률입니다.",
       },
       {
         term: "무리 성향",
         svg: SVG.herding,
         desc: "함께 모여 다니고, 모이면 서로 보온합니다.",
         rows: [
-          { k: "0.0", v: "무리 효과 없음" },
-          { k: "0.5 (기본)", v: "모이면 추위 소모 약 27% 감소" },
-          { k: "1.0", v: "약 55% 감소" },
+          { k: "0.0", v: "무리 효과 없음", bar: 0 },
+          { k: "0.5 (기본)", v: "모이면 추위 소모 약 27% 감소", bar: 0.27, base: true },
+          { k: "1.0", v: "약 55% 감소", bar: 0.55 },
         ],
+        note: "막대는 모였을 때 추위 에너지 소모가 줄어드는 비율입니다.",
       },
       {
         term: "식성",
@@ -379,15 +383,29 @@ export function createGlossary(): Glossary {
       e.rows.forEach((r, idx) => {
         const row = document.createElement("div");
         row.style.cssText =
-          "display:flex; justify-content:space-between; gap:10px; padding:9px 12px;" +
-          (idx > 0 ? "border-top:1px solid #1a2230;" : "");
+          "padding:9px 12px;" +
+          (idx > 0 ? "border-top:1px solid #1a2230;" : "") +
+          (r.base ? "background:#101a18;" : "");
+        const head = document.createElement("div");
+        head.style.cssText = "display:flex; justify-content:space-between; gap:10px; align-items:baseline;";
         const k = document.createElement("span");
-        k.textContent = r.k;
-        k.style.cssText = "color:#aeb7c4; font-size:13.5px; flex:0 0 auto;";
+        k.textContent = r.base ? r.k + " ◀ 시작값" : r.k;
+        k.style.cssText = "color:" + (r.base ? "#9bffb0" : "#aeb7c4") + "; font-size:13.5px; flex:0 0 auto; font-weight:" + (r.base ? "700" : "400") + ";";
         const v = document.createElement("span");
         v.textContent = r.v;
         v.style.cssText = "color:#e6e6e6; font-size:13.5px; font-weight:600; text-align:right; word-break:keep-all;";
-        row.append(k, v);
+        head.append(k, v);
+        row.appendChild(head);
+        if (r.bar !== undefined) {
+          const pct = Math.round(Math.max(0, Math.min(1, r.bar)) * 100);
+          const track = document.createElement("div");
+          track.style.cssText = "margin-top:7px; height:7px; border-radius:4px; background:#1a2230; overflow:hidden;";
+          const fill = document.createElement("div");
+          fill.style.cssText =
+            "height:100%; width:" + pct + "%; border-radius:4px; background:" + (r.base ? "#9bffb0" : "#6cff7a") + ";";
+          track.appendChild(fill);
+          row.appendChild(track);
+        }
         table.appendChild(row);
       });
       detailView.appendChild(table);
