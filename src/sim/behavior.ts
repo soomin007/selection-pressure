@@ -73,6 +73,10 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     }
   }
 
+  // --- 벽 회피: 가려는 방향 앞이 막혔으면 목표에 가장 가까운 통행 가능 방향으로 desired 를 돌린다.
+  // 벽에 정면으로 박혀 멈추는 대신 벽을 따라 비스듬히 흐르며 우회한다(목표가 벽 너머여도 돌아간다). ---
+  desired = avoidWalls(world, e.x, e.y, desired, canSwim);
+
   // --- 관성: 현재 속도를 desired 로 부드럽게 (홱 꺾임/제자리 떨림 제거) ---
   e.vx += (desired.x - e.vx) * turn;
   e.vy += (desired.y - e.vy) * turn;
@@ -254,6 +258,35 @@ function chooseGoal(
   }
   return null;
 }
+
+/**
+ * 가려는 방향(desired) 앞이 막혔으면, 목표에 가장 가까운(작은 회피각) 통행 가능 방향으로 desired 를
+ * 회전시킨다. 좌우로 번갈아 각을 벌려가며 한 타일 앞이 트인 첫 방향을 고른다 — 벽에 정면으로 박혀
+ * 멈추는 대신 벽을 따라 우회하게 한다(목표가 벽 너머여도 돌아간다). 속도 크기(speed)는 보존.
+ * 목표 추적·배회·도망 desired 모두에 적용되므로 "막히면 못 돌아간다"를 근본적으로 푼다.
+ */
+function avoidWalls(world: World, x: number, y: number, desired: Vec, canSwim: boolean): Vec {
+  const speed = Math.hypot(desired.x, desired.y);
+  if (speed < 1e-6) return desired;
+  const probe = world.terrain.cellSize; // 한 타일 앞을 보고 미리 우회
+  const base = Math.atan2(desired.y, desired.x);
+  if (world.terrain.isPassable(x + Math.cos(base) * probe, y + Math.sin(base) * probe, canSwim)) {
+    return desired; // 앞이 트였으면 그대로
+  }
+  for (const off of WALL_AVOID_OFFSETS) {
+    const a = base + off;
+    if (world.terrain.isPassable(x + Math.cos(a) * probe, y + Math.sin(a) * probe, canSwim)) {
+      return { x: Math.cos(a) * speed, y: Math.sin(a) * speed };
+    }
+  }
+  return desired; // 사방이 막힌 극단(거의 없음) — axis sliding + 배회가 결국 빼낸다
+}
+
+// 회피 탐색 각(라디안). 0.35rad(~20°)씩 좌우 번갈아 점점 크게 — 가장 작은 우회각을 먼저 고른다.
+const WALL_AVOID_OFFSETS: readonly number[] = [
+  0.35, -0.35, 0.7, -0.7, 1.05, -1.05, 1.4, -1.4,
+  1.75, -1.75, 2.1, -2.1, 2.45, -2.45, 2.8, -2.8,
+];
 
 /** 목표가 없을 때: 보존된 헤딩을 조금씩 흔들며 순항(멈추지 않고 부드럽게 떠돈다). */
 function wanderDesired(e: Entity, world: World, maxSpeed: number): Vec {
