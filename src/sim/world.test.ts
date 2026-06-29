@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { World } from "@/sim/world";
 import { SIM } from "@/sim/params";
+import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
@@ -204,6 +205,32 @@ describe("종 다양성", () => {
     const alive = new Set<number>();
     for (const e of w.entities) alive.add(e.species.id);
     expect(alive.size).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe("지형 이동 차단 (P1 결합)", () => {
+  it("비수영 종은 물·산 타일에 들어가지 못한다", () => {
+    // 야생/내 종 모두 기본 수영 0.5 < 0.65 → 물에 못 들어가고, 산은 누구도 못 넘는다.
+    const w = new World("env-1", W, H, defaultGenome());
+    let violations = 0;
+    for (let i = 0; i < 1500; i++) {
+      w.step();
+      for (const e of w.entities) {
+        const k = w.terrain.kindAt(e.x, e.y);
+        const canSwim = e.genome.traits.swimming >= SIM.swimThreshold;
+        if (k === TILE.mountain) violations += 1;
+        else if (k === TILE.water && !canSwim) violations += 1;
+      }
+    }
+    expect(violations).toBe(0);
+  });
+
+  it("막힌 지형이 있어도 멸종하지 않는다(통행 가능한 육지에서 생존)", () => {
+    for (const seed of ["env-1", "s2", "s3"]) {
+      const w = new World(seed, W, H, defaultGenome());
+      for (let i = 0; i < 1500; i++) w.step();
+      expect(w.population).toBeGreaterThan(0);
+    }
   });
 });
 

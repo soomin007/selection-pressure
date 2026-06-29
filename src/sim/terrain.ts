@@ -104,6 +104,63 @@ export class Terrain {
   isMountain(x: number, y: number): boolean {
     return this.kindAt(x, y) === TILE.mountain;
   }
+
+  /**
+   * 이 좌표를 (canSwim 인 종이) 지나갈 수 있는가.
+   * 산은 누구도 못 넘고, 물은 수영 형질이 충분한 종(canSwim)만 들어간다. 육지는 모두 통행.
+   * rng 미사용 → 결정론. (이동 차단·스폰 스냅에 함께 쓴다.)
+   */
+  isPassable(x: number, y: number, canSwim: boolean): boolean {
+    const k = this.kindAt(x, y);
+    if (k === TILE.mountain) return false;
+    if (k === TILE.water) return canSwim;
+    return true;
+  }
+
+  private passableTile(cx: number, cy: number, canSwim: boolean): boolean {
+    const k = this.tiles[cy * this.cols + cx] ?? TILE.land;
+    if (k === TILE.mountain) return false;
+    if (k === TILE.water) return canSwim;
+    return true;
+  }
+
+  /**
+   * (x,y) 가 막힌 타일이면 가장 가까운 통행 가능 타일의 중심을 돌려준다(통행 가능하면 그대로).
+   * 스폰(초기/이주/번식)이 물·산 한가운데 떨어져 갇히는 것을 막는다. **rng 미사용 = 결정론·밸런스 무관**
+   * — 위치만 살짝 옮길 뿐 무작위 스트림을 안 건드린다(스폰 rng 소비 횟수 보존이 밸런스 보존의 열쇠).
+   */
+  nearestPassable(x: number, y: number, canSwim: boolean): { x: number; y: number } {
+    if (this.isPassable(x, y, canSwim)) return { x, y };
+    const cs = this.cellSize;
+    const sx = clampIndex(Math.floor(x / cs), this.cols);
+    const sy = clampIndex(Math.floor(y / cs), this.rows);
+    const maxR = Math.max(this.cols, this.rows);
+    for (let r = 1; r <= maxR; r++) {
+      let bestX = -1;
+      let bestY = -1;
+      let bestD2 = Infinity;
+      // 반경 r 의 정사각 링만 검사(안쪽은 이미 본 거리).
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const cx = sx + dx;
+          const cy = sy + dy;
+          if (cx < 0 || cx >= this.cols || cy < 0 || cy >= this.rows) continue;
+          if (!this.passableTile(cx, cy, canSwim)) continue;
+          const px = (cx + 0.5) * cs;
+          const py = (cy + 0.5) * cs;
+          const d2 = (px - x) * (px - x) + (py - y) * (py - y);
+          if (d2 < bestD2) {
+            bestD2 = d2;
+            bestX = px;
+            bestY = py;
+          }
+        }
+      }
+      if (bestX >= 0) return { x: bestX, y: bestY };
+    }
+    return { x, y }; // 통행 가능 타일이 하나도 없을 때(실제론 육지가 항상 있어 도달 안 함)
+  }
 }
 
 function clampIndex(i: number, n: number): number {

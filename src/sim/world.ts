@@ -237,16 +237,13 @@ export class World {
     for (const sp of this.species) {
       if (sp.isPlayer) continue;
       if ((counts.get(sp.id) ?? 0) >= SIM.immigrationFloor) continue;
+      const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
       for (let k = 0; k < SIM.immigrationBatch; k++) {
-        this.entities.push(
-          createEntity(
-            this.nextId(),
-            this.rng.range(0, this.width),
-            this.rng.range(0, this.height),
-            sp,
-            SIM.startEnergy,
-          ),
-        );
+        // rng 소비 순서(width→height)를 보존한 뒤 막힌 타일이면 통행 타일로 스냅(스냅은 rng 미사용).
+        const ix = this.rng.range(0, this.width);
+        const iy = this.rng.range(0, this.height);
+        const spot = this.terrain.nearestPassable(ix, iy, canSwim);
+        this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }
   }
@@ -259,10 +256,13 @@ export class World {
       const homeY = this.rng.range(0.14, 0.86) * this.height;
       // 야생종은 좁은 영역에 모여 태어나(영역화 → 공존), 내 종(주인공)은 맵 전체에 얇게 퍼진다.
       const spread = sp.isPlayer ? Math.max(this.width, this.height) : 72;
+      const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
       for (let i = 0; i < sp.initialCount; i++) {
         const x = Math.max(0, Math.min(this.width, homeX + this.rng.range(-spread, spread)));
         const y = Math.max(0, Math.min(this.height, homeY + this.rng.range(-spread, spread)));
-        this.entities.push(createEntity(this.nextId(), x, y, sp, SIM.startEnergy));
+        // 막힌 타일에 떨어지면 통행 타일로 스냅(rng 미사용 → 스폰 rng 소비 보존 = 밸런스 보존).
+        const spot = this.terrain.nearestPassable(x, y, canSwim);
+        this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }
   }

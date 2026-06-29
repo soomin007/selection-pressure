@@ -28,6 +28,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 식성 구간: 초식(<0.35) 식물만 / 잡식(0.35~0.7) 둘 다 / 육식(>0.7) 사냥만.
   const canHunt = t.diet > SIM.dietHuntMin;
   const canGraze = t.diet < SIM.dietGrazeMax;
+  // 수영 종만 물에 들어갈 수 있다(산은 누구도 못 넘는다) — 이동 차단·번식 스폰에 함께 쓴다.
+  const canSwim = t.swimming >= SIM.swimThreshold;
 
   // 무리 이웃(3×3 칸) — cohesion(이동)과 huddle(보온)에 함께 쓴다.
   const nb = t.herding > 0.01 ? world.grid.neighborhood(e.x, e.y) : null;
@@ -75,9 +77,15 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   e.vx += (desired.x - e.vx) * turn;
   e.vy += (desired.y - e.vy) * turn;
 
-  // --- 위치 갱신 + 벽 반사 ---
-  e.x += e.vx;
-  e.y += e.vy;
+  // --- 위치 갱신: 지형 차단(축 분리) → 월드 경계 반사 ---
+  // 다음 위치가 막힌 타일(산 / 수영 못 하면 물)이면 그 축 이동만 취소해 벽을 따라 미끄러진다
+  // (완전 반사보다 스티킹·떨림이 적다). maxSpeed < 타일폭이라 한 틱에 타일을 건너뛰지 않는다.
+  const nx = e.x + e.vx;
+  const ny = e.y + e.vy;
+  if (world.terrain.isPassable(nx, e.y, canSwim)) e.x = nx;
+  else e.vx = 0;
+  if (world.terrain.isPassable(e.x, ny, canSwim)) e.y = ny;
+  else e.vy = 0;
   if (e.x < 0) {
     e.x = 0;
     e.vx = -e.vx;
@@ -162,8 +170,10 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     e.energy -= childEnergy;
     const cx = e.x + world.rng.range(-6, 6);
     const cy = e.y + world.rng.range(-6, 6);
-    newborns.push(createEntity(world.nextId(), cx, cy, e.species, childEnergy));
-    world.emit("birth", cx, cy); // 연출: 탄생(초록 반짝)
+    // 막힌 타일에 태어나면 갇히므로 가장 가까운 통행 타일로 스냅(rng 미사용 → 결정론·밸런스 보존).
+    const spot = world.terrain.nearestPassable(cx, cy, canSwim);
+    newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, childEnergy));
+    world.emit("birth", spot.x, spot.y); // 연출: 탄생(초록 반짝)
   }
 }
 
