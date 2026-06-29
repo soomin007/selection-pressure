@@ -129,6 +129,114 @@ export class Terrain {
    * 스폰(초기/이주/번식)이 물·산 한가운데 떨어져 갇히는 것을 막는다. **rng 미사용 = 결정론·밸런스 무관**
    * — 위치만 살짝 옮길 뿐 무작위 스트림을 안 건드린다(스폰 rng 소비 횟수 보존이 밸런스 보존의 열쇠).
    */
+  /** 좌표가 속한 타일 인덱스(경계 밖은 클램프). 경로 추종에서 목표 타일 식별·웨이포인트 변환에 쓴다. */
+  tileIndex(x: number, y: number): number {
+    return this.indexAt(x, y);
+  }
+
+  tileCenterX(idx: number): number {
+    return ((idx % this.cols) + 0.5) * this.cellSize;
+  }
+
+  tileCenterY(idx: number): number {
+    return (Math.floor(idx / this.cols) + 0.5) * this.cellSize;
+  }
+
+  private passableIndex(idx: number, canSwim: boolean): boolean {
+    const k = this.tiles[idx] ?? TILE.land;
+    if (k === TILE.mountain) return false;
+    if (k === TILE.water) return canSwim;
+    return true;
+  }
+
+  /**
+   * (x0,y0)→(x1,y1) 직선이 지나는 타일에 (canSwim 기준) 막힌 칸이 없으면 true. Bresenham 격자 순회.
+   * 길찾기의 1차 판정 — 목표가 직선으로 보이면 BFS 없이 바로 직진한다(대부분의 경우, 가볍다).
+   */
+  lineOfSight(x0: number, y0: number, x1: number, y1: number, canSwim: boolean): boolean {
+    let cx = clampIndex(Math.floor(x0 / this.cellSize), this.cols);
+    let cy = clampIndex(Math.floor(y0 / this.cellSize), this.rows);
+    const ex = clampIndex(Math.floor(x1 / this.cellSize), this.cols);
+    const ey = clampIndex(Math.floor(y1 / this.cellSize), this.rows);
+    const dx = Math.abs(ex - cx);
+    const dy = Math.abs(ey - cy);
+    const sx = cx < ex ? 1 : -1;
+    const sy = cy < ey ? 1 : -1;
+    let err = dx - dy;
+    // 무한 루프 방지(격자 크기로 상한). 정상 경로는 dx+dy 안에 끝난다.
+    for (let guard = 0; guard <= dx + dy + 1; guard++) {
+      if (!this.passableIndex(cy * this.cols + cx, canSwim)) return false;
+      if (cx === ex && cy === ey) return true;
+      const e2 = 2 * err;
+      if (e2 > -dy) {
+        err -= dy;
+        cx += sx;
+      }
+      if (e2 < dx) {
+        err += dx;
+        cy += sy;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * start 타일 → goal 타일까지 통행 가능한 4방향 최단 경로(BFS)를 타일 인덱스 배열로 돌려준다
+   * (start 다음 칸부터 goal 까지). 경로가 없으면 빈 배열. rng 미사용 → 결정론(이웃 순회 순서 고정).
+   * 직선이 막혔을 때만 호출되고 목표 타일이 바뀔 때만 재계산되므로(behavior 가 캐시) 빈도가 낮다.
+   */
+  findPath(x0: number, y0: number, x1: number, y1: number, canSwim: boolean): number[] {
+    const n = this.cols * this.rows;
+    const start = this.indexAt(x0, y0);
+    const goal = this.indexAt(x1, y1);
+    if (start === goal) return [];
+    if (!this.passableIndex(goal, canSwim)) return []; // 목표 칸이 막힘(보통 먹이는 통행 칸)
+    const prev = new Int32Array(n).fill(-1);
+    const seen = new Uint8Array(n);
+    const queue: number[] = [start];
+    seen[start] = 1;
+    let head = 0;
+    let reached = false;
+    while (head < queue.length) {
+      const cur = queue[head++] ?? 0;
+      if (cur === goal) {
+        reached = true;
+        break;
+      }
+      const cx = cur % this.cols;
+      const cy = (cur - cx) / this.cols;
+      // 4방향(상하좌우). 순서 고정 → 결정론.
+      if (cx + 1 < this.cols) this.visit(cur + 1, cur, canSwim, seen, prev, queue);
+      if (cx - 1 >= 0) this.visit(cur - 1, cur, canSwim, seen, prev, queue);
+      if (cy + 1 < this.rows) this.visit(cur + this.cols, cur, canSwim, seen, prev, queue);
+      if (cy - 1 >= 0) this.visit(cur - this.cols, cur, canSwim, seen, prev, queue);
+    }
+    if (!reached) return [];
+    // goal → start 역추적 후 뒤집어 start 다음..goal 순서로.
+    const path: number[] = [];
+    let c = goal;
+    while (c !== start && c !== -1) {
+      path.push(c);
+      c = prev[c] ?? -1;
+    }
+    path.reverse();
+    return path;
+  }
+
+  private visit(
+    next: number,
+    cur: number,
+    canSwim: boolean,
+    seen: Uint8Array,
+    prev: Int32Array,
+    queue: number[],
+  ): void {
+    if (seen[next] || !this.passableIndex(next, canSwim)) return;
+    seen[next] = 1;
+    prev[next] = cur;
+    queue.push(next);
+  }
+
   nearestPassable(x: number, y: number, canSwim: boolean): { x: number; y: number } {
     if (this.isPassable(x, y, canSwim)) return { x, y };
     const cs = this.cellSize;

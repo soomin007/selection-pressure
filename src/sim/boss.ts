@@ -86,7 +86,7 @@ const PRESETS: Record<BossType, Preset> = {
     visionFlee: 0,
     auraRadius: 230,
     globalKillRate: 0,
-    globalDrain: 0.3, // ×(0.3+metabolism): 대사 높을수록 더 빨림 (건강한 무리는 카운터 없이도 버티게)
+    globalDrain: 0.5, // ×(0.3+metabolism): 대사 높을수록 더 빨림. 길찾기로 채집·개체수↑ 만큼 압박도 키워 저대사 우위를 드러냄(0.3→0.5, 프로브: 저대사15통과·기본5탈락)
     cullAttackResist: 0,
     cullGroupResist: 0,
     cullVisionResist: 0,

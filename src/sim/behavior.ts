@@ -46,12 +46,15 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   } else {
     const goal = chooseGoal(e, world, vision, canHunt, canGraze);
     if (goal) {
-      // 먹이/먹잇감 모두 도착 감속(arrive) — 가까울수록 속도를 줄여 목표를 지나쳐 되돌아가는
-      // 오버슈트(와리가리)를 없앤다. 사냥은 표적이 움직이므로 더 짧은 반경(공격 사거리 부근에서만
-      // 감속)이라 추격력은 보존된다.
-      const r = e.targetPrey !== null ? SIM.huntArriveRadius : SIM.arriveRadius;
-      desired = toward(goal.x - e.x, goal.y - e.y, maxSpeed, r);
+      // 지형 길찾기: 목표가 직선으로 보이면 직진, 막혀 있으면 격자 BFS 경로를 따라 우회한다.
+      const nav = navTo(e, world, goal, canSwim);
+      // 최종 목표가 직선으로 보일 때만 도착 감속(arrive) — 가까울수록 줄여 오버슈트(와리가리)를 없앤다.
+      // 사냥은 표적이 움직이므로 더 짧게(추격력 보존). 경유 웨이포인트는 감속 없이 전속 통과.
+      const r = nav.final ? (e.targetPrey !== null ? SIM.huntArriveRadius : SIM.arriveRadius) : 0;
+      desired = toward(nav.x - e.x, nav.y - e.y, maxSpeed, r);
     } else {
+      e.path.length = 0; // 목표가 없으면 경로 버림(배회로 전환)
+      e.pathGoalTile = -1;
       desired = wanderDesired(e, world, maxSpeed);
     }
     // 무리 cohesion: 무리에서 충분히 벗어났을 때만 무게중심으로 끌어당긴다.
@@ -61,7 +64,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       const hdx = nb.comX - e.x;
       const hdy = nb.comY - e.y;
       const hd = Math.hypot(hdx, hdy);
-      if (hd > SIM.herdComfortRadius) {
+      // 무게중심이 벽 너머(직선으로 안 보임)면 cohesion 을 끈다 — 못 가는 무리를 쫓아 벽에 정지하지
+      // 않게(길찾기는 먹이 목표에만 적용되므로 cohesion 발 끼임은 여기서 막는다).
+      if (hd > SIM.herdComfortRadius && world.terrain.lineOfSight(e.x, e.y, nb.comX, nb.comY, canSwim)) {
         const pull = Math.min(1, (hd - SIM.herdComfortRadius) / SIM.herdComfortRamp);
         const w = SIM.herdCohesion * t.herding * pull;
         const herd = scaleTo(hdx, hdy, maxSpeed);
@@ -72,10 +77,6 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       }
     }
   }
-
-  // --- 벽 회피: 가려는 방향 앞이 막혔으면 목표에 가장 가까운 통행 가능 방향으로 desired 를 돌린다.
-  // 벽에 정면으로 박혀 멈추는 대신 벽을 따라 비스듬히 흐르며 우회한다(목표가 벽 너머여도 돌아간다). ---
-  desired = avoidWalls(world, e.x, e.y, desired, canSwim);
 
   // --- 관성: 현재 속도를 desired 로 부드럽게 (홱 꺾임/제자리 떨림 제거) ---
   e.vx += (desired.x - e.vx) * turn;
@@ -260,33 +261,52 @@ function chooseGoal(
 }
 
 /**
- * 가려는 방향(desired) 앞이 막혔으면, 목표에 가장 가까운(작은 회피각) 통행 가능 방향으로 desired 를
- * 회전시킨다. 좌우로 번갈아 각을 벌려가며 한 타일 앞이 트인 첫 방향을 고른다 — 벽에 정면으로 박혀
- * 멈추는 대신 벽을 따라 우회하게 한다(목표가 벽 너머여도 돌아간다). 속도 크기(speed)는 보존.
- * 목표 추적·배회·도망 desired 모두에 적용되므로 "막히면 못 돌아간다"를 근본적으로 푼다.
+ * 목표(goal)로 향하는 다음 지점을 돌려준다(+ 그것이 최종 목표인지 final).
+ *  1) 목표가 직선으로 보이면 그대로 직진(final=true) — 대부분의 경우, BFS 없이 가볍다.
+ *  2) 막혀 있으면 격자 BFS 경로(캐시)를 따라 다음 웨이포인트로 향한다(final=false, 경유라 감속 안 함).
+ *  3) 다음 웨이포인트가 보이면 현재 것을 건너뛰어(funnel) 계단형 경로를 부드럽게 단축한다.
+ * 반응형 회피(avoidWalls)의 좌우 진동·local minima 없이 "막히면 못 돌아간다"를 근본 해결한다.
  */
-function avoidWalls(world: World, x: number, y: number, desired: Vec, canSwim: boolean): Vec {
-  const speed = Math.hypot(desired.x, desired.y);
-  if (speed < 1e-6) return desired;
-  const probe = world.terrain.cellSize; // 한 타일 앞을 보고 미리 우회
-  const base = Math.atan2(desired.y, desired.x);
-  if (world.terrain.isPassable(x + Math.cos(base) * probe, y + Math.sin(base) * probe, canSwim)) {
-    return desired; // 앞이 트였으면 그대로
-  }
-  for (const off of WALL_AVOID_OFFSETS) {
-    const a = base + off;
-    if (world.terrain.isPassable(x + Math.cos(a) * probe, y + Math.sin(a) * probe, canSwim)) {
-      return { x: Math.cos(a) * speed, y: Math.sin(a) * speed };
+function navTo(
+  e: Entity,
+  world: World,
+  goal: Vec,
+  canSwim: boolean,
+): { x: number; y: number; final: boolean } {
+  const terr = world.terrain;
+  // 1) 직선으로 보이면 직진 — 경로 버림.
+  if (terr.lineOfSight(e.x, e.y, goal.x, goal.y, canSwim)) {
+    if (e.path.length > 0) {
+      e.path.length = 0;
+      e.pathGoalTile = -1;
     }
+    return { x: goal.x, y: goal.y, final: true };
   }
-  return desired; // 사방이 막힌 극단(거의 없음) — axis sliding + 배회가 결국 빼낸다
+  // 2) 막힘 — 목표 타일이 바뀌었거나 경로가 없으면 BFS 재계산(그 외엔 캐시 재사용).
+  const goalTile = terr.tileIndex(goal.x, goal.y);
+  if (e.pathGoalTile !== goalTile || e.path.length === 0) {
+    e.path = terr.findPath(e.x, e.y, goal.x, goal.y, canSwim);
+    e.pathGoalTile = goalTile;
+  }
+  // 3) 경로 단축(funnel): 다음 웨이포인트가 보이면 현재 것을 건너뛴다.
+  while (e.path.length >= 2) {
+    const w1 = e.path[1] as number;
+    if (terr.lineOfSight(e.x, e.y, terr.tileCenterX(w1), terr.tileCenterY(w1), canSwim)) e.path.shift();
+    else break;
+  }
+  // 4) 현재 웨이포인트에 충분히 닿으면 소비.
+  if (e.path.length > 0) {
+    const w0 = e.path[0] as number;
+    const wx = terr.tileCenterX(w0);
+    const wy = terr.tileCenterY(w0);
+    const reach = terr.cellSize * 0.6;
+    if ((e.x - wx) ** 2 + (e.y - wy) ** 2 < reach * reach) e.path.shift();
+  }
+  // 경로 소진/못 찾음 → 목표로 직진 시도(axis sliding 이 막아주니 갇히진 않는다).
+  if (e.path.length === 0) return { x: goal.x, y: goal.y, final: true };
+  const w = e.path[0] as number;
+  return { x: terr.tileCenterX(w), y: terr.tileCenterY(w), final: false };
 }
-
-// 회피 탐색 각(라디안). 0.35rad(~20°)씩 좌우 번갈아 점점 크게 — 가장 작은 우회각을 먼저 고른다.
-const WALL_AVOID_OFFSETS: readonly number[] = [
-  0.35, -0.35, 0.7, -0.7, 1.05, -1.05, 1.4, -1.4,
-  1.75, -1.75, 2.1, -2.1, 2.45, -2.45, 2.8, -2.8,
-];
 
 /** 목표가 없을 때: 보존된 헤딩을 조금씩 흔들며 순항(멈추지 않고 부드럽게 떠돈다). */
 function wanderDesired(e: Entity, world: World, maxSpeed: number): Vec {

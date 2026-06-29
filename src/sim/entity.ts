@@ -24,6 +24,11 @@ export interface Entity {
   // 배회(wander) 헤딩 (런타임, 직렬화 안 함). 매 틱 방향을 새로 추첨하면 제자리 떨림이 되므로,
   // 헤딩을 개체에 보존하고 조금씩만 흔들어 부드럽게 떠돈다.
   wanderAngle: number;
+  // 지형 경로 추종 (런타임, 직렬화 안 함). 목표가 직선으로 안 보일 때만 격자 BFS 경로를 따라간다.
+  // path = 남은 웨이포인트 타일 인덱스(앞에서부터 소비). pathGoalTile = 이 경로의 목표 타일(-1=없음,
+  // 목표 타일이 바뀌면 재계산). 직선으로 보이면 경로를 버리고 직진하므로 대부분 비어 있다.
+  path: number[];
+  pathGoalTile: number;
 }
 
 export function createEntity(
@@ -50,5 +55,7 @@ export function createEntity(
     targetPrey: null,
     // 초기 헤딩을 id 로 결정론적으로 분산(같은 시드면 동일). 처음 배회 때 방향이 한쪽으로 쏠리지 않게.
     wanderAngle: ((id % 360) * Math.PI) / 180,
+    path: [],
+    pathGoalTile: -1,
   };
 }

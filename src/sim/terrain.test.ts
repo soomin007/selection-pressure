@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Rng } from "@/sim/rng";
-import { Terrain, TILE } from "@/sim/terrain";
+import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 
 const W = 540;
 const H = 960;
@@ -82,5 +82,37 @@ describe("지형 통행(이동 차단)", () => {
     const [mx, my] = tileCenter(t, t.tiles.findIndex((k) => k === TILE.mountain));
     const snapped = t.nearestPassable(mx, my, false);
     expect(t.isPassable(snapped.x, snapped.y, false)).toBe(true);
+  });
+});
+
+describe("길찾기(lineOfSight / findPath)", () => {
+  // 합성 지형으로 결정론 검증. cellSize 20, 타일 중심 = (col+0.5)·20, (row+0.5)·20.
+  const L = TILE.land;
+  const M = TILE.mountain;
+  const elev = (n: number): number[] => new Array<number>(n).fill(0.5);
+
+  it("lineOfSight: 같은 칸·트인 직선은 true, 막힌 칸을 가로지르면 false", () => {
+    // 3×1: [육지, 산, 육지]. 중심 x = 10 / 30 / 50, y = 10.
+    const t = new Terrain(3, 1, 20, elev(3), [L, M, L] as TileKind[]);
+    expect(t.lineOfSight(10, 10, 10, 10, false)).toBe(true); // 같은 칸
+    expect(t.lineOfSight(10, 10, 30, 10, false)).toBe(false); // 산 칸으로 들어감
+    expect(t.lineOfSight(10, 10, 50, 10, false)).toBe(false); // 산을 가로질러 건너편으로
+  });
+
+  it("findPath: 막힌 직선을 우회하는 경로를 찾고, 막힌 칸을 지나지 않는다", () => {
+    // 3×2 (cols=3): 윗줄 [육지, 산, 육지] / 아랫줄 [육지, 육지, 육지].
+    // idx: 0 1 2 / 3 4 5. (0,0)→(2,0) 직선은 산(idx1)에 막혀 아랫줄로 우회해야 한다.
+    const tiles = [L, M, L, L, L, L] as TileKind[];
+    const t = new Terrain(3, 2, 20, elev(6), tiles);
+    const path = t.findPath(10, 10, 50, 10, false); // idx0 중심 → idx2 중심
+    expect(path.length).toBeGreaterThan(0); // 경로 존재
+    expect(path[path.length - 1]).toBe(2); // 끝은 목표 칸
+    expect(path).not.toContain(1); // 산 칸은 지나지 않음
+  });
+
+  it("findPath: 도달 불가(완전히 막힘)면 빈 배열", () => {
+    // 3×1: [육지, 산, 육지]. 우회로가 없어 건너편 육지에 못 간다.
+    const t = new Terrain(3, 1, 20, elev(3), [L, M, L] as TileKind[]);
+    expect(t.findPath(10, 10, 50, 10, false)).toEqual([]);
   });
 });
