@@ -84,6 +84,16 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
     foodKinds: [],
     traits: { diet: 0.85, fertility: 0.3, speed: 0.66, vision: 0.6, metabolism: 0.5, attack: 0.7, herding: 0.4 },
   },
+  {
+    // 바다 풀뜯이 — 수영 형질로 바다 먹이(무경쟁 틈새)를 전문으로 먹는다. 육지 식물(foodKinds=[])은
+    // 안 먹어 다른 초식종과 경쟁하지 않고, 바다라는 별도 무대에서 산다(이동 차단으로 비수영 종이 못
+    // 따라오는 피난처). 플레이어가 수영을 찍으면 그제야 이 바다 자원을 두고 경쟁이 시작된다.
+    name: "바다 풀뜯이",
+    color: 0xff7eb0, // 청록 바다 배경 위에서 잘 보이게 보색(밝은 산호 분홍) — 기존 종색과도 구분
+    initialCount: 10,
+    foodKinds: [],
+    traits: { diet: 0.18, fertility: 0.55, speed: 0.5, vision: 0.5, metabolism: 0.42, attack: 0.2, herding: 0.45, swimming: 0.75 },
+  },
 ];
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);

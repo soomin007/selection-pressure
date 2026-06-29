@@ -184,9 +184,9 @@ describe("Phase 6 — 사망 원인 집계", () => {
 });
 
 describe("종 다양성", () => {
-  it("내 종 + 야생 6종 = 7종으로 시작한다", () => {
+  it("내 종 + 야생 7종 = 8종으로 시작한다", () => {
     const w = new World("env-1", W, H, defaultGenome());
-    expect(w.species.length).toBe(7);
+    expect(w.species.length).toBe(8);
     expect(w.species.filter((s) => s.isPlayer).length).toBe(1);
   });
 
