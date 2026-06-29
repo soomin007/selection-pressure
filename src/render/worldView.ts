@@ -135,6 +135,9 @@ export class WorldView {
       if (!sp) {
         sp = new Sprite();
         sp.anchor.set(0.5);
+        // 서브픽셀 떨림 차단: 스프라이트를 정수 픽셀에 스냅. 위치 평활(어떤 세기든)으로도 안 잡히던
+        // 떨림은 진폭이 아니라 sub-pixel 안티앨리어싱 깜빡임이라, 그건 roundPixels 만이 없앤다.
+        sp.roundPixels = true;
         this.creatureLayer.addChild(sp);
         this.pool.push(sp);
       }
