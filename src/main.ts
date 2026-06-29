@@ -130,7 +130,7 @@ async function boot(): Promise<void> {
     result.show(res === "win", summary);
   };
   game.onWorldChanged = (world) => {
-    view.drawEnvironment(world.environment);
+    view.drawEnvironment(world);
     view.refreshSpecies(world);
     hud.reset();
     effects.clear();

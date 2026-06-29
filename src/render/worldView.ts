@@ -5,7 +5,7 @@
 
 import { Container, Graphics, Sprite, Texture, type Renderer } from "pixi.js";
 import type { World } from "@/sim/world";
-import type { Environment } from "@/sim/environment";
+import { TILE, type TileKind } from "@/sim/terrain";
 import type { Genome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 import { DEBUG, TUNE } from "@/debug";
@@ -60,22 +60,22 @@ export class WorldView {
     }
   }
 
-  /** 런이 바뀔 때 한 번 — 환경 배경. */
-  drawEnvironment(env: Environment): void {
+  /** 런이 바뀔 때 한 번 — 지형 풍경(바다/육지/산)을 그린다. 표고로 음영, 환경(추위/비옥도)으로 색조. */
+  drawEnvironment(world: World): void {
+    const terr = world.terrain;
+    const env = world.environment;
+    const cs = terr.cellSize;
     this.envG.clear();
-    for (let cy = 0; cy < env.rows; cy++) {
-      for (let cx = 0; cx < env.cols; cx++) {
-        const i = cy * env.cols + cx;
-        const cold = env.coldness[i] ?? 0;
-        const fert = env.fertility[i] ?? 0;
-        const warm = 1 - cold;
-        const lift = 0.5 + 0.75 * fert;
-        const r = clamp255((warm * 150 + cold * 28) * lift);
-        const g = clamp255((warm * 82 + cold * 78) * lift);
-        const b = clamp255((warm * 44 + cold * 156) * lift);
+    for (let cy = 0; cy < terr.rows; cy++) {
+      for (let cx = 0; cx < terr.cols; cx++) {
+        const i = cy * terr.cols + cx;
+        const kind = terr.tiles[i] ?? TILE.land;
+        const elev = terr.elevation[i] ?? 0.5;
+        // 이 타일 중심의 환경(추위/비옥도)을 샘플 — 육지 색조·산 눈에 반영.
+        const s = env.sampleAt((cx + 0.5) * cs, (cy + 0.5) * cs);
         this.envG
-          .rect(cx * env.cellSize, cy * env.cellSize, env.cellSize, env.cellSize)
-          .fill({ color: (r << 16) | (g << 8) | b, alpha: 1 });
+          .rect(cx * cs, cy * cs, cs, cs)
+          .fill({ color: terrainColor(kind, elev, s.coldness, s.fertility), alpha: 1 });
       }
     }
   }
@@ -268,6 +268,46 @@ const ROTATE_MIN_STEP = 0.35;
 function clamp255(v: number): number {
   const n = Math.round(v);
   return n < 0 ? 0 : n > 255 ? 255 : n;
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+// 지형 색 팔레트(RGB). 바다=깊이별 남색→청록, 산=암석→눈, 육지=비옥도별 황갈→초록(추우면 차갑게).
+type RGB = readonly [number, number, number];
+const WATER_DEEP: RGB = [16, 38, 72];
+const WATER_SHALLOW: RGB = [46, 112, 150];
+const ROCK: RGB = [86, 82, 94];
+const SNOW: RGB = [206, 212, 222];
+const LAND_BARREN: RGB = [122, 106, 64];
+const LAND_LUSH: RGB = [54, 110, 50];
+const LAND_COOL: RGB = [78, 96, 92];
+// 렌더 음영용 표고 밴드(terrain 의 기본 분류 경계와 맞춤 — 시각 전용이라 근사면 충분).
+const WATER_BAND = 0.32;
+const MOUNTAIN_BAND = 0.76;
+
+function mix(a: RGB, b: RGB, t: number): RGB {
+  const k = clamp01(t);
+  return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+}
+
+function pack(c: RGB): number {
+  return (clamp255(c[0]) << 16) | (clamp255(c[1]) << 8) | clamp255(c[2]);
+}
+
+function terrainColor(kind: TileKind, elev: number, cold: number, fert: number): number {
+  if (kind === TILE.water) {
+    // 표고가 낮을수록(깊을수록) 어두운 남색, 해안에 가까울수록 청록.
+    return pack(mix(WATER_DEEP, WATER_SHALLOW, elev / WATER_BAND));
+  }
+  if (kind === TILE.mountain) {
+    // 높을수록·추울수록 눈으로.
+    const t = (elev - MOUNTAIN_BAND) / (1 - MOUNTAIN_BAND);
+    return pack(mix(ROCK, SNOW, t * 0.7 + cold * 0.5));
+  }
+  // 육지 — 비옥하면 초록, 척박하면 황갈. 추운 땅은 차갑게.
+  return pack(mix(mix(LAND_BARREN, LAND_LUSH, fert), LAND_COOL, cold * 0.35));
 }
 
 function clampRange(v: number, lo: number, hi: number): number {

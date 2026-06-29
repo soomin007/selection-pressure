@@ -28,6 +28,8 @@ export const SIM = {
 
   // --- 환경 (Phase 3) ---
   cellSize: 60, // 환경 격자 한 칸 픽셀 (540×960 → 9×16칸)
+  terrainCellSize: 20, // 지형 타일 한 칸 픽셀 (환경보다 곱게 — 540×960 → 27×48칸). 시각 전용(현재)
+
   coldPenalty: 0.3, // 추운 칸 추가 소모 (틱당, ×coldness×(1-metabolism)) — 추운 맵=고대사 유리
   globalColdLethality: 1.7, // 대멸종 한파(globalCold)는 평상시 추위보다 이만큼 더 매섭다(클라이맥스 필터)
   plagueFertilityResist: 0.9, // 대역병 솎임을 번식력으로 저항: rate ×= 1 - this×fertility (번식력 카운터)

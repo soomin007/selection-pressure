@@ -9,6 +9,7 @@ import type { Genome } from "@/sim/genome";
 import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
 import { Environment } from "@/sim/environment";
+import { Terrain } from "@/sim/terrain";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { makePlayerSpecies, generateWildSpecies, type Species } from "@/sim/species";
 import { stepEntity } from "@/sim/behavior";
@@ -40,6 +41,8 @@ export class World {
   readonly playerSpecies: Species;
   readonly species: Species[];
   readonly environment: Environment;
+  /** 지형(바다/육지/산). 현재는 시각 전용 — 이동/먹이/시야 결합은 다음 슬라이스(독립 rng 라 sim 동역학 무관). */
+  readonly terrain: Terrain;
   readonly grid: SpatialGrid;
 
   entities: Entity[] = [];
@@ -67,6 +70,13 @@ export class World {
     this.rng = new Rng(seed);
     this.genome = genome;
     this.environment = Environment.generate(this.rng, width, height, SIM.cellSize);
+    // 지형은 메인 rng 와 "독립된 rng"로 생성 → 기존 sim 동역학(결정론·밸런스)을 1비트도 안 건드린다.
+    this.terrain = Terrain.generate(
+      new Rng(String(seed) + "-terrain"),
+      width,
+      height,
+      SIM.terrainCellSize,
+    );
     this.grid = new SpatialGrid(width, height, SIM.gridCellSize);
     this.playerSpecies = makePlayerSpecies(genome, SIM.initialEntities);
     this.species = [this.playerSpecies, ...generateWildSpecies(this.rng)];
