@@ -23,6 +23,7 @@ export class WorldView {
   private readonly pool: Sprite[] = [];
   private readonly speciesTex = new Map<number, Texture>();
   private readonly angle = new Map<number, number>(); // 개체별 부드러운 회전각(스냅 떨림 제거)
+  private readonly heading = new Map<number, { x: number; y: number }>(); // 진행방향 벡터 저역통과(좌우 회전 진동 제거)
   private readonly dispPos = new Map<number, { x: number; y: number }>(); // 렌더 전용 위치 평활(고주파 떨림 제거)
   private frame = 0;
 
@@ -52,6 +53,7 @@ export class WorldView {
     for (const tex of this.speciesTex.values()) tex.destroy(true);
     this.speciesTex.clear();
     this.angle.clear();
+    this.heading.clear();
     this.dispPos.clear();
     for (const sp of world.species) {
       this.speciesTex.set(sp.id, makeCreatureTexture(this.renderer, sp.genome, sp.color));
@@ -85,6 +87,10 @@ export class WorldView {
     // 회전 이징을 프레임률 독립으로 — 120Hz 폰에서 한 스텝당 더 많은 프레임이 들어가
     // 회전이 빠르게 노이즈를 쫓던 떨림을 없앤다(60fps 1프레임 = TUNE.rotEase).
     const rotK = 1 - Math.pow(1 - TUNE.rotEase, dtMS / (1000 / 60));
+    // 헤딩 저역통과 계수(프레임률 독립). 매 스텝 진행방향이 좌우로 튀어도(저속 노이즈) 평균만 남겨
+    // 스프라이트가 좌우로 부들부들 회전하는 걸 없앤다 — 떨림의 진짜 원인은 회전 목표의 방향 노이즈.
+    const headK =
+      TUNE.headingSmooth >= 1 ? 1 : 1 - Math.pow(1 - TUNE.headingSmooth, dtMS / (1000 / 60));
     // 위치 평활 계수(프레임률 독립). sim 의 고주파 떨림(먹이 재타깃 등 방향 급변)을 화면에서만
     // 부드럽게 한다 — 어떤 sim 파라미터로도 못 잡는 본질적 떨림이라 렌더에서 흡수. smooth=1 이면 끔.
     const smoothK =
@@ -144,20 +150,31 @@ export class WorldView {
       sp.texture = this.speciesTex.get(e.species.id) ?? Texture.WHITE;
       sp.x = rx;
       sp.y = ry;
-      // 회전: 진행 방향으로 향하되 "방향을 굳힌다". 좁은 각도(데드존) 안의 변화는 무시하고,
-      // 데드존을 넘는 진짜 방향 전환만 프레임률 독립으로 부드럽게 이징한다.
-      // 매 스텝 회전 목표가 미세하게 흔들려도(전 종 공통) 데드존 안이면 안 돌아 떨림이 사라진다.
-      // ?norot 면 회전 고정, ?dz/?rotk 로 데드존·이징을 폰에서 즉시 튜닝.
+      // 회전: 떨림(좌우 진동)의 원인은 회전 "목표"가 매 스텝의 미세 이동 방향이라 노이즈가 크다는 것.
+      // → 진행방향 벡터를 저역통과(headK)해 평균 방향만 목표로 삼는다. 방향이 한 스텝씩 홱홱 뒤집혀도
+      // 평활된 헤딩은 거의 안 움직여 회전이 안정된다(제자리·이동 중 둘 다). 진짜 전환은 서서히 따라감.
+      // 데드존/이징은 그 위에 얹어 미세 잔회전까지 막는다. ?norot 회전고정 · ?head/?dz/?rotk 폰 튜닝.
       if (DEBUG.freezeRotation) {
         sp.rotation = 0;
       } else {
         const dx = e.x - e.prevX;
         const dy = e.y - e.prevY;
         const moved = Math.hypot(dx, dy);
+        let hd = this.heading.get(e.id);
+        if (!hd) {
+          hd = { x: dx, y: dy };
+          this.heading.set(e.id, hd);
+        } else if (moved > ROTATE_MIN_STEP) {
+          // 헤딩 벡터를 저역통과. 좌우로 뒤집히는 방향은 평균이 0 근처로 수렴 → 각도 안 바뀜.
+          hd.x += (dx - hd.x) * headK;
+          hd.y += (dy - hd.y) * headK;
+        }
+        const hmag = Math.hypot(hd.x, hd.y);
         let ang = this.angle.get(e.id);
-        if (ang === undefined) ang = moved > 0 ? Math.atan2(dy, dx) : 0;
-        else if (moved > ROTATE_MIN_STEP) {
-          let diff = Math.atan2(dy, dx) - ang;
+        if (ang === undefined) ang = hmag > 1e-4 ? Math.atan2(hd.y, hd.x) : 0;
+        else if (hmag > 1e-3) {
+          // 평활된 헤딩이 목표. 데드존 너머만 부드럽게 따라간다.
+          let diff = Math.atan2(hd.y, hd.x) - ang;
           while (diff > Math.PI) diff -= Math.PI * 2;
           while (diff < -Math.PI) diff += Math.PI * 2;
           if (Math.abs(diff) > TUNE.headingDeadzone) ang += diff * rotK;
@@ -177,6 +194,7 @@ export class WorldView {
       const live = new Set<number>();
       for (const e of world.entities) live.add(e.id);
       for (const id of this.angle.keys()) if (!live.has(id)) this.angle.delete(id);
+      for (const id of this.heading.keys()) if (!live.has(id)) this.heading.delete(id);
       for (const id of this.dispPos.keys()) if (!live.has(id)) this.dispPos.delete(id);
     }
 
