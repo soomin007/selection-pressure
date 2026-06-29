@@ -50,6 +50,8 @@ const SVG = {
     '<svg viewBox="0 0 140 90"><line x1="16" y1="60" x2="124" y2="60" stroke="#3b465c" stroke-width="3"/><circle cx="16" cy="60" r="5" fill="#7b8595"/><circle cx="70" cy="60" r="6" fill="#9bffa0"/><circle cx="124" cy="60" r="5" fill="#7b8595"/><text x="70" y="40" fill="#9bffa0" font-size="15" text-anchor="middle" font-family="sans-serif">0.5</text></svg>',
   food:
     '<svg viewBox="0 0 140 90"><circle cx="42" cy="45" r="12" fill="#9bee5a"/><circle cx="70" cy="45" r="12" fill="#5ad6b0"/><circle cx="98" cy="45" r="12" fill="#d8de5a"/></svg>',
+  swimming:
+    '<svg viewBox="0 0 140 90"><path d="M14 36 q12 -9 24 0 t24 0 t24 0 t24 0" fill="none" stroke="#5ad6f0" stroke-width="3"/><path d="M14 62 q12 -9 24 0 t24 0 t24 0 t24 0" fill="none" stroke="#5ad6f0" stroke-width="3" opacity="0.6"/><ellipse cx="76" cy="49" rx="16" ry="9" fill="#6cc24a"/><polygon points="62,49 50,42 50,56" fill="#6cc24a"/></svg>',
   energy:
     '<svg viewBox="0 0 140 90"><rect x="22" y="37" width="96" height="18" rx="9" fill="#1a2230" stroke="#3b465c" stroke-width="2"/><rect x="25" y="40" width="58" height="12" rx="6" fill="#6cff7a"/></svg>',
   chaser:
@@ -165,6 +167,16 @@ const SECTIONS: readonly Section[] = [
           { k: "0.35 ~ 0.7", v: "잡식 (둘 다, 가까운 쪽 먼저)" },
           { k: "0.7 초과", v: "육식 (주로 사냥)" },
         ],
+      },
+      {
+        term: "수영",
+        svg: SVG.swimming,
+        desc: "바다에 적응하는 정도입니다. 충분히 높으면 바다의 먹이를 먹을 수 있습니다. 바다 먹이는 육상 종이 못 먹어 경쟁이 없습니다.",
+        rows: [
+          { k: "0.65 미만 (기본 0.5)", v: "바다 먹이 못 먹음", base: true },
+          { k: "0.65 이상", v: "바다 먹이 먹음 (무경쟁 틈새)" },
+        ],
+        note: "지느러미·물갈퀴 발 카드로 키웁니다. 바다는 경쟁자가 없어 한번 열면 풍족합니다.",
       },
     ],
   },

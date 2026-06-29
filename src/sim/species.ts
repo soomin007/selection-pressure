@@ -95,6 +95,12 @@ export function generateWildSpecies(rng: Rng): Species[] {
   for (const arch of WILD_ARCHETYPES) {
     const g = defaultGenome();
     for (const key of TRAIT_KEYS) {
+      // swimming 은 아직 야생종에 안 쓰므로 rng 없이 기본값 유지 — 기존 rng 스트림 보존(밸런스 불변).
+      // (나중에 수생 야생종을 넣을 때 아키타입에 swimming 을 주면 된다.)
+      if (key === "swimming") {
+        g.traits.swimming = arch.traits.swimming ?? 0.5;
+        continue;
+      }
       const base = arch.traits[key] ?? 0.5;
       g.traits[key] = clamp01(base + rng.range(-0.07, 0.07));
     }

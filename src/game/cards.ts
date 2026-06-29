@@ -271,6 +271,20 @@ export const CARD_POOL: readonly Card[] = [
     desc: "넓은 시야로 먹이를 찾고 강하게 사냥합니다. 대신 굼떠집니다.",
     effects: { vision: 0.16, attack: 0.16, speed: -0.07 },
   },
+
+  // 바다 적응 — 수영을 키우면 바다 먹이를 먹는다(육상 종은 못 먹는 무경쟁 틈새).
+  {
+    id: "fins",
+    name: "지느러미",
+    desc: "헤엄쳐 바다의 먹이를 먹습니다. 바다는 다투는 경쟁자가 없습니다.",
+    effects: { swimming: 0.22 },
+  },
+  {
+    id: "webbed",
+    name: "물갈퀴 발",
+    desc: "물에서 잘 움직입니다. 수영과 속도가 함께 조금 늡니다.",
+    effects: { swimming: 0.16, speed: 0.06 },
+  },
 ];
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);

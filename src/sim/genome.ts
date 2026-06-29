@@ -10,7 +10,7 @@
 import type { Rng } from "@/sim/rng";
 
 /** 현재 게놈 스키마 버전. 형질을 추가/변경하면 올리고 migrate 에 단계를 더한다. */
-export const GENOME_VERSION = 1 as const;
+export const GENOME_VERSION = 2 as const;
 
 /** v1 형질 묶음. */
 export interface TraitsV1 {
@@ -35,11 +35,25 @@ export interface GenomeV1 {
   traits: TraitsV1;
 }
 
-/** 항상 "현재 버전" 을 가리킨다. 코드 다른 곳은 이 별칭만 쓴다. */
-export type Genome = GenomeV1;
-export type Traits = TraitsV1;
+/** v2 — 수영(바다 적응)을 더했다. 임계값을 넘으면 바다 먹이를 먹을 수 있다(무경쟁 틈새 보상). */
+export interface TraitsV2 extends TraitsV1 {
+  /** 수영 (바다 적응). 높으면 바다 먹이를 먹는다. */
+  swimming: number;
+}
 
-/** 형질 키 목록 (순회용). */
+export interface GenomeV2 {
+  genomeVersion: 2;
+  traits: TraitsV2;
+}
+
+/** 항상 "현재 버전" 을 가리킨다. 코드 다른 곳은 이 별칭만 쓴다. */
+export type Genome = GenomeV2;
+export type Traits = TraitsV2;
+
+/**
+ * 형질 키 목록 (순회용). swimming 은 **맨 끝**에 둔다 — generateWildSpecies 가 이 순서로 rng 를
+ * 뽑으므로, swimming 을 끝에 두고 그 항목만 rng 없이 설정하면 기존 rng 스트림이 보존된다(밸런스 불변).
+ */
 export const TRAIT_KEYS = [
   "speed",
   "attack",
@@ -48,6 +62,7 @@ export const TRAIT_KEYS = [
   "metabolism",
   "fertility",
   "diet",
+  "swimming",
 ] as const satisfies readonly (keyof Traits)[];
 
 /**
@@ -62,6 +77,7 @@ export const TRAIT_LABELS: Record<keyof Traits, string> = {
   metabolism: "대사",
   fertility: "번식력",
   diet: "식성",
+  swimming: "수영",
 };
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -78,6 +94,7 @@ export function defaultGenome(): Genome {
       metabolism: 0.5,
       fertility: 0.5,
       diet: 0.5,
+      swimming: 0.5,
     },
   };
 }
@@ -106,9 +123,14 @@ export function migrateGenome(raw: unknown): Genome {
   }
   const version = (raw as { genomeVersion?: unknown }).genomeVersion;
   switch (version) {
-    case 1:
+    case 1: {
+      // v1 → v2: 수영(swimming)을 0.5 기본으로 채운다(기존 게놈은 육상 기준).
+      const v1 = raw as GenomeV1;
+      return clampGenome({ genomeVersion: 2, traits: { ...v1.traits, swimming: 0.5 } });
+    }
+    case 2:
       // (실전에선 여기서 형질 키 존재/타입을 검증한다.)
-      return clampGenome(raw as GenomeV1);
+      return clampGenome(raw as GenomeV2);
     default:
       throw new Error(`알 수 없는 게놈 버전입니다: ${String(version)}`);
   }

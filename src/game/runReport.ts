@@ -25,6 +25,7 @@ const HIGH_ADJ: Record<AdjKey, string> = {
   herding: "무리 짓는",
   metabolism: "몸이 뜨거운",
   fertility: "번식이 왕성한",
+  swimming: "헤엄치는",
 };
 const LOW_ADJ: Record<AdjKey, string> = {
   speed: "발이 느린",
@@ -33,6 +34,7 @@ const LOW_ADJ: Record<AdjKey, string> = {
   herding: "혼자 다니는",
   metabolism: "몸이 차가운",
   fertility: "번식이 더딘",
+  swimming: "뭍에만 사는",
 };
 const ADJ_KEYS: readonly AdjKey[] = [
   "speed",
@@ -41,6 +43,7 @@ const ADJ_KEYS: readonly AdjKey[] = [
   "herding",
   "metabolism",
   "fertility",
+  "swimming",
 ];
 
 const dietNoun = (diet: number): string =>
