@@ -8,8 +8,9 @@ export interface Food {
   kind: number; // 먹이 종류 (0..K-1). 종마다 먹을 수 있는 종류가 다르다.
   available: boolean;
   regrowTimer: number; // available=false 일 때 남은 재생 틱
+  aquatic: boolean; // true = 바다 먹이(수영 형질이 충분한 종만 먹는다). false = 육지 식물.
 }
 
-export function createFood(x: number, y: number, kind: number): Food {
-  return { x, y, kind, available: true, regrowTimer: 0 };
+export function createFood(x: number, y: number, kind: number, aquatic = false): Food {
+  return { x, y, kind, available: true, regrowTimer: 0, aquatic };
 }

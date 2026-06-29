@@ -258,9 +258,14 @@ function nearestFood(e: Entity, world: World, maxDist2: number): Food | null {
   let best = maxDist2;
   let found: Food | null = null;
   const kinds = e.species.foodKinds;
+  const canSwim = e.genome.traits.swimming >= SIM.swimThreshold;
   for (const f of world.food) {
     if (!f.available) continue;
-    if (!kinds.includes(f.kind)) continue; // 이 종이 못 먹는 먹이 종류는 건너뛴다(먹이 분할)
+    if (f.aquatic) {
+      if (!canSwim) continue; // 바다 먹이는 수영 형질이 충분한 종만 먹는다(육상 종엔 무경쟁 틈새)
+    } else if (!kinds.includes(f.kind)) {
+      continue; // 이 종이 못 먹는 먹이 종류는 건너뛴다(먹이 분할)
+    }
     const dx = f.x - e.x;
     const dy = f.y - e.y;
     const d2 = dx * dx + dy * dy;

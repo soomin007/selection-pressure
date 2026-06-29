@@ -28,7 +28,11 @@ export const SIM = {
 
   // --- 환경 (Phase 3) ---
   cellSize: 60, // 환경 격자 한 칸 픽셀 (540×960 → 9×16칸)
-  terrainCellSize: 20, // 지형 타일 한 칸 픽셀 (환경보다 곱게 — 540×960 → 27×48칸). 시각 전용(현재)
+  terrainCellSize: 20, // 지형 타일 한 칸 픽셀 (환경보다 곱게 — 540×960 → 27×48칸)
+
+  // --- 지형 먹이 (P1 결합) ---
+  seaFoodPatches: 80, // 바다 타일에 놓는 바다 먹이 수(수영 형질로만 먹는 무경쟁 틈새 보상)
+  swimThreshold: 0.65, // 수영 형질이 이 이상이면 바다 먹이를 먹는다(기본 0.5 → 카드 1장으로 도달)
 
   coldPenalty: 0.3, // 추운 칸 추가 소모 (틱당, ×coldness×(1-metabolism)) — 추운 맵=고대사 유리
   globalColdLethality: 1.7, // 대멸종 한파(globalCold)는 평상시 추위보다 이만큼 더 매섭다(클라이맥스 필터)

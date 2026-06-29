@@ -9,7 +9,7 @@ import type { Genome } from "@/sim/genome";
 import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
 import { Environment } from "@/sim/environment";
-import { Terrain, TILE } from "@/sim/terrain";
+import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { makePlayerSpecies, generateWildSpecies, type Species } from "@/sim/species";
 import { stepEntity } from "@/sim/behavior";
@@ -82,6 +82,8 @@ export class World {
     this.species = [this.playerSpecies, ...generateWildSpecies(this.rng)];
     this.spawnFood();
     this.spawnEntities();
+    // 바다 먹이는 "독립 rng"로 생물 스폰 뒤에 — this.rng 상태(=step 동역학)를 안 건드려 밸런스 보존.
+    this.spawnSeaFood(new Rng(String(seed) + "-seafood"));
     this.grid.rebuild(this.entities);
   }
 
@@ -175,24 +177,40 @@ export class World {
   }
 
   private spawnFood(): void {
-    // 비옥한 칸일수록 먹이가 더 많이 놓이도록 가중 추첨한다. 단 물·산 칸엔 안 놓는다(육지에만 식물).
-    // ⚠️ rng 소비 "횟수"는 그대로 — 가중치만 바꾼다. 그래야 생물 스폰 등 다른 모든 rng 가 불변이라
-    //    밸런스 변동이 "먹이 위치(육지 집중)" 하나로 한정된다(known_issues: sim 변경은 최소 perturbation).
-    const env = this.environment;
+    // 육지 타일에만 식물 먹이. 지형 "타일" 단위로 정밀 배치(환경 칸 단위면 물 위에 떨어진다).
+    // 비옥할수록 많이. this.rng 사용(스폰 전이라 생물 스폰 rng 와 이어짐 — 소비 횟수는 환경칸판과 동일).
+    this.spawnFoodOnTiles(this.rng, SIM.foodPatches, false, (kind, fertility) =>
+      kind === TILE.land ? 0.15 + fertility : 0,
+    );
+  }
+
+  /** 바다 타일에 바다 먹이(수영 형질로만 먹는 무경쟁 틈새). 독립 rng → step 동역학 불변. */
+  private spawnSeaFood(rng: Rng): void {
+    this.spawnFoodOnTiles(rng, SIM.seaFoodPatches, true, (kind) => (kind === TILE.water ? 1 : 0));
+  }
+
+  /** 지형 타일 단위 가중 추첨으로 먹이 count 개를 놓는다(정밀 배치). 타일별 weight 는 콜백이 정한다. */
+  private spawnFoodOnTiles(
+    rng: Rng,
+    count: number,
+    aquatic: boolean,
+    tileWeight: (kind: TileKind, fertility: number) => number,
+  ): void {
     const terr = this.terrain;
+    const cs = terr.cellSize;
     const weights: number[] = [];
     let total = 0;
-    for (let i = 0; i < env.fertility.length; i++) {
-      const cx = i % env.cols;
-      const cy = Math.floor(i / env.cols);
-      const onLand =
-        terr.kindAt((cx + 0.5) * env.cellSize, (cy + 0.5) * env.cellSize) === TILE.land;
-      const w = onLand ? 0.15 + (env.fertility[i] ?? 0) : 0;
+    for (let i = 0; i < terr.tiles.length; i++) {
+      const cx = i % terr.cols;
+      const cy = Math.floor(i / terr.cols);
+      const fert = this.environment.sampleAt((cx + 0.5) * cs, (cy + 0.5) * cs).fertility;
+      const w = tileWeight(terr.tiles[i] ?? TILE.land, fert);
       weights.push(w);
       total += w;
     }
-    for (let n = 0; n < SIM.foodPatches; n++) {
-      let r = this.rng.range(0, total);
+    if (total <= 0) return;
+    for (let n = 0; n < count; n++) {
+      let r = rng.range(0, total);
       let cell = 0;
       for (let i = 0; i < weights.length; i++) {
         r -= weights[i] ?? 0;
@@ -201,12 +219,12 @@ export class World {
           break;
         }
       }
-      const cx = cell % env.cols;
-      const cy = Math.floor(cell / env.cols);
-      const x = Math.min(this.width, (cx + this.rng.unit()) * env.cellSize);
-      const y = Math.min(this.height, (cy + this.rng.unit()) * env.cellSize);
-      const kind = this.rng.int(0, SIM.foodKindCount - 1);
-      this.food.push(createFood(x, y, kind));
+      const cx = cell % terr.cols;
+      const cy = Math.floor(cell / terr.cols);
+      const x = Math.min(this.width, (cx + rng.unit()) * cs);
+      const y = Math.min(this.height, (cy + rng.unit()) * cs);
+      const kind = rng.int(0, SIM.foodKindCount - 1);
+      this.food.push(createFood(x, y, kind, aquatic));
     }
   }
 

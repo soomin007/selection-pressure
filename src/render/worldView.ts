@@ -98,8 +98,9 @@ export class WorldView {
     this.foodG.clear();
     for (const f of world.food) {
       if (!f.available) continue;
-      // 먹이 종류별 색(자연스러운 식물색) — 종마다 먹는 먹이가 다름을 한눈에.
-      this.foodG.circle(f.x, f.y, 4).fill({ color: FOOD_COLORS[f.kind] ?? 0x9bee5a, alpha: 1 });
+      // 육지 식물은 종류별 자연색, 바다 먹이는 청록(수영 종만 먹는 바다 틈새를 한눈에).
+      const color = f.aquatic ? SEA_FOOD_COLOR : (FOOD_COLORS[f.kind] ?? 0x9bee5a);
+      this.foodG.circle(f.x, f.y, 4).fill({ color, alpha: 1 });
     }
 
     // 생물 스프라이트 풀 — sim(30/s)과 화면(60fps) 사이를 prev→현재로 보간해 드득거림을 없앤다.
@@ -260,6 +261,8 @@ export class WorldView {
 
 // 먹이 종류별 색 — 모두 식물처럼 자연스럽되 구분되게(연두 / 청록 / 노랑풀).
 const FOOD_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
+// 바다 먹이 색 — 물 위에서 밝게 빛나는 청록(수영 종만 먹는 틈새 강조).
+const SEA_FOOD_COLOR = 0x7fe9ff;
 
 // 회전 떨림 방지: 이만큼(px/스텝)보다 실제로 더 움직일 때만 진행 방향을 갱신한다.
 // (느린 종은 미세 변위의 방향이 노이즈라, 낮으면 제자리에서 몸이 떤다.)
