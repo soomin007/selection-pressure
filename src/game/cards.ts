@@ -209,6 +209,68 @@ export const CARD_POOL: readonly Card[] = [
     desc: "홀로 강하게 싸웁니다. 공격력이 크게 늘지만 무리에서 떨어집니다.",
     effects: { attack: 0.22, speed: 0.06, herding: -0.16 },
   },
+
+  // 추가 조합·정체성. 빈 형질 조합을 메워 드래프트 변주를 넓힌다(기존 형질만).
+  {
+    id: "scout_pack",
+    name: "파수 무리",
+    desc: "함께 다니며 멀리까지 살핍니다. 시야와 무리 성향이 늡니다.",
+    effects: { vision: 0.14, herding: 0.12 },
+  },
+  {
+    id: "owl_eye",
+    name: "올빼미 눈",
+    desc: "멀리 보면서도 에너지를 아낍니다. 시야가 늘고 대사가 줍니다.",
+    effects: { vision: 0.16, metabolism: -0.08 },
+  },
+  {
+    id: "nest_herd",
+    name: "둥지 무리",
+    desc: "무리 속에서 안전하게 새끼를 칩니다. 번식과 무리 성향이 늡니다.",
+    effects: { fertility: 0.16, herding: 0.1 },
+  },
+  {
+    id: "farsight",
+    name: "천리안",
+    desc: "아주 멀리까지 봅니다. 대신 조금 느려집니다.",
+    effects: { vision: 0.26, speed: -0.06 },
+  },
+  {
+    id: "evasive",
+    name: "민첩한 회피",
+    desc: "빠르게 움직이며 위험을 멀리서 알아챕니다. 속도와 시야가 함께 늡니다.",
+    effects: { speed: 0.12, vision: 0.12 },
+  },
+  {
+    id: "beast_metab",
+    name: "맹수의 대사",
+    desc: "사냥을 위해 힘이 세지만 에너지를 많이 씁니다.",
+    effects: { attack: 0.16, metabolism: 0.08 },
+  },
+  {
+    id: "glass_cannon",
+    name: "유리 대포",
+    desc: "공격력이 폭발하지만 몸이 약해 번식이 줍니다.",
+    effects: { attack: 0.28, fertility: -0.1 },
+  },
+  {
+    id: "swift_breeder",
+    name: "잰걸음 번식",
+    desc: "재빠르게 늘어납니다. 속도와 번식이 함께 조금 늡니다.",
+    effects: { speed: 0.08, fertility: 0.1 },
+  },
+  {
+    id: "stoic",
+    name: "굳건한 체질",
+    desc: "에너지를 아끼고 함께 버팁니다. 느린 대사와 무리 보온.",
+    effects: { metabolism: -0.12, herding: 0.1 },
+  },
+  {
+    id: "apex_scout",
+    name: "정점의 사냥꾼",
+    desc: "넓은 시야로 먹이를 찾고 강하게 사냥합니다. 대신 굼떠집니다.",
+    effects: { vision: 0.16, attack: 0.16, speed: -0.07 },
+  },
 ];
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);

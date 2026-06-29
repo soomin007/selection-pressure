@@ -14,6 +14,11 @@ describe("드래프트", () => {
     const ids = drawCards(new Rng("x"), 3).map((c) => c.id);
     expect(new Set(ids).size).toBe(3);
   });
+
+  it("카드 풀의 모든 id 는 고유하다", () => {
+    const ids = CARD_POOL.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
 });
 
 describe("카드 적용", () => {

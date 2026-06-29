@@ -109,6 +109,18 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     expect(hi).toBeGreaterThan(lo);
   });
 
+  it("그림자 매복자: 시야가 높으면 통과, 낮으면 실패", () => {
+    const hi = afterGate(tune({ vision: 0.9 }), GAME.bossSeconds, (w) => {
+      w.boss = createBoss("stalker", W, H);
+    });
+    const lo = afterGate(tune({ vision: 0.1 }), GAME.bossSeconds, (w) => {
+      w.boss = createBoss("stalker", W, H);
+    });
+    expect(hi).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
+    expect(lo).toBeLessThan(GAME.bossPassThreshold);
+    expect(hi).toBeGreaterThan(lo);
+  });
+
   it("한파 대멸종: 고대사는 통과, 저대사는 실패", () => {
     const hi = afterGate(tune({ metabolism: 0.9 }), GAME.extinctionSeconds, (w) => {
       w.globalCold = 1.3;
