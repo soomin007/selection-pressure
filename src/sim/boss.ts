@@ -127,7 +127,7 @@ const PRESETS: Record<BossType, Preset> = {
     killRadius: 0,
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0.0075, // 프로브 튠: 시야0.9통과(여유)·기본0.5통과·시야0.1탈락(벽 아닌 시야 게이트)
+    globalKillRate: 0.011, // 프로브 재튠(먹이 육지화 후): 시야0.9통과(여유)·기본0.5통과·시야0.1탈락(시야 게이트)
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0,

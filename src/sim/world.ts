@@ -9,7 +9,7 @@ import type { Genome } from "@/sim/genome";
 import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
 import { Environment } from "@/sim/environment";
-import { Terrain } from "@/sim/terrain";
+import { Terrain, TILE } from "@/sim/terrain";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { makePlayerSpecies, generateWildSpecies, type Species } from "@/sim/species";
 import { stepEntity } from "@/sim/behavior";
@@ -175,12 +175,19 @@ export class World {
   }
 
   private spawnFood(): void {
-    // 비옥한 칸일수록 먹이가 더 많이 놓이도록 가중 추첨한다.
+    // 비옥한 칸일수록 먹이가 더 많이 놓이도록 가중 추첨한다. 단 물·산 칸엔 안 놓는다(육지에만 식물).
+    // ⚠️ rng 소비 "횟수"는 그대로 — 가중치만 바꾼다. 그래야 생물 스폰 등 다른 모든 rng 가 불변이라
+    //    밸런스 변동이 "먹이 위치(육지 집중)" 하나로 한정된다(known_issues: sim 변경은 최소 perturbation).
     const env = this.environment;
+    const terr = this.terrain;
     const weights: number[] = [];
     let total = 0;
     for (let i = 0; i < env.fertility.length; i++) {
-      const w = 0.15 + (env.fertility[i] ?? 0);
+      const cx = i % env.cols;
+      const cy = Math.floor(i / env.cols);
+      const onLand =
+        terr.kindAt((cx + 0.5) * env.cellSize, (cy + 0.5) * env.cellSize) === TILE.land;
+      const w = onLand ? 0.15 + (env.fertility[i] ?? 0) : 0;
       weights.push(w);
       total += w;
     }
