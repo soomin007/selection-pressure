@@ -1,9 +1,17 @@
 // 빌드 패널 — 화면 우상단에 "내가 고른 형질(카드)"을 상시 보여준다.
-// 종 한 줄 요약 + 고른 카드 목록. 캔버스 위 HTML 오버레이(인라인 스타일, 터치 통과).
+// 종 한 줄 요약 + 현재 형질값(7개) + 고른 카드 목록. 캔버스 위 HTML 오버레이(인라인 스타일, 터치 통과).
+
+import { TRAIT_KEYS, TRAIT_LABELS, type Traits } from "@/sim/genome";
 
 export interface BuildData {
   headline: string; // "빠른 잡식성" 같은 종 한 줄 요약
+  traits: Traits; // 현재 게놈의 형질값(카드 누적 결과) — "내 종이 지금 얼마인지"
   cards: string[]; // 이번 런에서 고른 카드 이름들
+}
+
+/** 식성값을 쉬운 범주로. (형질 도감과 같은 경계) */
+function dietWord(v: number): string {
+  return v < 0.35 ? "초식" : v > 0.7 ? "육식" : "잡식";
 }
 
 export interface BuildPanel {
@@ -39,8 +47,19 @@ export function createBuildPanel(): BuildPanel {
   headline.style.cssText =
     "color:#9bffa0; font-weight:700; font-size:12.5px; margin-bottom:6px; word-break:keep-all;";
 
+  // 현재 형질값 readout — "내 종이 지금 얼마인지". 카드 누적 결과를 그대로 보여준다.
+  const traitsLabel = document.createElement("div");
+  traitsLabel.textContent = "현재 형질";
+  traitsLabel.style.cssText = "color:#8a93a6; font-weight:700; font-size:11px; margin:2px 0 4px;";
+  const traitsBox = document.createElement("div");
+  traitsBox.style.cssText = "margin-bottom:7px;";
+
+  const cardsLabel = document.createElement("div");
+  cardsLabel.textContent = "고른 카드";
+  cardsLabel.style.cssText = "color:#8a93a6; font-weight:700; font-size:11px; margin:2px 0 4px;";
+
   const list = document.createElement("div");
-  body.append(headline, list);
+  body.append(headline, traitsLabel, traitsBox, cardsLabel, list);
 
   // 레이아웃별 기본값: 데스크톱은 펼침(공간 여유), 모바일은 접힘(클러터 최소화). 탭으로 토글.
   let collapsed = document.body.dataset.layout !== "desktop";
@@ -60,6 +79,35 @@ export function createBuildPanel(): BuildPanel {
 
   const setData = (data: BuildData): void => {
     headline.textContent = data.headline;
+
+    // 현재 형질값: 7개를 값+미니 막대로. 식성만 범주(초식/잡식/육식) 텍스트.
+    traitsBox.replaceChildren();
+    for (const key of TRAIT_KEYS) {
+      const v = data.traits[key];
+      const row = document.createElement("div");
+      row.style.cssText = "margin-top:3px;";
+      const top = document.createElement("div");
+      top.style.cssText = "display:flex; justify-content:space-between; gap:6px;";
+      const name = document.createElement("span");
+      name.textContent = TRAIT_LABELS[key];
+      name.style.cssText = "color:#aeb7c4;";
+      const val = document.createElement("span");
+      val.textContent = key === "diet" ? dietWord(v) : v.toFixed(2);
+      val.style.cssText = "color:#dfe6ee; font-weight:700; font-variant-numeric:tabular-nums;";
+      top.append(name, val);
+      row.appendChild(top);
+      if (key !== "diet") {
+        const track = document.createElement("div");
+        track.style.cssText = "margin-top:2px; height:4px; border-radius:3px; background:#1a2230; overflow:hidden;";
+        const fill = document.createElement("div");
+        const pct = Math.round(Math.max(0, Math.min(1, v)) * 100);
+        fill.style.cssText = "height:100%; width:" + pct + "%; border-radius:3px; background:#6cc24a;";
+        track.appendChild(fill);
+        row.appendChild(track);
+      }
+      traitsBox.appendChild(row);
+    }
+
     list.replaceChildren();
     if (data.cards.length === 0) {
       const empty = document.createElement("div");

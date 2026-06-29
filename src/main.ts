@@ -63,7 +63,11 @@ async function boot(): Promise<void> {
 
   const buildPanel = createBuildPanel();
   const refreshBuild = (): void => {
-    buildPanel.setData({ headline: describeSpecies(game.genome), cards: game.pickedCardNames });
+    buildPanel.setData({
+      headline: describeSpecies(game.genome),
+      traits: game.genome.traits,
+      cards: game.pickedCardNames,
+    });
   };
   refreshBuild();
 
