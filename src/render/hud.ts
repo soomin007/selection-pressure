@@ -49,9 +49,9 @@ const PANEL_H_DESKTOP_DEATH = 156;
 const DEATH_Y_MOBILE = 88;
 const DEATH_Y_DESKTOP = 140; // 그래프 아래
 
-// 낮밤 타이머 — 정보 박스 우상단의 색 원 + 라벨.
+// 낮밤 타이머 — 정보 박스 둘째 줄(상태) 우측. 개체 수(첫 줄)가 길어져도 겹치지 않게 수직 분리.
 const DAY_DOT_X = PANEL_X + PANEL_W - 16;
-const DAY_DOT_Y = 21;
+const DAY_DOT_Y = 52;
 const DAY_DOT_COLOR = 0xffd24a; // 낮(밝은 노랑)
 const NIGHT_DOT_COLOR = 0x2a3a6a; // 밤(어두운 남색)
 
@@ -131,7 +131,7 @@ export class Hud {
       style: new TextStyle({ fill: 0xccd3df, fontSize: 12, fontWeight: "600" }),
     });
     this.dayLabel.anchor.set(1, 0);
-    this.dayLabel.position.set(DAY_DOT_X - 11, 15);
+    this.dayLabel.position.set(DAY_DOT_X - 11, 46);
 
     // 정보 박스(맨 뒤) — 글자·그래프의 공용 배경. 사망 알림 유무에 따라 높이만 다시 그린다(drawPanel).
     this.container.addChild(this.panelBg);
