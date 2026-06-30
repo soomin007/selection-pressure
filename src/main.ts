@@ -16,10 +16,14 @@ import { createLobby } from "@/ui/lobby";
 import { createControls } from "@/ui/controls";
 import { createBuildPanel } from "@/ui/buildPanel";
 import { createGlossary } from "@/ui/glossary";
+import { createCreatureCard } from "@/ui/creatureCard";
+import { creatureName } from "@/ui/creatureName";
 import { describeSpecies } from "@/game/runReport";
 import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
+import { SIM } from "@/sim/params";
+import type { Entity } from "@/sim/entity";
 
 // 맵 배율 — 월드를 화면의 이 배수만큼 크게. 소수 개체(한 무리)를 카메라가 따라가며 약간의 탐험.
 const MAP_SCALE = 1.5;
@@ -68,6 +72,11 @@ async function boot(): Promise<void> {
   // 디버그: URL 에 ?seed=… 가 있으면 그 시드로 고정(맵·카드·보스 완전 재현). 없으면 런마다 랜덤.
   const seedParam = new URLSearchParams(window.location.search).get("seed");
   if (seedParam) game.fixedSeed = seedParam;
+
+  // 개인 카메라(방향 전환 2단계) — 탭으로 고른 한 개체를 따라가며 클로즈업한다(소수 개체 애착의 핵심).
+  let selectedId: number | null = null; // 따라가는 개체 id(없으면 무리 추적)
+  let currentSelected: Entity | null = null; // 이번 프레임의 선택 개체(카메라가 읽음)
+  const INDIVIDUAL_ZOOM = 2.6; // 개체 추적 시 줌 배율(클로즈업)
 
   const buildPanel = createBuildPanel();
   const refreshBuild = (): void => {
@@ -142,6 +151,8 @@ async function boot(): Promise<void> {
     view.refreshSpecies(world);
     hud.reset();
     effects.clear();
+    selectedId = null; // 새 월드 → 옛 선택(개체 id)은 무효
+    currentSelected = null;
     // 재현용: 이 맵의 시드를 콘솔에 남긴다(?seed=… 로 다시 불러올 수 있음).
     console.info(`[seed] ${game.seed}  (재현: ?seed=${game.seed})`);
   };
@@ -171,8 +182,33 @@ async function boot(): Promise<void> {
   let prevLowWarn = false;
   let prevPhase = game.phase;
 
+  // 선택 개체 정보 카드(좌하단). 닫기(✕)를 누르면 선택 해제 → 무리 시점으로.
+  const creatureCard = createCreatureCard(() => {
+    selectedId = null;
+  });
+
+  // 월드 탭 → 가장 가까운 개체를 골라 따라간다. 같은 개체를 다시 탭하거나 빈 곳을 탭하면 선택 해제.
+  // 월드 레이어는 hit-test 에서 빼(none) 탭이 stage 까지 통과하게 한다 → 개체는 좌표로 직접 찾는다
+  // (스프라이트는 풀 재사용이라 개체와 1:1 이 아니므로 스프라이트 이벤트 대신 좌표 + 최근접 탐색).
+  view.container.eventMode = "none";
+  app.stage.eventMode = "static";
+  app.stage.hitArea = app.screen;
+  app.stage.on("pointertap", (e) => {
+    if (game.phase !== "watch" && game.phase !== "draft") return;
+    // 빈 월드 탭만 처리 — 범례 등 누를 수 있는 UI 가 잡은 탭(target≠stage)은 그 UI 몫이라 건너뛴다.
+    if (e.target !== app.stage) return;
+    // 미니맵 위 탭은 조망 조작이라 개체 선택에서 제외(뒤의 개체가 잡히지 않게).
+    if (minimap.container.visible && minimap.containsScreenPoint(e.global.x, e.global.y)) return;
+    // 화면 좌표 → 월드 좌표(카메라/뷰포트 변환을 toLocal 이 한 번에 풀어 준다).
+    const p = view.container.toLocal(e.global);
+    const picked = pickEntity(p.x, p.y);
+    selectedId = !picked || picked.id === selectedId ? null : picked.id;
+  });
+
   app.ticker.add((ticker) => {
     game.update(ticker.deltaMS);
+    // 개인 카메라: 선택 개체를 해석(죽었으면 작별, 관전 아니면 해제) → 강조 고리·카드·카메라에 반영.
+    resolveSelection();
     view.sync(game.world, game.interpAlpha, ticker.deltaMS);
     // 사건 연출: sim 이 이번 프레임에 emit 한 사건(탄생/죽음/잡아먹힘)을 효과로 옮기고 비운다.
     for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y);
@@ -203,17 +239,84 @@ async function boot(): Promise<void> {
   function updateCamera(dtMS: number): void {
     const boss = game.world.boss;
     const focusBoss = game.phase === "watch" && boss !== null;
-    // 평상시엔 내 무리의 무게중심을 따라가고, 보스 관전 땐 보스로 줌인.
-    const centroid = game.world.playerCentroid();
-    const tz = focusBoss ? 1.35 : 1;
-    const tx = focusBoss && boss ? boss.x : centroid.x;
-    const ty = focusBoss && boss ? boss.y : centroid.y;
+    // 우선순위: 고른 개체(클로즈업) > 보스 관전(줌인) > 평상시 내 무리 무게중심.
+    let tx: number;
+    let ty: number;
+    let tz: number;
+    if (currentSelected) {
+      // 개체의 부드러운 렌더 위치를 따라가 떨림 없이 클로즈업한다(sim 위치는 고주파 진동이 있다).
+      const dp = view.getDisplayPos(currentSelected.id);
+      tx = dp ? dp.x : currentSelected.x;
+      ty = dp ? dp.y : currentSelected.y;
+      tz = INDIVIDUAL_ZOOM;
+    } else if (focusBoss && boss) {
+      tx = boss.x;
+      ty = boss.y;
+      tz = 1.35;
+    } else {
+      const centroid = game.world.playerCentroid();
+      tx = centroid.x;
+      ty = centroid.y;
+      tz = 1;
+    }
     const k = Math.min(1, (dtMS / 1000) * 3.5); // 시간 기반 이징
     camX += (tx - camX) * k;
     camY += (ty - camY) * k;
     camZoom += (tz - camZoom) * k;
     // 월드(game.width/height)와 화면(layout) 분리 — 큰 월드의 일부만 화면에 보여준다.
     view.setCamera(camX, camY, camZoom, game.width, game.height, layout.width, layout.height);
+  }
+
+  // 월드 좌표에서 가장 가까운 개체를 고른다(화면상 일정한 탭 반경). 닿는 개체가 없으면 null.
+  function pickEntity(wx: number, wy: number): Entity | null {
+    // 줌이 클수록 더 좁은 월드 반경 = 화면상 탭 반경 일정. 폰 손가락 기준 넉넉히, 최소 바닥값 유지.
+    const r = Math.max(16, 38 / Math.max(0.6, camZoom));
+    let best: Entity | null = null;
+    let bestSq = r * r;
+    for (const en of game.world.entities) {
+      const dx = en.x - wx;
+      const dy = en.y - wy;
+      const d = dx * dx + dy * dy;
+      if (d < bestSq) {
+        bestSq = d;
+        best = en;
+      }
+    }
+    return best;
+  }
+
+  // 선택 개체를 매 프레임 해석한다 — 죽었으면 작별 인사 후 해제, 관전 단계가 아니면 해제.
+  // 그 결과를 강조 고리(view) · 정보 카드 · 카메라(currentSelected)에 일관되게 반영한다.
+  function resolveSelection(): void {
+    if (game.phase !== "watch" && game.phase !== "draft") selectedId = null;
+    currentSelected = null;
+    if (selectedId !== null) {
+      const found = game.world.entities.find((en) => en.id === selectedId) ?? null;
+      if (!found) {
+        // 따라가던 아이가 죽었다 — 작별 인사 한 번 띄우고 무리 시점으로 돌아간다(애착의 무게).
+        highlights.flash(`${creatureName(selectedId)} 떠남`, 0xffd089);
+        selectedId = null;
+      } else {
+        currentSelected = found;
+      }
+    }
+    view.setSelected(selectedId);
+    if (currentSelected) {
+      const en = currentSelected;
+      creatureCard.update({
+        name: creatureName(en.id),
+        speciesName: en.species.name,
+        isPlayer: en.species.isPlayer,
+        color: en.species.color,
+        energy: en.energy / SIM.maxEnergy,
+        ageSeconds: en.age / SIM.stepsPerSecond,
+        activity: en.targetPrey ? "사냥하는 중" : en.targetFood ? "먹이로 가는 중" : "돌아다니는 중",
+        descriptor: describeSpecies(en.genome),
+        traits: en.genome.traits,
+      });
+    } else {
+      creatureCard.update(null);
+    }
   }
 
   function detectEvents(): void {

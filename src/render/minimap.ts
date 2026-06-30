@@ -75,6 +75,12 @@ export class Minimap {
     this.container.position.set(screenW - MM_W - margin, screenH - this.mmH - margin);
   }
 
+  /** 화면 좌표(px)가 미니맵 패널 위인지 — 미니맵을 탭했을 때 뒤의 개체가 선택되지 않게 막는다. */
+  containsScreenPoint(x: number, y: number): boolean {
+    const p = this.container.position;
+    return x >= p.x - 4 && x <= p.x + MM_W + 4 && y >= p.y - 4 && y <= p.y + this.mmH + 4;
+  }
+
   get height(): number {
     return this.mmH;
   }

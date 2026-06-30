@@ -17,8 +17,10 @@ export class WorldView {
   private readonly foodG = new Graphics();
   private readonly playerG = new Graphics(); // 내 종 강조(스프라이트 아래 빛나는 고리)
   private readonly creatureLayer = new Container();
+  private readonly selectG = new Graphics(); // 탭으로 고른 개체 강조 고리(개인 카메라)
   private readonly bossG = new Graphics();
   private readonly overlayG = new Graphics();
+  private selectedId: number | null = null; // 따라가며 관찰 중인 개체
 
   private readonly pool: Sprite[] = [];
   private readonly speciesTex = new Map<number, Texture>();
@@ -33,8 +35,19 @@ export class WorldView {
     this.container.addChild(this.foodG);
     this.container.addChild(this.playerG);
     this.container.addChild(this.creatureLayer);
+    this.container.addChild(this.selectG);
     this.container.addChild(this.bossG);
     this.container.addChild(this.overlayG);
+  }
+
+  /** 따라가며 관찰할 개체를 정한다(탭 선택). null 이면 선택 해제. 강조 고리를 그릴 대상. */
+  setSelected(id: number | null): void {
+    this.selectedId = id;
+  }
+
+  /** 개체의 렌더 표시 위치(저역통과된 부드러운 좌표). 카메라가 이 위치를 따라가면 떨림 없이 추적된다. */
+  getDisplayPos(id: number): { x: number; y: number } | null {
+    return this.dispPos.get(id) ?? null;
   }
 
   /**
@@ -219,6 +232,19 @@ export class WorldView {
       for (const id of this.angle.keys()) if (!live.has(id)) this.angle.delete(id);
       for (const id of this.heading.keys()) if (!live.has(id)) this.heading.delete(id);
       for (const id of this.dispPos.keys()) if (!live.has(id)) this.dispPos.delete(id);
+    }
+
+    // 선택 개체 강조 — 탭으로 고른 한 마리를 또렷한 고리로 표시(카메라가 이 아이를 따라간다).
+    // 폰에서 한눈에 보이게 밝은 금빛 + 은은한 맥동. 위치는 렌더 표시 좌표(저역통과)라 떨지 않는다.
+    this.selectG.clear();
+    if (this.selectedId !== null) {
+      const dp = this.dispPos.get(this.selectedId);
+      if (dp) {
+        const pulse = 0.5 + 0.5 * Math.sin((this.frame % 64) / 64 * Math.PI * 2);
+        const r = 17 + pulse * 3;
+        this.selectG.circle(dp.x, dp.y, r).stroke({ color: 0xffe08a, width: 2.4, alpha: 0.9 });
+        this.selectG.circle(dp.x, dp.y, r + 3).stroke({ color: 0xffe08a, width: 1.2, alpha: 0.3 });
+      }
     }
 
     // 보스 + 위험 반경 (보스도 보간)
