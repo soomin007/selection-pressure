@@ -6,7 +6,8 @@ export const SIM = {
   stepsPerSecond: 30,
 
   // --- 초기 배치 ---
-  initialEntities: 36,
+  // 내 종도 자연의 한 종 — 우위 없이 야생 종과 동급으로 작게 시작해 카드로 키워 추월한다(bottom→top 서사).
+  initialEntities: 14,
   aquaticInitialEntities: 12, // 물 전용 플레이어(바다 개척자)는 바다(맵 12%)만 살아 과밀 → 시작 수를 줄여 적정 밀도로
   foodPatches: 192, // 여러 초식종이 나눠 먹어도 공존하도록 넉넉히 (먹이 종류로 분할되므로 종류당 ~64)
   foodKindCount: 3, // 먹이 종류 수 — 종마다 먹는 종류가 달라 경쟁을 분할(공존)
@@ -55,7 +56,7 @@ export const SIM = {
   fleeRadiusPad: 46, // 즉사 반경 + 이만큼 안에 들면 보스에서 도망친다
   fleeProbeTiles: 2, // 도망 방향 통행 검사 거리(타일 수) — 막다른 반도·만으로 도망쳐 고립되는 걸 미리 회피
   fleeHeadingWeight: 0.6, // 도망 방향 회전 시 현재 헤딩 일관성 가중(좌우 진동 억제, avoidWalls 진동 방지)
-  heatPenalty: 0.46, // 폭염 시 추가 소모 (틱당, ×heat×metabolism) — 폭염=저대사 유리. 폭염은 대멸종 때만이라 평상시 영향 없음. 고대사를 확실히 솎는 필터
+  heatPenalty: 0.54, // 폭염 시 추가 소모 (틱당, ×heat×metabolism) — 폭염=저대사 유리. 폭염은 대멸종 때만이라 평상시 영향 없음. 시작 수↓(36→14)로 개체 풀이 작아져 고대사가 경계(10) → 살짝 올려 확실히 솎음(0.46→0.54)
 
   // --- 무리 성향 herding ---
   herdCohesion: 0.35, // 무게중심으로 끌리는 비율 (×herding)
