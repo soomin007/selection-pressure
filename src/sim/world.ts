@@ -289,14 +289,18 @@ export class World {
   private maybeImmigrate(): void {
     if (this.tick % SIM.immigrationInterval !== 0) return;
     if (this.entities.length >= this.cap) return;
+    // 이주 바닥·보충량도 면적 비례 — 절대값이면 큰 맵에서 종당 적정 수 대비 너무 낮아(예 floor 4 vs
+    // 종당 ~90) 야생이 줄어도 보충이 안 돼 내 종에게 단조 잠식된다. 비례하면 작은 맵의 회복 진동을 유지.
+    const floor = Math.round(SIM.immigrationFloor * this.areaScale);
+    const batch = Math.round(SIM.immigrationBatch * this.areaScale);
     const counts = new Map<number, number>();
     for (const e of this.entities) counts.set(e.species.id, (counts.get(e.species.id) ?? 0) + 1);
     for (const sp of this.species) {
       if (sp.isPlayer) continue;
-      if ((counts.get(sp.id) ?? 0) >= SIM.immigrationFloor) continue;
+      if ((counts.get(sp.id) ?? 0) >= floor) continue;
       const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
       const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
-      for (let k = 0; k < SIM.immigrationBatch; k++) {
+      for (let k = 0; k < batch; k++) {
         // rng 소비 순서(width→height)를 보존한 뒤 막힌 타일이면 통행 타일로 스냅(스냅은 rng 미사용).
         const ix = this.rng.range(0, this.width);
         const iy = this.rng.range(0, this.height);
@@ -324,7 +328,10 @@ export class World {
         baseY = wh.y;
       }
       // 육상/양용 내 종은 맵 전체에 얇게, 물 전용 내 종은 야생처럼 한 바다 영역에 모아(흩어지면 고립).
-      const spread = sp.isPlayer && canLand ? Math.max(this.width, this.height) : 72;
+      // 야생 보금자리는 맵 크기(면적의 제곱근)에 비례 — 절대값이면 큰 맵에서 좁은 점에 과밀해 국소 먹이를
+      // 빨리 소진하고 집단 아사한다(맵 3배에서 야생 급감의 원인). 비례하면 밀도가 유지된다.
+      const wildSpread = 72 * Math.sqrt(this.areaScale);
+      const spread = sp.isPlayer && canLand ? Math.max(this.width, this.height) : wildSpread;
       const count = Math.round(sp.initialCount * this.areaScale);
       for (let i = 0; i < count; i++) {
         const x = Math.max(0, Math.min(this.width, baseX + this.rng.range(-spread, spread)));
