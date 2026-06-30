@@ -15,28 +15,43 @@ export interface Card {
   set?: Partial<Record<keyof Traits, number>>;
 }
 
-// 런 첫 드래프트 — 시작 식성을 정한다. (반대 형질을 나중에 얻으면 잡식이 된다)
-export const DIET_CHOICE_CARDS: readonly Card[] = [
+// 런 첫 드래프트 — 시작 프리셋(빌드 방향)을 정한다. 식성(set diet) + 특화 형질 두엇.
+// 식성만 고르던 것을 "어떤 종으로 시작할지"로 넓혀 첫 판의 방향을 또렷하게 한다(드래프트로 계속 발전).
+export const PRESET_CARDS: readonly Card[] = [
   {
-    id: "start_herb",
-    name: "초식 동물",
-    desc: "식물을 먹습니다. 다툼을 피하고 수로 버팁니다.",
-    set: { diet: 0.2 },
-    effects: { fertility: 0.06 },
-  },
-  {
-    id: "start_omni",
-    name: "잡식 동물",
-    desc: "식물도 먹고 사냥도 합니다. 균형 잡힌 시작.",
+    id: "preset_omni",
+    name: "균형 잡식",
+    desc: "식물도 먹고 사냥도 합니다. 시야가 조금 넓은 무난한 시작.",
     set: { diet: 0.5 },
-    effects: { vision: 0.07 },
+    effects: { vision: 0.08 },
   },
   {
-    id: "start_carn",
-    name: "육식 동물",
-    desc: "주로 사냥합니다. 모자라면 식물도 먹습니다.",
+    id: "preset_herd",
+    name: "다산 초식 무리",
+    desc: "식물을 먹습니다. 함께 모여 다니며 빠르게 새끼를 쳐 수로 버팁니다.",
+    set: { diet: 0.2 },
+    effects: { fertility: 0.1, herding: 0.12 },
+  },
+  {
+    id: "preset_hunter",
+    name: "날쌘 육식 사냥꾼",
+    desc: "주로 사냥합니다. 빠르고 공격적이라 먹잇감을 잘 잡습니다.",
     set: { diet: 0.65 },
-    effects: { attack: 0.12 },
+    effects: { speed: 0.1, attack: 0.12 },
+  },
+  {
+    id: "preset_scout",
+    name: "느긋한 정찰자",
+    desc: "식물과 사냥을 겸합니다. 멀리 보고 에너지를 아껴 오래 버팁니다.",
+    set: { diet: 0.4 },
+    effects: { vision: 0.12, metabolism: -0.1 },
+  },
+  {
+    id: "preset_sea",
+    name: "바다 개척자",
+    desc: "헤엄쳐 바다의 먹이를 먹습니다. 바다는 다투는 경쟁자가 적습니다.",
+    set: { diet: 0.45 },
+    effects: { swimming: 0.18, speed: 0.06 },
   },
 ];
 

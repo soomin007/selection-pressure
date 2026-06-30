@@ -8,7 +8,7 @@
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, type Genome } from "@/sim/genome";
-import { drawCards, applyCard, DIET_CHOICE_CARDS, type Card } from "@/game/cards";
+import { drawCards, applyCard, PRESET_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, type StageKind } from "@/game/config";
 import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, BOSS_TYPES, type BossType } from "@/sim/boss";
@@ -221,10 +221,10 @@ export class Game {
     this.pendingBoss = null;
     this.pendingExtinction = null;
 
-    // 런 첫 드래프트는 시작 식성 선택.
+    // 런 첫 드래프트는 시작 프리셋 선택(어떤 종으로 시작할지 — 식성 + 특화 형질).
     if (this.firstChoice) {
-      this.draftCards = DIET_CHOICE_CARDS.slice();
-      this.preview = "당신의 종은 무엇을 먹나요? 시작 식성을 고르세요. (반대 형질을 얻으면 잡식이 됩니다)";
+      this.draftCards = PRESET_CARDS.slice();
+      this.preview = "어떤 종으로 시작할까요? 시작 프리셋을 고르세요. (카드로 계속 발전시킵니다)";
       return;
     }
 
