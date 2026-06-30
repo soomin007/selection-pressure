@@ -234,8 +234,12 @@ export class WorldView {
       }
     }
 
-    // 대멸종 화면 틴트
+    // 낮/밤 + 대멸종 화면 틴트 (둘 다 overlayG — 밤을 먼저 깔고 대멸종 틴트를 그 위에)
     this.overlayG.clear();
+    // 밤일수록 짙은 남색으로 어둑하게. daylight 1=낮(영향 없음), 0=자정(가장 어둑). 생물은 보이게.
+    const night = (1 - world.daylight) * NIGHT_MAX_ALPHA;
+    if (night > 0.01)
+      this.overlayG.rect(0, 0, world.width, world.height).fill({ color: NIGHT_COLOR, alpha: night });
     let tint = 0;
     let tintAlpha = 0;
     if (world.globalCold > 0) {
@@ -263,6 +267,9 @@ export class WorldView {
 const FOOD_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
 // 바다 먹이 색 — 물 위에서 밝게 빛나는 청록(수영 종만 먹는 틈새 강조).
 const SEA_FOOD_COLOR = 0x7fe9ff;
+// 밤 오버레이 — 짙은 남색을 daylight 에 반비례해 덮는다(자정에 가장 어둑하되 생물은 보이게).
+const NIGHT_COLOR = 0x0a1030;
+const NIGHT_MAX_ALPHA = 0.4;
 
 // 회전 떨림 방지: 이만큼(px/스텝)보다 실제로 더 움직일 때만 진행 방향을 갱신한다.
 // (느린 종은 미세 변위의 방향이 노이즈라, 낮으면 제자리에서 몸이 떤다.)

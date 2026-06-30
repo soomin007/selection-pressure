@@ -5,6 +5,7 @@ import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
+import { nightVisionFactor } from "@/sim/behavior";
 import { Rng } from "@/sim/rng";
 import type { Food } from "@/sim/food";
 
@@ -231,6 +232,38 @@ describe("지형 이동 차단 (P1 결합)", () => {
       for (let i = 0; i < 1500; i++) w.step();
       expect(w.population).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("낮/밤 순환", () => {
+  it("daylight 는 0~1 범위를 돌고 정오(시작)=1·자정(절반)≈0", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    expect(w.daylight).toBeCloseTo(1, 5); // tick 0 = 정오
+    const half = SIM.dayLength / 2;
+    for (let i = 0; i < half; i++) w.step();
+    expect(w.daylight).toBeCloseTo(0, 5); // 절반 = 자정
+    for (let i = 0; i < half; i++) w.step();
+    expect(w.daylight).toBeCloseTo(1, 5); // 한 바퀴 = 다시 정오
+  });
+
+  it("daylight 는 tick 만의 함수라 결정론적(같은 시드 무관)", () => {
+    const a = new World("env-1", W, H, defaultGenome());
+    const b = new World("other-seed", W, H, defaultGenome());
+    for (let i = 0; i < 123; i++) {
+      a.step();
+      b.step();
+    }
+    expect(a.daylight).toBeCloseTo(b.daylight, 10); // 시드 달라도 tick 같으면 같은 밝기
+  });
+
+  it("밤엔 시야가 줄고, vision 이 높을수록 덜 준다(야행성 틈새)", () => {
+    // 낮(daylight 1)엔 vision 무관 영향 없음.
+    expect(nightVisionFactor(1, 0.1)).toBeCloseTo(1, 5);
+    expect(nightVisionFactor(1, 0.9)).toBeCloseTo(1, 5);
+    // 자정(daylight 0)엔 시야가 준다(<1).
+    expect(nightVisionFactor(0, 0.5)).toBeLessThan(1);
+    // 야행성: 자정에 vision 높은 종이 낮은 종보다 더 멀리 본다.
+    expect(nightVisionFactor(0, 0.9)).toBeGreaterThan(nightVisionFactor(0, 0.1));
   });
 });
 

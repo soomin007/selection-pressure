@@ -34,6 +34,11 @@ export const SIM = {
   seaFoodPatches: 80, // 바다 타일에 놓는 바다 먹이 수(수영 형질로만 먹는 무경쟁 틈새 보상)
   swimThreshold: 0.65, // 수영 형질이 이 이상이면 바다 먹이를 먹는다(기본 0.5 → 카드 1장으로 도달)
 
+  // --- 낮/밤 순환 (P2) ---
+  dayLength: 600, // 하루 한 바퀴 틱 수(약 20초) — 한 라운드(16~24초)에 낮밤이 한 번은 돈다
+  nightVisionFloor: 0.5, // 자정(가장 어두움) 시야 배율 하한(vision 0 기준). 밤엔 시야가 이만큼까지 준다
+  nightVisionBonus: 0.4, // vision 형질이 밤 시야를 끌어올리는 정도(야행성 틈새 — 큰 눈은 밤에도 본다)
+
   coldPenalty: 0.3, // 추운 칸 추가 소모 (틱당, ×coldness×(1-metabolism)) — 추운 맵=고대사 유리
   globalColdLethality: 1.5, // 대멸종 한파(globalCold)는 평상시 추위보다 이만큼 더 매섭다(클라이맥스 필터). 벽 회피로 서식지 제약↑·개체 풀↓ 만큼 한파도 일관 완화(1.7→1.5, 프로브: 고대사14통과·저대사2탈락)
   plagueFertilityResist: 0.9, // 대역병 솎임을 번식력으로 저항: rate ×= 1 - this×fertility (번식력 카운터)

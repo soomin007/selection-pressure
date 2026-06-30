@@ -22,7 +22,8 @@ interface Vec {
 export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const t = e.genome.traits;
   const maxSpeed = SIM.maxSpeedBase * (0.4 + t.speed);
-  const vision = SIM.visionBase * (0.4 + t.vision);
+  // 밤엔 시야가 준다(낮=영향 없음). vision 형질이 높을수록 밤에도 잘 본다 → 야행성 틈새(큰 눈).
+  const vision = SIM.visionBase * (0.4 + t.vision) * nightVisionFactor(world.daylight, t.vision);
   const drain = SIM.metabolismDrain * (0.5 + t.metabolism);
   const maxAge = SIM.baseMaxAge;
   // 식성 구간: 초식(<0.35) 식물만 / 잡식(0.35~0.7) 둘 다 / 육식(>0.7) 사냥만.
@@ -386,6 +387,15 @@ function nearestFood(e: Entity, world: World, maxDist2: number): Food | null {
     }
   }
   return found;
+}
+
+/**
+ * 밤 시야 배율. daylight 1(정오)=1.0(영향 없음), 0(자정)=가장 어두움. vision 형질이 높을수록 밤
+ * 하한이 올라간다(야행성 — 큰 눈은 밤에도 본다). 낮↔밤을 daylight 로 부드럽게 보간. (단위 테스트용 export)
+ */
+export function nightVisionFactor(daylight: number, vision: number): number {
+  const nightMin = SIM.nightVisionFloor + SIM.nightVisionBonus * vision;
+  return nightMin + (1 - nightMin) * daylight;
 }
 
 /** (dx,dy) 를 길이 len 으로 정규화. 0 벡터는 0 그대로. */

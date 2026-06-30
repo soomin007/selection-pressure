@@ -148,6 +148,15 @@ export class World {
     this.maybeImmigrate();
   }
 
+  /**
+   * 낮의 밝기 0(자정)~1(정오). tick 기반이라 결정론(rng 무관). 시야(밤엔 감소)·화면 밝기에 쓴다.
+   * cos 곡선이라 정오→해질녘→자정→동틀녘이 부드럽게 이어진다.
+   */
+  get daylight(): number {
+    const phase = (this.tick % SIM.dayLength) / SIM.dayLength; // 0~1 (0=정오 시작)
+    return 0.5 + 0.5 * Math.cos(phase * 2 * Math.PI);
+  }
+
   get population(): number {
     return this.entities.length;
   }
