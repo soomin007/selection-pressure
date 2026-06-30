@@ -19,6 +19,7 @@ import { createGlossary } from "@/ui/glossary";
 import { describeSpecies } from "@/game/runReport";
 import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
+import { Minimap } from "@/render/minimap";
 
 // 맵 확장 배율 — 월드를 화면의 이 배수만큼 크게(가로·세로 각). 면적은 제곱(3 → 9배).
 const MAP_SCALE = 3;
@@ -57,6 +58,8 @@ async function boot(): Promise<void> {
   view.container.mask = worldMask;
   app.stage.addChild(hud.container); // ← root(스케일) 밖 = 네이티브 해상도
   app.stage.addChild(highlights.container);
+  const minimap = new Minimap(); // 큰 맵 조망 — 화면 픽셀 좌표(카메라 변환 밖, 모서리 고정)
+  app.stage.addChild(minimap.container);
 
   // 맵 확장: 월드를 화면보다 크게(가로·세로 MAP_SCALE 배 = 면적 MAP_SCALE² 배). 카메라가 내 무리를
   // 따라다니며 일부만 보여준다. 개체·먹이·통과기준은 areaScale(면적 배율)로 비례해 밀도·난이도 유지.
@@ -183,6 +186,12 @@ async function boot(): Promise<void> {
     buildPanel.setVisible(game.phase === "draft" || game.phase === "watch");
 
     updateCamera(ticker.deltaMS);
+    // 미니맵 — 관전/드래프트 중에만(로비 제외). 카메라 뷰포트는 화면(layout)/줌 기준.
+    minimap.container.visible = game.phase !== "lobby";
+    if (minimap.container.visible) {
+      minimap.sync(game.world, camX, camY, camZoom, layout.width, layout.height);
+      minimap.place(app.screen.width, app.screen.height);
+    }
     detectEvents();
     highlights.update(ticker.deltaMS, app.screen.width);
 
