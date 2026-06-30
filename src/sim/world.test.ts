@@ -186,9 +186,9 @@ describe("Phase 6 — 사망 원인 집계", () => {
 });
 
 describe("종 다양성", () => {
-  it("내 종 + 야생 7종 = 8종으로 시작한다", () => {
+  it("내 종 + 야생 8종 = 9종으로 시작한다", () => {
     const w = new World("env-1", W, H, defaultGenome());
-    expect(w.species.length).toBe(8);
+    expect(w.species.length).toBe(9);
     expect(w.species.filter((s) => s.isPlayer).length).toBe(1);
   });
 
@@ -233,6 +233,23 @@ describe("지형 이동 차단 (P1 결합)", () => {
       for (let i = 0; i < 1500; i++) w.step();
       expect(w.population).toBeGreaterThan(0);
     }
+  });
+
+  it("물 전용 종(수영≥0.9, 물고기 떼)은 육지에 못 올라온다", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    let landViolation = 0;
+    for (let i = 0; i < 1500; i++) {
+      w.step();
+      for (const e of w.entities) {
+        if (
+          e.genome.traits.swimming >= SIM.aquaticOnlyThreshold &&
+          w.terrain.kindAt(e.x, e.y) === TILE.land
+        ) {
+          landViolation += 1;
+        }
+      }
+    }
+    expect(landViolation).toBe(0);
   });
 });
 

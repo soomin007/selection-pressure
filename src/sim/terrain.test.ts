@@ -71,6 +71,15 @@ describe("지형 통행(이동 차단)", () => {
     expect(t.isPassable(mx, my, true)).toBe(false);
   });
 
+  it("isPassable: 물 전용(canLand=false)은 물만 통행하고 육지엔 못 오른다", () => {
+    const t = gen("t-1");
+    const [lx, ly] = tileCenter(t, t.tiles.findIndex((k) => k === TILE.land));
+    const [wx, wy] = tileCenter(t, t.tiles.findIndex((k) => k === TILE.water));
+    // 물 전용: 물은 통행, 육지는 차단(진짜 물고기)
+    expect(t.isPassable(wx, wy, true, false)).toBe(true);
+    expect(t.isPassable(lx, ly, true, false)).toBe(false);
+  });
+
   it("nearestPassable: 통행 좌표는 그대로, 막힌 좌표는 통행 가능 타일로 스냅", () => {
     const t = gen("t-1");
     const [lx, ly] = tileCenter(t, t.tiles.findIndex((k) => k === TILE.land));

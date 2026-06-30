@@ -85,14 +85,22 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
     traits: { diet: 0.85, fertility: 0.3, speed: 0.66, vision: 0.6, metabolism: 0.5, attack: 0.7, herding: 0.4 },
   },
   {
-    // 바다 풀뜯이 — 수영 형질로 바다 먹이(무경쟁 틈새)를 전문으로 먹는다. 육지 식물(foodKinds=[])은
-    // 안 먹어 다른 초식종과 경쟁하지 않고, 바다라는 별도 무대에서 산다(이동 차단으로 비수영 종이 못
-    // 따라오는 피난처). 플레이어가 수영을 찍으면 그제야 이 바다 자원을 두고 경쟁이 시작된다.
+    // 바다 풀뜯이 — 수륙양용(수영 0.75: 물+육지 다 다님). 바다 먹이를 전문으로 먹되 육지도 오간다.
+    // 이동 차단으로 비수영 종이 못 따라오는 바다가 피난처. 플레이어가 수영을 찍으면 바다 자원 경쟁 시작.
     name: "바다 풀뜯이",
     color: 0xff7eb0, // 청록 바다 배경 위에서 잘 보이게 보색(밝은 산호 분홍) — 기존 종색과도 구분
     initialCount: 10,
     foodKinds: [],
     traits: { diet: 0.18, fertility: 0.55, speed: 0.5, vision: 0.5, metabolism: 0.42, attack: 0.2, herding: 0.45, swimming: 0.75 },
+  },
+  {
+    // 물고기 떼 — 물 전용(수영 0.95 ≥ 0.9: 육지에 못 올라옴). 바다 먹이만 먹고 바다에서만 산다.
+    // 다산형(물고기답게 알 많이). 바다 풀뜯이(양용)와 바다 먹이를 두고 경쟁하는 진짜 수생 거주자.
+    name: "물고기 떼",
+    color: 0x7fc0e8, // 밝은 물빛 파랑 — 청록 바다 배경에서 뜨고, 바다 풀뜯이(분홍)와 구분
+    initialCount: 10,
+    foodKinds: [],
+    traits: { diet: 0.2, fertility: 0.7, speed: 0.45, vision: 0.4, metabolism: 0.45, attack: 0.15, herding: 0.6, swimming: 0.95 },
   },
 ];
 

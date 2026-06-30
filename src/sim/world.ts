@@ -78,7 +78,12 @@ export class World {
       SIM.terrainCellSize,
     );
     this.grid = new SpatialGrid(width, height, SIM.gridCellSize);
-    this.playerSpecies = makePlayerSpecies(genome, SIM.initialEntities);
+    // 물 전용 플레이어(바다 개척자)는 바다만 살아 과밀하므로 시작 수를 줄인다(다른 게놈엔 영향 없음).
+    const playerStart =
+      genome.traits.swimming >= SIM.aquaticOnlyThreshold
+        ? SIM.aquaticInitialEntities
+        : SIM.initialEntities;
+    this.playerSpecies = makePlayerSpecies(genome, playerStart);
     this.species = [this.playerSpecies, ...generateWildSpecies(this.rng)];
     this.spawnFood();
     this.spawnEntities();
@@ -251,11 +256,12 @@ export class World {
       if (sp.isPlayer) continue;
       if ((counts.get(sp.id) ?? 0) >= SIM.immigrationFloor) continue;
       const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
+      const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
       for (let k = 0; k < SIM.immigrationBatch; k++) {
         // rng 소비 순서(width→height)를 보존한 뒤 막힌 타일이면 통행 타일로 스냅(스냅은 rng 미사용).
         const ix = this.rng.range(0, this.width);
         const iy = this.rng.range(0, this.height);
-        const spot = this.terrain.nearestPassable(ix, iy, canSwim);
+        const spot = this.terrain.nearestPassable(ix, iy, canSwim, canLand);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }
@@ -268,13 +274,23 @@ export class World {
       const homeX = this.rng.range(0.14, 0.86) * this.width;
       const homeY = this.rng.range(0.14, 0.86) * this.height;
       // 야생종은 좁은 영역에 모여 태어나(영역화 → 공존), 내 종(주인공)은 맵 전체에 얇게 퍼진다.
-      const spread = sp.isPlayer ? Math.max(this.width, this.height) : 72;
       const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
+      const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
+      // 물 전용 내 종은 보금자리를 가장 가까운 바다로 옮긴다(육지 home 이면 흩어져 고립). 스냅은 rng 미사용.
+      let baseX = homeX;
+      let baseY = homeY;
+      if (sp.isPlayer && !canLand) {
+        const wh = this.terrain.nearestPassable(homeX, homeY, canSwim, canLand);
+        baseX = wh.x;
+        baseY = wh.y;
+      }
+      // 육상/양용 내 종은 맵 전체에 얇게, 물 전용 내 종은 야생처럼 한 바다 영역에 모아(흩어지면 고립).
+      const spread = sp.isPlayer && canLand ? Math.max(this.width, this.height) : 72;
       for (let i = 0; i < sp.initialCount; i++) {
-        const x = Math.max(0, Math.min(this.width, homeX + this.rng.range(-spread, spread)));
-        const y = Math.max(0, Math.min(this.height, homeY + this.rng.range(-spread, spread)));
-        // 막힌 타일에 떨어지면 통행 타일로 스냅(rng 미사용 → 스폰 rng 소비 보존 = 밸런스 보존).
-        const spot = this.terrain.nearestPassable(x, y, canSwim);
+        const x = Math.max(0, Math.min(this.width, baseX + this.rng.range(-spread, spread)));
+        const y = Math.max(0, Math.min(this.height, baseY + this.rng.range(-spread, spread)));
+        // 막힌 타일에 떨어지면 통행 타일로 스냅(물 전용은 물로). rng 미사용 → 스폰 rng 소비 보존.
+        const spot = this.terrain.nearestPassable(x, y, canSwim, canLand);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }

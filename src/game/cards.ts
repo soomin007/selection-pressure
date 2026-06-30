@@ -49,9 +49,9 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_sea",
     name: "바다 개척자",
-    desc: "헤엄쳐 바다의 먹이를 먹습니다. 바다는 다투는 경쟁자가 적습니다.",
-    set: { diet: 0.45 },
-    effects: { swimming: 0.18, speed: 0.06 },
+    desc: "헤엄쳐 바다 먹이를 먹으면서 뭍도 오갑니다. 바다는 다투는 경쟁자가 적습니다.",
+    set: { diet: 0.4, swimming: 0.85 },
+    effects: { speed: 0.06 },
   },
 ];
 

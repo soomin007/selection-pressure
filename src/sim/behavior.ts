@@ -29,8 +29,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 식성 구간: 초식(<0.35) 식물만 / 잡식(0.35~0.7) 둘 다 / 육식(>0.7) 사냥만.
   const canHunt = t.diet > SIM.dietHuntMin;
   const canGraze = t.diet < SIM.dietGrazeMax;
-  // 수영 종만 물에 들어갈 수 있다(산은 누구도 못 넘는다) — 이동 차단·번식 스폰에 함께 쓴다.
+  // 수영 종만 물에 들어가고(산은 누구도 못 넘는다), 물 전용(수영 아주 높음)은 육지에 못 올라온다.
   const canSwim = t.swimming >= SIM.swimThreshold;
+  const canLand = t.swimming < SIM.aquaticOnlyThreshold;
 
   // 무리 이웃(3×3 칸) — cohesion(이동)과 huddle(보온)에 함께 쓴다.
   const nb = t.herding > 0.01 ? world.grid.neighborhood(e.x, e.y) : null;
@@ -39,7 +40,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   let desired: Vec;
   let turn: number = SIM.steerTurn;
 
-  const flee = computeFlee(e, world, t, maxSpeed, canSwim);
+  const flee = computeFlee(e, world, t, maxSpeed, canSwim, canLand);
   const fleeing = flee !== null;
   if (flee) {
     desired = flee;
@@ -48,7 +49,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     const goal = chooseGoal(e, world, vision, canHunt, canGraze);
     if (goal) {
       // 지형 길찾기: 목표가 직선으로 보이면 직진, 막혀 있으면 격자 BFS 경로를 따라 우회한다.
-      const nav = navTo(e, world, goal, canSwim);
+      const nav = navTo(e, world, goal, canSwim, canLand);
       // 최종 목표가 직선으로 보일 때만 도착 감속(arrive) — 가까울수록 줄여 오버슈트(와리가리)를 없앤다.
       // 사냥은 표적이 움직이므로 더 짧게(추격력 보존). 경유 웨이포인트는 감속 없이 전속 통과.
       const r = nav.final ? (e.targetPrey !== null ? SIM.huntArriveRadius : SIM.arriveRadius) : 0;
@@ -88,9 +89,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // (완전 반사보다 스티킹·떨림이 적다). maxSpeed < 타일폭이라 한 틱에 타일을 건너뛰지 않는다.
   const nx = e.x + e.vx;
   const ny = e.y + e.vy;
-  if (world.terrain.isPassable(nx, e.y, canSwim)) e.x = nx;
+  if (world.terrain.isPassable(nx, e.y, canSwim, canLand)) e.x = nx;
   else e.vx = 0;
-  if (world.terrain.isPassable(e.x, ny, canSwim)) e.y = ny;
+  if (world.terrain.isPassable(e.x, ny, canSwim, canLand)) e.y = ny;
   else e.vy = 0;
   if (e.x < 0) {
     e.x = 0;
@@ -177,21 +178,28 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     const cx = e.x + world.rng.range(-6, 6);
     const cy = e.y + world.rng.range(-6, 6);
     // 막힌 타일에 태어나면 갇히므로 가장 가까운 통행 타일로 스냅(rng 미사용 → 결정론·밸런스 보존).
-    const spot = world.terrain.nearestPassable(cx, cy, canSwim);
+    const spot = world.terrain.nearestPassable(cx, cy, canSwim, canLand);
     newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, childEnergy));
     world.emit("birth", spot.x, spot.y); // 연출: 탄생(초록 반짝)
   }
 }
 
 /** 보스/포식자가 도망 범위 안이면 도망 속도(단위×maxSpeed), 아니면 null. 도망 방향은 지형 회피로 보정. */
-function computeFlee(e: Entity, world: World, t: Traits, maxSpeed: number, canSwim: boolean): Vec | null {
+function computeFlee(
+  e: Entity,
+  world: World,
+  t: Traits,
+  maxSpeed: number,
+  canSwim: boolean,
+  canLand: boolean,
+): Vec | null {
   const boss = world.boss;
   if (boss && boss.killRadius > 0) {
     const bdx = e.x - boss.x;
     const bdy = e.y - boss.y;
     const bd2 = bdx * bdx + bdy * bdy;
     const fr = boss.killRadius + SIM.fleeRadiusPad + boss.visionFlee * t.vision;
-    if (bd2 < fr * fr) return clearFleeDir(e, world, bdx, bdy, maxSpeed, canSwim);
+    if (bd2 < fr * fr) return clearFleeDir(e, world, bdx, bdy, maxSpeed, canSwim, canLand);
   }
   const predator = world.grid.nearestMatching(
     e.x,
@@ -201,7 +209,9 @@ function computeFlee(e: Entity, world: World, t: Traits, maxSpeed: number, canSw
       p.alive && p !== e && p.species.id !== e.species.id &&
       p.genome.traits.diet > SIM.dietHuntMin && p.genome.traits.attack >= t.attack,
   );
-  if (predator) return clearFleeDir(e, world, e.x - predator.x, e.y - predator.y, maxSpeed, canSwim);
+  if (predator) {
+    return clearFleeDir(e, world, e.x - predator.x, e.y - predator.y, maxSpeed, canSwim, canLand);
+  }
   return null;
 }
 
@@ -218,13 +228,14 @@ function clearFleeDir(
   awayY: number,
   maxSpeed: number,
   canSwim: boolean,
+  canLand: boolean,
 ): Vec {
   const d = Math.hypot(awayX, awayY);
   if (d < 1e-6) return { x: 0, y: 0 };
   const base = Math.atan2(awayY, awayX);
   const probe = world.terrain.cellSize * SIM.fleeProbeTiles;
   // 도망 방향이 probe 거리까지 트였으면 그대로(대부분).
-  if (fleeClear(world, e.x, e.y, base, probe, canSwim)) {
+  if (fleeClear(world, e.x, e.y, base, probe, canSwim, canLand)) {
     return { x: Math.cos(base) * maxSpeed, y: Math.sin(base) * maxSpeed };
   }
   // 막힘 — away 유지 + 헤딩 일관성으로 통행 가능한 최선 방향을 고른다.
@@ -233,7 +244,7 @@ function clearFleeDir(
   let bestScore = -Infinity;
   for (const off of FLEE_OFFSETS) {
     const a = base + off;
-    if (!fleeClear(world, e.x, e.y, a, probe, canSwim)) continue;
+    if (!fleeClear(world, e.x, e.y, a, probe, canSwim, canLand)) continue;
     const score = Math.cos(off) + SIM.fleeHeadingWeight * Math.cos(a - heading);
     if (score > bestScore) {
       bestScore = score;
@@ -244,8 +255,18 @@ function clearFleeDir(
 }
 
 /** (x,y)에서 각도 ang 로 probe 거리까지 통행 가능한가(LOS). 끝점까지 보므로 막다른 곳을 미리 안다. */
-function fleeClear(world: World, x: number, y: number, ang: number, probe: number, canSwim: boolean): boolean {
-  return world.terrain.lineOfSight(x, y, x + Math.cos(ang) * probe, y + Math.sin(ang) * probe, canSwim);
+function fleeClear(
+  world: World,
+  x: number,
+  y: number,
+  ang: number,
+  probe: number,
+  canSwim: boolean,
+  canLand: boolean,
+): boolean {
+  return world.terrain.lineOfSight(
+    x, y, x + Math.cos(ang) * probe, y + Math.sin(ang) * probe, canSwim, canLand,
+  );
 }
 
 // 도망 회피 탐색 각(라디안). 0.4rad 씩 좌우로 점점 크게 — away 에 가까운(작은 편차) 통행 방향 우선.
@@ -323,10 +344,11 @@ function navTo(
   world: World,
   goal: Vec,
   canSwim: boolean,
+  canLand: boolean,
 ): { x: number; y: number; final: boolean } {
   const terr = world.terrain;
   // 1) 직선으로 보이면 직진 — 경로 버림.
-  if (terr.lineOfSight(e.x, e.y, goal.x, goal.y, canSwim)) {
+  if (terr.lineOfSight(e.x, e.y, goal.x, goal.y, canSwim, canLand)) {
     if (e.path.length > 0) {
       e.path.length = 0;
       e.pathGoalTile = -1;
@@ -336,14 +358,15 @@ function navTo(
   // 2) 막힘 — 목표 타일이 바뀌었거나 경로가 없으면 BFS 재계산(그 외엔 캐시 재사용).
   const goalTile = terr.tileIndex(goal.x, goal.y);
   if (e.pathGoalTile !== goalTile || e.path.length === 0) {
-    e.path = terr.findPath(e.x, e.y, goal.x, goal.y, canSwim);
+    e.path = terr.findPath(e.x, e.y, goal.x, goal.y, canSwim, canLand);
     e.pathGoalTile = goalTile;
   }
   // 3) 경로 단축(funnel): 다음 웨이포인트가 보이면 현재 것을 건너뛴다.
   while (e.path.length >= 2) {
     const w1 = e.path[1] as number;
-    if (terr.lineOfSight(e.x, e.y, terr.tileCenterX(w1), terr.tileCenterY(w1), canSwim)) e.path.shift();
-    else break;
+    if (terr.lineOfSight(e.x, e.y, terr.tileCenterX(w1), terr.tileCenterY(w1), canSwim, canLand)) {
+      e.path.shift();
+    } else break;
   }
   // 4) 현재 웨이포인트에 충분히 닿으면 소비.
   if (e.path.length > 0) {

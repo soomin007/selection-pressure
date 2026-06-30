@@ -106,22 +106,22 @@ export class Terrain {
   }
 
   /**
-   * 이 좌표를 (canSwim 인 종이) 지나갈 수 있는가.
-   * 산은 누구도 못 넘고, 물은 수영 형질이 충분한 종(canSwim)만 들어간다. 육지는 모두 통행.
-   * rng 미사용 → 결정론. (이동 차단·스폰 스냅에 함께 쓴다.)
+   * 이 좌표를 (canSwim·canLand 인 종이) 지나갈 수 있는가.
+   * 산은 누구도 못 넘고, 물은 수영 형질이 충분한 종(canSwim)만, 육지는 canLand 인 종만 통행한다.
+   * canLand=false 는 물 전용(진짜 물고기) — 육지에 못 올라온다. rng 미사용 → 결정론.
    */
-  isPassable(x: number, y: number, canSwim: boolean): boolean {
+  isPassable(x: number, y: number, canSwim: boolean, canLand = true): boolean {
     const k = this.kindAt(x, y);
     if (k === TILE.mountain) return false;
     if (k === TILE.water) return canSwim;
-    return true;
+    return canLand;
   }
 
-  private passableTile(cx: number, cy: number, canSwim: boolean): boolean {
+  private passableTile(cx: number, cy: number, canSwim: boolean, canLand: boolean): boolean {
     const k = this.tiles[cy * this.cols + cx] ?? TILE.land;
     if (k === TILE.mountain) return false;
     if (k === TILE.water) return canSwim;
-    return true;
+    return canLand;
   }
 
   /**
@@ -142,18 +142,18 @@ export class Terrain {
     return (Math.floor(idx / this.cols) + 0.5) * this.cellSize;
   }
 
-  private passableIndex(idx: number, canSwim: boolean): boolean {
+  private passableIndex(idx: number, canSwim: boolean, canLand: boolean): boolean {
     const k = this.tiles[idx] ?? TILE.land;
     if (k === TILE.mountain) return false;
     if (k === TILE.water) return canSwim;
-    return true;
+    return canLand;
   }
 
   /**
    * (x0,y0)→(x1,y1) 직선이 지나는 타일에 (canSwim 기준) 막힌 칸이 없으면 true. Bresenham 격자 순회.
    * 길찾기의 1차 판정 — 목표가 직선으로 보이면 BFS 없이 바로 직진한다(대부분의 경우, 가볍다).
    */
-  lineOfSight(x0: number, y0: number, x1: number, y1: number, canSwim: boolean): boolean {
+  lineOfSight(x0: number, y0: number, x1: number, y1: number, canSwim: boolean, canLand = true): boolean {
     let cx = clampIndex(Math.floor(x0 / this.cellSize), this.cols);
     let cy = clampIndex(Math.floor(y0 / this.cellSize), this.rows);
     const ex = clampIndex(Math.floor(x1 / this.cellSize), this.cols);
@@ -165,7 +165,7 @@ export class Terrain {
     let err = dx - dy;
     // 무한 루프 방지(격자 크기로 상한). 정상 경로는 dx+dy 안에 끝난다.
     for (let guard = 0; guard <= dx + dy + 1; guard++) {
-      if (!this.passableIndex(cy * this.cols + cx, canSwim)) return false;
+      if (!this.passableIndex(cy * this.cols + cx, canSwim, canLand)) return false;
       if (cx === ex && cy === ey) return true;
       const e2 = 2 * err;
       if (e2 > -dy) {
@@ -185,12 +185,12 @@ export class Terrain {
    * (start 다음 칸부터 goal 까지). 경로가 없으면 빈 배열. rng 미사용 → 결정론(이웃 순회 순서 고정).
    * 직선이 막혔을 때만 호출되고 목표 타일이 바뀔 때만 재계산되므로(behavior 가 캐시) 빈도가 낮다.
    */
-  findPath(x0: number, y0: number, x1: number, y1: number, canSwim: boolean): number[] {
+  findPath(x0: number, y0: number, x1: number, y1: number, canSwim: boolean, canLand = true): number[] {
     const n = this.cols * this.rows;
     const start = this.indexAt(x0, y0);
     const goal = this.indexAt(x1, y1);
     if (start === goal) return [];
-    if (!this.passableIndex(goal, canSwim)) return []; // 목표 칸이 막힘(보통 먹이는 통행 칸)
+    if (!this.passableIndex(goal, canSwim, canLand)) return []; // 목표 칸이 막힘(보통 먹이는 통행 칸)
     const prev = new Int32Array(n).fill(-1);
     const seen = new Uint8Array(n);
     const queue: number[] = [start];
@@ -206,10 +206,10 @@ export class Terrain {
       const cx = cur % this.cols;
       const cy = (cur - cx) / this.cols;
       // 4방향(상하좌우). 순서 고정 → 결정론.
-      if (cx + 1 < this.cols) this.visit(cur + 1, cur, canSwim, seen, prev, queue);
-      if (cx - 1 >= 0) this.visit(cur - 1, cur, canSwim, seen, prev, queue);
-      if (cy + 1 < this.rows) this.visit(cur + this.cols, cur, canSwim, seen, prev, queue);
-      if (cy - 1 >= 0) this.visit(cur - this.cols, cur, canSwim, seen, prev, queue);
+      if (cx + 1 < this.cols) this.visit(cur + 1, cur, canSwim, canLand, seen, prev, queue);
+      if (cx - 1 >= 0) this.visit(cur - 1, cur, canSwim, canLand, seen, prev, queue);
+      if (cy + 1 < this.rows) this.visit(cur + this.cols, cur, canSwim, canLand, seen, prev, queue);
+      if (cy - 1 >= 0) this.visit(cur - this.cols, cur, canSwim, canLand, seen, prev, queue);
     }
     if (!reached) return [];
     // goal → start 역추적 후 뒤집어 start 다음..goal 순서로.
@@ -227,18 +227,19 @@ export class Terrain {
     next: number,
     cur: number,
     canSwim: boolean,
+    canLand: boolean,
     seen: Uint8Array,
     prev: Int32Array,
     queue: number[],
   ): void {
-    if (seen[next] || !this.passableIndex(next, canSwim)) return;
+    if (seen[next] || !this.passableIndex(next, canSwim, canLand)) return;
     seen[next] = 1;
     prev[next] = cur;
     queue.push(next);
   }
 
-  nearestPassable(x: number, y: number, canSwim: boolean): { x: number; y: number } {
-    if (this.isPassable(x, y, canSwim)) return { x, y };
+  nearestPassable(x: number, y: number, canSwim: boolean, canLand = true): { x: number; y: number } {
+    if (this.isPassable(x, y, canSwim, canLand)) return { x, y };
     const cs = this.cellSize;
     const sx = clampIndex(Math.floor(x / cs), this.cols);
     const sy = clampIndex(Math.floor(y / cs), this.rows);
@@ -254,7 +255,7 @@ export class Terrain {
           const cx = sx + dx;
           const cy = sy + dy;
           if (cx < 0 || cx >= this.cols || cy < 0 || cy >= this.rows) continue;
-          if (!this.passableTile(cx, cy, canSwim)) continue;
+          if (!this.passableTile(cx, cy, canSwim, canLand)) continue;
           const px = (cx + 0.5) * cs;
           const py = (cy + 0.5) * cs;
           const d2 = (px - x) * (px - x) + (py - y) * (py - y);
