@@ -5,8 +5,8 @@ export const GAME = {
   roundSeconds: 16, // 채집 라운드 길이(초) — 통과 기준 없어 짧혀도 밸런스 영향 없음
   bossSeconds: 20, // 보스 게이트 관전 길이(초) — 통과 기준이 이 길이에 맞춰져 있음
   extinctionSeconds: 24, // 대멸종 피날레 길이(초) — 통과 기준이 이 길이에 맞춰져 있음
-  bossPassThreshold: 6, // 보스 끝까지 내 종이 이 수 이상 생존하면 통과
-  extinctionPassThreshold: 10, // 대멸종 끝까지 내 종이 이 수 이상 생존하면 통과(승리, 클라이맥스 필터)
+  bossPassThreshold: 3, // 보스 끝까지 내 종이 이 수 이상 생존하면 통과 (소수 개체 게임에 맞춰 낮춤)
+  extinctionPassThreshold: 3, // 대멸종 끝까지 내 종이 이 수 이상 생존하면 통과(승리, 클라이맥스 필터)
 } as const;
 
 // 한 런의 라운드 계획. 각 단계 앞에는 드래프트가 붙는다.

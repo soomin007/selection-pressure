@@ -189,9 +189,9 @@ export class World {
     return 0.5 + 0.5 * Math.cos(this.dayPhase * 2 * Math.PI);
   }
 
-  /** 개체 수 안전 상한(면적 비례) — 폭주 방지. 큰 월드일수록 더 많은 개체를 허용한다. */
+  /** 개체 수 안전 상한 — 폭주 방지. 소수 개체 게임이라 맵 크기와 무관한 절대 상한. */
   get cap(): number {
-    return Math.round(SIM.populationCap * this.areaScale);
+    return SIM.populationCap;
   }
 
   get population(): number {
@@ -368,9 +368,12 @@ export class World {
       // 육상/양용 내 종은 맵 전체에 얇게, 물 전용 내 종은 야생처럼 한 바다 영역에 모아(흩어지면 고립).
       // 야생 보금자리는 맵 크기(면적의 제곱근)에 비례 — 절대값이면 큰 맵에서 좁은 점에 과밀해 국소 먹이를
       // 빨리 소진하고 집단 아사한다(맵 3배에서 야생 급감의 원인). 비례하면 밀도가 유지된다.
-      const wildSpread = 72 * Math.sqrt(this.areaScale);
-      const spread = sp.isPlayer && canLand ? Math.max(this.width, this.height) : wildSpread;
-      const count = Math.round(sp.initialCount * this.areaScale);
+      // 모든 종(내 종 포함)이 한 무리로 모여 태어난다 — 내 종이 맵 전체에 흩어지면 무게중심이 안
+      // 움직여 카메라가 못 따라가고 개체 하나하나 관찰이 안 된다(소수 개체 게임의 핵심).
+      const spread = 72 * Math.sqrt(this.areaScale);
+      // 야생은 종 정체성(상대 비율)은 유지하며 전체만 절반으로(소수 생태). 개체는 절대 수(맵 크기와
+      // 무관하게 소수) — areaScale(면적 배율)은 먹이 밀도·상한에만 써서, 큰 맵일수록 개체당 먹이가 넉넉하다.
+      const count = Math.max(1, Math.round(sp.isPlayer ? sp.initialCount : sp.initialCount * SIM.wildCountScale));
       for (let i = 0; i < count; i++) {
         const x = Math.max(0, Math.min(this.width, baseX + this.rng.range(-spread, spread)));
         const y = Math.max(0, Math.min(this.height, baseY + this.rng.range(-spread, spread)));

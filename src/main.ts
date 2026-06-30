@@ -21,8 +21,8 @@ import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
 
-// 맵 확장 배율 — 월드를 화면의 이 배수만큼 크게(가로·세로 각). 면적은 제곱(3 → 9배).
-const MAP_SCALE = 3;
+// 맵 배율 — 월드를 화면의 이 배수만큼 크게. 소수 개체(한 무리)를 카메라가 따라가며 약간의 탐험.
+const MAP_SCALE = 1.5;
 
 async function boot(): Promise<void> {
   const layout = chooseLayout();
@@ -61,13 +61,9 @@ async function boot(): Promise<void> {
   const minimap = new Minimap(); // 큰 맵 조망 — 화면 픽셀 좌표(카메라 변환 밖, 모서리 고정)
   app.stage.addChild(minimap.container);
 
-  // 맵 확장: 월드를 화면보다 크게(가로·세로 MAP_SCALE 배 = 면적 MAP_SCALE² 배). 카메라가 내 무리를
-  // 따라다니며 일부만 보여준다. 개체·먹이·통과기준은 areaScale(면적 배율)로 비례해 밀도·난이도 유지.
-  const game = new Game(
-    layout.width * MAP_SCALE,
-    layout.height * MAP_SCALE,
-    MAP_SCALE * MAP_SCALE,
-  );
+  // 소수 개체 게임: 월드를 약간 크게(MAP_SCALE) + 개체는 절대 수(소수)지만 먹이 밀도·상한은 면적 비례
+  // (areaScale=면적배율) → 큰 맵일수록 개체당 먹이가 넉넉해 굶지 않는다. 카메라가 한 무리를 따라다닌다.
+  const game = new Game(layout.width * MAP_SCALE, layout.height * MAP_SCALE, MAP_SCALE * MAP_SCALE);
 
   // 디버그: URL 에 ?seed=… 가 있으면 그 시드로 고정(맵·카드·보스 완전 재현). 없으면 런마다 랜덤.
   const seedParam = new URLSearchParams(window.location.search).get("seed");

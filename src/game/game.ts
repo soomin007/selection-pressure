@@ -273,13 +273,10 @@ export class Game {
       return;
     }
 
-    // 통과기준도 면적 비례(큰 월드는 개체가 많으니) — 난이도를 월드 크기와 무관하게 유지.
+    // 통과기준은 절대 수(소수 개체 게임) — 개체가 맵 크기와 무관하게 소수라 기준도 고정.
     let passed = true;
-    if (kind === "boss") {
-      passed = this.world.playerPopulation >= Math.round(GAME.bossPassThreshold * this.areaScale);
-    } else if (kind === "extinction") {
-      passed = this.world.playerPopulation >= Math.round(GAME.extinctionPassThreshold * this.areaScale);
-    }
+    if (kind === "boss") passed = this.world.playerPopulation >= GAME.bossPassThreshold;
+    else if (kind === "extinction") passed = this.world.playerPopulation >= GAME.extinctionPassThreshold;
 
     if (!passed) {
       this.endRun("lose");

@@ -284,14 +284,14 @@ describe("야생 진화(살아있는 생태)", () => {
 });
 
 describe("맵 확장(areaScale)", () => {
-  it("areaScale 이 크면 개체·먹이·상한이 면적에 비례해 늘어난다(밀도 유지)", () => {
+  it("개체·상한은 절대(소수), 먹이만 면적 비례(큰 맵일수록 개체당 먹이↑)", () => {
     const small = new World("env-1", W, H, defaultGenome(), 1);
     const big = new World("env-1", W * 3, H * 3, defaultGenome(), 9);
-    // 개체·먹이는 대략 9배(반올림 오차 허용 — 5배 이상이면 비례 확인 충분)
-    expect(big.entities.length).toBeGreaterThan(small.entities.length * 5);
+    // 개체·상한은 맵 크기와 무관(절대 수 — 소수 개체 게임)
+    expect(big.entities.length).toBe(small.entities.length);
+    expect(big.cap).toBe(small.cap);
+    // 먹이만 면적 비례(밀도 유지 → 큰 맵에서도 개체가 안 굶는다)
     expect(big.food.length).toBeGreaterThan(small.food.length * 5);
-    // 상한은 정확히 9배
-    expect(big.cap).toBe(small.cap * 9);
   });
 
   it("playerCentroid 는 내 종 무리의 평균 위치(카메라 추적용)", () => {
