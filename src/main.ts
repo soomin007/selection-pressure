@@ -20,6 +20,9 @@ import { describeSpecies } from "@/game/runReport";
 import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
 
+// 맵 확장 배율 — 월드를 화면의 이 배수만큼 크게(가로·세로 각). 면적은 제곱(3 → 9배).
+const MAP_SCALE = 3;
+
 async function boot(): Promise<void> {
   const layout = chooseLayout();
   document.body.dataset.layout = layout.isDesktop ? "desktop" : "mobile";
@@ -55,7 +58,13 @@ async function boot(): Promise<void> {
   app.stage.addChild(hud.container); // ← root(스케일) 밖 = 네이티브 해상도
   app.stage.addChild(highlights.container);
 
-  const game = new Game(layout.width, layout.height);
+  // 맵 확장: 월드를 화면보다 크게(가로·세로 MAP_SCALE 배 = 면적 MAP_SCALE² 배). 카메라가 내 무리를
+  // 따라다니며 일부만 보여준다. 개체·먹이·통과기준은 areaScale(면적 배율)로 비례해 밀도·난이도 유지.
+  const game = new Game(
+    layout.width * MAP_SCALE,
+    layout.height * MAP_SCALE,
+    MAP_SCALE * MAP_SCALE,
+  );
 
   // 디버그: URL 에 ?seed=… 가 있으면 그 시드로 고정(맵·카드·보스 완전 재현). 없으면 런마다 랜덤.
   const seedParam = new URLSearchParams(window.location.search).get("seed");
@@ -154,9 +163,9 @@ async function boot(): Promise<void> {
     document.body.appendChild(debugBadge);
   }
 
-  // 카메라(보스 추적 줌) + 하이라이트 이벤트 감지 상태
-  let camX = layout.width / 2;
-  let camY = layout.height / 2;
+  // 카메라(평상시 내 무리 추적, 보스 땐 보스 추적 줌) + 하이라이트 이벤트 감지 상태
+  let camX = game.width / 2;
+  let camY = game.height / 2;
   let camZoom = 1;
   let prevBoss = false;
   let prevExt = "";
@@ -189,14 +198,17 @@ async function boot(): Promise<void> {
   function updateCamera(dtMS: number): void {
     const boss = game.world.boss;
     const focusBoss = game.phase === "watch" && boss !== null;
+    // 평상시엔 내 무리의 무게중심을 따라가고, 보스 관전 땐 보스로 줌인.
+    const centroid = game.world.playerCentroid();
     const tz = focusBoss ? 1.35 : 1;
-    const tx = focusBoss && boss ? boss.x : layout.width / 2;
-    const ty = focusBoss && boss ? boss.y : layout.height / 2;
+    const tx = focusBoss && boss ? boss.x : centroid.x;
+    const ty = focusBoss && boss ? boss.y : centroid.y;
     const k = Math.min(1, (dtMS / 1000) * 3.5); // 시간 기반 이징
     camX += (tx - camX) * k;
     camY += (ty - camY) * k;
     camZoom += (tz - camZoom) * k;
-    view.setCamera(camX, camY, camZoom, layout.width, layout.height);
+    // 월드(game.width/height)와 화면(layout) 분리 — 큰 월드의 일부만 화면에 보여준다.
+    view.setCamera(camX, camY, camZoom, game.width, game.height, layout.width, layout.height);
   }
 
   function detectEvents(): void {

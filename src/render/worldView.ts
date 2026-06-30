@@ -37,15 +37,26 @@ export class WorldView {
     this.container.addChild(this.overlayG);
   }
 
-  /** 카메라 — 초점(fx,fy)을 화면 중앙에 두고 zoom 배율로. 세계 밖이 안 보이게 클램프. */
-  setCamera(fx: number, fy: number, zoom: number, worldW: number, worldH: number): void {
-    const halfW = worldW / (2 * zoom);
-    const halfH = worldH / (2 * zoom);
+  /**
+   * 카메라 — 초점(fx,fy)을 화면 중앙에 두고 zoom 배율로. 월드 밖(가장자리 너머 빈 공간)이 안 보이게
+   * 화면 절반만큼 안쪽으로 클램프. 월드(worldW/H)와 화면(screenW/H)을 분리해 큰 월드의 일부만 보여준다.
+   */
+  setCamera(
+    fx: number,
+    fy: number,
+    zoom: number,
+    worldW: number,
+    worldH: number,
+    screenW = worldW,
+    screenH = worldH,
+  ): void {
+    const halfW = screenW / (2 * zoom);
+    const halfH = screenH / (2 * zoom);
     const cx = clampRange(fx, halfW, worldW - halfW);
     const cy = clampRange(fy, halfH, worldH - halfH);
     this.container.scale.set(zoom);
     this.container.pivot.set(cx, cy);
-    this.container.position.set(worldW / 2, worldH / 2);
+    this.container.position.set(screenW / 2, screenH / 2);
   }
 
   /** 런이 바뀌거나 내 종 게놈이 바뀌면 호출 — 종별 스프라이트 텍스처를 다시 만든다. */

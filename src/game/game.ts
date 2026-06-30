@@ -23,6 +23,8 @@ const EXTINCTION_TYPES: readonly ExtinctionType[] = ["cold", "famine", "heat", "
 export class Game {
   readonly width: number;
   readonly height: number;
+  /** 월드 면적 배율(화면 1개=1). 맵 확장 시 개체·먹이·통과기준을 면적 비례로 키운다. */
+  readonly areaScale: number;
 
   genome: Genome;
   world: World;
@@ -61,9 +63,10 @@ export class Game {
   onResult: ((result: RunResult, summary: string) => void) | null = null;
   onWorldChanged: ((world: World) => void) | null = null;
 
-  constructor(width: number, height: number) {
+  constructor(width: number, height: number, areaScale = 1) {
     this.width = width;
     this.height = height;
+    this.areaScale = areaScale;
     this.genome = defaultGenome();
     this.draftRng = new Rng("draft-0");
     this.stageRng = new Rng("stage-0");
@@ -209,7 +212,7 @@ export class Game {
   }
 
   private makeWorld(): World {
-    return new World(`${this.currentSeed}-env`, this.width, this.height, this.genome);
+    return new World(`${this.currentSeed}-env`, this.width, this.height, this.genome, this.areaScale);
   }
 
   private currentKind(): StageKind {
@@ -270,10 +273,13 @@ export class Game {
       return;
     }
 
+    // 통과기준도 면적 비례(큰 월드는 개체가 많으니) — 난이도를 월드 크기와 무관하게 유지.
     let passed = true;
-    if (kind === "boss") passed = this.world.playerPopulation >= GAME.bossPassThreshold;
-    else if (kind === "extinction")
-      passed = this.world.playerPopulation >= GAME.extinctionPassThreshold;
+    if (kind === "boss") {
+      passed = this.world.playerPopulation >= Math.round(GAME.bossPassThreshold * this.areaScale);
+    } else if (kind === "extinction") {
+      passed = this.world.playerPopulation >= Math.round(GAME.extinctionPassThreshold * this.areaScale);
+    }
 
     if (!passed) {
       this.endRun("lose");

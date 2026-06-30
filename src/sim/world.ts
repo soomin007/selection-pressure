@@ -11,6 +11,7 @@ import { createFood, type Food } from "@/sim/food";
 import { Environment } from "@/sim/environment";
 import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { SpatialGrid } from "@/sim/spatialGrid";
+import { FoodGrid } from "@/sim/foodGrid";
 import { makePlayerSpecies, generateWildSpecies, type Species } from "@/sim/species";
 import { stepEntity } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
@@ -35,6 +36,9 @@ export interface VisualEvent {
 export class World {
   readonly width: number;
   readonly height: number;
+  /** 면적 배율(화면 1개 = 1). 개체·먹이·개체 상한을 월드 크기에 비례시켜 밀도를 일정하게 유지한다.
+   * 테스트는 작은 월드(1)로 빠르게, 게임은 큰 월드(맵 3배 → 9)로. 밀도가 같아 밸런스가 일관된다. */
+  readonly areaScale: number;
   readonly rng: Rng;
   /** 내 종 게놈 — 드래프트가 수정하는 대상(살아있는 중 바꾸면 즉시 반영). */
   readonly genome: Genome;
@@ -44,6 +48,8 @@ export class World {
   /** 지형(바다/육지/산). 현재는 시각 전용 — 이동/먹이/시야 결합은 다음 슬라이스(독립 rng 라 sim 동역학 무관). */
   readonly terrain: Terrain;
   readonly grid: SpatialGrid;
+  /** 먹이 공간 격자 — 가까운 먹이 질의를 빠르게(큰 맵 성능). 먹이 위치 불변이라 생성 시 1회 빌드. */
+  readonly foodGrid: FoodGrid;
 
   entities: Entity[] = [];
   food: Food[] = [];
@@ -64,9 +70,16 @@ export class World {
 
   private idCounter = 0;
 
-  constructor(seed: string | number, width: number, height: number, genome: Genome) {
+  constructor(
+    seed: string | number,
+    width: number,
+    height: number,
+    genome: Genome,
+    areaScale = 1,
+  ) {
     this.width = width;
     this.height = height;
+    this.areaScale = areaScale;
     this.rng = new Rng(seed);
     this.genome = genome;
     this.environment = Environment.generate(this.rng, width, height, SIM.cellSize);
@@ -79,17 +92,21 @@ export class World {
     );
     this.grid = new SpatialGrid(width, height, SIM.gridCellSize);
     // 물 전용 플레이어(바다 개척자)는 바다만 살아 과밀하므로 시작 수를 줄인다(다른 게놈엔 영향 없음).
-    const playerStart =
+    // areaScale 은 spawnEntities 에서 일괄 곱하므로 여기선 기본 수만(이중 곱 방지).
+    const baseStart =
       genome.traits.swimming >= SIM.aquaticOnlyThreshold
         ? SIM.aquaticInitialEntities
         : SIM.initialEntities;
-    this.playerSpecies = makePlayerSpecies(genome, playerStart);
+    this.playerSpecies = makePlayerSpecies(genome, baseStart);
     this.species = [this.playerSpecies, ...generateWildSpecies(this.rng)];
     this.spawnFood();
     this.spawnEntities();
     // 바다 먹이는 "독립 rng"로 생물 스폰 뒤에 — this.rng 상태(=step 동역학)를 안 건드려 밸런스 보존.
     this.spawnSeaFood(new Rng(String(seed) + "-seafood"));
     this.grid.rebuild(this.entities);
+    // 먹이 위치는 불변이라 격자를 한 번만 빌드한다(available 토글은 탐색 시 거른다).
+    this.foodGrid = new FoodGrid(width, height, SIM.gridCellSize);
+    this.foodGrid.build(this.food);
   }
 
   nextId(): number {
@@ -166,6 +183,11 @@ export class World {
     return 0.5 + 0.5 * Math.cos(this.dayPhase * 2 * Math.PI);
   }
 
+  /** 개체 수 안전 상한(면적 비례) — 폭주 방지. 큰 월드일수록 더 많은 개체를 허용한다. */
+  get cap(): number {
+    return Math.round(SIM.populationCap * this.areaScale);
+  }
+
   get population(): number {
     return this.entities.length;
   }
@@ -175,6 +197,22 @@ export class World {
     let count = 0;
     for (const e of this.entities) if (e.species.isPlayer) count += 1;
     return count;
+  }
+
+  /** 내 종 무리의 무게중심(카메라 추적용). 내 종이 없으면 월드 중앙. */
+  playerCentroid(): { x: number; y: number } {
+    let sx = 0;
+    let sy = 0;
+    let n = 0;
+    for (const e of this.entities) {
+      if (e.species.isPlayer) {
+        sx += e.x;
+        sy += e.y;
+        n += 1;
+      }
+    }
+    if (n === 0) return { x: this.width / 2, y: this.height / 2 };
+    return { x: sx / n, y: sy / n };
   }
 
   /** 죽음 1건 집계. 정산은 "왜 내 종이 죽었나"가 핵심이라 내 종만 센다. (rng 미사용 → 결정론 유지) */
@@ -197,14 +235,15 @@ export class World {
   private spawnFood(): void {
     // 육지 타일에만 식물 먹이. 지형 "타일" 단위로 정밀 배치(환경 칸 단위면 물 위에 떨어진다).
     // 비옥할수록 많이. this.rng 사용(스폰 전이라 생물 스폰 rng 와 이어짐 — 소비 횟수는 환경칸판과 동일).
-    this.spawnFoodOnTiles(this.rng, SIM.foodPatches, false, (kind, fertility) =>
+    this.spawnFoodOnTiles(this.rng, Math.round(SIM.foodPatches * this.areaScale), false, (kind, fertility) =>
       kind === TILE.land ? 0.15 + fertility : 0,
     );
   }
 
   /** 바다 타일에 바다 먹이(수영 형질로만 먹는 무경쟁 틈새). 독립 rng → step 동역학 불변. */
   private spawnSeaFood(rng: Rng): void {
-    this.spawnFoodOnTiles(rng, SIM.seaFoodPatches, true, (kind) => (kind === TILE.water ? 1 : 0));
+    const count = Math.round(SIM.seaFoodPatches * this.areaScale);
+    this.spawnFoodOnTiles(rng, count, true, (kind) => (kind === TILE.water ? 1 : 0));
   }
 
   /** 지형 타일 단위 가중 추첨으로 먹이 count 개를 놓는다(정밀 배치). 타일별 weight 는 콜백이 정한다. */
@@ -249,7 +288,7 @@ export class World {
   /** 야생 이주 — 멸종했거나 적은 야생종을 주기적으로 소수 보충(다양성 바닥). 내 종은 제외. */
   private maybeImmigrate(): void {
     if (this.tick % SIM.immigrationInterval !== 0) return;
-    if (this.entities.length >= SIM.populationCap) return;
+    if (this.entities.length >= this.cap) return;
     const counts = new Map<number, number>();
     for (const e of this.entities) counts.set(e.species.id, (counts.get(e.species.id) ?? 0) + 1);
     for (const sp of this.species) {
@@ -286,7 +325,8 @@ export class World {
       }
       // 육상/양용 내 종은 맵 전체에 얇게, 물 전용 내 종은 야생처럼 한 바다 영역에 모아(흩어지면 고립).
       const spread = sp.isPlayer && canLand ? Math.max(this.width, this.height) : 72;
-      for (let i = 0; i < sp.initialCount; i++) {
+      const count = Math.round(sp.initialCount * this.areaScale);
+      for (let i = 0; i < count; i++) {
         const x = Math.max(0, Math.min(this.width, baseX + this.rng.range(-spread, spread)));
         const y = Math.max(0, Math.min(this.height, baseY + this.rng.range(-spread, spread)));
         // 막힌 타일에 떨어지면 통행 타일로 스냅(물 전용은 물로). rng 미사용 → 스폰 rng 소비 보존.

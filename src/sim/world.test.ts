@@ -253,6 +253,27 @@ describe("지형 이동 차단 (P1 결합)", () => {
   });
 });
 
+describe("맵 확장(areaScale)", () => {
+  it("areaScale 이 크면 개체·먹이·상한이 면적에 비례해 늘어난다(밀도 유지)", () => {
+    const small = new World("env-1", W, H, defaultGenome(), 1);
+    const big = new World("env-1", W * 3, H * 3, defaultGenome(), 9);
+    // 개체·먹이는 대략 9배(반올림 오차 허용 — 5배 이상이면 비례 확인 충분)
+    expect(big.entities.length).toBeGreaterThan(small.entities.length * 5);
+    expect(big.food.length).toBeGreaterThan(small.food.length * 5);
+    // 상한은 정확히 9배
+    expect(big.cap).toBe(small.cap * 9);
+  });
+
+  it("playerCentroid 는 내 종 무리의 평균 위치(카메라 추적용)", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    const c = w.playerCentroid();
+    expect(c.x).toBeGreaterThanOrEqual(0);
+    expect(c.x).toBeLessThanOrEqual(W);
+    expect(c.y).toBeGreaterThanOrEqual(0);
+    expect(c.y).toBeLessThanOrEqual(H);
+  });
+});
+
 describe("낮/밤 순환", () => {
   it("daylight 는 0~1 범위를 돌고 정오(시작)=1·자정(절반)≈0", () => {
     const w = new World("env-1", W, H, defaultGenome());
