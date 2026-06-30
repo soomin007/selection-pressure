@@ -21,6 +21,23 @@ const LEGEND_Y_DESKTOP = 168;
 // worldView.ts 의 FOOD_COLORS 와 동기화 유지(먹이 종류별 색: 연두 / 청록 / 노랑풀).
 const FOOD_LEGEND_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
 
+/** 밝기·진행도로 낮밤 단계 라벨. 노을(정오→자정, phase<0.5) vs 새벽(자정→정오)을 phase 로 가른다. */
+function phaseLabel(daylight: number, phase: number): string {
+  if (daylight >= 0.66) return "낮";
+  if (daylight < 0.33) return "밤";
+  return phase < 0.5 ? "노을" : "새벽";
+}
+
+/** 두 색(0xRRGGBB)을 t(0~1)로 선형 보간. */
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+  const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return (r << 16) | (g << 8) | bl;
+}
+
 // 정보 박스 — 모바일은 슬림(내 종+상태), 데스크톱은 추이 그래프까지. 사망 알림은 죽을 때만 한 줄 추가.
 const PANEL_X = 8;
 const PANEL_Y = 8;
@@ -31,6 +48,12 @@ const PANEL_H_DESKTOP = 134; // stat + 상태 2줄 + 추이 그래프
 const PANEL_H_DESKTOP_DEATH = 156;
 const DEATH_Y_MOBILE = 88;
 const DEATH_Y_DESKTOP = 140; // 그래프 아래
+
+// 낮밤 타이머 — 정보 박스 우상단의 색 원 + 라벨.
+const DAY_DOT_X = PANEL_X + PANEL_W - 16;
+const DAY_DOT_Y = 21;
+const DAY_DOT_COLOR = 0xffd24a; // 낮(밝은 노랑)
+const NIGHT_DOT_COLOR = 0x2a3a6a; // 밤(어두운 남색)
 
 // 추이 그래프(데스크톱 전용) — 정보 박스 안 스파크라인.
 const GRAPH_X = 16;
@@ -57,6 +80,8 @@ export class Hud {
   private readonly stat: Text;
   private readonly notice: Text;
   private readonly deathFeed: Text;
+  private readonly dayDot = new Graphics(); // 낮밤 색 원(노랑=낮, 남색=밤)
+  private readonly dayLabel: Text; // 낮/노을/밤/새벽
   private readonly panelBg = new Graphics();
   private readonly graph = new Graphics(); // 추이 그래프(데스크톱 전용)
   private history: number[] = [];
@@ -100,12 +125,22 @@ export class Hud {
     });
     this.deathFeed.position.set(16, this.isDesktop ? DEATH_Y_DESKTOP : DEATH_Y_MOBILE);
 
+    // 낮밤 타이머 — 정보 박스 우상단. 색 원(낮밤 색) + 라벨(우측 정렬, 원 왼쪽).
+    this.dayLabel = new Text({
+      text: "",
+      style: new TextStyle({ fill: 0xccd3df, fontSize: 12, fontWeight: "600" }),
+    });
+    this.dayLabel.anchor.set(1, 0);
+    this.dayLabel.position.set(DAY_DOT_X - 11, 15);
+
     // 정보 박스(맨 뒤) — 글자·그래프의 공용 배경. 사망 알림 유무에 따라 높이만 다시 그린다(drawPanel).
     this.container.addChild(this.panelBg);
     if (this.isDesktop) this.container.addChild(this.graph); // 추이 그래프는 데스크톱만
     this.container.addChild(this.stat);
     this.container.addChild(this.notice);
     this.container.addChild(this.deathFeed);
+    this.container.addChild(this.dayDot);
+    this.container.addChild(this.dayLabel);
     this.drawPanel();
 
     // 범례: 배경(맨 뒤) → 색 동그라미/구분선 → 이름 텍스트(updateLegend 에서 추가) 순.
@@ -138,6 +173,7 @@ export class Hud {
     const mine = world.playerPopulation;
     this.stat.text = `내 종 ${mine}   야생 ${world.population - mine}`;
     this.notice.text = statusText;
+    this.updateDayNight(world);
 
     this.frame += 1;
     if (this.isDesktop && this.frame % SAMPLE_EVERY === 0) {
@@ -157,8 +193,18 @@ export class Hud {
     this.stat.visible = notLobby;
     this.notice.visible = notLobby;
     this.deathFeed.visible = notLobby;
+    this.dayDot.visible = notLobby;
+    this.dayLabel.visible = notLobby;
     this.legend.visible = onWatch;
     this.drawGraph();
+  }
+
+  /** 낮밤 타이머 — 정보 박스 우상단의 색 원(낮=노랑↔밤=남색)과 단계 라벨(낮/노을/밤/새벽). */
+  private updateDayNight(world: World): void {
+    const dl = world.daylight;
+    this.dayLabel.text = phaseLabel(dl, world.dayPhase);
+    this.dayDot.clear();
+    this.dayDot.circle(DAY_DOT_X, DAY_DOT_Y, 6).fill({ color: lerpColor(NIGHT_DOT_COLOR, DAY_DOT_COLOR, dl) });
   }
 
   /** 최근 구간에 내 종이 어떤 원인으로 죽었는지 한 줄로(죽을 때만 잠깐). */

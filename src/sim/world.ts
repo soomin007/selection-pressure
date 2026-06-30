@@ -148,13 +148,17 @@ export class World {
     this.maybeImmigrate();
   }
 
+  /** 하루 진행도 0~1 (0=정오 시작 → 0.5 자정 → 1 다시 정오). tick 기반 결정론. 낮밤 표시·밝기 산출에. */
+  get dayPhase(): number {
+    return (this.tick % SIM.dayLength) / SIM.dayLength;
+  }
+
   /**
    * 낮의 밝기 0(자정)~1(정오). tick 기반이라 결정론(rng 무관). 시야(밤엔 감소)·화면 밝기에 쓴다.
    * cos 곡선이라 정오→해질녘→자정→동틀녘이 부드럽게 이어진다.
    */
   get daylight(): number {
-    const phase = (this.tick % SIM.dayLength) / SIM.dayLength; // 0~1 (0=정오 시작)
-    return 0.5 + 0.5 * Math.cos(phase * 2 * Math.PI);
+    return 0.5 + 0.5 * Math.cos(this.dayPhase * 2 * Math.PI);
   }
 
   get population(): number {
