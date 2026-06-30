@@ -253,6 +253,36 @@ describe("지형 이동 차단 (P1 결합)", () => {
   });
 });
 
+describe("야생 진화(살아있는 생태)", () => {
+  const wildMeta = (w: World): number => {
+    const alive = w.species.filter((s) => !s.isPlayer && w.entities.some((e) => e.species.id === s.id));
+    return alive.length
+      ? alive.reduce((a, s) => a + s.genome.traits.metabolism, 0) / alive.length
+      : 0;
+  };
+
+  it("추운 맵에서 야생종이 고대사로 적응한다(환경 진화)", () => {
+    const w = new World("s3", W, H, defaultGenome()); // s3 는 추운 맵(평균 추위 ~0.89)
+    const start = w.species
+      .filter((s) => !s.isPlayer)
+      .reduce((a, s) => a + s.genome.traits.metabolism, 0) / 8;
+    for (let i = 0; i < 2000; i++) w.step();
+    expect(wildMeta(w)).toBeGreaterThan(start); // 추위에 적응해 대사가 올라간다
+  });
+
+  it("야생 진화는 독립 rng 라 같은 시드면 동일하게 진화한다(결정론)", () => {
+    const a = new World("env-1", W, H, defaultGenome());
+    const b = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 600; i++) {
+      a.step();
+      b.step();
+    }
+    const sig = (w: World): string =>
+      w.species.filter((s) => !s.isPlayer).map((s) => s.genome.traits.metabolism.toFixed(5)).join(",");
+    expect(sig(a)).toEqual(sig(b));
+  });
+});
+
 describe("맵 확장(areaScale)", () => {
   it("areaScale 이 크면 개체·먹이·상한이 면적에 비례해 늘어난다(밀도 유지)", () => {
     const small = new World("env-1", W, H, defaultGenome(), 1);

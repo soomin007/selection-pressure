@@ -5,7 +5,7 @@
 // 초식은 식물(food)을, 육식은 다른 종을 먹는다. 먹이/사냥 경쟁이 창발한다.
 
 import { Rng } from "@/sim/rng";
-import type { Genome } from "@/sim/genome";
+import { TRAIT_KEYS, type Genome } from "@/sim/genome";
 import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
 import { Environment } from "@/sim/environment";
@@ -24,6 +24,8 @@ export type DeathTally = Record<DeathCause, number>;
 export function emptyDeathTally(): DeathTally {
   return { starve: 0, cold: 0, heat: 0, age: 0, boss: 0, predation: 0, plague: 0 };
 }
+
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /** 화면 연출용 1회성 사건(전 종, 위치 포함). 렌더가 매 프레임 읽고 비운다. rng 미사용 → 결정론 무관. */
 export type VisualEventKind = "birth" | "death" | "kill";
@@ -50,6 +52,8 @@ export class World {
   readonly grid: SpatialGrid;
   /** 먹이 공간 격자 — 가까운 먹이 질의를 빠르게(큰 맵 성능). 먹이 위치 불변이라 생성 시 1회 빌드. */
   readonly foodGrid: FoodGrid;
+  /** 야생 진화의 무작위 드리프트 전용 rng — 메인 rng 스트림을 안 건드려 기존 결정론을 보존한다. */
+  private readonly wildEvoRng: Rng;
 
   entities: Entity[] = [];
   food: Food[] = [];
@@ -91,6 +95,7 @@ export class World {
       SIM.terrainCellSize,
     );
     this.grid = new SpatialGrid(width, height, SIM.gridCellSize);
+    this.wildEvoRng = new Rng(String(seed) + "-wildevo");
     // 물 전용 플레이어(바다 개척자)는 바다만 살아 과밀하므로 시작 수를 줄인다(다른 게놈엔 영향 없음).
     // areaScale 은 spawnEntities 에서 일괄 곱하므로 여기선 기본 수만(이중 곱 방지).
     const baseStart =
@@ -168,6 +173,7 @@ export class World {
     if (hasDead) this.entities = this.entities.filter((e) => e.alive);
 
     this.maybeImmigrate();
+    this.maybeEvolveWild();
   }
 
   /** 하루 진행도 0~1 (0=정오 시작 → 0.5 자정 → 1 다시 정오). tick 기반 결정론. 낮밤 표시·밝기 산출에. */
@@ -286,6 +292,38 @@ export class World {
   }
 
   /** 야생 이주 — 멸종했거나 적은 야생종을 주기적으로 소수 보충(다양성 바닥). 내 종은 제외. */
+  /**
+   * 야생종도 진화한다(스포어식 살아있는 생태). 주기적으로 각 야생종 게놈을 ① 자기가 사는 환경에 적응
+   * (추운 곳 무리일수록 고대사로 수렴) ② 형질별 미세 무작위 드리프트(종마다 조금씩 달라짐)로 옮긴다.
+   * 종 게놈을 바꾸면 그 종 모든 개체가 즉시 반영(공유 게놈). 드리프트 무작위는 독립 rng → 메인 스트림
+   * 보존(기존 결정론 유지). 내 종은 제외 — 내 종의 진화 방향은 플레이어(카드=선택압)가 쥔다.
+   */
+  private maybeEvolveWild(): void {
+    if (this.tick % SIM.wildEvolveInterval !== 0) return;
+    for (const sp of this.species) {
+      if (sp.isPlayer) continue;
+      let n = 0;
+      let coldSum = 0;
+      for (const e of this.entities) {
+        if (e.species.id === sp.id) {
+          coldSum += this.environment.sampleAt(e.x, e.y).coldness;
+          n += 1;
+        }
+      }
+      if (n === 0) continue;
+      const avgCold = coldSum / n;
+      const t = sp.genome.traits;
+      // 환경 적응: 추운 곳에 사는 무리일수록 고대사(추위 견딤)로 천천히 수렴.
+      const metaTarget = clamp01(0.3 + avgCold * 0.6);
+      t.metabolism = clamp01(t.metabolism + (metaTarget - t.metabolism) * SIM.wildAdaptRate);
+      // 형질별 미세 드리프트(독립 rng). swimming 은 수생/육상 정체성이라 제외(드리프트로 뒤집히면 어색).
+      for (const key of TRAIT_KEYS) {
+        if (key === "swimming") continue;
+        t[key] = clamp01(t[key] + this.wildEvoRng.range(-SIM.wildDriftStep, SIM.wildDriftStep));
+      }
+    }
+  }
+
   private maybeImmigrate(): void {
     if (this.tick % SIM.immigrationInterval !== 0) return;
     if (this.entities.length >= this.cap) return;
