@@ -127,9 +127,20 @@ export class WorldView {
 
       // 내 종 강조: 스프라이트 아래 은은한 고리(폰에서 "내 무리"가 한눈에).
       if (e.species.isPlayer) {
-        // 시야 반경(이 종이 먹이·위험을 얼마나 멀리 감지하는지) — 일부에만 옅은 파란 원으로.
+        // 시야(이 종이 먹이를 어느 방향·얼마나 멀리 보는지) — 보는 방향(진행방향) 기준 부채꼴로.
+        // 정지(헤딩이 거의 0)면 두리번거리므로 원으로. 일부 개체에만 옅게(클러터 없이 시야각 감).
         if (visionRings < 14) {
-          this.playerG.circle(rx, ry, playerVision).stroke({ color: 0x7ec8ff, width: 1, alpha: 0.06 });
+          const hd = this.heading.get(e.id);
+          if (hd && Math.hypot(hd.x, hd.y) > 0.02) {
+            const fa = Math.atan2(hd.y, hd.x);
+            this.playerG
+              .moveTo(rx, ry)
+              .arc(rx, ry, playerVision, fa - VISION_FOV_HALF, fa + VISION_FOV_HALF)
+              .lineTo(rx, ry)
+              .stroke({ color: 0x7ec8ff, width: 1, alpha: 0.08 });
+          } else {
+            this.playerG.circle(rx, ry, playerVision).stroke({ color: 0x7ec8ff, width: 1, alpha: 0.06 });
+          }
           visionRings++;
         }
         this.playerG.circle(rx, ry, 13).fill({ color: 0x6cff7a, alpha: 0.1 });
@@ -270,6 +281,8 @@ const SEA_FOOD_COLOR = 0x7fe9ff;
 // 밤 오버레이 — 짙은 남색을 daylight 에 반비례해 덮는다(자정에 가장 어둑하되 생물은 보이게).
 const NIGHT_COLOR = 0x0a1030;
 const NIGHT_MAX_ALPHA = 0.4;
+// 시야 부채꼴 반각(라디안) — sim 의 fovHalfCos 와 같은 각도로 표시(보는 방향 ± 이만큼).
+const VISION_FOV_HALF = Math.acos(SIM.fovHalfCos);
 
 // 회전 떨림 방지: 이만큼(px/스텝)보다 실제로 더 움직일 때만 진행 방향을 갱신한다.
 // (느린 종은 미세 변위의 방향이 노이즈라, 낮으면 제자리에서 몸이 떤다.)

@@ -282,7 +282,9 @@ function chooseGoal(
     e.targetFood = null;
   }
 
-  // 2) 새 목표 탐색
+  // 2) 새 목표 탐색 — 시야각(부채꼴): 움직일 때는 보는 방향(=이동 방향) 기준 FOV 안만 새로 발견한다.
+  //    (이미 쫓던 목표는 1)에서 유지 — 인지한 건 시야각 밖이라도 계속 본다. 정지·저속이면 전방위로 두리번.)
+  const inFov = makeFovTest(e);
   let prey: Entity | null = null;
   let food: Food | null = null;
   if (canHunt) {
@@ -290,10 +292,10 @@ function chooseGoal(
       e.x,
       e.y,
       vision,
-      (p) => p.alive && p !== e && p.species.id !== e.species.id,
+      (p) => p.alive && p !== e && p.species.id !== e.species.id && inFov(p.x, p.y),
     );
   }
-  if (canGraze) food = nearestFood(e, world, vision * vision);
+  if (canGraze) food = nearestFood(e, world, vision * vision, inFov);
   if (prey && food) {
     if (dist2(e, prey) <= dist2(e, food)) food = null;
     else prey = null;
@@ -366,7 +368,12 @@ function wanderDesired(e: Entity, world: World, maxSpeed: number): Vec {
   return { x: Math.cos(e.wanderAngle) * cruise, y: Math.sin(e.wanderAngle) * cruise };
 }
 
-function nearestFood(e: Entity, world: World, maxDist2: number): Food | null {
+function nearestFood(
+  e: Entity,
+  world: World,
+  maxDist2: number,
+  inFov: (tx: number, ty: number) => boolean,
+): Food | null {
   let best = maxDist2;
   let found: Food | null = null;
   const kinds = e.species.foodKinds;
@@ -378,6 +385,7 @@ function nearestFood(e: Entity, world: World, maxDist2: number): Food | null {
     } else if (!kinds.includes(f.kind)) {
       continue; // 이 종이 못 먹는 먹이 종류는 건너뛴다(먹이 분할)
     }
+    if (!inFov(f.x, f.y)) continue; // 시야각(부채꼴) 밖 — 보는 방향에서 벗어난 먹이는 아직 못 본다
     const dx = f.x - e.x;
     const dy = f.y - e.y;
     const d2 = dx * dx + dy * dy;
@@ -387,6 +395,24 @@ function nearestFood(e: Entity, world: World, maxDist2: number): Food | null {
     }
   }
   return found;
+}
+
+/**
+ * 개체가 보는 방향(=이동 방향) 기준 시야각 안인지 판정하는 함수를 만든다. 움직일 때만 부채꼴이고,
+ * 정지·저속(fovMinSpeed 미만)이면 항상 true(전방위 — 멈춰선 두리번거린다). dot 곱으로 가볍게 판정.
+ * (단위 테스트용 export.)
+ */
+export function makeFovTest(e: Entity): (tx: number, ty: number) => boolean {
+  const speed = Math.hypot(e.vx, e.vy);
+  if (speed <= SIM.fovMinSpeed) return () => true;
+  const fvx = e.vx / speed;
+  const fvy = e.vy / speed;
+  return (tx: number, ty: number): boolean => {
+    const dx = tx - e.x;
+    const dy = ty - e.y;
+    const d = Math.hypot(dx, dy);
+    return d < 1e-6 || (fvx * dx + fvy * dy) / d >= SIM.fovHalfCos;
+  };
 }
 
 /**

@@ -113,7 +113,7 @@ const PRESETS: Record<BossType, Preset> = {
     killRadius: 0,
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0.006, // 외톨이는 매섭게 솎이되, 무리에 섞이면 안전
+    globalKillRate: 0.008, // 외톨이는 매섭게 솎이되, 무리에 섞이면 안전. 시야각 도입으로 개체수↑ 만큼 재튠(0.006→0.008, 프로브: 무리33통과·외톨이1탈락)
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0.9, // 이웃이 많을수록 거의 안 솎임

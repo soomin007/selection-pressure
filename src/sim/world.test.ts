@@ -5,7 +5,8 @@ import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
-import { nightVisionFactor } from "@/sim/behavior";
+import { nightVisionFactor, makeFovTest } from "@/sim/behavior";
+import type { Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
 import type { Food } from "@/sim/food";
 
@@ -264,6 +265,23 @@ describe("낮/밤 순환", () => {
     expect(nightVisionFactor(0, 0.5)).toBeLessThan(1);
     // 야행성: 자정에 vision 높은 종이 낮은 종보다 더 멀리 본다.
     expect(nightVisionFactor(0, 0.9)).toBeGreaterThan(nightVisionFactor(0, 0.1));
+  });
+});
+
+describe("시야각(부채꼴)", () => {
+  // makeFovTest 는 e 의 x,y,vx,vy 만 본다 → 부분 mock 으로 충분.
+  const ent = (vx: number, vy: number): Entity => ({ x: 0, y: 0, vx, vy }) as unknown as Entity;
+
+  it("움직이면 보는 방향(앞)은 보고 등 뒤는 못 본다", () => {
+    const test = makeFovTest(ent(1, 0)); // 동쪽(+x)으로 이동 = 동쪽을 봄
+    expect(test(10, 0)).toBe(true); // 정면(동)
+    expect(test(-10, 0)).toBe(false); // 정반대(서, 등 뒤)
+  });
+
+  it("정지(저속)하면 전방위로 본다(두리번)", () => {
+    const test = makeFovTest(ent(0, 0));
+    expect(test(10, 0)).toBe(true);
+    expect(test(-10, 0)).toBe(true); // 뒤도 보임
   });
 });
 
