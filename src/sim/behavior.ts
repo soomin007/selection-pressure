@@ -38,7 +38,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   let desired: Vec;
   let turn: number = SIM.steerTurn;
 
-  const flee = computeFlee(e, world, t, maxSpeed);
+  const flee = computeFlee(e, world, t, maxSpeed, canSwim);
   const fleeing = flee !== null;
   if (flee) {
     desired = flee;
@@ -182,15 +182,15 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   }
 }
 
-/** 보스/포식자가 도망 범위 안이면 도망 속도(단위×maxSpeed), 아니면 null. */
-function computeFlee(e: Entity, world: World, t: Traits, maxSpeed: number): Vec | null {
+/** 보스/포식자가 도망 범위 안이면 도망 속도(단위×maxSpeed), 아니면 null. 도망 방향은 지형 회피로 보정. */
+function computeFlee(e: Entity, world: World, t: Traits, maxSpeed: number, canSwim: boolean): Vec | null {
   const boss = world.boss;
   if (boss && boss.killRadius > 0) {
     const bdx = e.x - boss.x;
     const bdy = e.y - boss.y;
     const bd2 = bdx * bdx + bdy * bdy;
     const fr = boss.killRadius + SIM.fleeRadiusPad + boss.visionFlee * t.vision;
-    if (bd2 < fr * fr) return scaleTo(bdx, bdy, maxSpeed);
+    if (bd2 < fr * fr) return clearFleeDir(e, world, bdx, bdy, maxSpeed, canSwim);
   }
   const predator = world.grid.nearestMatching(
     e.x,
@@ -200,9 +200,57 @@ function computeFlee(e: Entity, world: World, t: Traits, maxSpeed: number): Vec 
       p.alive && p !== e && p.species.id !== e.species.id &&
       p.genome.traits.diet > SIM.dietHuntMin && p.genome.traits.attack >= t.attack,
   );
-  if (predator) return scaleTo(e.x - predator.x, e.y - predator.y, maxSpeed);
+  if (predator) return clearFleeDir(e, world, e.x - predator.x, e.y - predator.y, maxSpeed, canSwim);
   return null;
 }
+
+/**
+ * 도망 방향(awayX,awayY)을 지형에 맞게 보정한다. 그 방향이 막혀(또는 막다른 곳이라) 있으면, 포식자
+ * 에서 멀어지는 성분(cos off)과 현재 헤딩 일관성(진동 억제)을 함께 점수화해 통행 가능한 최선 방향으로
+ * 튼다. 도망이 벽(물/산)으로 가 코너에 고립·잡히는 것을 줄인다. 헤딩 가중 덕에 avoidWalls 같은
+ * 좌우 진동이 없고, probe 를 한 칸보다 멀리 봐서 막다른 반도·만으로 도망치는 것을 미리 피한다.
+ */
+function clearFleeDir(
+  e: Entity,
+  world: World,
+  awayX: number,
+  awayY: number,
+  maxSpeed: number,
+  canSwim: boolean,
+): Vec {
+  const d = Math.hypot(awayX, awayY);
+  if (d < 1e-6) return { x: 0, y: 0 };
+  const base = Math.atan2(awayY, awayX);
+  const probe = world.terrain.cellSize * SIM.fleeProbeTiles;
+  // 도망 방향이 probe 거리까지 트였으면 그대로(대부분).
+  if (fleeClear(world, e.x, e.y, base, probe, canSwim)) {
+    return { x: Math.cos(base) * maxSpeed, y: Math.sin(base) * maxSpeed };
+  }
+  // 막힘 — away 유지 + 헤딩 일관성으로 통행 가능한 최선 방향을 고른다.
+  const heading = Math.atan2(e.vy, e.vx);
+  let bestAng = base;
+  let bestScore = -Infinity;
+  for (const off of FLEE_OFFSETS) {
+    const a = base + off;
+    if (!fleeClear(world, e.x, e.y, a, probe, canSwim)) continue;
+    const score = Math.cos(off) + SIM.fleeHeadingWeight * Math.cos(a - heading);
+    if (score > bestScore) {
+      bestScore = score;
+      bestAng = a;
+    }
+  }
+  return { x: Math.cos(bestAng) * maxSpeed, y: Math.sin(bestAng) * maxSpeed };
+}
+
+/** (x,y)에서 각도 ang 로 probe 거리까지 통행 가능한가(LOS). 끝점까지 보므로 막다른 곳을 미리 안다. */
+function fleeClear(world: World, x: number, y: number, ang: number, probe: number, canSwim: boolean): boolean {
+  return world.terrain.lineOfSight(x, y, x + Math.cos(ang) * probe, y + Math.sin(ang) * probe, canSwim);
+}
+
+// 도망 회피 탐색 각(라디안). 0.4rad 씩 좌우로 점점 크게 — away 에 가까운(작은 편차) 통행 방향 우선.
+const FLEE_OFFSETS: readonly number[] = [
+  0.4, -0.4, 0.8, -0.8, 1.2, -1.2, 1.6, -1.6, 2.0, -2.0, 2.4, -2.4, 2.8, -2.8,
+];
 
 /**
  * 쫓을 목표 좌표를 고른다. 기존 목표가 유효(존재·시야 안)하면 유지(hysteresis)해 목표 진동을 막고,

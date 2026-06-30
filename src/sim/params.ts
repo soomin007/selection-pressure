@@ -40,6 +40,8 @@ export const SIM = {
 
   // --- 보스/대멸종 (Phase 5) ---
   fleeRadiusPad: 46, // 즉사 반경 + 이만큼 안에 들면 보스에서 도망친다
+  fleeProbeTiles: 2, // 도망 방향 통행 검사 거리(타일 수) — 막다른 반도·만으로 도망쳐 고립되는 걸 미리 회피
+  fleeHeadingWeight: 0.6, // 도망 방향 회전 시 현재 헤딩 일관성 가중(좌우 진동 억제, avoidWalls 진동 방지)
   heatPenalty: 0.46, // 폭염 시 추가 소모 (틱당, ×heat×metabolism) — 폭염=저대사 유리. 폭염은 대멸종 때만이라 평상시 영향 없음. 고대사를 확실히 솎는 필터
 
   // --- 무리 성향 herding ---
