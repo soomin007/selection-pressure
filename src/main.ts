@@ -191,9 +191,13 @@ async function boot(): Promise<void> {
   let prevLowWarn = false;
   let prevPhase = game.phase;
 
-  // 선택 개체 정보 카드(좌하단). 닫기(✕)를 누르면 선택 해제 → 무리 시점으로.
-  const creatureCard = createCreatureCard(() => {
-    selectedId = null;
+  // 선택 개체 정보 카드(좌하단). 닫기(✕)=선택 해제, ‹ ›=같은 무리의 다른 개체로 포커스 이동.
+  const creatureCard = createCreatureCard({
+    onClose: () => {
+      selectedId = null;
+    },
+    onPrev: () => cycleSelection(-1),
+    onNext: () => cycleSelection(1),
   });
 
   // 월드 탭 → 가장 가까운 개체를 골라 따라간다. 같은 개체를 다시 탭하거나 빈 곳을 탭하면 선택 해제.
@@ -298,6 +302,23 @@ async function boot(): Promise<void> {
       }
     }
     return best;
+  }
+
+  // 카드의 ‹ › — 현재 선택 개체와 같은 무리(종) 안에서 이전/다음 개체로 포커스를 옮긴다(id 순환).
+  function cycleSelection(dir: number): void {
+    if (selectedId === null) return;
+    const cur = game.world.entities.find((en) => en.id === selectedId);
+    if (!cur) return;
+    const same = game.world.entities
+      .filter((en) => en.species.id === cur.species.id)
+      .sort((a, b) => a.id - b.id);
+    const idx = same.findIndex((en) => en.id === selectedId);
+    if (idx < 0) return;
+    const next = same[(idx + dir + same.length) % same.length];
+    if (next) {
+      selectedId = next.id;
+      manualCam = null; // 개체 추적으로 전환(수동 조망 해제)
+    }
   }
 
   // 선택 개체를 매 프레임 해석한다 — 죽었으면 작별 인사 후 해제, 관전 단계가 아니면 해제.

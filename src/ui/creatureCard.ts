@@ -22,6 +22,12 @@ export interface CreatureCard {
   update: (data: CreatureCardData | null) => void;
 }
 
+export interface CreatureCardCallbacks {
+  onClose: () => void; // 닫기(✕) — 선택 해제
+  onPrev: () => void; // ‹ 같은 무리의 이전 개체로
+  onNext: () => void; // › 같은 무리의 다음 개체로
+}
+
 const hex = (c: number): string => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
 
 /** 식성값 → 쉬운 범주(형질 도감·빌드 패널과 같은 경계). */
@@ -39,7 +45,7 @@ function energyColor(v: number): string {
   return v >= 0.7 ? "#6cc24a" : v >= 0.34 ? "#e0b94a" : "#e05a4a";
 }
 
-export function createCreatureCard(onClose: () => void): CreatureCard {
+export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
   const root = document.createElement("div");
   root.style.cssText =
     "position:fixed; left:8px; bottom:8px; width:188px; box-sizing:border-box; padding:9px 11px;" +
@@ -47,19 +53,31 @@ export function createCreatureCard(onClose: () => void): CreatureCard {
     "color:#dfe6ee; font-family:system-ui,-apple-system,sans-serif; font-size:12px; line-height:1.4;" +
     "z-index:11; pointer-events:none; user-select:none; display:none;";
 
-  // 헤더 — 종 색 점 + 이름(크게) + 닫기. 닫기만 누를 수 있고 나머지는 터치 통과.
+  // 헤더 — 종 색 점 + 이름(크게) + 이전/다음 화살표 + 닫기. 버튼만 누를 수 있고 나머지는 터치 통과.
   const header = document.createElement("div");
-  header.style.cssText = "display:flex; align-items:center; gap:7px;";
+  header.style.cssText = "display:flex; align-items:center; gap:5px;";
   const dot = document.createElement("span");
   dot.style.cssText = "width:11px; height:11px; border-radius:50%; flex:none;";
   const name = document.createElement("span");
   name.style.cssText = "font-size:16px; font-weight:800; flex:1; word-break:keep-all;";
+  // ‹ › — 같은 무리의 다른 개체로 포커스 이동. 폰 손가락 기준 넉넉한 탭 영역.
+  const mkBtn = (label: string, onTap: () => void): HTMLSpanElement => {
+    const b = document.createElement("span");
+    b.textContent = label;
+    b.style.cssText =
+      "pointer-events:auto; cursor:pointer; color:#cdd5df; font-size:17px; font-weight:700;" +
+      "line-height:1; padding:2px 6px; border-radius:6px; background:#20293a; flex:none;";
+    b.addEventListener("click", onTap);
+    return b;
+  };
+  const prev = mkBtn("‹", cb.onPrev);
+  const next = mkBtn("›", cb.onNext);
   const close = document.createElement("span");
   close.textContent = "✕";
   close.style.cssText =
-    "pointer-events:auto; cursor:pointer; color:#8a93a6; font-size:13px; padding:1px 4px;";
-  close.addEventListener("click", onClose);
-  header.append(dot, name, close);
+    "pointer-events:auto; cursor:pointer; color:#8a93a6; font-size:13px; padding:1px 4px; flex:none;";
+  close.addEventListener("click", cb.onClose);
+  header.append(dot, name, prev, next, close);
 
   // 종 · 한 줄 묘사.
   const sub = document.createElement("div");
