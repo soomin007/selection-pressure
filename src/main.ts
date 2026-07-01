@@ -78,6 +78,13 @@ async function boot(): Promise<void> {
   let currentSelected: Entity | null = null; // 이번 프레임의 선택 개체(카메라가 읽음)
   const INDIVIDUAL_ZOOM = 2.6; // 개체 추적 시 줌 배율(클로즈업)
 
+  // 미니맵 드래그 카메라 — 미니맵을 누르거나 끌면 그 지점으로 카메라를 수동 이동(맵 탐색·조망).
+  let manualCam: { x: number; y: number } | null = null;
+  minimap.onPan = (wx, wy) => {
+    manualCam = { x: wx, y: wy };
+    selectedId = null; // 수동 조망 중엔 개체 추적 해제
+  };
+
   const buildPanel = createBuildPanel();
   const refreshBuild = (): void => {
     buildPanel.setData({
@@ -153,6 +160,7 @@ async function boot(): Promise<void> {
     effects.clear();
     selectedId = null; // 새 월드 → 옛 선택(개체 id)은 무효
     currentSelected = null;
+    manualCam = null; // 수동 조망도 초기화
     // 재현용: 이 맵의 시드를 콘솔에 남긴다(?seed=… 로 다시 불러올 수 있음).
     console.info(`[seed] ${game.seed}  (재현: ?seed=${game.seed})`);
   };
@@ -202,6 +210,7 @@ async function boot(): Promise<void> {
     // 화면 좌표 → 월드 좌표(카메라/뷰포트 변환을 toLocal 이 한 번에 풀어 준다).
     const p = view.container.toLocal(e.global);
     const picked = pickEntity(p.x, p.y);
+    manualCam = null; // 화면 탭 = 수동 조망 종료(개체 추적 또는 빈 곳이면 무리 복귀)
     selectedId = !picked || picked.id === selectedId ? null : picked.id;
   });
 
@@ -249,6 +258,11 @@ async function boot(): Promise<void> {
       tx = dp ? dp.x : currentSelected.x;
       ty = dp ? dp.y : currentSelected.y;
       tz = INDIVIDUAL_ZOOM;
+    } else if (manualCam) {
+      // 미니맵으로 옮긴 수동 조망 위치(넓게 보도록 줌 1). 개체·빈 곳 탭으로 해제된다.
+      tx = manualCam.x;
+      ty = manualCam.y;
+      tz = 1;
     } else if (focusBoss && boss) {
       tx = boss.x;
       ty = boss.y;
@@ -288,7 +302,10 @@ async function boot(): Promise<void> {
   // 선택 개체를 매 프레임 해석한다 — 죽었으면 작별 인사 후 해제, 관전 단계가 아니면 해제.
   // 그 결과를 강조 고리(view) · 정보 카드 · 카메라(currentSelected)에 일관되게 반영한다.
   function resolveSelection(): void {
-    if (game.phase !== "watch" && game.phase !== "draft") selectedId = null;
+    if (game.phase !== "watch" && game.phase !== "draft") {
+      selectedId = null;
+      manualCam = null;
+    }
     currentSelected = null;
     if (selectedId !== null) {
       const found = game.world.entities.find((en) => en.id === selectedId) ?? null;
