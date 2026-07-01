@@ -7,7 +7,7 @@
 
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
-import { defaultGenome, type Genome } from "@/sim/genome";
+import { defaultGenome, cloneGenome, type Genome } from "@/sim/genome";
 import { drawCards, applyCard, PRESET_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, type StageKind } from "@/game/config";
 import { SIM } from "@/sim/params";
@@ -119,6 +119,10 @@ export class Game {
     if (this.firstChoice) {
       // 시작 프리셋을 골랐으니 곧장 첫 채집 단계로.
       this.firstChoice = false;
+      // 프리셋은 "시작 형질"이라 이미 태어난 초기 무리에도 반영한다(세대별 스냅샷은 레벨업부터).
+      for (const e of this.world.entities) {
+        if (e.species.isPlayer) e.genome = cloneGenome(this.world.genome);
+      }
       this.beginStage();
     } else {
       // 레벨업 드래프트 — 진행 중이던 단계로 복귀(단계 타이머·보스 상태는 그대로 보존).

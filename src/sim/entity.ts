@@ -1,6 +1,6 @@
 // 개체(Entity) — 한 마리. 어떤 종(Species)에 속하며, 게놈은 그 종이 공유한다.
 
-import type { Genome } from "@/sim/genome";
+import { cloneGenome, type Genome } from "@/sim/genome";
 import type { Species } from "@/sim/species";
 import type { Food } from "@/sim/food";
 
@@ -13,7 +13,7 @@ export interface Entity {
   energy: number;
   age: number; // 살아온 틱 수
   species: Species; // 소속 종
-  genome: Genome; // = species.genome (편의 참조)
+  genome: Genome; // 내 종은 태어난 시점의 스냅샷(세대별 형질), 야생은 species.genome 공유
   alive: boolean;
   // 직전 스텝의 위치 (렌더 보간용, 직렬화 안 함). sim 은 30/s, 화면은 60fps → 그 사이를 메운다.
   prevX: number;
@@ -47,7 +47,9 @@ export function createEntity(
     energy,
     age: 0,
     species,
-    genome: species.genome,
+    // 내 종은 태어난 시점의 게놈을 복사한다(세대별 형질) — 이후 카드(레벨업)로 종 게놈이 바뀌어도
+    // 이 개체는 옛 형질을 유지한다. 야생은 종 게놈을 공유(종 전체가 함께 진화).
+    genome: species.isPlayer ? cloneGenome(species.genome) : species.genome,
     alive: true,
     prevX: x,
     prevY: y,

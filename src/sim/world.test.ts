@@ -7,7 +7,7 @@ import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
 import { nightVisionFactor, makeFovTest } from "@/sim/behavior";
 import { areFriends } from "@/sim/species";
-import type { Entity } from "@/sim/entity";
+import { createEntity, type Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
 import type { Food } from "@/sim/food";
 
@@ -235,6 +235,29 @@ describe("종 다양성", () => {
     const alive = new Set<number>();
     for (const e of w.entities) alive.add(e.species.id);
     expect(alive.size).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe("세대별 형질 (레벨 = 세대)", () => {
+  it("내 종은 태어난 시점 게놈 스냅샷 — 종 게놈을 바꿔도 기존 개체는 옛 형질, 새 개체만 새 형질", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    const player = w.species.find((s) => s.isPlayer);
+    const existing = w.entities.find((e) => e.species.isPlayer);
+    expect(player && existing).toBeTruthy();
+    const before = existing!.genome.traits.speed;
+    player!.genome.traits.speed = 0.99; // 카드(레벨업)로 종 게놈 변경
+    expect(existing!.genome.traits.speed).toBe(before); // 기존 개체는 옛 형질 유지(스냅샷)
+    const child = createEntity(9999, 0, 0, player!, 50); // 이후 태어난 개체
+    expect(child.genome.traits.speed).toBeCloseTo(0.99); // 새 개체만 새 형질
+    expect(child.genome).not.toBe(player!.genome); // 독립 복사본
+  });
+
+  it("야생은 종 게놈을 공유한다(종 전체가 함께 진화 — 참조 공유)", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    const wild = w.species.find((s) => !s.isPlayer && !s.friendly);
+    expect(wild).toBeTruthy();
+    const child = createEntity(9998, 0, 0, wild!, 50);
+    expect(child.genome).toBe(wild!.genome); // 야생은 복사 안 함(공유 참조)
   });
 });
 

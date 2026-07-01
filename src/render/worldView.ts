@@ -5,8 +5,9 @@
 
 import { Container, Graphics, Sprite, Texture, type Renderer } from "pixi.js";
 import type { World } from "@/sim/world";
+import type { Entity } from "@/sim/entity";
 import { TILE, type TileKind } from "@/sim/terrain";
-import type { Genome } from "@/sim/genome";
+import { TRAIT_KEYS, type Genome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 import { DEBUG, TUNE } from "@/debug";
 import { personalityScale, personalityTint } from "@/render/creatureLook";
@@ -24,7 +25,9 @@ export class WorldView {
   private selectedId: number | null = null; // 따라가며 관찰 중인 개체
 
   private readonly pool: Sprite[] = [];
-  private readonly speciesTex = new Map<number, Texture>();
+  // 생물 텍스처 캐시 — 키가 "내 종 세대별 게놈 서명" 또는 "야생 종 id". 내 종은 레벨업으로 게놈이
+  // 바뀌면 새 서명 = 새 텍스처라, 그 뒤 태어난 개체만 새 모습이 된다(기존 개체는 옛 서명 텍스처 유지).
+  private readonly texCache = new Map<string, Texture>();
   private readonly angle = new Map<number, number>(); // 개체별 부드러운 회전각(스냅 떨림 제거)
   private readonly heading = new Map<number, { x: number; y: number }>(); // 진행방향 벡터 저역통과(좌우 회전 진동 제거)
   private readonly dispPos = new Map<number, { x: number; y: number }>(); // 렌더 전용 위치 평활(고주파 떨림 제거)
@@ -73,16 +76,26 @@ export class WorldView {
     this.container.position.set(screenW / 2, screenH / 2);
   }
 
-  /** 런이 바뀌거나 내 종 게놈이 바뀌면 호출 — 종별 스프라이트 텍스처를 다시 만든다. */
-  refreshSpecies(world: World): void {
-    for (const tex of this.speciesTex.values()) tex.destroy(true);
-    this.speciesTex.clear();
+  /** 런이 바뀌면 호출 — 텍스처 캐시를 비운다. 텍스처는 sync 에서 개체 게놈별로 lazy 생성한다(세대별). */
+  refreshSpecies(_world: World): void {
+    for (const tex of this.texCache.values()) tex.destroy(true);
+    this.texCache.clear();
     this.angle.clear();
     this.heading.clear();
     this.dispPos.clear();
-    for (const sp of world.species) {
-      this.speciesTex.set(sp.id, makeCreatureTexture(this.renderer, sp.genome, sp.color));
+  }
+
+  /** 개체의 텍스처(캐시). 내 종은 세대별 게놈 서명으로, 야생은 종 id 로 캐시해 필요할 때 만든다. */
+  private textureFor(e: Entity): Texture {
+    const key = e.species.isPlayer
+      ? "p" + e.species.id + ":" + genomeSignature(e.genome)
+      : "s" + e.species.id;
+    let tex = this.texCache.get(key);
+    if (!tex) {
+      tex = makeCreatureTexture(this.renderer, e.genome, e.species.color);
+      this.texCache.set(key, tex);
     }
+    return tex;
   }
 
   /** 런이 바뀔 때 한 번 — 지형 풍경(바다/육지/산)을 그린다. 표고로 음영, 환경(추위/비옥도)으로 색조. */
@@ -195,7 +208,7 @@ export class WorldView {
         this.creatureLayer.addChild(sp);
         this.pool.push(sp);
       }
-      sp.texture = this.speciesTex.get(e.species.id) ?? Texture.WHITE;
+      sp.texture = this.textureFor(e);
       sp.x = rx;
       sp.y = ry;
       // 개체별 미세 개성(크기·명암) — 같은 종이라도 한 마리씩 달라 보이게. id 결정론, sim 무관.
@@ -398,6 +411,15 @@ function darken(color: number, f: number): number {
   const g = Math.round(((color >> 8) & 0xff) * f);
   const b = Math.round((color & 0xff) * f);
   return (r << 16) | (g << 8) | b;
+}
+
+// 게놈을 텍스처 캐시 키로 만든다 — 형질을 0.05(=1/20) 단위로 반올림해 서명. 같은 세대(같은 게놈)면
+// 같은 키라 텍스처를 재사용하고, 레벨업으로 형질이 바뀌면 새 서명 = 새 텍스처(그때 태어난 세대 모습).
+function genomeSignature(g: Genome): string {
+  const t = g.traits;
+  let s = "";
+  for (const k of TRAIT_KEYS) s += Math.round(t[k] * 20) + ",";
+  return s;
 }
 
 // 게놈에서 한 종의 생물 스프라이트 텍스처를 만든다(앞쪽 = +x). 형질이 형태로 드러난다.

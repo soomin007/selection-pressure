@@ -100,8 +100,9 @@ async function boot(): Promise<void> {
 
   const draft = createDraftPanel((i) => {
     game.pickCard(i);
-    refreshBuild(); // 방금 고른 카드를 빌드 패널에 반영
-    view.refreshSpecies(game.world); // 고른 형질을 내 종 모습에 반영
+    refreshBuild(); // 방금 고른 카드를 빌드 패널(설계도=최신 게놈)에 반영
+    // 세대별 형질: 텍스처를 새로 만들지 않는다 — 이미 태어난 개체는 옛 모습을 유지하고, 이후 태어난
+    // 개체가 새 게놈 서명으로 lazy 생성된다(worldView.textureFor). refreshSpecies(전체 교체)는 안 부른다.
     draft.hide();
   });
   const result = createResultPanel(() => {

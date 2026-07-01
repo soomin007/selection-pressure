@@ -106,6 +106,14 @@ export function randomGenome(rng: Rng): Genome {
   return { genomeVersion: GENOME_VERSION, traits };
 }
 
+/**
+ * 게놈 깊은 복사 — 세대별 형질에 쓴다. 개체가 태어난 시점의 종 게놈을 스냅샷으로 떠, 이후 종 게놈이
+ * 카드로 바뀌어도(레벨업) 기존 개체는 옛 형질을 유지한다(그때 태어난 세대만 새 형질).
+ */
+export function cloneGenome(genome: Genome): Genome {
+  return { genomeVersion: genome.genomeVersion, traits: { ...genome.traits } };
+}
+
 /** 모든 형질을 [0, 1] 로 강제. (카드 효과 누적 후 호출) */
 export function clampGenome(genome: Genome): Genome {
   const traits = {} as Traits;
