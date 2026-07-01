@@ -93,6 +93,7 @@ export class Hud {
   private readonly dayLabel: Text; // 낮/노을/밤/새벽
   private readonly xpG = new Graphics(); // 레벨업 경험치 게이지 바
   private readonly levelText: Text; // Lv.N
+  private readonly timelineG = new Graphics(); // 런 전체 진행 타임라인(상단 긴 막대 + 위협 마커)
   private readonly panelBg = new Graphics();
   private readonly graph = new Graphics(); // 추이 그래프(데스크톱 전용)
   private history: number[] = [];
@@ -159,6 +160,7 @@ export class Hud {
     this.container.addChild(this.deathFeed);
     this.container.addChild(this.dayDot);
     this.container.addChild(this.dayLabel);
+    this.container.addChild(this.timelineG);
     this.container.addChild(this.xpG);
     this.container.addChild(this.levelText);
     this.drawPanel();
@@ -189,12 +191,20 @@ export class Hud {
     this.legendSig = ""; // 새 런에서 종 구성이 바뀌면 다시 그리도록
   }
 
-  sync(world: World, statusText: string, level: number, xpProgress: number): void {
+  sync(
+    world: World,
+    statusText: string,
+    level: number,
+    xpProgress: number,
+    timeline: { progress: number; markers: readonly { kind: string; at: number }[] },
+    screenW: number,
+  ): void {
     const mine = world.playerPopulation;
     this.stat.text = `내 종 ${mine}   야생 ${world.population - mine}`;
     this.notice.text = statusText;
     this.updateDayNight(world);
     this.updateXpGauge(level, xpProgress);
+    this.updateTimeline(timeline, screenW);
 
     this.frame += 1;
     if (this.isDesktop && this.frame % SAMPLE_EVERY === 0) {
@@ -216,10 +226,35 @@ export class Hud {
     this.deathFeed.visible = notLobby;
     this.dayDot.visible = notLobby;
     this.dayLabel.visible = notLobby;
+    this.timelineG.visible = notLobby;
     this.xpG.visible = notLobby;
     this.levelText.visible = notLobby;
     this.legend.visible = onWatch;
     this.drawGraph();
+  }
+
+  /** 런 전체 진행 타임라인 — 상단 긴 막대(왼→오 차오름) + 보스(빨강)·대멸종(파랑) 시점 마커. */
+  private updateTimeline(
+    timeline: { progress: number; markers: readonly { kind: string; at: number }[] },
+    screenW: number,
+  ): void {
+    const barX = 12;
+    const barY = 4;
+    const barH = 7;
+    const barW = Math.max(60, screenW - 24);
+    this.timelineG.clear();
+    this.timelineG
+      .roundRect(barX, barY, barW, barH, 4)
+      .fill({ color: 0x0c1018, alpha: 0.85 })
+      .stroke({ color: 0x3b465c, width: 1, alpha: 0.95 });
+    const fw = barW * Math.max(0, Math.min(1, timeline.progress));
+    if (fw > 1) this.timelineG.roundRect(barX, barY, fw, barH, 4).fill({ color: 0x6cc24a, alpha: 0.85 });
+    // 위협 시점 마커 — 막대 위아래로 살짝 튀어나온 세로 선(보스=빨강, 대멸종=파랑).
+    for (const m of timeline.markers) {
+      const mx = barX + barW * Math.max(0, Math.min(1, m.at));
+      const col = m.kind === "boss" ? 0xff5535 : 0x8ab4ff;
+      this.timelineG.rect(mx - 1.5, barY - 2, 3, barH + 4).fill({ color: col });
+    }
   }
 
   /** 레벨업 경험치 게이지 — 레벨 라벨 + 채움 바(먹이를 먹어 채우면 레벨업). */

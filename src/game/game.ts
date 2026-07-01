@@ -16,6 +16,16 @@ import { buildRunReport } from "@/game/runReport";
 
 export type Phase = "lobby" | "draft" | "watch" | "result";
 export type RunResult = "win" | "lose";
+
+/** 런 전체 진행 타임라인 — 하나의 긴 막대(진행률) + 보스/대멸종 시점 마커. */
+export interface TimelineMarker {
+  kind: StageKind; // "boss" | "extinction"
+  at: number; // 막대상 위치 0~1
+}
+export interface RunTimeline {
+  progress: number; // 전체 진행 0~1(왼→오 차오름)
+  markers: TimelineMarker[];
+}
 type ExtinctionType = "cold" | "famine" | "heat" | "plague";
 
 const EXTINCTION_TYPES: readonly ExtinctionType[] = ["cold", "famine", "heat", "plague"];
@@ -202,6 +212,39 @@ export class Game {
     return this.xpToNext > 0 ? Math.min(1, this.xp / this.xpToNext) : 0;
   }
 
+  /** 런 전체 진행 타임라인(HUD 막대) — 완료 단계 + 현재 단계 경과. 레벨업으로 멈추면 진행도 멈춘다. */
+  get timeline(): RunTimeline {
+    const durs = SCHEDULE.map(stageDuration);
+    const total = durs.reduce((a, b) => a + b, 0) || 1;
+    let elapsed = 0;
+    for (let i = 0; i < this.stageIndex; i++) elapsed += durs[i] ?? 0;
+    if (this.phase === "watch" || this.phase === "draft") {
+      const curDur = durs[this.stageIndex] ?? 0;
+      elapsed += curDur - this.stageTicksLeft / SIM.stepsPerSecond;
+    } else if (this.phase === "result" && this.result === "win") {
+      elapsed = total; // 승리 = 끝까지 완주
+    }
+    const progress = Math.max(0, Math.min(1, elapsed / total));
+    const markers: TimelineMarker[] = [];
+    let acc = 0;
+    for (let i = 0; i < SCHEDULE.length; i++) {
+      const kind = SCHEDULE[i] as StageKind;
+      if (kind === "boss" || kind === "extinction") markers.push({ kind, at: acc / total });
+      acc += durs[i] ?? 0;
+    }
+    return { progress, markers };
+  }
+
+  /** 현재 단계 끝 무렵, 다음이 위협이면 예고 문구(전광판). 아니면 null. (rng·상태 불변 — 순수 조회) */
+  get upcomingThreat(): string | null {
+    if (this.phase !== "watch") return null;
+    if (this.secondsLeft > GAME.threatPreviewLead) return null;
+    const next = SCHEDULE[this.stageIndex + 1];
+    if (next === "boss") return "곧 보스가 나타납니다";
+    if (next === "extinction") return "곧 대멸종이 닥칩니다";
+    return null;
+  }
+
   /** 렌더 보간 비율 [0,1) — 다음 스텝까지 얼마나 왔나(화면 60fps 가 sim 30/s 사이를 메운다). */
   get interpAlpha(): number {
     const stepMs = 1000 / SIM.stepsPerSecond;
@@ -348,6 +391,13 @@ export class Game {
     if (kind === "extinction") return "대멸종을 견디지 못했습니다.";
     return `${this.stageNumber}단계에서 멸종했습니다.`;
   }
+}
+
+/** 단계 종류별 길이(초) — 타임라인 진행·마커 계산용. */
+function stageDuration(kind: StageKind): number {
+  if (kind === "boss") return GAME.bossSeconds;
+  if (kind === "extinction") return GAME.extinctionSeconds;
+  return GAME.roundSeconds;
 }
 
 // 런 시드를 무작위로 하나 뽑는다(게임 층이라 Math.random 사용 가능 — sim 결정론과 무관).

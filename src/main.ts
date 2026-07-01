@@ -22,6 +22,7 @@ import { describeSpecies } from "@/game/runReport";
 import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
+import { ThreatBanner } from "@/render/threatBanner";
 import { sizeWord } from "@/render/creatureLook";
 import { SIM } from "@/sim/params";
 import type { Entity } from "@/sim/entity";
@@ -65,6 +66,8 @@ async function boot(): Promise<void> {
   app.stage.addChild(highlights.container);
   const minimap = new Minimap(); // 큰 맵 조망 — 화면 픽셀 좌표(카메라 변환 밖, 모서리 고정)
   app.stage.addChild(minimap.container);
+  const threatBanner = new ThreatBanner(); // 위협 예고 전광판(최상단)
+  app.stage.addChild(threatBanner.container);
 
   // 소수 개체 게임: 월드를 약간 크게(MAP_SCALE) + 개체는 절대 수(소수)지만 먹이 밀도·상한은 면적 비례
   // (areaScale=면적배율) → 큰 맵일수록 개체당 먹이가 넉넉해 굶지 않는다. 카메라가 한 무리를 따라다닌다.
@@ -192,6 +195,7 @@ async function boot(): Promise<void> {
   let prevLowWarn = false;
   let prevPhase = game.phase;
   let prevLevel = game.level;
+  let prevThreat: string | null = null;
 
   // 선택 개체 정보 카드(좌하단). 닫기(✕)=선택 해제, ‹ ›=같은 무리의 다른 개체로 포커스 이동.
   const creatureCard = createCreatureCard({
@@ -230,7 +234,7 @@ async function boot(): Promise<void> {
     for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y);
     game.world.events.length = 0;
     effects.update(ticker.deltaMS);
-    hud.sync(game.world, statusLine(), game.level, game.xpProgress);
+    hud.sync(game.world, statusLine(), game.level, game.xpProgress, game.timeline, app.screen.width);
     buildPanel.setVisible(game.phase === "draft" || game.phase === "watch");
 
     updateCamera(ticker.deltaMS);
@@ -242,6 +246,7 @@ async function boot(): Promise<void> {
     }
     detectEvents();
     highlights.update(ticker.deltaMS, app.screen.width);
+    threatBanner.update(ticker.deltaMS, app.screen.width, app.screen.height);
 
     if (debugBadge) {
       let txt = `디버그: ${debugLabel()}`;
@@ -386,6 +391,11 @@ async function boot(): Promise<void> {
     // 레벨업 — 경험치가 차 새 형질을 고르는 순간(드래프트 팝업과 함께 눈에 띄게).
     if (game.level > prevLevel) highlights.flash(`레벨 ${game.level} 달성!`, 0xffd24a);
     prevLevel = game.level;
+
+    // 위협 예고 전광판 — 보스/대멸종 단계 직전에 한 번 크게 띄운다(같은 예고는 중복 표시 안 함).
+    const threat = game.upcomingThreat;
+    if (threat && threat !== prevThreat) threatBanner.show(threat);
+    prevThreat = threat;
   }
 
   function statusLine(): string {
