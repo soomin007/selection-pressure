@@ -262,10 +262,11 @@ export class WorldView {
       }
     }
 
-    // 보스 + 위험 반경 (보스도 보간)
+    // 보스 + 위험 반경 (보스도 보간). 단 독 안개(globalDrain)는 위치 없는 전역 현상이라 보스 개체를
+    // 안 그리고 아래 전체 화면 안개(overlay)로만 표현한다 — "저 원 안만 독"이라는 오해를 없앤다.
     this.bossG.clear();
     const boss = world.boss;
-    if (boss) {
+    if (boss && boss.globalDrain <= 0) {
       const bx = boss.prevX + (boss.x - boss.prevX) * interp;
       const by = boss.prevY + (boss.y - boss.prevY) * interp;
       if (boss.auraRadius > 0) {
@@ -318,8 +319,10 @@ export class WorldView {
       tint = 0x5a7a3a; // 병색(칙칙한 녹황)
       tintAlpha = 0.16;
     } else if (world.boss && world.boss.globalDrain > 0) {
-      tint = 0x6a9a4a; // 독 안개 — 독성은 사방에 퍼져 있다(전체 화면 안개). 못 벗어나니 대사가 카운터.
-      tintAlpha = 0.15;
+      // 독 안개 — 온 땅에 퍼진 전역 독. 진한 녹황을 느리게 맥동시켜 "살아 움직이는 독"을 체감시킨다
+      // (못 벗어나니 대사 낮은 종이 카운터). 국소 원이 없어 전체가 독임이 분명하다. 생물은 보이게.
+      tint = 0x5f8f36;
+      tintAlpha = 0.22 + 0.07 * Math.sin(this.frame * 0.06);
     }
     if (tintAlpha > 0)
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });

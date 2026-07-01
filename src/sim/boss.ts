@@ -84,7 +84,7 @@ const PRESETS: Record<BossType, Preset> = {
     speed: 0.9,
     killRadius: 0,
     visionFlee: 0,
-    auraRadius: 230,
+    auraRadius: 0, // 독은 전역(위치 없음) — 국소 원 대신 화면 전체 안개로 표현(worldView). 보스 점도 안 그린다.
     globalKillRate: 0,
     globalDrain: 0.5, // ×(0.3+metabolism): 대사 높을수록 더 빨림. 길찾기로 채집·개체수↑ 만큼 압박도 키워 저대사 우위를 드러냄(0.3→0.5, 프로브: 저대사15통과·기본5탈락)
     cullAttackResist: 0,
