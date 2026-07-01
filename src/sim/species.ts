@@ -76,7 +76,7 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
   {
     // 초식 경쟁자 — 0번 먹이 전문.
     name: "초식 경쟁자",
-    color: 0x46a6c8,
+    color: 0x4a86e0, // 선명한 파랑(물고기떼 하늘색과 구분)
     initialCount: 12,
     foodKinds: [0],
     traits: { diet: 0.15, fertility: 0.5, speed: 0.4, vision: 0.4, metabolism: 0.45, attack: 0.3, herding: 0.6 },
@@ -100,7 +100,7 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
   {
     // 느린 거북 — 0·2번 먹이. 저대사 장수형(K전략): 느리고 적게 낳지만 에너지를 거의 안 써 오래 버틴다.
     name: "느린 거북",
-    color: 0x5fae6a,
+    color: 0x9aa0ab, // 돌회색(초록 계열 내 종·친척과 확실히 구분 — 등딱지 느낌)
     initialCount: 9,
     foodKinds: [0, 2],
     traits: { diet: 0.26, fertility: 0.36, speed: 0.22, vision: 0.34, metabolism: 0.28, attack: 0.52, herding: 0.3 },
@@ -116,7 +116,7 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
   {
     // 포식자 — 식물 안 먹음(육식). 먹잇감이 많아야 유지된다(붐버스트).
     name: "포식자",
-    color: 0xe0653a,
+    color: 0xe23b2e, // 선명한 빨강(위험 강조 + 잡식 청소부 주황과 구분)
     initialCount: 4,
     foodKinds: [],
     traits: { diet: 0.85, fertility: 0.3, speed: 0.66, vision: 0.6, metabolism: 0.5, attack: 0.7, herding: 0.4 },
