@@ -172,6 +172,12 @@ export class WorldView {
         this.playerG
           .circle(rx, ry, 12.5)
           .stroke({ color: 0xaaffb0, width: 1.6, alpha: 0.35 + 0.25 * ringPulse });
+      } else if (e.species.friendly) {
+        // 우호적 친척 무리 — 내 종(초록)과 다른 청록 고리로 "내 편이지만 다른 무리"를 한눈에 구분.
+        this.playerG.circle(rx, ry, 12).fill({ color: 0x35d6c0, alpha: 0.08 });
+        this.playerG
+          .circle(rx, ry, 11.5)
+          .stroke({ color: 0x7fffe8, width: 1.4, alpha: 0.3 + 0.2 * ringPulse });
       }
 
       let sp = this.pool[i];

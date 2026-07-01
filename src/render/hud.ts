@@ -307,6 +307,9 @@ export class Hud {
         if (sp.isPlayer) {
           // 화면 속 내 종 초록 고리와 맞춰 범례에서도 내 종임을 표시.
           this.legendG.circle(cx, cy, LEGEND_SWATCH + 2).stroke({ color: 0xaaffb0, width: 1.5 });
+        } else if (sp.friendly) {
+          // 우호적 친척 — 화면의 청록 고리와 맞춰 "내 편"임을 표시(야생과 구분).
+          this.legendG.circle(cx, cy, LEGEND_SWATCH + 2).stroke({ color: 0x7fffe8, width: 1.5 });
         }
         const label = new Text({ text: sp.name, style: this.legendItemStyle });
         label.position.set(LEGEND_PAD + LEGEND_SWATCH * 2 + 6, y);
