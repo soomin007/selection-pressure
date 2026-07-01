@@ -423,8 +423,8 @@ function genomeSignature(g: Genome): string {
 }
 
 // 게놈에서 한 종의 생물 스프라이트 텍스처를 만든다(앞쪽 = +x). 형질이 형태로 드러난다.
-// 나중에 더 정교한 아트로 바꿀 땐 이 함수만 손보면 된다.
-function makeCreatureTexture(renderer: Renderer, genome: Genome, color: number): Texture {
+// 나중에 더 정교한 아트로 바꿀 땐 이 함수만 손보면 된다. (프리셋 선택 창의 외형 미리보기도 재사용)
+export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: number): Texture {
   const t = genome.traits;
   const g = new Graphics();
   const dark = darken(color, 0.55);

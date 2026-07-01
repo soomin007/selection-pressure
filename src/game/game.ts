@@ -212,6 +212,11 @@ export class Game {
     return this.xpToNext > 0 ? Math.min(1, this.xp / this.xpToNext) : 0;
   }
 
+  /** 지금 드래프트가 "시작 프리셋 선택"인지 — main 이 프리셋 캐릭터 선택 창 vs 일반 카드 창을 고른다. */
+  get isChoosingPreset(): boolean {
+    return this.phase === "draft" && this.firstChoice;
+  }
+
   /** 런 전체 진행 타임라인(HUD 막대) — 완료 단계 + 현재 단계 경과. 레벨업으로 멈추면 진행도 멈춘다. */
   get timeline(): RunTimeline {
     const durs = SCHEDULE.map(stageDuration);

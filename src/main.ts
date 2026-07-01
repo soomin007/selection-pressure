@@ -11,6 +11,7 @@ import { WorldView } from "@/render/worldView";
 import { Hud } from "@/render/hud";
 import { Game } from "@/game/game";
 import { createDraftPanel } from "@/ui/draftPanel";
+import { createPresetPanel } from "@/ui/presetPanel";
 import { createResultPanel } from "@/ui/resultPanel";
 import { createLobby } from "@/ui/lobby";
 import { createControls } from "@/ui/controls";
@@ -108,6 +109,12 @@ async function boot(): Promise<void> {
     // 개체가 새 게놈 서명으로 lazy 생성된다(worldView.textureFor). refreshSpecies(전체 교체)는 안 부른다.
     draft.hide();
   });
+  // 시작 프리셋은 캐릭터 선택 창으로(외형 미리보기 + 화살표로 페이지 넘기며 선택).
+  const presetPanel = createPresetPanel(app.renderer, (i) => {
+    game.pickCard(i);
+    refreshBuild();
+    presetPanel.hide();
+  });
   const result = createResultPanel(() => {
     result.hide();
     game.beginRun();
@@ -152,7 +159,9 @@ async function boot(): Promise<void> {
   });
 
   game.onDraft = (cards, preview) => {
-    draft.show(cards, preview);
+    // 시작 프리셋 선택은 캐릭터 선택 창, 레벨업 형질은 일반 카드 창.
+    if (game.isChoosingPreset) presetPanel.show(cards, preview);
+    else draft.show(cards, preview);
   };
   game.onResult = (res, summary) => {
     controls.setVisible(false);
