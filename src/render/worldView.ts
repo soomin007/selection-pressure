@@ -9,6 +9,7 @@ import { TILE, type TileKind } from "@/sim/terrain";
 import type { Genome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 import { DEBUG, TUNE } from "@/debug";
+import { personalityScale, personalityTint } from "@/render/creatureLook";
 
 export class WorldView {
   readonly container = new Container();
@@ -186,6 +187,9 @@ export class WorldView {
       sp.texture = this.speciesTex.get(e.species.id) ?? Texture.WHITE;
       sp.x = rx;
       sp.y = ry;
+      // 개체별 미세 개성(크기·명암) — 같은 종이라도 한 마리씩 달라 보이게. id 결정론, sim 무관.
+      sp.scale.set(personalityScale(e.id));
+      sp.tint = personalityTint(e.id);
       // 회전: 떨림(좌우 진동)의 원인은 회전 "목표"가 매 스텝의 미세 이동 방향이라 노이즈가 크다는 것.
       // → 진행방향 벡터를 저역통과(headK)해 평균 방향만 목표로 삼는다. 방향이 한 스텝씩 홱홱 뒤집혀도
       // 평활된 헤딩은 거의 안 움직여 회전이 안정된다(제자리·이동 중 둘 다). 진짜 전환은 서서히 따라감.

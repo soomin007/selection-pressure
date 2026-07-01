@@ -11,6 +11,7 @@ export interface CreatureCardData {
   color: number; // 종 색(0xRRGGBB)
   energy: number; // 기운 0~1
   ageSeconds: number; // 살아온 시간(초)
+  sizeText: string; // 덩치 한 단어(개체 개성 — 작은 몸/보통/큰 몸집)
   activity: string; // 지금 무엇을 하는 중인지(사냥/먹이/배회)
   descriptor: string; // 종 한 줄 묘사(describeSpecies)
   traits: Traits; // 형질값(종 공유 게놈)
@@ -144,7 +145,7 @@ export function createCreatureCard(onClose: () => void): CreatureCard {
     energyText.textContent = energyWord(e);
     energyText.style.color = energyColor(e);
 
-    ageText.textContent = `나이 ${Math.floor(data.ageSeconds)}초`;
+    ageText.textContent = `나이 ${Math.floor(data.ageSeconds)}초 · ${data.sizeText}`;
     activityText.textContent = data.activity;
 
     for (const key of TRAIT_KEYS) {

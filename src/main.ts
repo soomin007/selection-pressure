@@ -22,6 +22,7 @@ import { describeSpecies } from "@/game/runReport";
 import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
+import { sizeWord } from "@/render/creatureLook";
 import { SIM } from "@/sim/params";
 import type { Entity } from "@/sim/entity";
 
@@ -327,6 +328,7 @@ async function boot(): Promise<void> {
         color: en.species.color,
         energy: en.energy / SIM.maxEnergy,
         ageSeconds: en.age / SIM.stepsPerSecond,
+        sizeText: sizeWord(en.id),
         activity: en.targetPrey ? "사냥하는 중" : en.targetFood ? "먹이로 가는 중" : "돌아다니는 중",
         descriptor: describeSpecies(en.genome),
         traits: en.genome.traits,
