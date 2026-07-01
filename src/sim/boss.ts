@@ -181,6 +181,19 @@ export function bossName(type: BossType): string {
   return PRESETS[type].name;
 }
 
+/**
+ * 개체형 보스(실제로 쫓아와 즉사시키는 개체)인가 — 아니면 전역 시련(위치 무관하게 사방에서 솎기/흡수,
+ * 못 피하고 형질로 버틴다). killRadius(즉사 반경)가 있으면 개체형. 시각·용어·도망 여부를 이걸로 가른다.
+ */
+export function isPredatorBoss(type: BossType): boolean {
+  return PRESETS[type].killRadius > 0;
+}
+
+/** 위협 대응 힌트(예고 부제) — 이 형질을 키우면 버틴다. */
+export function bossCounter(type: BossType): string {
+  return PRESETS[type].counter;
+}
+
 export function pickBossType(rng: Rng): BossType {
   return rng.pick(BOSS_TYPES);
 }

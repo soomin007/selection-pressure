@@ -25,6 +25,7 @@ import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
 import { ThreatBanner } from "@/render/threatBanner";
 import { sizeWord } from "@/render/creatureLook";
+import { isPredatorBoss } from "@/sim/boss";
 import { SIM } from "@/sim/params";
 import type { Entity } from "@/sim/entity";
 
@@ -202,7 +203,6 @@ async function boot(): Promise<void> {
   let prevBoss = false;
   let prevExt = "";
   let prevLowWarn = false;
-  let prevPhase = game.phase;
   let prevLevel = game.level;
   let prevThreat: string | null = null;
 
@@ -262,8 +262,6 @@ async function boot(): Promise<void> {
       if (DEBUG.showAlpha) txt += `  α=${game.interpAlpha.toFixed(2)}`;
       debugBadge.textContent = txt;
     }
-
-    prevPhase = game.phase;
   });
 
   function updateCamera(dtMS: number): void {
@@ -378,11 +376,13 @@ async function boot(): Promise<void> {
   function detectEvents(): void {
     const w = game.world;
     const bossNow = w.boss !== null;
-    if (bossNow && !prevBoss && w.boss) highlights.flash(`${w.boss.name} 등장`, 0xff6a4a);
-    // 보스 단계를 통과하면(보스 있던 watch → draft) 알린다.
-    if (prevPhase === "watch" && game.phase === "draft" && prevBoss && !bossNow) {
-      highlights.flash("관문 통과", 0x6cc24a);
+    if (bossNow && !prevBoss && w.boss) {
+      // 개체형=보스, 전역 재난=시련으로 알린다(시각·용어 일치).
+      const kind = isPredatorBoss(w.boss.type) ? "보스" : "시련";
+      highlights.flash(`${kind} · ${w.boss.name}`, 0xff6a4a);
     }
+    // 위협(보스/시련)이 사라진 순간 = 넘긴 것(단계 전환에 드래프트가 없으니 phase 대신 boss 유무로).
+    if (prevBoss && !bossNow) highlights.flash("위협을 넘겼습니다", 0x6cc24a);
     prevBoss = bossNow;
 
     const ext = w.globalCold > 0 ? "한파" : w.heat > 0 ? "폭염" : w.foodRegrowMultiplier > 1 ? "대가뭄" : "";
@@ -401,10 +401,11 @@ async function boot(): Promise<void> {
     if (game.level > prevLevel) highlights.flash(`레벨 ${game.level} 달성!`, 0xffd24a);
     prevLevel = game.level;
 
-    // 위협 예고 전광판 — 보스/대멸종 단계 직전에 한 번 크게 띄운다(같은 예고는 중복 표시 안 함).
+    // 위협 예고 전광판 — 위협 직전에 종류·대응 힌트를 크게 띄운다(같은 예고는 중복 표시 안 함).
     const threat = game.upcomingThreat;
-    if (threat && threat !== prevThreat) threatBanner.show(threat);
-    prevThreat = threat;
+    const threatKey = threat ? threat.title : null;
+    if (threat && threatKey !== prevThreat) threatBanner.show(threat.title, threat.sub);
+    prevThreat = threatKey;
   }
 
   function statusLine(): string {

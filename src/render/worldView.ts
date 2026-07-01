@@ -275,40 +275,21 @@ export class WorldView {
       }
     }
 
-    // 보스 + 위험 반경 (보스도 보간). 단 독 안개(globalDrain)는 위치 없는 전역 현상이라 보스 개체를
-    // 안 그리고 아래 전체 화면 안개(overlay)로만 표현한다 — "저 원 안만 독"이라는 오해를 없앤다.
+    // 보스 시각은 로직과 1:1 (known_issues). 즉사 반경이 있는 "개체형 보스(추격자)"만 실제 개체라
+    // 점 + 즉사 반경 + 주목 펄스로 그린다(도망 대상). 전역 솎기/흡수 시련(위치 무관)은 개체가 없으므로
+    // 여기서 안 그리고 아래 전체 화면 틴트(overlay)로만 표현한다 — "저기 있는데 왜 여기서 죽지"를 없앤다.
     this.bossG.clear();
     const boss = world.boss;
-    if (boss && boss.globalDrain <= 0) {
+    if (boss && boss.killRadius > 0) {
       const bx = boss.prevX + (boss.x - boss.prevX) * interp;
       const by = boss.prevY + (boss.y - boss.prevY) * interp;
-      if (boss.auraRadius > 0) {
-        this.bossG.circle(bx, by, boss.auraRadius).fill({ color: 0xc060e0, alpha: 0.18 });
-      }
-      if (boss.killRadius > 0) {
-        this.bossG.circle(bx, by, boss.killRadius).fill({ color: 0xe0402a, alpha: 0.3 });
-      }
-      // 주목 펄스 — "여기 위험" 시선 유도(가독성, §7)
-      const pulse = (this.frame % 60) / 60;
+      this.bossG.circle(bx, by, boss.killRadius).fill({ color: 0xe0402a, alpha: 0.3 });
+      const pulse = (this.frame % 60) / 60; // 주목 펄스(가독성 §7)
       this.bossG
         .circle(bx, by, 16 + pulse * 26)
         .stroke({ color: 0xff5535, width: 2.5, alpha: 0.55 * (1 - pulse) });
-      if (boss.globalKillRate > 0) {
-        // 사나운 무리·약탈자·외톨이 사냥꾼 = 떼로 보이게. 작은 점 여러 개가 모여 일렁인다.
-        const n = 11;
-        for (let k = 0; k < n; k++) {
-          const a = (k / n) * Math.PI * 2 + this.frame * 0.04;
-          const rad = 11 + 7 * Math.sin(this.frame * 0.06 + k * 1.7);
-          const px = bx + Math.cos(a) * rad;
-          const py = by + Math.sin(a * 1.3) * rad;
-          this.bossG.circle(px, py, 4).fill({ color: 0xff5535, alpha: 0.95 });
-          this.bossG.circle(px, py, 4).stroke({ color: 0x3a0d06, width: 1.2 });
-        }
-      } else {
-        // 추격자·거대 포식자 = 단일 큰 개체.
-        this.bossG.circle(bx, by, 14).fill({ color: 0xff5535, alpha: 1 });
-        this.bossG.circle(bx, by, 14).stroke({ color: 0x3a0d06, width: 3 });
-      }
+      this.bossG.circle(bx, by, 14).fill({ color: 0xff5535, alpha: 1 });
+      this.bossG.circle(bx, by, 14).stroke({ color: 0x3a0d06, width: 3 });
     }
 
     // 낮/밤 + 대멸종 화면 틴트 (둘 다 overlayG — 밤을 먼저 깔고 대멸종 틴트를 그 위에)
@@ -336,6 +317,11 @@ export class WorldView {
       // (못 벗어나니 대사 낮은 종이 카운터). 국소 원이 없어 전체가 독임이 분명하다. 생물은 보이게.
       tint = 0x5f8f36;
       tintAlpha = 0.22 + 0.07 * Math.sin(this.frame * 0.06);
+    } else if (world.boss && world.boss.globalKillRate > 0) {
+      // 전역 솎기 시련(사나운 무리·약탈자·외톨이 사냥꾼·그림자 매복자) — 위치 무관하게 사방에서 덮친다.
+      // 붉은 위협을 화면 전체에 맥동시켜 "온 사방이 위험"임을 보인다. 죽는 이펙트도 사방에서 터진다.
+      tint = 0x9a2a1a;
+      tintAlpha = 0.16 + 0.06 * Math.sin(this.frame * 0.06);
     }
     if (tintAlpha > 0)
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });

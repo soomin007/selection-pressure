@@ -8,7 +8,8 @@ const DURATION = 2600; // ms
 export class ThreatBanner {
   readonly container = new Container();
   private readonly bg = new Graphics();
-  private readonly text: Text;
+  private readonly text: Text; // 위협 이름(큰 글씨)
+  private readonly subText: Text; // 대응 힌트(작은 글씨)
   private life = 0;
 
   constructor() {
@@ -16,20 +17,34 @@ export class ThreatBanner {
       text: "",
       style: new TextStyle({
         fill: 0xffe08a,
-        fontSize: 40,
+        fontSize: 38,
         fontWeight: "900",
         stroke: { color: 0x1a0606, width: 7 },
         align: "center",
       }),
     });
     this.text.anchor.set(0.5);
+    this.subText = new Text({
+      text: "",
+      style: new TextStyle({
+        fill: 0xffd6b0,
+        fontSize: 16,
+        fontWeight: "700",
+        stroke: { color: 0x1a0606, width: 4 },
+        align: "center",
+      }),
+    });
+    this.subText.anchor.set(0.5, 0);
     this.container.addChild(this.bg);
     this.container.addChild(this.text);
+    this.container.addChild(this.subText);
     this.container.visible = false;
   }
 
-  show(message: string): void {
-    this.text.text = message;
+  show(title: string, sub: string): void {
+    this.text.text = title;
+    this.subText.text = sub;
+    this.subText.visible = sub !== "";
     this.life = DURATION;
     this.container.visible = true;
   }
@@ -43,15 +58,20 @@ export class ThreatBanner {
     const t = this.life / DURATION; // 1 → 0
     this.container.alpha = Math.min(1, t * 4); // 빠르게 등장, 마지막 ~0.65초에 페이드아웃
     const cx = screenW / 2;
-    const cy = screenH * 0.42;
+    const cy = screenH * 0.4;
     this.text.position.set(cx, cy);
-    // 어두운 경고 띠 — 텍스트 폭에 맞춰. 전광판 느낌(빨강 테두리).
-    const w = this.text.width + 60;
-    const h = this.text.height + 26;
+    const hasSub = this.subText.visible;
+    this.subText.position.set(cx, cy + this.text.height / 2 + 6);
+    // 어두운 경고 띠 — 이름 + 힌트를 함께 감싼다(빨강 테두리 전광판).
+    const w = Math.max(this.text.width, hasSub ? this.subText.width : 0) + 56;
+    const top = cy - this.text.height / 2 - 14;
+    const bottom = hasSub
+      ? cy + this.text.height / 2 + 6 + this.subText.height + 12
+      : cy + this.text.height / 2 + 14;
     this.bg.clear();
     this.bg
-      .roundRect(cx - w / 2, cy - h / 2, w, h, 12)
-      .fill({ color: 0x1a0808, alpha: 0.72 })
+      .roundRect(cx - w / 2, top, w, bottom - top, 12)
+      .fill({ color: 0x1a0808, alpha: 0.75 })
       .stroke({ color: 0xff6a4a, width: 2, alpha: 0.85 });
   }
 }

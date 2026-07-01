@@ -11,7 +11,7 @@ import { defaultGenome, cloneGenome, type Genome } from "@/sim/genome";
 import { drawCards, applyCard, PRESET_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, type StageKind } from "@/game/config";
 import { SIM } from "@/sim/params";
-import { createBoss, bossPreview, bossName, BOSS_TYPES, type BossType } from "@/sim/boss";
+import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { buildRunReport } from "@/game/runReport";
 
 export type Phase = "lobby" | "draft" | "watch" | "result";
@@ -242,13 +242,23 @@ export class Game {
     return { progress, markers };
   }
 
-  /** 현재 단계 끝 무렵, 다음이 위협이면 예고 문구(전광판). 아니면 null. (rng·상태 불변 — 순수 조회) */
-  get upcomingThreat(): string | null {
+  /**
+   * 현재 단계 끝 무렵, 다음이 위협이면 예고(전광판 제목 + 대응 힌트 부제). 아니면 null.
+   * 보스는 다음 종류가 정해져 있어(bossQueue peek) 무엇이 오는지·어떻게 버티는지 미리 알린다.
+   * (rng·상태 불변 — bossQueue 는 읽기만 하는 순수 조회.)
+   */
+  get upcomingThreat(): { title: string; sub: string } | null {
     if (this.phase !== "watch") return null;
     if (this.secondsLeft > GAME.threatPreviewLead) return null;
     const next = SCHEDULE[this.stageIndex + 1];
-    if (next === "boss") return "곧 보스가 나타납니다";
-    if (next === "extinction") return "곧 대멸종이 닥칩니다";
+    if (next === "boss") {
+      const bt = this.bossQueue[0];
+      if (bt) return { title: `곧 ${bossName(bt)}!`, sub: bossCounter(bt) };
+      return { title: "곧 위협이 닥칩니다", sub: "" };
+    }
+    if (next === "extinction") {
+      return { title: "곧 대멸종이 닥칩니다", sub: "형태를 갖추고 수를 늘려 대비하세요" };
+    }
     return null;
   }
 
@@ -329,7 +339,8 @@ export class Game {
     if (kind === "boss") {
       const bt = this.bossQueue.shift() ?? this.stageRng.pick(BOSS_TYPES);
       this.world.boss = createBoss(bt, this.width, this.height);
-      this.stageLabel = `보스 · ${bossName(bt)}`;
+      // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
+      this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
       this.stageTicksLeft = GAME.bossSeconds * SIM.stepsPerSecond;
     } else if (kind === "extinction") {
