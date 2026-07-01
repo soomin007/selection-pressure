@@ -56,7 +56,7 @@ export const SIM = {
   nightVisionBonus: 0.4, // vision 형질이 밤 시야를 끌어올리는 정도(야행성 틈새 — 큰 눈은 밤에도 본다)
 
   coldPenalty: 0.3, // 추운 칸 추가 소모 (틱당, ×coldness×(1-metabolism)) — 추운 맵=고대사 유리
-  globalColdLethality: 1.5, // 대멸종 한파(globalCold)는 평상시 추위보다 이만큼 더 매섭다(클라이맥스 필터). 벽 회피로 서식지 제약↑·개체 풀↓ 만큼 한파도 일관 완화(1.7→1.5, 프로브: 고대사14통과·저대사2탈락)
+  globalColdLethality: 1.4, // 대멸종 한파(globalCold)는 평상시 추위보다 이만큼 더 매섭다(클라이맥스 필터). 야생 동맹(청소부가 초식 안 잡음)으로 초식이 살짝 번성→내 종 먹이 경쟁↑→고대사 통과가 경계(2)로. 한파 전용 지점만 완화(1.5→1.4, 프로브: 고대사 통과·저대사 탈락)
   plagueFertilityResist: 0.9, // 대역병 솎임을 번식력으로 저항: rate ×= 1 - this×fertility (번식력 카운터)
 
   // --- 보스/대멸종 (Phase 5) ---

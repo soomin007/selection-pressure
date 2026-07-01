@@ -310,6 +310,9 @@ export class Hud {
         } else if (sp.friendly) {
           // 우호적 친척 — 화면의 청록 고리와 맞춰 "내 편"임을 표시(야생과 구분).
           this.legendG.circle(cx, cy, LEGEND_SWATCH + 2).stroke({ color: 0x7fffe8, width: 1.5 });
+        } else if (sp.faction !== 0) {
+          // 야생 동맹 — 화면의 금빛 고리와 맞춰 "저 종들은 한 편"임을 표시.
+          this.legendG.circle(cx, cy, LEGEND_SWATCH + 2).stroke({ color: 0xffcf6a, width: 1.3 });
         }
         const label = new Text({ text: sp.name, style: this.legendItemStyle });
         label.position.set(LEGEND_PAD + LEGEND_SWATCH * 2 + 6, y);

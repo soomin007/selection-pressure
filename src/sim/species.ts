@@ -15,22 +15,28 @@ export interface Species {
   initialCount: number;
   /** 먹을 수 있는 먹이 종류(0..K-1). 종마다 달라 경쟁을 분할한다. 빈 배열 = 식물 안 먹음(순수 육식). */
   foodKinds: number[];
-  /** 우호 종(내 종에서 갈라진 친척) — 내 종과 서로 사냥/도망하지 않는다(스포어식 같은 편). */
+  /** 우호 종(내 종에서 갈라진 친척) — 렌더에서 내 편임을 청록 고리로 표시하는 데 쓴다. */
   friendly: boolean;
+  /**
+   * 편(우호 그룹). 0 = 무소속(중립). 같은 편(faction ≠ 0 이고 값이 같음)끼리는 서로 사냥·도망하지
+   * 않는다(스포어식 동맹). 내 종 + 친척 = 1편, 야생 동맹 = 2편. 야생끼리 편을 맺어도 내 종 무리
+   * (cohesion·통과기준)를 안 건드려 밸런스가 안전하다.
+   */
+  faction: number;
 }
 
 export function isCarnivore(genome: Genome): boolean {
   return genome.traits.diet > 0.5;
 }
 
-/** 두 종이 서로 해치지 않는 사이인지 — 내 종 ↔ 친척, 친척 ↔ 친척은 사냥/도망 대상에서 뺀다. */
+/** 두 종이 같은 편(서로 사냥/도망 대상에서 제외)인지 — 내 종↔친척, 야생 동맹끼리 모두 이 하나로 판정. */
 export function areFriends(a: Species, b: Species): boolean {
-  return (a.isPlayer || a.friendly) && (b.isPlayer || b.friendly);
+  return a.faction !== 0 && a.faction === b.faction;
 }
 
 export function makePlayerSpecies(genome: Genome, initialCount: number): Species {
-  // 내 종(잡식)은 일반종 — 모든 먹이 종류를 먹는다(전문 야생종 사이의 틈새).
-  return { id: 0, name: "내 종", genome, isPlayer: true, color: 0x6cc24a, initialCount, foodKinds: [0, 1, 2], friendly: false };
+  // 내 종(잡식)은 일반종 — 모든 먹이 종류를 먹는다(전문 야생종 사이의 틈새). 친척과 같은 1편.
+  return { id: 0, name: "내 종", genome, isPlayer: true, color: 0x6cc24a, initialCount, foodKinds: [0, 1, 2], friendly: false, faction: 1 };
 }
 
 /**
@@ -59,6 +65,7 @@ export function makeKinSpecies(id: number, rng: Rng): Species {
     color: 0x3fbf8f, // 내 종 초록과 같은 계열의 민트 초록(같은 편 느낌 + 구분)
     initialCount: SIM.kinInitialCount,
     foodKinds: [0, 1],
+    faction: 1, // 내 종과 같은 편(서로 안 싸움)
   };
 }
 
@@ -68,6 +75,7 @@ interface Archetype {
   initialCount: number;
   traits: Partial<Traits>;
   foodKinds: number[];
+  faction?: number; // 편(우호 그룹). 생략=0(중립). 같은 값 야생끼리 동맹(서로 안 싸움).
 }
 
 // 야생 아키타입 6종. 같은 먹이를 두고 똑같이 경쟁하면 한둘만 남으므로(경쟁 배제),
@@ -80,6 +88,7 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
     initialCount: 12,
     foodKinds: [0],
     traits: { diet: 0.15, fertility: 0.5, speed: 0.4, vision: 0.4, metabolism: 0.45, attack: 0.3, herding: 0.6 },
+    faction: 2, // 초원 연합(들풀 무리·잡식 청소부와 같은 편 — 서로 안 싸움)
   },
   {
     // 들풀 무리 — 1번 먹이 전문. 약간 빠르고 큰 무리.
@@ -88,6 +97,7 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
     initialCount: 12,
     foodKinds: [1],
     traits: { diet: 0.22, fertility: 0.48, speed: 0.46, vision: 0.45, metabolism: 0.5, attack: 0.28, herding: 0.6 },
+    faction: 2, // 초원 연합
   },
   {
     // 작은 풀벌레 — 2번 먹이 전문. 다산형(r전략): 약하지만 빨리 불어나 잡아먹혀도 버틴다.
@@ -112,6 +122,7 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
     initialCount: 8,
     foodKinds: [0, 1, 2],
     traits: { diet: 0.5, fertility: 0.46, speed: 0.5, vision: 0.5, metabolism: 0.5, attack: 0.4, herding: 0.32 },
+    faction: 2, // 초원 연합(사냥 성향이 있어 동맹 초식을 안 잡는 게 눈에 띈다)
   },
   {
     // 포식자 — 식물 안 먹음(육식). 먹잇감이 많아야 유지된다(붐버스트).
@@ -168,6 +179,7 @@ export function generateWildSpecies(rng: Rng): Species[] {
       initialCount: arch.initialCount,
       foodKinds: arch.foodKinds.slice(),
       friendly: false,
+      faction: arch.faction ?? 0, // 동맹 아키타입만 편(faction)을 갖고, 나머지는 중립(0)
     });
   }
   return out;

@@ -178,6 +178,11 @@ export class WorldView {
         this.playerG
           .circle(rx, ry, 11.5)
           .stroke({ color: 0x7fffe8, width: 1.4, alpha: 0.3 + 0.2 * ringPulse });
+      } else if (e.species.faction !== 0) {
+        // 야생 동맹(같은 편끼리 안 싸움) — 옅은 금빛 고리로 "저 종들은 한 편"을 표시(내 편보다 은은하게).
+        this.playerG
+          .circle(rx, ry, 11.5)
+          .stroke({ color: 0xffcf6a, width: 1.2, alpha: 0.22 + 0.14 * ringPulse });
       }
 
       let sp = this.pool[i];

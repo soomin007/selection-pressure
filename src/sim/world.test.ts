@@ -208,6 +208,18 @@ describe("종 다양성", () => {
     expect(areFriends(kin!, wild!)).toBe(false);
   });
 
+  it("야생 동맹(같은 편)끼리는 서로 우호, 중립 야생끼리는 아니다", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    const ally1 = w.species.find((s) => s.name === "초식 경쟁자"); // faction 2
+    const ally2 = w.species.find((s) => s.name === "들풀 무리"); // faction 2
+    const neutralA = w.species.find((s) => s.name === "작은 풀벌레"); // faction 0
+    const neutralB = w.species.find((s) => s.name === "느린 거북"); // faction 0
+    expect(ally1 && ally2 && neutralA && neutralB).toBeTruthy();
+    expect(areFriends(ally1!, ally2!)).toBe(true); // 같은 2편 = 동맹
+    expect(areFriends(ally1!, neutralA!)).toBe(false); // 2편 vs 중립
+    expect(areFriends(neutralA!, neutralB!)).toBe(false); // 중립끼리는 편이 없어 우호 아님
+  });
+
   it("먹이가 여러 종류로 나뉜다(경쟁 분할)", () => {
     const w = new World("env-1", W, H, defaultGenome());
     const kinds = new Set<number>();
