@@ -55,6 +55,7 @@ export class Game {
   private stageTicksLeft = 0;
   private firstChoice = true; // 런 첫 드래프트 = 시작 프리셋 선택
   private bossQueue: BossType[] = []; // 한 런의 보스들(서로 다른 종류)
+  private extinctionQueue: ExtinctionType[] = []; // 한 런의 대멸종 종류들 — 미리 정해 예고 가능(보스와 대칭)
 
   // 레벨업(형질 성장) — 시간/단계 전환이 아니라 "먹이 경험치"로 레벨을 올려 형질을 얻는다.
   // 레벨 = 세대: 레벨업해서 고른 형질은 그 뒤로 태어난 개체에게만 물려진다(세대별 적용 — 후속 슬라이스).
@@ -70,6 +71,9 @@ export class Game {
 
   private draftRng: Rng;
   private stageRng: Rng;
+  // 대멸종 종류 전용 독립 스트림. stageRng(보스 순서)를 1비트도 안 건드려, 기존 보스 순서·시드 재현이
+  // 그대로 보존된다(known_issues "독립 rng" 패턴 — 소비 순서만 분리, 대멸종 종류만 여기서 결정).
+  private extRng: Rng;
   private acc = 0;
   private ambientAcc = 0;
 
@@ -85,6 +89,7 @@ export class Game {
     this.genome = defaultGenome();
     this.draftRng = new Rng("draft-0");
     this.stageRng = new Rng("stage-0");
+    this.extRng = new Rng("ext-0");
     this.currentSeed = randomSeed(); // 로비 배경 맵도 매번 다르게
     this.world = this.makeWorld();
   }
@@ -257,6 +262,9 @@ export class Game {
       return { title: "곧 위협이 닥칩니다", sub: "" };
     }
     if (next === "extinction") {
+      // 대멸종 종류도 미리 정해 저장하므로(extinctionQueue) 무엇이 오는지·어떻게 버티는지 예고한다.
+      const et = this.extinctionQueue[0];
+      if (et) return { title: `곧 ${extinctionName(et)}!`, sub: extinctionCounter(et) };
       return { title: "곧 대멸종이 닥칩니다", sub: "형태를 갖추고 수를 늘려 대비하세요" };
     }
     return null;
@@ -308,7 +316,9 @@ export class Game {
     this.lastFoodEaten = 0;
     this.draftRng = new Rng(`${this.currentSeed}-draft`);
     this.stageRng = new Rng(`${this.currentSeed}-stage`);
+    this.extRng = new Rng(`${this.currentSeed}-ext`);
     this.bossQueue = shuffle(BOSS_TYPES, this.stageRng); // 한 런의 보스는 서로 다른 종류
+    this.extinctionQueue = shuffle(EXTINCTION_TYPES, this.extRng); // 대멸종 종류도 미리 정해 예고 가능
     this.world = this.makeWorld();
     this.beginFirstDraft();
   }
@@ -344,7 +354,8 @@ export class Game {
       this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
       this.stageTicksLeft = GAME.bossSeconds * SIM.stepsPerSecond;
     } else if (kind === "extinction") {
-      const et = this.stageRng.pick(EXTINCTION_TYPES);
+      // 예고와 실제가 일치하도록 미리 정해 둔 큐에서 꺼낸다(peek 로 예고한 종류 == 여기서 shift 되는 종류).
+      const et = this.extinctionQueue.shift() ?? this.extRng.pick(EXTINCTION_TYPES);
       applyExtinction(this.world, et);
       this.stageLabel = `대멸종 · ${extinctionName(et)}`;
       this.preview = `대멸종 — ${extinctionPreview(et)}`;
@@ -423,12 +434,12 @@ function randomSeed(): string {
   return "r" + Math.floor(Math.random() * 0xffffffff).toString(36);
 }
 
-function shuffle(types: readonly BossType[], rng: Rng): BossType[] {
-  const out = types.slice();
+function shuffle<T>(items: readonly T[], rng: Rng): T[] {
+  const out = items.slice();
   for (let i = out.length - 1; i > 0; i--) {
     const j = rng.int(0, i);
-    const a = out[i] as BossType;
-    const b = out[j] as BossType;
+    const a = out[i] as T;
+    const b = out[j] as T;
     out[i] = b;
     out[j] = a;
   }
@@ -440,6 +451,14 @@ function extinctionName(type: ExtinctionType): string {
   if (type === "famine") return "대가뭄";
   if (type === "plague") return "대역병";
   return "폭염";
+}
+
+/** 대멸종 대응 힌트(예고 전광판 부제) — 이 형질을 키우면 버틴다(보스의 bossCounter 와 대칭, 짧게). */
+function extinctionCounter(type: ExtinctionType): string {
+  if (type === "cold") return "뜨거운 피(높은 대사)라야 얼지 않고 버팁니다";
+  if (type === "famine") return "에너지를 아끼고 수가 많아야 버팁니다";
+  if (type === "plague") return "번식력이 높아야 스러진 수를 메웁니다";
+  return "느린 대사라야 타지 않고 버팁니다";
 }
 
 function extinctionPreview(type: ExtinctionType): string {
