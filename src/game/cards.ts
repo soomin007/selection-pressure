@@ -13,6 +13,8 @@ export interface Card {
   desc: string;
   effects: Partial<Record<keyof Traits, number>>;
   set?: Partial<Record<keyof Traits, number>>;
+  /** 시작 프리셋의 내 종 시작 색(프리셋 전용) — 종마다 뚜렷이 달라 외형만으로 구분된다. */
+  color?: number;
 }
 
 // 런 첫 드래프트 — 시작 프리셋(빌드 방향)을 정한다. 식성(set diet) + 특화 형질 두엇.
@@ -24,6 +26,7 @@ export const PRESET_CARDS: readonly Card[] = [
     desc: "식물도 먹고 사냥도 합니다. 시야가 조금 넓은 무난한 시작.",
     set: { diet: 0.5 },
     effects: { vision: 0.08 },
+    color: 0x6cc24a, // 초록
   },
   {
     id: "preset_herd",
@@ -31,6 +34,7 @@ export const PRESET_CARDS: readonly Card[] = [
     desc: "식물을 먹습니다. 함께 모여 다니며 빠르게 새끼를 쳐 수로 버팁니다.",
     set: { diet: 0.2 },
     effects: { fertility: 0.1, herding: 0.12 },
+    color: 0xb4e04a, // 라임(밝은 연두)
   },
   {
     id: "preset_hunter",
@@ -38,6 +42,7 @@ export const PRESET_CARDS: readonly Card[] = [
     desc: "주로 사냥합니다. 빠르고 공격적이라 먹잇감을 잘 잡습니다.",
     set: { diet: 0.65 },
     effects: { speed: 0.1, attack: 0.12 },
+    color: 0xff7a3a, // 주황
   },
   {
     id: "preset_scout",
@@ -45,6 +50,7 @@ export const PRESET_CARDS: readonly Card[] = [
     desc: "식물과 사냥을 겸합니다. 멀리 보고 에너지를 아껴 오래 버팁니다.",
     set: { diet: 0.4 },
     effects: { vision: 0.12, metabolism: -0.1 },
+    color: 0x3fc9c0, // 청록
   },
   {
     id: "preset_sea",
@@ -52,6 +58,7 @@ export const PRESET_CARDS: readonly Card[] = [
     desc: "헤엄쳐 바다 먹이를 먹으면서 뭍도 오갑니다. 바다는 다투는 경쟁자가 적습니다.",
     set: { diet: 0.4, swimming: 0.85 },
     effects: { speed: 0.06 },
+    color: 0x5aa0f0, // 하늘 파랑
   },
 ];
 

@@ -14,7 +14,9 @@ export interface PresetPanel {
   hide: () => void;
 }
 
-const PLAYER_COLOR = 0x6cc24a; // 내 종 초록(프리셋 미리보기 색)
+const PLAYER_COLOR = 0x6cc24a; // 프리셋에 색이 없을 때의 기본(초록)
+
+const hexColor = (c: number): string => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
 
 function dietWord(v: number): string {
   return v < 0.35 ? "초식성" : v > 0.7 ? "육식성" : "잡식성";
@@ -115,7 +117,7 @@ export function createPresetPanel(
     for (const card of cards) {
       const g = presetGenome(card);
       genomes.push(g);
-      const tex = makeCreatureTexture(renderer, g, PLAYER_COLOR);
+      const tex = makeCreatureTexture(renderer, g, card.color ?? PLAYER_COLOR);
       const canvas = renderer.extract.canvas(tex) as HTMLCanvasElement;
       arts.push(canvas);
       tex.destroy(true);
@@ -159,6 +161,10 @@ export function createPresetPanel(
       }
     }
     nameEl.textContent = card.name;
+    // 선택 버튼과 이름을 그 종의 색으로 물들여 미리보기 외형과 연결한다.
+    const c = card.color ?? PLAYER_COLOR;
+    nameEl.style.color = hexColor(c);
+    selectBtn.style.background = hexColor(c);
     featureEl.textContent = describeSpecies(g);
     dietEl.textContent = dietWord(g.traits.diet);
     dietEl.style.color = dietColor(g.traits.diet);

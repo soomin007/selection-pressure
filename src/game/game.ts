@@ -129,6 +129,8 @@ export class Game {
     if (this.firstChoice) {
       // 시작 프리셋을 골랐으니 곧장 첫 채집 단계로.
       this.firstChoice = false;
+      // 프리셋이 정한 시작 색으로 내 종을 물들인다(종마다 뚜렷이 달라 외형만으로 구분).
+      if (card && card.color !== undefined) this.world.playerSpecies.color = card.color;
       // 프리셋은 "시작 형질"이라 이미 태어난 초기 무리에도 반영한다(세대별 스냅샷은 레벨업부터).
       for (const e of this.world.entities) {
         if (e.species.isPlayer) e.genome = cloneGenome(this.world.genome);

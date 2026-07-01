@@ -269,20 +269,23 @@ export class Hud {
       let label = this.markerLabels[i];
       if (!label) {
         label = new Text({ text: "", style: new TextStyle({ fontSize: 10, fontWeight: "700" }) });
-        label.anchor.set(0.5, 0);
+        label.anchor.set(0.5, 0.5); // 중심 기준 → 배경 박스 중심과 정확히 맞춘다
         this.container.addChild(label);
         this.markerLabels.push(label);
       }
       label.text = m.kind === "boss" ? "보스" : "멸종";
       label.style.fill = col;
-      label.position.set(mx, barY + barH + 3);
-      label.visible = true;
-      // 라벨 글자 뒤 배경 띠(가독성) — 어두운 맵 위에서도 또렷하게. 라벨 폭에 맞춰.
-      const lw = label.width + 8;
+      // 배경 띠(가독성)를 먼저 그리고, 그 중심에 라벨을 얹는다(가로·세로 중심 일치).
+      const boxW = 30;
+      const boxH = 15;
+      const boxCx = mx;
+      const boxCy = barY + barH + 3 + boxH / 2;
       this.timelineG
-        .roundRect(mx - lw / 2, barY + barH + 1, lw, 15, 4)
+        .roundRect(boxCx - boxW / 2, boxCy - boxH / 2, boxW, boxH, 4)
         .fill({ color: 0x0c1018, alpha: 0.88 })
         .stroke({ color: col, width: 1, alpha: 0.55 });
+      label.position.set(boxCx, boxCy);
+      label.visible = true;
     });
     for (let i = timeline.markers.length; i < this.markerLabels.length; i++) {
       const lbl = this.markerLabels[i];
