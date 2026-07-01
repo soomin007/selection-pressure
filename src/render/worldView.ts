@@ -6,6 +6,7 @@
 import { Container, Graphics, Sprite, Texture, type Renderer } from "pixi.js";
 import type { World } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
+import type { BossType } from "@/sim/boss";
 import { TILE, type TileKind } from "@/sim/terrain";
 import { TRAIT_KEYS, type Genome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
@@ -312,21 +313,44 @@ export class WorldView {
     } else if (world.plagueRate > 0) {
       tint = 0x5a7a3a; // 병색(칙칙한 녹황)
       tintAlpha = 0.16;
-    } else if (world.boss && world.boss.globalDrain > 0) {
-      // 독 안개 — 온 땅에 퍼진 전역 독. 진한 녹황을 느리게 맥동시켜 "살아 움직이는 독"을 체감시킨다
-      // (못 벗어나니 대사 낮은 종이 카운터). 국소 원이 없어 전체가 독임이 분명하다. 생물은 보이게.
-      tint = 0x5f8f36;
-      tintAlpha = 0.22 + 0.07 * Math.sin(this.frame * 0.06);
-    } else if (world.boss && world.boss.globalKillRate > 0) {
-      // 전역 솎기 시련(사나운 무리·약탈자·외톨이 사냥꾼·그림자 매복자) — 위치 무관하게 사방에서 덮친다.
-      // 붉은 위협을 화면 전체에 맥동시켜 "온 사방이 위험"임을 보인다. 죽는 이펙트도 사방에서 터진다.
-      tint = 0x9a2a1a;
-      tintAlpha = 0.16 + 0.06 * Math.sin(this.frame * 0.06);
+    } else if (boss && boss.killRadius === 0) {
+      // 전역 시련(사나운 무리·약탈자·외톨이 사냥꾼·그림자 매복자·독 안개) — 위치 무관하게 사방에서
+      // 솎거나 흡수한다. 시각=로직 1:1(known_issues): 전역이라 화면 전체로 표현한다. 종류마다 색·맥동을
+      // 달리해 "지금 무엇이 덮치는지"를 한눈에 구분한다(전엔 4종이 다 같은 붉은색이라 못 갈랐다).
+      // 개체형(추격자/거대 포식자)은 killRadius>0 이라 여기 안 오고 위의 점+반경으로 그려진다.
+      const v = TRIAL_VISUALS[boss.type];
+      if (v) {
+        tint = v.color;
+        tintAlpha = v.baseAlpha + v.pulseAmp * Math.sin(this.frame * v.pulseSpeed);
+      }
     }
     if (tintAlpha > 0)
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });
   }
 }
+
+// 전역 시련별 화면 틴트 — 종류마다 색·맥동을 달리해 "무엇이 덮치는지" 한눈에 갈린다(시각=로직 1:1,
+// known_issues). 색은 서로·대멸종 틴트(한파 파랑·폭염 주황·역병 녹황)와 겹치지 않게 벌렸고, 맥동
+// 속도/진폭으로 질감(우글거림·파상·냉혹·은신)까지 구분한다. tintAlpha = base + amp·sin(frame·speed).
+// 개체형 보스(추격자/거대 포식자)는 화면 틴트가 없어(점+반경으로 그림) 여기 없다.
+interface TrialVisual {
+  color: number;
+  baseAlpha: number;
+  pulseAmp: number;
+  pulseSpeed: number;
+}
+const TRIAL_VISUALS: Partial<Record<BossType, TrialVisual>> = {
+  // 사나운 무리 — 사방에서 우글우글 솎아낸다. 성난 주황빛 붉은을 빠르게 맥동(들끓는 느낌).
+  swarm: { color: 0xd23a12, baseAlpha: 0.15, pulseAmp: 0.07, pulseSpeed: 0.1 },
+  // 약탈자 무리 — 파상으로 달려든다. 핏빛 진홍을 큰 진폭으로 느리게 맥동(밀려왔다 빠지는 공격).
+  raider: { color: 0xb0142e, baseAlpha: 0.17, pulseAmp: 0.08, pulseSpeed: 0.05 },
+  // 외톨이 사냥꾼 — 무리에서 떨어진 개체를 노린다. 차가운 청록빛 남색을 느리게(냉혹·고립).
+  isolation: { color: 0x1f6f88, baseAlpha: 0.16, pulseAmp: 0.05, pulseSpeed: 0.035 },
+  // 그림자 매복자 — 숨어 있다 덮친다. 어두운 자주를 은은하게(수풀 속 그림자).
+  stalker: { color: 0x5a1a4a, baseAlpha: 0.15, pulseAmp: 0.06, pulseSpeed: 0.04 },
+  // 독 안개 — 온 땅의 에너지를 빨아들인다. 진한 녹황을 느리게 맥동(살아 움직이는 독). 기존 값 유지.
+  poison: { color: 0x5f8f36, baseAlpha: 0.22, pulseAmp: 0.07, pulseSpeed: 0.06 },
+};
 
 // 먹이 종류별 색 — 모두 식물처럼 자연스럽되 구분되게(연두 / 청록 / 노랑풀).
 const FOOD_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
