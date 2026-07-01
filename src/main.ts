@@ -190,6 +190,7 @@ async function boot(): Promise<void> {
   let prevExt = "";
   let prevLowWarn = false;
   let prevPhase = game.phase;
+  let prevLevel = game.level;
 
   // 선택 개체 정보 카드(좌하단). 닫기(✕)=선택 해제, ‹ ›=같은 무리의 다른 개체로 포커스 이동.
   const creatureCard = createCreatureCard({
@@ -228,7 +229,7 @@ async function boot(): Promise<void> {
     for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y);
     game.world.events.length = 0;
     effects.update(ticker.deltaMS);
-    hud.sync(game.world, statusLine());
+    hud.sync(game.world, statusLine(), game.level, game.xpProgress);
     buildPanel.setVisible(game.phase === "draft" || game.phase === "watch");
 
     updateCamera(ticker.deltaMS);
@@ -380,6 +381,10 @@ async function boot(): Promise<void> {
     } else if (pop > 9) {
       prevLowWarn = false;
     }
+
+    // 레벨업 — 경험치가 차 새 형질을 고르는 순간(드래프트 팝업과 함께 눈에 띄게).
+    if (game.level > prevLevel) highlights.flash(`레벨 ${game.level} 달성!`, 0xffd24a);
+    prevLevel = game.level;
   }
 
   function statusLine(): string {

@@ -43,10 +43,15 @@ export class Game {
 
   private stageIndex = 0;
   private stageTicksLeft = 0;
-  private pendingBoss: BossType | null = null;
-  private pendingExtinction: ExtinctionType | null = null;
-  private firstChoice = true; // 런 첫 드래프트 = 시작 식성 선택
+  private firstChoice = true; // 런 첫 드래프트 = 시작 프리셋 선택
   private bossQueue: BossType[] = []; // 한 런의 보스들(서로 다른 종류)
+
+  // 레벨업(형질 성장) — 시간/단계 전환이 아니라 "먹이 경험치"로 레벨을 올려 형질을 얻는다.
+  // 레벨 = 세대: 레벨업해서 고른 형질은 그 뒤로 태어난 개체에게만 물려진다(세대별 적용 — 후속 슬라이스).
+  level = 1; // 시작 프리셋 = 1레벨
+  xp = 0; // 현재 레벨에서 쌓은 경험치(먹은 먹이 수)
+  xpToNext: number = GAME.xpBase; // 다음 레벨까지 필요한 경험치(GAME.xpBase 는 리터럴이라 number 명시)
+  private lastFoodEaten = 0; // world.playerFoodEaten 직전 값(매 update 의 delta 를 xp 로 누적)
 
   /** 디버그용 고정 시드(URL ?seed=). null 이면 런마다 랜덤(맵·카드·보스가 매번 다름). */
   fixedSeed: string | null = null;
@@ -112,11 +117,13 @@ export class Game {
       this.pickedCardNames.push(card.name);
     }
     if (this.firstChoice) {
-      // 시작 식성을 골랐으니 곧장 첫 채집 단계로.
+      // 시작 프리셋을 골랐으니 곧장 첫 채집 단계로.
       this.firstChoice = false;
       this.beginStage();
     } else {
-      this.beginStage();
+      // 레벨업 드래프트 — 진행 중이던 단계로 복귀(단계 타이머·보스 상태는 그대로 보존).
+      this.phase = "watch";
+      this.acc = 0;
     }
   }
 
@@ -158,10 +165,37 @@ export class Game {
       }
     }
     if (this.acc > stepMs) this.acc = 0;
+    // 이번 update 에서 내 종이 먹은 먹이만큼 경험치를 쌓고, 임계를 넘으면 레벨업 드래프트를 띄운다.
+    this.updateXp();
+  }
+
+  /** 먹이 섭취 delta 를 경험치로 누적하고, 임계 도달 시 레벨업(형질 드래프트)한다. */
+  private updateXp(): void {
+    const eaten = this.world.playerFoodEaten;
+    this.xp += eaten - this.lastFoodEaten;
+    this.lastFoodEaten = eaten;
+    if (this.xp >= this.xpToNext) this.levelUp();
+  }
+
+  /** 레벨업 — 진행 중이던 단계를 멈추고 형질 카드 3장 중 하나를 고르게 한다(레벨=세대). */
+  private levelUp(): void {
+    this.level += 1;
+    this.xp -= this.xpToNext;
+    if (this.xp < 0) this.xp = 0;
+    this.xpToNext = GAME.xpBase + (this.level - 1) * GAME.xpPerLevel;
+    this.phase = "draft";
+    this.draftCards = drawCards(this.draftRng, 3);
+    this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (지금부터 태어나는 새끼에게 물려집니다)`;
+    this.onDraft?.(this.draftCards, this.preview);
   }
 
   get secondsLeft(): number {
     return Math.max(0, Math.ceil(this.stageTicksLeft / SIM.stepsPerSecond));
+  }
+
+  /** 레벨업 게이지 진행도 0~1 (HUD 표시용). */
+  get xpProgress(): number {
+    return this.xpToNext > 0 ? Math.min(1, this.xp / this.xpToNext) : 0;
   }
 
   /** 렌더 보간 비율 [0,1) — 다음 스텝까지 얼마나 왔나(화면 60fps 가 sim 30/s 사이를 메운다). */
@@ -204,11 +238,15 @@ export class Game {
     this.stageIndex = 0;
     this.result = null;
     this.firstChoice = true;
+    this.level = 1;
+    this.xp = 0;
+    this.xpToNext = GAME.xpBase;
+    this.lastFoodEaten = 0;
     this.draftRng = new Rng(`${this.currentSeed}-draft`);
     this.stageRng = new Rng(`${this.currentSeed}-stage`);
     this.bossQueue = shuffle(BOSS_TYPES, this.stageRng); // 한 런의 보스는 서로 다른 종류
     this.world = this.makeWorld();
-    this.beginDraft();
+    this.beginFirstDraft();
   }
 
   private makeWorld(): World {
@@ -219,47 +257,36 @@ export class Game {
     return SCHEDULE[this.stageIndex] ?? "forage";
   }
 
-  private beginDraft(): void {
+  /** 런 첫 드래프트 — 시작 프리셋 선택(어떤 종으로 시작할지). 이후 형질은 레벨업으로 얻는다. */
+  private beginFirstDraft(): void {
     this.phase = "draft";
-    this.pendingBoss = null;
-    this.pendingExtinction = null;
-
-    // 런 첫 드래프트는 시작 프리셋 선택(어떤 종으로 시작할지 — 식성 + 특화 형질).
-    if (this.firstChoice) {
-      this.draftCards = PRESET_CARDS.slice();
-      this.preview = "어떤 종으로 시작할까요? 시작 프리셋을 고르세요. (카드로 계속 발전시킵니다)";
-      return;
-    }
-
-    this.draftCards = drawCards(this.draftRng, 3);
-
-    // 다가오는 단계의 위협을 미리 정하고 예고를 만든다(전투 전 예고, §4.2).
-    const kind = this.currentKind();
-    if (kind === "boss") {
-      this.pendingBoss = this.bossQueue.shift() ?? this.stageRng.pick(BOSS_TYPES);
-      this.preview = `다가오는 위협 — ${bossPreview(this.pendingBoss)}`;
-    } else if (kind === "extinction") {
-      this.pendingExtinction = this.stageRng.pick(EXTINCTION_TYPES);
-      this.preview = `대멸종이 다가옵니다 — ${extinctionPreview(this.pendingExtinction)}`;
-    } else {
-      this.preview = "위협 없음 · 채집 라운드입니다.";
-    }
+    this.draftCards = PRESET_CARDS.slice();
+    this.preview = "어떤 종으로 시작할까요? 시작 프리셋을 고르세요. (먹이를 먹어 레벨업하며 형질을 더합니다)";
   }
 
+  /**
+   * 단계 시작 — 위협(보스/대멸종)을 직접 정한다. 하이브리드: 단계 전환에는 드래프트가 붙지 않고(형질은
+   * 레벨업으로만), 위협만 흐른다. 예고(preview)는 stageLabel 과 함께 main 이 하이라이트로 띄운다.
+   */
   private beginStage(): void {
     this.phase = "watch";
     this.acc = 0;
     const kind = this.currentKind();
-    if (kind === "boss" && this.pendingBoss) {
-      this.world.boss = createBoss(this.pendingBoss, this.width, this.height);
-      this.stageLabel = `보스 · ${bossName(this.pendingBoss)}`;
+    if (kind === "boss") {
+      const bt = this.bossQueue.shift() ?? this.stageRng.pick(BOSS_TYPES);
+      this.world.boss = createBoss(bt, this.width, this.height);
+      this.stageLabel = `보스 · ${bossName(bt)}`;
+      this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
       this.stageTicksLeft = GAME.bossSeconds * SIM.stepsPerSecond;
-    } else if (kind === "extinction" && this.pendingExtinction) {
-      applyExtinction(this.world, this.pendingExtinction);
-      this.stageLabel = `대멸종 · ${extinctionName(this.pendingExtinction)}`;
+    } else if (kind === "extinction") {
+      const et = this.stageRng.pick(EXTINCTION_TYPES);
+      applyExtinction(this.world, et);
+      this.stageLabel = `대멸종 · ${extinctionName(et)}`;
+      this.preview = `대멸종 — ${extinctionPreview(et)}`;
       this.stageTicksLeft = GAME.extinctionSeconds * SIM.stepsPerSecond;
     } else {
       this.stageLabel = "채집";
+      this.preview = "";
       this.stageTicksLeft = GAME.roundSeconds * SIM.stepsPerSecond;
     }
   }
@@ -288,8 +315,7 @@ export class Game {
       this.endRun("win");
       return;
     }
-    this.beginDraft();
-    this.onDraft?.(this.draftCards, this.preview);
+    this.beginStage(); // 다음 단계 바로 시작 — 형질 드래프트는 단계 전환이 아니라 레벨업으로만.
   }
 
   private clearStageState(): void {

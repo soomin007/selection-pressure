@@ -58,6 +58,8 @@ export class World {
   entities: Entity[] = [];
   food: Food[] = [];
   tick = 0;
+  /** 내 종이 먹은 먹이 누적 수 — 레벨업 경험치의 소스. rng 미사용 → 결정론·밸런스 무관(game 이 delta 로 XP). */
+  playerFoodEaten = 0;
 
   // Phase 5 단계 상태 (Game 이 설정/해제). 기본값은 평상시(영향 없음).
   boss: Boss | null = null;

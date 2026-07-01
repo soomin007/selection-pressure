@@ -137,6 +137,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       food.available = false;
       food.regrowTimer = Math.round(SIM.foodRegrowTicks * world.foodRegrowMultiplier);
       e.targetFood = null;
+      if (e.species.isPlayer) world.playerFoodEaten += 1; // 레벨업 경험치 소스(내 종 섭취만)
     }
   }
 

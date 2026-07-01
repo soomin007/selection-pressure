@@ -55,6 +55,15 @@ const DAY_DOT_Y = 52;
 const DAY_DOT_COLOR = 0xffd24a; // 낮(밝은 노랑)
 const NIGHT_DOT_COLOR = 0x2a3a6a; // 밤(어두운 남색)
 
+// 레벨업 경험치 게이지 — 정보 박스와 범례 사이. 먹이를 먹어 채우면 레벨업(형질 선택).
+const XP_LABEL_X = 16;
+const XP_BAR_X = 58;
+const XP_BAR_W = 172;
+const XP_BAR_H = 9;
+const XP_Y_MOBILE = 94; // 정보 박스(하단 ~90) 아래, 범례(116) 위
+const XP_Y_DESKTOP = 146; // 정보 박스(하단 ~142) 아래, 범례(168) 위
+const XP_FILL_COLOR = 0xffd24a;
+
 // 추이 그래프(데스크톱 전용) — 정보 박스 안 스파크라인.
 const GRAPH_X = 16;
 const GRAPH_Y = 88;
@@ -82,6 +91,8 @@ export class Hud {
   private readonly deathFeed: Text;
   private readonly dayDot = new Graphics(); // 낮밤 색 원(노랑=낮, 남색=밤)
   private readonly dayLabel: Text; // 낮/노을/밤/새벽
+  private readonly xpG = new Graphics(); // 레벨업 경험치 게이지 바
+  private readonly levelText: Text; // Lv.N
   private readonly panelBg = new Graphics();
   private readonly graph = new Graphics(); // 추이 그래프(데스크톱 전용)
   private history: number[] = [];
@@ -133,6 +144,13 @@ export class Hud {
     this.dayLabel.anchor.set(1, 0);
     this.dayLabel.position.set(DAY_DOT_X - 11, 46);
 
+    // 레벨 라벨(경험치 게이지 왼쪽).
+    this.levelText = new Text({
+      text: "",
+      style: new TextStyle({ fill: XP_FILL_COLOR, fontSize: 13, fontWeight: "800" }),
+    });
+    this.levelText.position.set(XP_LABEL_X, (this.isDesktop ? XP_Y_DESKTOP : XP_Y_MOBILE) - 3);
+
     // 정보 박스(맨 뒤) — 글자·그래프의 공용 배경. 사망 알림 유무에 따라 높이만 다시 그린다(drawPanel).
     this.container.addChild(this.panelBg);
     if (this.isDesktop) this.container.addChild(this.graph); // 추이 그래프는 데스크톱만
@@ -141,6 +159,8 @@ export class Hud {
     this.container.addChild(this.deathFeed);
     this.container.addChild(this.dayDot);
     this.container.addChild(this.dayLabel);
+    this.container.addChild(this.xpG);
+    this.container.addChild(this.levelText);
     this.drawPanel();
 
     // 범례: 배경(맨 뒤) → 색 동그라미/구분선 → 이름 텍스트(updateLegend 에서 추가) 순.
@@ -169,11 +189,12 @@ export class Hud {
     this.legendSig = ""; // 새 런에서 종 구성이 바뀌면 다시 그리도록
   }
 
-  sync(world: World, statusText: string): void {
+  sync(world: World, statusText: string, level: number, xpProgress: number): void {
     const mine = world.playerPopulation;
     this.stat.text = `내 종 ${mine}   야생 ${world.population - mine}`;
     this.notice.text = statusText;
     this.updateDayNight(world);
+    this.updateXpGauge(level, xpProgress);
 
     this.frame += 1;
     if (this.isDesktop && this.frame % SAMPLE_EVERY === 0) {
@@ -195,8 +216,25 @@ export class Hud {
     this.deathFeed.visible = notLobby;
     this.dayDot.visible = notLobby;
     this.dayLabel.visible = notLobby;
+    this.xpG.visible = notLobby;
+    this.levelText.visible = notLobby;
     this.legend.visible = onWatch;
     this.drawGraph();
+  }
+
+  /** 레벨업 경험치 게이지 — 레벨 라벨 + 채움 바(먹이를 먹어 채우면 레벨업). */
+  private updateXpGauge(level: number, xpProgress: number): void {
+    this.levelText.text = `Lv.${level}`;
+    const y = this.isDesktop ? XP_Y_DESKTOP : XP_Y_MOBILE;
+    this.xpG.clear();
+    this.xpG
+      .roundRect(XP_BAR_X, y, XP_BAR_W, XP_BAR_H, 4)
+      .fill({ color: 0x11161f, alpha: 0.9 })
+      .stroke({ color: 0x3b465c, width: 1, alpha: 0.95 });
+    const w = Math.max(0, Math.min(1, xpProgress)) * (XP_BAR_W - 2);
+    if (w > 0.5) {
+      this.xpG.roundRect(XP_BAR_X + 1, y + 1, w, XP_BAR_H - 2, 3).fill({ color: XP_FILL_COLOR });
+    }
   }
 
   /** 낮밤 타이머 — 정보 박스 우상단의 색 원(낮=노랑↔밤=남색)과 단계 라벨(낮/노을/밤/새벽). */
