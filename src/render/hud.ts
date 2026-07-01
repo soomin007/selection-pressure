@@ -15,8 +15,13 @@ const LEGEND_W = 150;
 const LEGEND_PAD = 7;
 const LEGEND_ROW = 18;
 const LEGEND_SWATCH = 6; // 색 동그라미 반지름
-const LEGEND_Y_MOBILE = 116;
-const LEGEND_Y_DESKTOP = 168;
+const LEGEND_Y_MOBILE = 164; // 정보 박스 → 타임라인 막대 → (여기) 범례 순
+const LEGEND_Y_DESKTOP = 212;
+
+// 런 진행 타임라인 막대 — 정보 박스 아래(상단 노치에 가리지 않게). full-width, 아래에 마커 라벨.
+const TIMELINE_Y_MOBILE = 140;
+const TIMELINE_Y_DESKTOP = 188;
+const TIMELINE_H = 8;
 
 // worldView.ts 의 FOOD_COLORS 와 동기화 유지(먹이 종류별 색: 연두 / 청록 / 노랑풀).
 const FOOD_LEGEND_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
@@ -42,12 +47,14 @@ function lerpColor(a: number, b: number, t: number): number {
 const PANEL_X = 8;
 const PANEL_Y = 8;
 const PANEL_W = 236;
-const PANEL_H_MOBILE = 82;
-const PANEL_H_MOBILE_DEATH = 104;
-const PANEL_H_DESKTOP = 134; // stat + 상태 2줄 + 추이 그래프
-const PANEL_H_DESKTOP_DEATH = 156;
-const DEATH_Y_MOBILE = 88;
-const DEATH_Y_DESKTOP = 140; // 그래프 아래
+// 정보 박스 내부 세로 순서: stat → 상태 2줄 → (데스크톱: 추이 그래프) → 경험치 게이지 → 사망 알림.
+// 경험치 게이지를 사망 알림 "위"에 둬 둘이 겹치지 않게 한다(박스 높이는 게이지·사망 포함해 늘렸다).
+const PANEL_H_MOBILE = 104; // stat + 상태 2줄 + 경험치 게이지
+const PANEL_H_MOBILE_DEATH = 128; // + 사망 알림
+const PANEL_H_DESKTOP = 154; // stat + 상태 2줄 + 추이 그래프 + 경험치 게이지
+const PANEL_H_DESKTOP_DEATH = 176; // + 사망 알림
+const DEATH_Y_MOBILE = 108; // 경험치 게이지(88) 아래
+const DEATH_Y_DESKTOP = 158; // 경험치 게이지(138) 아래
 
 // 낮밤 타이머 — 정보 박스 둘째 줄(상태) 우측. 개체 수(첫 줄)가 길어져도 겹치지 않게 수직 분리.
 const DAY_DOT_X = PANEL_X + PANEL_W - 16;
@@ -60,8 +67,8 @@ const XP_LABEL_X = 16;
 const XP_BAR_X = 58;
 const XP_BAR_W = 172;
 const XP_BAR_H = 9;
-const XP_Y_MOBILE = 94; // 정보 박스(하단 ~90) 아래, 범례(116) 위
-const XP_Y_DESKTOP = 146; // 정보 박스(하단 ~142) 아래, 범례(168) 위
+const XP_Y_MOBILE = 88; // 정보 박스 안, 상태 2줄 아래 · 사망 알림(108) 위
+const XP_Y_DESKTOP = 138; // 정보 박스 안, 추이 그래프 아래 · 사망 알림(158) 위
 const XP_FILL_COLOR = 0xffd24a;
 
 // 추이 그래프(데스크톱 전용) — 정보 박스 안 스파크라인.
@@ -93,7 +100,8 @@ export class Hud {
   private readonly dayLabel: Text; // 낮/노을/밤/새벽
   private readonly xpG = new Graphics(); // 레벨업 경험치 게이지 바
   private readonly levelText: Text; // Lv.N
-  private readonly timelineG = new Graphics(); // 런 전체 진행 타임라인(상단 긴 막대 + 위협 마커)
+  private readonly timelineG = new Graphics(); // 런 전체 진행 타임라인(긴 막대 + 위협 마커)
+  private readonly markerLabels: Text[] = []; // 타임라인 마커 라벨(보스/멸종) 재사용 풀
   private readonly panelBg = new Graphics();
   private readonly graph = new Graphics(); // 추이 그래프(데스크톱 전용)
   private history: number[] = [];
@@ -227,20 +235,24 @@ export class Hud {
     this.dayDot.visible = notLobby;
     this.dayLabel.visible = notLobby;
     this.timelineG.visible = notLobby;
+    if (!notLobby) for (const lbl of this.markerLabels) lbl.visible = false;
     this.xpG.visible = notLobby;
     this.levelText.visible = notLobby;
     this.legend.visible = onWatch;
     this.drawGraph();
   }
 
-  /** 런 전체 진행 타임라인 — 상단 긴 막대(왼→오 차오름) + 보스(빨강)·대멸종(파랑) 시점 마커. */
+  /**
+   * 런 전체 진행 타임라인 — 정보 박스 아래 긴 막대(왼→오 차오름) + 보스(빨강)·대멸종(파랑) 시점 마커.
+   * 각 마커 아래에 "보스"/"멸종" 라벨을 붙여, 처음 보는 사람도 무슨 위협이 언제 오는지 알 수 있게 한다.
+   */
   private updateTimeline(
     timeline: { progress: number; markers: readonly { kind: string; at: number }[] },
     screenW: number,
   ): void {
     const barX = 12;
-    const barY = 4;
-    const barH = 7;
+    const barY = this.isDesktop ? TIMELINE_Y_DESKTOP : TIMELINE_Y_MOBILE;
+    const barH = TIMELINE_H;
     const barW = Math.max(60, screenW - 24);
     this.timelineG.clear();
     this.timelineG
@@ -248,12 +260,27 @@ export class Hud {
       .fill({ color: 0x0c1018, alpha: 0.85 })
       .stroke({ color: 0x3b465c, width: 1, alpha: 0.95 });
     const fw = barW * Math.max(0, Math.min(1, timeline.progress));
-    if (fw > 1) this.timelineG.roundRect(barX, barY, fw, barH, 4).fill({ color: 0x6cc24a, alpha: 0.85 });
-    // 위협 시점 마커 — 막대 위아래로 살짝 튀어나온 세로 선(보스=빨강, 대멸종=파랑).
-    for (const m of timeline.markers) {
+    if (fw > 1) this.timelineG.roundRect(barX, barY, fw, barH, 4).fill({ color: 0x6cc24a, alpha: 0.9 });
+    // 위협 마커(세로 선) + 그 아래 라벨(보스/멸종).
+    timeline.markers.forEach((m, i) => {
       const mx = barX + barW * Math.max(0, Math.min(1, m.at));
       const col = m.kind === "boss" ? 0xff5535 : 0x8ab4ff;
-      this.timelineG.rect(mx - 1.5, barY - 2, 3, barH + 4).fill({ color: col });
+      this.timelineG.rect(mx - 1.5, barY - 3, 3, barH + 6).fill({ color: col });
+      let label = this.markerLabels[i];
+      if (!label) {
+        label = new Text({ text: "", style: new TextStyle({ fontSize: 10, fontWeight: "700" }) });
+        label.anchor.set(0.5, 0);
+        this.container.addChild(label);
+        this.markerLabels.push(label);
+      }
+      label.text = m.kind === "boss" ? "보스" : "멸종";
+      label.style.fill = col;
+      label.position.set(mx, barY + barH + 2);
+      label.visible = true;
+    });
+    for (let i = timeline.markers.length; i < this.markerLabels.length; i++) {
+      const lbl = this.markerLabels[i];
+      if (lbl) lbl.visible = false;
     }
   }
 
