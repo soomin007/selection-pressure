@@ -275,8 +275,14 @@ export class Hud {
       }
       label.text = m.kind === "boss" ? "보스" : "멸종";
       label.style.fill = col;
-      label.position.set(mx, barY + barH + 2);
+      label.position.set(mx, barY + barH + 3);
       label.visible = true;
+      // 라벨 글자 뒤 배경 띠(가독성) — 어두운 맵 위에서도 또렷하게. 라벨 폭에 맞춰.
+      const lw = label.width + 8;
+      this.timelineG
+        .roundRect(mx - lw / 2, barY + barH + 1, lw, 15, 4)
+        .fill({ color: 0x0c1018, alpha: 0.88 })
+        .stroke({ color: col, width: 1, alpha: 0.55 });
     });
     for (let i = timeline.markers.length; i < this.markerLabels.length; i++) {
       const lbl = this.markerLabels[i];
