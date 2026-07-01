@@ -12,6 +12,7 @@ import type { Entity } from "@/sim/entity";
 import type { Food } from "@/sim/food";
 import type { Traits } from "@/sim/genome";
 import { createEntity } from "@/sim/entity";
+import { areFriends } from "@/sim/species";
 import { SIM } from "@/sim/params";
 
 interface Vec {
@@ -206,7 +207,7 @@ function computeFlee(
     e.y,
     SIM.predatorSenseRange,
     (p) =>
-      p.alive && p !== e && p.species.id !== e.species.id &&
+      p.alive && p !== e && p.species.id !== e.species.id && !areFriends(e.species, p.species) &&
       p.genome.traits.diet > SIM.dietHuntMin && p.genome.traits.attack >= t.attack,
   );
   if (predator) {
@@ -313,7 +314,9 @@ function chooseGoal(
       e.x,
       e.y,
       vision,
-      (p) => p.alive && p !== e && p.species.id !== e.species.id && inFov(p.x, p.y),
+      (p) =>
+        p.alive && p !== e && p.species.id !== e.species.id &&
+        !areFriends(e.species, p.species) && inFov(p.x, p.y),
     );
   }
   if (canGraze) food = nearestFood(e, world, vision, inFov);

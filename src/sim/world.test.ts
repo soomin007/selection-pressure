@@ -6,6 +6,7 @@ import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
 import { nightVisionFactor, makeFovTest } from "@/sim/behavior";
+import { areFriends } from "@/sim/species";
 import type { Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
 import type { Food } from "@/sim/food";
@@ -186,10 +187,25 @@ describe("Phase 6 — 사망 원인 집계", () => {
 });
 
 describe("종 다양성", () => {
-  it("내 종 + 야생 8종 = 9종으로 시작한다", () => {
+  it("내 종 + 친척 1 + 야생 8 = 10종으로 시작한다", () => {
     const w = new World("env-1", W, H, defaultGenome());
-    expect(w.species.length).toBe(9);
+    expect(w.species.length).toBe(10);
     expect(w.species.filter((s) => s.isPlayer).length).toBe(1);
+    // 우호적 친척 종이 정확히 하나(내 종은 friendly 아님).
+    expect(w.species.filter((s) => s.friendly).length).toBe(1);
+    expect(w.species.filter((s) => s.friendly && s.isPlayer).length).toBe(0);
+  });
+
+  it("친척 종은 내 종과 서로 우호(사냥/도망 대상 제외), 야생과는 아니다", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    const player = w.species.find((s) => s.isPlayer);
+    const kin = w.species.find((s) => s.friendly);
+    const wild = w.species.find((s) => !s.isPlayer && !s.friendly);
+    expect(player && kin && wild).toBeTruthy();
+    expect(areFriends(player!, kin!)).toBe(true);
+    expect(areFriends(kin!, player!)).toBe(true);
+    expect(areFriends(player!, wild!)).toBe(false);
+    expect(areFriends(kin!, wild!)).toBe(false);
   });
 
   it("먹이가 여러 종류로 나뉜다(경쟁 분할)", () => {

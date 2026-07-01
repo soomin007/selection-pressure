@@ -12,7 +12,7 @@ import { Environment } from "@/sim/environment";
 import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
-import { makePlayerSpecies, generateWildSpecies, type Species } from "@/sim/species";
+import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, type Species } from "@/sim/species";
 import { stepEntity } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
 import { SIM } from "@/sim/params";
@@ -103,9 +103,14 @@ export class World {
         ? SIM.aquaticInitialEntities
         : SIM.initialEntities;
     this.playerSpecies = makePlayerSpecies(genome, baseStart);
-    this.species = [this.playerSpecies, ...generateWildSpecies(this.rng)];
+    // 우호적 친척 종 — 게놈 변형은 "독립 rng"라 메인 스트림(기존 밸런스)을 안 건드린다. id 는 야생 뒤 고유값.
+    const wild = generateWildSpecies(this.rng);
+    const kin = makeKinSpecies(wild.length + 1, new Rng(String(seed) + "-kin"));
+    this.species = [this.playerSpecies, kin, ...wild];
     this.spawnFood();
     this.spawnEntities();
+    // 친척은 spawnEntities(메인 rng) 대신 "독립 rng"로 내 종 근처에 스폰 → 메인 소비 순서 보존(밸런스 불변).
+    this.spawnKin(new Rng(String(seed) + "-kinpos"));
     // 바다 먹이는 "독립 rng"로 생물 스폰 뒤에 — this.rng 상태(=step 동역학)를 안 건드려 밸런스 보존.
     this.spawnSeaFood(new Rng(String(seed) + "-seafood"));
     this.grid.rebuild(this.entities);
@@ -334,7 +339,7 @@ export class World {
     const counts = new Map<number, number>();
     for (const e of this.entities) counts.set(e.species.id, (counts.get(e.species.id) ?? 0) + 1);
     for (const sp of this.species) {
-      if (sp.isPlayer) continue;
+      if (sp.isPlayer || sp.friendly) continue; // 친척은 이주로 보충 안 함(내 편 — 멸종하면 사라진다)
       if ((counts.get(sp.id) ?? 0) >= floor) continue;
       const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
       const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
@@ -350,6 +355,8 @@ export class World {
 
   private spawnEntities(): void {
     for (const sp of this.species) {
+      // 친척(우호 종)은 여기서 스폰하지 않는다 — spawnKin(독립 rng)이 맡아 메인 rng 소비 순서를 보존한다.
+      if (sp.friendly) continue;
       // 야생종은 고유한 영역(보금자리)에 모여 태어난다 — 환경 비옥도 차이 + 무리 성향과 맞물려
       // 경쟁 배제를 늦춰 더 많은 종이 공존한다. 내 종(주인공)은 맵 전체에 넓게 퍼뜨린다.
       const homeX = this.rng.range(0.14, 0.86) * this.width;
@@ -381,6 +388,27 @@ export class World {
         const spot = this.terrain.nearestPassable(x, y, canSwim, canLand);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
+    }
+  }
+
+  /**
+   * 우호적 친척 무리를 스폰한다(독립 rng → 메인 밸런스 불변). 야생종처럼 자기 영역(보금자리)에 모여
+   * 산다 — 내 종 바로 옆에 두면 소수 개체라 국소 먹이를 함께 소진해 내 종을 굶긴다(통과 마진 잠식).
+   * 떨어져 살되 이동하다 만나면 서로 사냥·도망하지 않아(friendly) 자연스레 섞인다(스포어식 우호 종).
+   */
+  private spawnKin(rng: Rng): void {
+    const kin = this.species.find((s) => s.friendly);
+    if (!kin) return;
+    const canSwim = kin.genome.traits.swimming >= SIM.swimThreshold;
+    const canLand = kin.genome.traits.swimming < SIM.aquaticOnlyThreshold;
+    const homeX = rng.range(0.14, 0.86) * this.width;
+    const homeY = rng.range(0.14, 0.86) * this.height;
+    const spread = 72 * Math.sqrt(this.areaScale);
+    for (let i = 0; i < kin.initialCount; i++) {
+      const x = Math.max(0, Math.min(this.width, homeX + rng.range(-spread, spread)));
+      const y = Math.max(0, Math.min(this.height, homeY + rng.range(-spread, spread)));
+      const spot = this.terrain.nearestPassable(x, y, canSwim, canLand);
+      this.entities.push(createEntity(this.nextId(), spot.x, spot.y, kin, SIM.startEnergy));
     }
   }
 }

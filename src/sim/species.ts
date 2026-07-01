@@ -4,6 +4,7 @@
 
 import type { Rng } from "@/sim/rng";
 import { defaultGenome, clampGenome, TRAIT_KEYS, type Genome, type Traits } from "@/sim/genome";
+import { SIM } from "@/sim/params";
 
 export interface Species {
   id: number;
@@ -14,15 +15,51 @@ export interface Species {
   initialCount: number;
   /** 먹을 수 있는 먹이 종류(0..K-1). 종마다 달라 경쟁을 분할한다. 빈 배열 = 식물 안 먹음(순수 육식). */
   foodKinds: number[];
+  /** 우호 종(내 종에서 갈라진 친척) — 내 종과 서로 사냥/도망하지 않는다(스포어식 같은 편). */
+  friendly: boolean;
 }
 
 export function isCarnivore(genome: Genome): boolean {
   return genome.traits.diet > 0.5;
 }
 
+/** 두 종이 서로 해치지 않는 사이인지 — 내 종 ↔ 친척, 친척 ↔ 친척은 사냥/도망 대상에서 뺀다. */
+export function areFriends(a: Species, b: Species): boolean {
+  return (a.isPlayer || a.friendly) && (b.isPlayer || b.friendly);
+}
+
 export function makePlayerSpecies(genome: Genome, initialCount: number): Species {
   // 내 종(잡식)은 일반종 — 모든 먹이 종류를 먹는다(전문 야생종 사이의 틈새).
-  return { id: 0, name: "내 종", genome, isPlayer: true, color: 0x6cc24a, initialCount, foodKinds: [0, 1, 2] };
+  return { id: 0, name: "내 종", genome, isPlayer: true, color: 0x6cc24a, initialCount, foodKinds: [0, 1, 2], friendly: false };
+}
+
+/**
+ * 우호적 친척 종 — 내 종과 같은 곳에서 갈라진 듯한 온건한 잡식 무리(균형 잡힌 원형에서 조금 흔든다).
+ * 내 종의 극단 형질을 물려받지 않는다 — 갈라진 친척은 제 갈 길을 가고(스포어식), 그래야 내 종과
+ * 과경쟁하지 않는다. 서로 사냥하지 않고(friendly) 비슷한 초록색으로 "같은 편"임을 보인다. 초식쪽
+ * 잡식이라 내 종(전 종류 잡식)보다 사냥을 안 하고, 위치는 내 종 보금자리 근처에 함께 태어난다.
+ * 게놈은 독립 rng 로 만들어 메인 스트림(기존 밸런스)을 건드리지 않는다.
+ */
+export function makeKinSpecies(id: number, rng: Rng): Species {
+  const g = defaultGenome();
+  for (const key of TRAIT_KEYS) {
+    if (key === "swimming") {
+      g.traits.swimming = 0.5; // 친척은 육상(내 종 옆에서 함께)
+      continue;
+    }
+    g.traits[key] = clamp01(0.5 + rng.range(-0.1, 0.1)); // 균형 원형에서 미세하게만 흔든다
+  }
+  g.traits.diet = clamp01(0.3 + rng.range(-0.05, 0.05)); // 초식쪽(내 종과 먹이 경쟁·사냥 완화)
+  return {
+    id,
+    name: "친척 무리",
+    genome: clampGenome(g),
+    isPlayer: false,
+    friendly: true,
+    color: 0x3fbf8f, // 내 종 초록과 같은 계열의 민트 초록(같은 편 느낌 + 구분)
+    initialCount: SIM.kinInitialCount,
+    foodKinds: [0, 1],
+  };
 }
 
 interface Archetype {
@@ -130,6 +167,7 @@ export function generateWildSpecies(rng: Rng): Species[] {
       color: arch.color,
       initialCount: arch.initialCount,
       foodKinds: arch.foodKinds.slice(),
+      friendly: false,
     });
   }
   return out;
