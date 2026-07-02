@@ -5,7 +5,7 @@
 // 초식은 식물(food)을, 육식은 다른 종을 먹는다. 먹이/사냥 경쟁이 창발한다.
 
 import { Rng } from "@/sim/rng";
-import { TRAIT_KEYS, type Genome } from "@/sim/genome";
+import { TRAIT_KEYS, TRAIT_MAX, type Genome } from "@/sim/genome";
 import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
 import { Environment } from "@/sim/environment";
@@ -25,7 +25,11 @@ export function emptyDeathTally(): DeathTally {
   return { starve: 0, cold: 0, heat: 0, age: 0, boss: 0, predation: 0, plague: 0 };
 }
 
-const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+/** 형질(0~100) 클램프 + 반올림. */
+const clampTrait = (v: number): number => {
+  const n = Math.round(v);
+  return n < 0 ? 0 : n > TRAIT_MAX ? TRAIT_MAX : n;
+};
 
 /** 화면 연출용 1회성 사건(전 종, 위치 포함). 렌더가 매 프레임 읽고 비운다. rng 미사용 → 결정론 무관. */
 export type VisualEventKind = "birth" | "death" | "kill";
@@ -156,7 +160,7 @@ export class World {
     if (this.plagueRate > 0) {
       for (const e of this.entities) {
         if (!e.alive) continue;
-        const rate = this.plagueRate * (1 - SIM.plagueFertilityResist * e.genome.traits.fertility);
+        const rate = this.plagueRate * (1 - SIM.plagueFertilityResist * (e.genome.traits.fertility / TRAIT_MAX));
         if (rate > 0 && this.rng.unit() < rate) {
           e.alive = false;
           this.recordDeath(e.species, "plague");
@@ -324,13 +328,13 @@ export class World {
       if (n === 0) continue;
       const avgCold = coldSum / n;
       const t = sp.genome.traits;
-      // 환경 적응: 추운 곳에 사는 무리일수록 고대사(추위 견딤)로 천천히 수렴.
-      const metaTarget = clamp01(0.3 + avgCold * 0.6);
-      t.metabolism = clamp01(t.metabolism + (metaTarget - t.metabolism) * SIM.wildAdaptRate);
+      // 환경 적응: 추운 곳에 사는 무리일수록 고대사(추위 견딤)로 천천히 수렴. (형질 0~100 스케일)
+      const metaTarget = clampTrait(30 + avgCold * 60);
+      t.metabolism = clampTrait(t.metabolism + (metaTarget - t.metabolism) * SIM.wildAdaptRate);
       // 형질별 미세 드리프트(독립 rng). swimming 은 수생/육상 정체성이라 제외(드리프트로 뒤집히면 어색).
       for (const key of TRAIT_KEYS) {
         if (key === "swimming") continue;
-        t[key] = clamp01(t[key] + this.wildEvoRng.range(-SIM.wildDriftStep, SIM.wildDriftStep));
+        t[key] = clampTrait(t[key] + this.wildEvoRng.range(-SIM.wildDriftStep, SIM.wildDriftStep));
       }
     }
   }

@@ -10,6 +10,7 @@
 import type { World } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
 import type { Rng } from "@/sim/rng";
+import { TRAIT_MAX } from "@/sim/genome";
 
 export type BossType = "chaser" | "swarm" | "poison" | "titan" | "raider" | "isolation" | "stalker";
 
@@ -264,12 +265,10 @@ export function stepBoss(boss: Boss, world: World): void {
     for (const e of world.entities) {
       if (!e.alive) continue;
       let rate = boss.globalKillRate;
-      // 약탈자: 공격력이 높으면 맞서 싸워 덜 솎인다.
-      if (boss.cullAttackResist > 0) rate *= 1 - boss.cullAttackResist * e.genome.traits.attack;
-      // 외톨이 사냥꾼: 무리 성향이 높을수록(함께 뭉쳐 다녀) 덜 솎인다.
-      if (boss.cullGroupResist > 0) rate *= 1 - boss.cullGroupResist * e.genome.traits.herding;
-      // 그림자 매복자: 시야가 높을수록(미리 보고 피해) 덜 솎인다.
-      if (boss.cullVisionResist > 0) rate *= 1 - boss.cullVisionResist * e.genome.traits.vision;
+      // (전역 솎기 시련은 개체 떼로 실재화됨 — 이 분기는 globalKillRate>0 시련이 없어 현재 미사용.)
+      if (boss.cullAttackResist > 0) rate *= 1 - boss.cullAttackResist * (e.genome.traits.attack / TRAIT_MAX);
+      if (boss.cullGroupResist > 0) rate *= 1 - boss.cullGroupResist * (e.genome.traits.herding / TRAIT_MAX);
+      if (boss.cullVisionResist > 0) rate *= 1 - boss.cullVisionResist * (e.genome.traits.vision / TRAIT_MAX);
       if (rate > 0 && world.rng.unit() < rate) {
         e.alive = false;
         world.recordDeath(e.species, "boss");
@@ -281,7 +280,7 @@ export function stepBoss(boss: Boss, world: World): void {
   if (boss.globalDrain > 0) {
     for (const e of world.entities) {
       if (!e.alive) continue;
-      e.energy -= boss.globalDrain * (0.3 + e.genome.traits.metabolism);
+      e.energy -= boss.globalDrain * (0.3 + e.genome.traits.metabolism / TRAIT_MAX);
       if (e.energy <= 0) {
         e.alive = false;
         world.recordDeath(e.species, "boss");
@@ -353,9 +352,9 @@ function stepMemberHorde(boss: Boss, world: World): void {
  */
 function memberKills(e: Entity, boss: Boss, world: World): boolean {
   const t = e.genome.traits;
-  if (boss.cullAttackResist > 0) return world.rng.unit() >= boss.cullAttackResist * t.attack;
-  if (boss.cullGroupResist > 0) return world.rng.unit() >= boss.cullGroupResist * t.herding;
-  if (boss.cullVisionResist > 0) return world.rng.unit() >= boss.cullVisionResist * t.vision;
+  if (boss.cullAttackResist > 0) return world.rng.unit() >= boss.cullAttackResist * (t.attack / TRAIT_MAX);
+  if (boss.cullGroupResist > 0) return world.rng.unit() >= boss.cullGroupResist * (t.herding / TRAIT_MAX);
+  if (boss.cullVisionResist > 0) return world.rng.unit() >= boss.cullVisionResist * (t.vision / TRAIT_MAX);
   return true;
 }
 

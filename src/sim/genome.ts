@@ -4,13 +4,16 @@
 //   나중에 비동기 생물(§6)을 붙일 때 게놈을 그대로 네트워크에 실으려면
 //   forward-compatibility 가 필수다. Phase 1 에서 거의 공짜로 챙긴다.
 //
-// 형질값은 모두 [0, 1] 로 정규화한다. 환경마다 유리한 형질이 달라지도록
-// 시뮬 쪽에서 이 값들을 해석한다 (예: 추운 환경 → metabolism 유리).
+// 형질값은 모두 [0, 100] 자연수다(0.01 단위 소수 대신 사람이 읽고 조절하기 쉬운 정수 스케일).
+// 시뮬 계산은 이 값을 0~1 로 정규화(÷100)해 해석한다 — 환경마다 유리한 형질이 달라진다.
 
 import type { Rng } from "@/sim/rng";
 
 /** 현재 게놈 스키마 버전. 형질을 추가/변경하면 올리고 migrate 에 단계를 더한다. */
-export const GENOME_VERSION = 2 as const;
+export const GENOME_VERSION = 3 as const;
+
+/** 형질 값 범위 — 0~100 자연수. 시뮬은 TRAIT_MAX 로 나눠 0~1 로 해석한다. */
+export const TRAIT_MAX = 100 as const;
 
 /** v1 형질 묶음. */
 export interface TraitsV1 {
@@ -46,8 +49,14 @@ export interface GenomeV2 {
   traits: TraitsV2;
 }
 
+/** v3 — 형질 스케일을 0~1 소수에서 0~100 자연수로. 형질 종류는 v2 와 같고 값 범위만 바뀐다. */
+export interface GenomeV3 {
+  genomeVersion: 3;
+  traits: TraitsV2;
+}
+
 /** 항상 "현재 버전" 을 가리킨다. 코드 다른 곳은 이 별칭만 쓴다. */
-export type Genome = GenomeV2;
+export type Genome = GenomeV3;
 export type Traits = TraitsV2;
 
 /**
@@ -80,29 +89,33 @@ export const TRAIT_LABELS: Record<keyof Traits, string> = {
   swimming: "수영",
 };
 
-const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+/** 형질 값을 0~100 자연수로 강제(반올림 + 범위 클램프). */
+const clampTrait = (v: number): number => {
+  const n = Math.round(v);
+  return n < 0 ? 0 : n > TRAIT_MAX ? TRAIT_MAX : n;
+};
 
-/** 모든 형질 0.5 인 기본 게놈. */
+/** 모든 형질 50(=중간) 인 기본 게놈. */
 export function defaultGenome(): Genome {
   return {
     genomeVersion: GENOME_VERSION,
     traits: {
-      speed: 0.5,
-      attack: 0.5,
-      vision: 0.5,
-      herding: 0.5,
-      metabolism: 0.5,
-      fertility: 0.5,
-      diet: 0.5,
-      swimming: 0.5,
+      speed: 50,
+      attack: 50,
+      vision: 50,
+      herding: 50,
+      metabolism: 50,
+      fertility: 50,
+      diet: 50,
+      swimming: 50,
     },
   };
 }
 
-/** 시드 RNG 로 무작위 게놈 생성 (결정론 유지). */
+/** 시드 RNG 로 무작위 게놈 생성 (결정론 유지). 0~100 자연수. */
 export function randomGenome(rng: Rng): Genome {
   const traits = {} as Traits;
-  for (const key of TRAIT_KEYS) traits[key] = rng.unit();
+  for (const key of TRAIT_KEYS) traits[key] = clampTrait(rng.unit() * TRAIT_MAX);
   return { genomeVersion: GENOME_VERSION, traits };
 }
 
@@ -114,10 +127,10 @@ export function cloneGenome(genome: Genome): Genome {
   return { genomeVersion: genome.genomeVersion, traits: { ...genome.traits } };
 }
 
-/** 모든 형질을 [0, 1] 로 강제. (카드 효과 누적 후 호출) */
+/** 모든 형질을 0~100 자연수로 강제. (카드 효과 누적 후 호출) */
 export function clampGenome(genome: Genome): Genome {
   const traits = {} as Traits;
-  for (const key of TRAIT_KEYS) traits[key] = clamp01(genome.traits[key]);
+  for (const key of TRAIT_KEYS) traits[key] = clampTrait(genome.traits[key]);
   return { genomeVersion: GENOME_VERSION, traits };
 }
 
@@ -132,16 +145,26 @@ export function migrateGenome(raw: unknown): Genome {
   const version = (raw as { genomeVersion?: unknown }).genomeVersion;
   switch (version) {
     case 1: {
-      // v1 → v2: 수영(swimming)을 0.5 기본으로 채운다(기존 게놈은 육상 기준).
+      // v1(0~1) → v3: 수영을 채우고(육상 기준 중간) 전 형질을 0~100 스케일로 올린다.
       const v1 = raw as GenomeV1;
-      return clampGenome({ genomeVersion: 2, traits: { ...v1.traits, swimming: 0.5 } });
+      return clampGenome(scaleUp({ genomeVersion: 3, traits: { ...v1.traits, swimming: 0.5 } }));
     }
     case 2:
+      // v2(0~1) → v3: 형질 값을 ×100 해 0~100 스케일로.
+      return clampGenome(scaleUp(raw as GenomeV2 as unknown as Genome));
+    case 3:
       // (실전에선 여기서 형질 키 존재/타입을 검증한다.)
-      return clampGenome(raw as GenomeV2);
+      return clampGenome(raw as Genome);
     default:
       throw new Error(`알 수 없는 게놈 버전입니다: ${String(version)}`);
   }
+}
+
+/** 0~1 스케일 게놈을 0~100 으로 올린다(v1/v2 마이그레이션용). */
+function scaleUp(genome: Genome): Genome {
+  const traits = {} as Traits;
+  for (const key of TRAIT_KEYS) traits[key] = clampTrait((genome.traits[key] ?? 0.5) * TRAIT_MAX);
+  return { genomeVersion: GENOME_VERSION, traits };
 }
 
 export function serializeGenome(genome: Genome): string {

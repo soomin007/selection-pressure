@@ -11,6 +11,7 @@ import type { World, DeathCause } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
 import type { Food } from "@/sim/food";
 import type { Traits } from "@/sim/genome";
+import { TRAIT_MAX } from "@/sim/genome";
 import { createEntity } from "@/sim/entity";
 import { areFriends } from "@/sim/species";
 import { SIM } from "@/sim/params";
@@ -22,16 +23,22 @@ interface Vec {
 
 export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const t = e.genome.traits;
-  const maxSpeed = SIM.maxSpeedBase * (0.4 + t.speed);
+  // 형질은 0~100 자연수 저장 → 계수 계산은 0~1 로 정규화(÷TRAIT_MAX)해 해석한다(임계 비교는 0~100 그대로).
+  const speed01 = t.speed / TRAIT_MAX;
+  const vision01 = t.vision / TRAIT_MAX;
+  const metabolism01 = t.metabolism / TRAIT_MAX;
+  const herding01 = t.herding / TRAIT_MAX;
+  const fertility01 = t.fertility / TRAIT_MAX;
+  const maxSpeed = SIM.maxSpeedBase * (0.4 + speed01);
   // 밤엔 시야가 준다(낮=영향 없음). vision 형질이 높을수록 밤에도 잘 본다 → 야행성 틈새(큰 눈).
   const vision =
     SIM.visionBase *
-    (0.4 + t.vision) *
-    nightVisionFactor(world.daylight, t.vision) *
-    grassVisionFactor(world, e.x, e.y, t.vision);
-  const drain = SIM.metabolismDrain * (0.5 + t.metabolism);
+    (0.4 + vision01) *
+    nightVisionFactor(world.daylight, vision01) *
+    grassVisionFactor(world, e.x, e.y, vision01);
+  const drain = SIM.metabolismDrain * (0.5 + metabolism01);
   const maxAge = SIM.baseMaxAge;
-  // 식성 구간: 초식(<0.35) 식물만 / 잡식(0.35~0.7) 둘 다 / 육식(>0.7) 사냥만.
+  // 식성 구간: 초식(<35) 식물만 / 잡식(35~70) 둘 다 / 육식(>70) 사냥만.
   const canHunt = t.diet > SIM.dietHuntMin;
   const canGraze = t.diet < SIM.dietGrazeMax;
   // 수영 종만 물에 들어가고(산은 누구도 못 넘는다), 물 전용(수영 아주 높음)은 육지에 못 올라온다.
@@ -39,7 +46,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const canLand = t.swimming < SIM.aquaticOnlyThreshold;
 
   // 무리 이웃(3×3 칸) — cohesion(이동)과 huddle(보온)에 함께 쓴다.
-  const nb = t.herding > 0.01 ? world.grid.neighborhood(e.x, e.y) : null;
+  const nb = t.herding > 0 ? world.grid.neighborhood(e.x, e.y) : null;
 
   // --- 원하는 속도(desired) 계산 ---
   let desired: Vec;
@@ -75,7 +82,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       // 않게(길찾기는 먹이 목표에만 적용되므로 cohesion 발 끼임은 여기서 막는다).
       if (hd > SIM.herdComfortRadius && world.terrain.lineOfSight(e.x, e.y, nb.comX, nb.comY, canSwim)) {
         const pull = Math.min(1, (hd - SIM.herdComfortRadius) / SIM.herdComfortRamp);
-        const w = SIM.herdCohesion * t.herding * pull;
+        const w = SIM.herdCohesion * herding01 * pull;
         const herd = scaleTo(hdx, hdy, maxSpeed);
         desired = {
           x: desired.x * (1 - w) + herd.x * w,
@@ -120,7 +127,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     const dy = prey.y - e.y;
     if (dx * dx + dy * dy <= SIM.attackRange * SIM.attackRange) {
       const chance = clamp(
-        SIM.killChanceBias + (t.attack - prey.genome.traits.attack) * SIM.killChanceScale,
+        SIM.killChanceBias + ((t.attack - prey.genome.traits.attack) / TRAIT_MAX) * SIM.killChanceScale,
         0.05,
         0.95,
       );
@@ -147,12 +154,12 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
 
   // --- 허기 + 노화. 추위(저대사 불리, 무리 보온으로 완화) + 폭염(고대사 불리). ---
   const env = world.environment.sampleAt(e.x, e.y);
-  const huddle = nb ? Math.min(1, (nb.count - 1) / SIM.huddleFull) * t.herding : 0;
+  const huddle = nb ? Math.min(1, (nb.count - 1) / SIM.huddleFull) * herding01 : 0;
   const warmthFactor = 1 - SIM.huddleWarmth * huddle;
   // 평상시 추위(env.coldness)는 그대로, 대멸종 한파(globalCold)만 더 매섭게(클라이맥스 필터).
   const coldField = env.coldness + world.globalCold * SIM.globalColdLethality;
-  const coldDrain = SIM.coldPenalty * coldField * (1 - t.metabolism) * warmthFactor;
-  const heatDrain = SIM.heatPenalty * world.heat * t.metabolism;
+  const coldDrain = SIM.coldPenalty * coldField * (1 - metabolism01) * warmthFactor;
+  const heatDrain = SIM.heatPenalty * world.heat * metabolism01;
   e.energy -= drain + coldDrain + heatDrain;
   e.age += 1;
 
@@ -177,7 +184,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   if (
     world.entities.length + newborns.length < world.cap &&
     e.energy >= SIM.reproduceThreshold &&
-    world.rng.chance(SIM.reproduceRate * (0.3 + t.fertility))
+    world.rng.chance(SIM.reproduceRate * (0.3 + fertility01))
   ) {
     const childEnergy = e.energy * 0.5;
     e.energy -= childEnergy;
@@ -216,14 +223,14 @@ function computeFlee(
         by = dy;
       }
     }
-    const visionPad = boss.cullVisionResist > 0 ? SIM.stalkerVisionFlee * t.vision : 0;
+    const visionPad = boss.cullVisionResist > 0 ? SIM.stalkerVisionFlee * (t.vision / TRAIT_MAX) : 0;
     const fr = boss.killRadius + SIM.fleeRadiusPad + visionPad;
     if (best2 < fr * fr) return clearFleeDir(e, world, bx, by, maxSpeed, canSwim, canLand);
   } else if (boss && boss.killRadius > 0) {
     const bdx = e.x - boss.x;
     const bdy = e.y - boss.y;
     const bd2 = bdx * bdx + bdy * bdy;
-    const fr = boss.killRadius + SIM.fleeRadiusPad + boss.visionFlee * t.vision;
+    const fr = boss.killRadius + SIM.fleeRadiusPad + boss.visionFlee * (t.vision / TRAIT_MAX);
     if (bd2 < fr * fr) return clearFleeDir(e, world, bdx, bdy, maxSpeed, canSwim, canLand);
   }
   const predator = world.grid.nearestMatching(

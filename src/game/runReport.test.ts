@@ -28,14 +28,14 @@ describe("describeSpecies", () => {
   });
 
   it("두드러진 형질을 식성 명사와 함께 묘사", () => {
-    const desc = describeSpecies(tune({ speed: 0.95, metabolism: 0.05, diet: 0.1 }));
+    const desc = describeSpecies(tune({ speed: 95, metabolism: 5, diet: 10 }));
     expect(desc).toContain("초식성");
     expect(desc).toMatch(/빠른|차가운/);
   });
 
   it("육식/초식 경계를 식성 명사로 가른다", () => {
-    expect(describeSpecies(tune({ diet: 0.9 }))).toContain("육식성");
-    expect(describeSpecies(tune({ diet: 0.1 }))).toContain("초식성");
+    expect(describeSpecies(tune({ diet: 90 }))).toContain("육식성");
+    expect(describeSpecies(tune({ diet: 10 }))).toContain("초식성");
   });
 });
 
@@ -55,7 +55,7 @@ describe("buildRunReport", () => {
   it("승패 줄 · 종 묘사 · 사망 원인을 빈 줄로 나눈다", () => {
     const report = buildRunReport(
       "4단계에서 멸종했습니다.",
-      tune({ metabolism: 0.1, diet: 0.2 }),
+      tune({ metabolism: 10, diet: 20 }),
       tally({ cold: 30, starve: 5 }),
     );
     const blocks = report.split("\n\n");

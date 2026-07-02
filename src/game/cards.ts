@@ -2,10 +2,12 @@
 // 매 라운드 풀에서 무작위 3장 후보(운 요소). 트레이드오프 카드로 "특화 vs 헷지" 결정을 만든다.
 // 문구는 쉬운 말로 (UI 규칙).
 //
-// effects = 누적 가감. set = 절대값 지정(시작 식성 선택용). 둘 다 적용 후 [0,1] 클램프.
+// effects = 누적 가감. set = 절대값 지정(시작 식성 선택용). 값은 형질과 같은 0~100 자연수 스케일.
+// 둘 다 적용 후 0~100 으로 클램프.
 
 import type { Rng } from "@/sim/rng";
 import type { Genome, Traits } from "@/sim/genome";
+import { TRAIT_MAX } from "@/sim/genome";
 
 export interface Card {
   id: string;
@@ -24,66 +26,66 @@ export const PRESET_CARDS: readonly Card[] = [
     id: "preset_omni",
     name: "균형 잡식",
     desc: "식물도 먹고 사냥도 합니다. 시야가 조금 넓은 무난한 시작.",
-    set: { diet: 0.5 },
-    effects: { vision: 0.08 },
+    set: { diet: 50 },
+    effects: { vision: 8 },
     color: 0x6cc24a, // 초록
   },
   {
     id: "preset_herd",
     name: "다산 초식 무리",
     desc: "식물을 먹습니다. 함께 모여 다니며 빠르게 새끼를 쳐 수로 버팁니다.",
-    set: { diet: 0.2 },
-    effects: { fertility: 0.1, herding: 0.12 },
+    set: { diet: 20 },
+    effects: { fertility: 10, herding: 12 },
     color: 0xb4e04a, // 라임(밝은 연두)
   },
   {
     id: "preset_hunter",
     name: "날쌘 육식 사냥꾼",
     desc: "주로 사냥합니다. 빠르고 공격적이라 먹잇감을 잘 잡습니다.",
-    set: { diet: 0.65 },
-    effects: { speed: 0.1, attack: 0.12 },
+    set: { diet: 65 },
+    effects: { speed: 10, attack: 12 },
     color: 0xff7a3a, // 주황
   },
   {
     id: "preset_scout",
     name: "느긋한 정찰자",
     desc: "식물과 사냥을 겸합니다. 멀리 보고 에너지를 아껴 오래 버팁니다.",
-    set: { diet: 0.4 },
-    effects: { vision: 0.12, metabolism: -0.1 },
+    set: { diet: 40 },
+    effects: { vision: 12, metabolism: -10 },
     color: 0x3fc9c0, // 청록
   },
   {
     id: "preset_sea",
     name: "바다 개척자",
     desc: "헤엄쳐 바다 먹이를 먹으면서 뭍도 오갑니다. 바다는 다투는 경쟁자가 적습니다.",
-    set: { diet: 0.4, swimming: 0.85 },
-    effects: { speed: 0.06 },
+    set: { diet: 40, swimming: 85 },
+    effects: { speed: 6 },
     color: 0x5aa0f0, // 하늘 파랑
   },
 ];
 
 export const CARD_POOL: readonly Card[] = [
   // 단일 형질
-  { id: "swift", name: "날쌘 다리", desc: "더 빨리 움직입니다.", effects: { speed: 0.15 } },
-  { id: "keen", name: "넓은 시야", desc: "먹이를 더 멀리서 봅니다.", effects: { vision: 0.15 } },
+  { id: "swift", name: "날쌘 다리", desc: "더 빨리 움직입니다.", effects: { speed: 15 } },
+  { id: "keen", name: "넓은 시야", desc: "먹이를 더 멀리서 봅니다.", effects: { vision: 15 } },
   {
     id: "thrifty",
     name: "느린 대사",
     desc: "에너지를 적게 씁니다. 따뜻한 땅·폭염·대가뭄에 유리합니다.",
-    effects: { metabolism: -0.14 },
+    effects: { metabolism: -14 },
   },
   {
     id: "hotblood",
     name: "뜨거운 피",
     desc: "추위를 잘 견딥니다. 대신 에너지를 더 씁니다. 추운 땅·한파에 유리합니다.",
-    effects: { metabolism: 0.14 },
+    effects: { metabolism: 14 },
   },
-  { id: "fertile", name: "다산", desc: "더 자주 새끼를 칩니다.", effects: { fertility: 0.16 } },
+  { id: "fertile", name: "다산", desc: "더 자주 새끼를 칩니다.", effects: { fertility: 16 } },
   {
     id: "herd",
     name: "무리 본능",
     desc: "함께 모여 다니고, 모이면 서로 보온합니다(추위에 유리).",
-    effects: { herding: 0.18 },
+    effects: { herding: 18 },
   },
 
   // 조합 (작은 상승 두 개)
@@ -91,25 +93,25 @@ export const CARD_POOL: readonly Card[] = [
     id: "adapt",
     name: "적응",
     desc: "속도와 시야가 조금씩 늡니다.",
-    effects: { speed: 0.08, vision: 0.08 },
+    effects: { speed: 8, vision: 8 },
   },
   {
     id: "eagle_eye",
     name: "매의 눈",
     desc: "시야가 넓어지고 조금 빨라집니다.",
-    effects: { vision: 0.2, speed: 0.05 },
+    effects: { vision: 20, speed: 5 },
   },
   {
     id: "pack_hunt",
     name: "무리 사냥",
     desc: "무리 성향과 속도가 함께 늡니다.",
-    effects: { herding: 0.12, speed: 0.08 },
+    effects: { herding: 12, speed: 8 },
   },
   {
     id: "warm_pack",
     name: "옹기종기",
     desc: "무리 보온이 강해지고 추위에 강해집니다.",
-    effects: { herding: 0.14, metabolism: 0.06 },
+    effects: { herding: 14, metabolism: 6 },
   },
 
   // 트레이드오프 (큰 상승 + 작은 대가)
@@ -117,37 +119,37 @@ export const CARD_POOL: readonly Card[] = [
     id: "sprint",
     name: "질주 본능",
     desc: "훨씬 빨라지지만 에너지를 더 씁니다.",
-    effects: { speed: 0.22, metabolism: 0.07 },
+    effects: { speed: 22, metabolism: 7 },
   },
   {
     id: "hunter_eye",
     name: "사냥꾼의 눈",
     desc: "시야가 크게 넓어지지만 번식이 줍니다.",
-    effects: { vision: 0.24, fertility: -0.06 },
+    effects: { vision: 24, fertility: -6 },
   },
   {
     id: "brood",
     name: "둥지 본능",
     desc: "번식이 크게 늘지만 느려집니다.",
-    effects: { fertility: 0.22, speed: -0.07 },
+    effects: { fertility: 22, speed: -7 },
   },
   {
     id: "loner",
     name: "외톨이",
     desc: "흩어져 빠르게 움직입니다. 무리 성향은 줄어듭니다.",
-    effects: { speed: 0.13, herding: -0.18 },
+    effects: { speed: 13, herding: -18 },
   },
   {
     id: "giant",
     name: "느긋한 거인",
     desc: "에너지를 아주 적게 쓰지만 느려집니다.",
-    effects: { metabolism: -0.18, speed: -0.06 },
+    effects: { metabolism: -18, speed: -6 },
   },
   {
     id: "furnace",
     name: "왕성한 대사",
     desc: "추위에 아주 강하고 번식도 늘지만 에너지를 많이 씁니다.",
-    effects: { metabolism: 0.2, fertility: 0.05 },
+    effects: { metabolism: 20, fertility: 5 },
   },
 
   // 공격성·식성 (다종 생태계)
@@ -155,25 +157,25 @@ export const CARD_POOL: readonly Card[] = [
     id: "fangs",
     name: "송곳니",
     desc: "공격력이 늡니다. 사냥에 강하고 포식자에 덜 쫓깁니다.",
-    effects: { attack: 0.18 },
+    effects: { attack: 18 },
   },
   {
     id: "savage",
     name: "사나운 이빨",
     desc: "공격력이 크게 늘고 조금 빨라집니다.",
-    effects: { attack: 0.24, speed: 0.05 },
+    effects: { attack: 24, speed: 5 },
   },
   {
     id: "predator",
     name: "포식 본능",
     desc: "육식으로 기웁니다. 다른 종을 사냥해 먹습니다.",
-    effects: { diet: 0.22, attack: 0.06 },
+    effects: { diet: 22, attack: 6 },
   },
   {
     id: "grazer",
     name: "초식 본능",
     desc: "초식으로 기웁니다. 식물을 먹고 다툼을 피합니다.",
-    effects: { diet: -0.22, fertility: 0.05 },
+    effects: { diet: -22, fertility: 5 },
   },
 
   // 특화 진화 — 큰 변화 + 뚜렷한 대가. 빌드 정체성을 만든다(드래프트가 매번 다르게).
@@ -181,55 +183,55 @@ export const CARD_POOL: readonly Card[] = [
     id: "cheetah",
     name: "치타의 다리",
     desc: "엄청나게 빨라지지만 번식이 줍니다.",
-    effects: { speed: 0.28, fertility: -0.1 },
+    effects: { speed: 28, fertility: -10 },
   },
   {
     id: "great_fangs",
     name: "거대 송곳니",
     desc: "공격력이 크게 늘지만 굼떠집니다.",
-    effects: { attack: 0.26, speed: -0.08 },
+    effects: { attack: 26, speed: -8 },
   },
   {
     id: "ambush",
     name: "매복 사냥꾼",
     desc: "멀리서 보고 덮칩니다. 시야와 공격력이 함께 늡니다.",
-    effects: { vision: 0.14, attack: 0.14 },
+    effects: { vision: 14, attack: 14 },
   },
   {
     id: "locust",
     name: "메뚜기 떼",
     desc: "폭발적으로 불어납니다. 대신 한 마리는 약해집니다.",
-    effects: { fertility: 0.28, attack: -0.06 },
+    effects: { fertility: 28, attack: -6 },
   },
   {
     id: "thick_fur",
     name: "두꺼운 털가죽",
     desc: "추위에 아주 강하고 함께 모입니다.",
-    effects: { metabolism: 0.16, herding: 0.12 },
+    effects: { metabolism: 16, herding: 12 },
   },
   {
     id: "all_rounder",
     name: "균형 진화",
     desc: "속도·시야·번식이 고루 조금씩 늡니다.",
-    effects: { speed: 0.08, vision: 0.08, fertility: 0.08 },
+    effects: { speed: 8, vision: 8, fertility: 8 },
   },
   {
     id: "ascetic",
     name: "고행자",
     desc: "에너지를 거의 안 쓰고 멀리 봅니다. 대신 느립니다.",
-    effects: { metabolism: -0.2, vision: 0.1, speed: -0.06 },
+    effects: { metabolism: -20, vision: 10, speed: -6 },
   },
   {
     id: "phalanx",
     name: "철벽 대형",
     desc: "함께 뭉쳐 맞서 싸웁니다. 무리 성향과 공격력이 함께 크게 늡니다.",
-    effects: { herding: 0.22, attack: 0.12 },
+    effects: { herding: 22, attack: 12 },
   },
   {
     id: "lone_warrior",
     name: "독불장군",
     desc: "홀로 강하게 싸웁니다. 공격력이 크게 늘지만 무리에서 떨어집니다.",
-    effects: { attack: 0.22, speed: 0.06, herding: -0.16 },
+    effects: { attack: 22, speed: 6, herding: -16 },
   },
 
   // 추가 조합·정체성. 빈 형질 조합을 메워 드래프트 변주를 넓힌다(기존 형질만).
@@ -237,61 +239,61 @@ export const CARD_POOL: readonly Card[] = [
     id: "scout_pack",
     name: "파수 무리",
     desc: "함께 다니며 멀리까지 살핍니다. 시야와 무리 성향이 늡니다.",
-    effects: { vision: 0.14, herding: 0.12 },
+    effects: { vision: 14, herding: 12 },
   },
   {
     id: "owl_eye",
     name: "올빼미 눈",
     desc: "멀리 보면서도 에너지를 아낍니다. 시야가 늘고 대사가 줍니다.",
-    effects: { vision: 0.16, metabolism: -0.08 },
+    effects: { vision: 16, metabolism: -8 },
   },
   {
     id: "nest_herd",
     name: "둥지 무리",
     desc: "무리 속에서 안전하게 새끼를 칩니다. 번식과 무리 성향이 늡니다.",
-    effects: { fertility: 0.16, herding: 0.1 },
+    effects: { fertility: 16, herding: 10 },
   },
   {
     id: "farsight",
     name: "천리안",
     desc: "아주 멀리까지 봅니다. 대신 조금 느려집니다.",
-    effects: { vision: 0.26, speed: -0.06 },
+    effects: { vision: 26, speed: -6 },
   },
   {
     id: "evasive",
     name: "민첩한 회피",
     desc: "빠르게 움직이며 위험을 멀리서 알아챕니다. 속도와 시야가 함께 늡니다.",
-    effects: { speed: 0.12, vision: 0.12 },
+    effects: { speed: 12, vision: 12 },
   },
   {
     id: "beast_metab",
     name: "맹수의 대사",
     desc: "사냥을 위해 힘이 세지만 에너지를 많이 씁니다.",
-    effects: { attack: 0.16, metabolism: 0.08 },
+    effects: { attack: 16, metabolism: 8 },
   },
   {
     id: "glass_cannon",
     name: "유리 대포",
     desc: "공격력이 폭발하지만 몸이 약해 번식이 줍니다.",
-    effects: { attack: 0.28, fertility: -0.1 },
+    effects: { attack: 28, fertility: -10 },
   },
   {
     id: "swift_breeder",
     name: "잰걸음 번식",
     desc: "재빠르게 늘어납니다. 속도와 번식이 함께 조금 늡니다.",
-    effects: { speed: 0.08, fertility: 0.1 },
+    effects: { speed: 8, fertility: 10 },
   },
   {
     id: "stoic",
     name: "굳건한 체질",
     desc: "에너지를 아끼고 함께 버팁니다. 느린 대사와 무리 보온.",
-    effects: { metabolism: -0.12, herding: 0.1 },
+    effects: { metabolism: -12, herding: 10 },
   },
   {
     id: "apex_scout",
     name: "정점의 사냥꾼",
     desc: "넓은 시야로 먹이를 찾고 강하게 사냥합니다. 대신 굼떠집니다.",
-    effects: { vision: 0.16, attack: 0.16, speed: -0.07 },
+    effects: { vision: 16, attack: 16, speed: -7 },
   },
 
   // 바다 적응 — 수영을 키우면 바다 먹이를 먹는다(육상 종은 못 먹는 무경쟁 틈새).
@@ -299,17 +301,21 @@ export const CARD_POOL: readonly Card[] = [
     id: "fins",
     name: "지느러미",
     desc: "헤엄쳐 바다의 먹이를 먹습니다. 바다는 다투는 경쟁자가 없습니다.",
-    effects: { swimming: 0.22 },
+    effects: { swimming: 22 },
   },
   {
     id: "webbed",
     name: "물갈퀴 발",
     desc: "물에서 잘 움직입니다. 수영과 속도가 함께 조금 늡니다.",
-    effects: { swimming: 0.16, speed: 0.06 },
+    effects: { swimming: 16, speed: 6 },
   },
 ];
 
-const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+/** 형질 값을 0~100 자연수로 강제(반올림 + 범위 클램프). */
+const clampTrait = (v: number): number => {
+  const n = Math.round(v);
+  return n < 0 ? 0 : n > TRAIT_MAX ? TRAIT_MAX : n;
+};
 
 /** 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). */
 export function drawCards(rng: Rng, n: number): Card[] {
@@ -326,15 +332,15 @@ export function drawCards(rng: Rng, n: number): Card[] {
   return pool.slice(0, count);
 }
 
-/** 카드 효과를 게놈에 그 자리에서 적용 + [0,1] 클램프. (공유 게놈이라 즉시 반영) */
+/** 카드 효과를 게놈에 그 자리에서 적용 + 0~100 클램프. (공유 게놈이라 즉시 반영) */
 export function applyCard(genome: Genome, card: Card): void {
   if (card.set) {
     for (const key of Object.keys(card.set) as (keyof Traits)[]) {
-      genome.traits[key] = clamp01(card.set[key] ?? genome.traits[key]);
+      genome.traits[key] = clampTrait(card.set[key] ?? genome.traits[key]);
     }
   }
   for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
     const delta = card.effects[key] ?? 0;
-    genome.traits[key] = clamp01(genome.traits[key] + delta);
+    genome.traits[key] = clampTrait(genome.traits[key] + delta);
   }
 }

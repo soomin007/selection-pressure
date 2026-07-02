@@ -34,7 +34,7 @@ describe("시작 프리셋", () => {
       expect(p.set?.diet).toBeDefined();
       const diet = p.set?.diet ?? -1;
       expect(diet).toBeGreaterThanOrEqual(0);
-      expect(diet).toBeLessThanOrEqual(1);
+      expect(diet).toBeLessThanOrEqual(100);
     }
   });
 
@@ -68,10 +68,10 @@ describe("카드 적용", () => {
     expect(swift).toBeDefined();
     if (!swift) return;
     applyCard(g, swift); // 속도 +0.15
-    expect(g.traits.speed).toBeCloseTo(0.65, 5);
+    expect(g.traits.speed).toBe(65);
 
     // 같은 카드 여러 번 → 1.0 에서 멈춤
     for (let i = 0; i < 10; i++) applyCard(g, swift);
-    expect(g.traits.speed).toBe(1);
+    expect(g.traits.speed).toBe(100);
   });
 });

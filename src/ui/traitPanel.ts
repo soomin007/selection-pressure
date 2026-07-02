@@ -60,8 +60,8 @@ export function createTraitPanel(opts: TraitPanelOptions): void {
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = "0";
-    slider.max = "1";
-    slider.step = "0.01";
+    slider.max = "100";
+    slider.step = "1";
     slider.value = String(opts.genome.traits[key]);
     slider.className = "tp-slider";
     slider.addEventListener("input", () => {
@@ -101,7 +101,7 @@ function makeButton(label: string, onClick: () => void): HTMLButtonElement {
 }
 
 function fmt(v: number): string {
-  return v.toFixed(2);
+  return String(Math.round(v)); // 형질 0~100 자연수
 }
 
 function injectStyles(): void {

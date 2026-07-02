@@ -47,17 +47,17 @@ const ADJ_KEYS: readonly AdjKey[] = [
 ];
 
 const dietNoun = (diet: number): string =>
-  diet < 0.35 ? "초식성" : diet > 0.7 ? "육식성" : "잡식성";
+  diet < 35 ? "초식성" : diet > 70 ? "육식성" : "잡식성";
 
 /** 게놈 → "이 종은 어떤 종이었나" 한 줄 묘사 (가장 두드러진 형질 1~2개 + 식성). */
 export function describeSpecies(genome: Genome): string {
   const t = genome.traits;
-  const scored = ADJ_KEYS.map((k) => ({ k, dev: t[k] - 0.5 })).sort(
+  const scored = ADJ_KEYS.map((k) => ({ k, dev: t[k] - 50 })).sort(
     (a, b) => Math.abs(b.dev) - Math.abs(a.dev),
   );
   const adjs: string[] = [];
   for (const s of scored) {
-    if (Math.abs(s.dev) < 0.18) break; // 0.5 근처면 특징 없음
+    if (Math.abs(s.dev) < 18) break; // 50 근처면 특징 없음
     adjs.push(s.dev > 0 ? HIGH_ADJ[s.k] : LOW_ADJ[s.k]);
     if (adjs.length >= 2) break;
   }
@@ -67,8 +67,8 @@ export function describeSpecies(genome: Genome): string {
 
 /** 대사 → 한온 적응 한 줄 (왜 추위/폭염에 죽었는지 연결). 중간 대사면 빈 문자열. */
 function climateNote(t: Traits): string {
-  if (t.metabolism <= 0.35) return "대사가 낮아 추위에 약하고 더위에 강했습니다.";
-  if (t.metabolism >= 0.65) return "대사가 높아 더위에 약하고 추위에 강했습니다.";
+  if (t.metabolism <= 35) return "대사가 낮아 추위에 약하고 더위에 강했습니다.";
+  if (t.metabolism >= 65) return "대사가 높아 더위에 약하고 추위에 강했습니다.";
   return "";
 }
 

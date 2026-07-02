@@ -8,7 +8,7 @@ import type { World } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
 import type { BossType } from "@/sim/boss";
 import { TILE, type TileKind } from "@/sim/terrain";
-import { TRAIT_KEYS, type Genome } from "@/sim/genome";
+import { TRAIT_KEYS, TRAIT_MAX, type Genome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 import { DEBUG, TUNE } from "@/debug";
 import { personalityScale, personalityTint } from "@/render/creatureLook";
@@ -147,7 +147,7 @@ export class WorldView {
     const ringPulse = 0.5 + 0.5 * Math.sin((this.frame % 70) / 70 * Math.PI * 2);
     let i = 0;
     let visionRings = 0; // 시야 반경은 일부 개체에만 옅게(클러터 없이 "얼마나 멀리 보는지" 감)
-    const playerVision = SIM.visionBase * (0.4 + world.playerSpecies.genome.traits.vision);
+    const playerVision = SIM.visionBase * (0.4 + world.playerSpecies.genome.traits.vision / TRAIT_MAX);
     for (const e of world.entities) {
       // 보간 위치(목표) → 렌더 전용 저역통과로 평활. 약 50ms 지연이라 관전엔 무해하고,
       // 제자리 떨림/먹이 앞 급정거 같은 고주파 진동을 흡수한다.
@@ -484,17 +484,22 @@ function genomeSignature(g: Genome): string {
 // 나중에 더 정교한 아트로 바꿀 땐 이 함수만 손보면 된다. (프리셋 선택 창의 외형 미리보기도 재사용)
 export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: number): Texture {
   const t = genome.traits;
+  // 형질은 0~100 저장 → 외형 계산은 0~1 로 정규화해 쓴다(식성 비교는 0~100 임계 그대로).
+  const speed01 = t.speed / TRAIT_MAX;
+  const attack01 = t.attack / TRAIT_MAX;
+  const diet01 = t.diet / TRAIT_MAX;
+  const vision01 = t.vision / TRAIT_MAX;
   const g = new Graphics();
   const dark = darken(color, 0.55);
 
-  const len = 9 + t.speed * 6; // 몸 반길이 (빠를수록 길쭉)
-  const wid = 7 - t.speed * 2.2; // 몸 반너비
+  const len = 9 + speed01 * 6; // 몸 반길이 (빠를수록 길쭉)
+  const wid = 7 - speed01 * 2.2; // 몸 반너비
 
   // 등가시 (공격력) — 위쪽 삼각형들
-  const spikes = Math.round(t.attack * 5);
+  const spikes = Math.round(attack01 * 5);
   for (let s = 0; s < spikes; s++) {
     const px = -len * 0.5 + (s / Math.max(1, spikes - 1)) * len;
-    const h = 4 + t.attack * 5;
+    const h = 4 + attack01 * 5;
     g.poly([px - 3, -wid, px, -wid - h, px + 3, -wid]).fill({ color: dark });
   }
 
@@ -504,7 +509,7 @@ export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: n
   // 식성별 앞부분
   if (t.diet > SIM.dietGrazeMax) {
     // 육식 — 뾰족한 주둥이 + 이빨
-    const snout = 7 + t.diet * 7;
+    const snout = 7 + diet01 * 7;
     g.poly([len - 2, -wid * 0.55, len - 2 + snout, 0, len - 2, wid * 0.55]).fill({ color });
     g.poly([len + snout * 0.5, -1.5, len + snout, 0, len + snout * 0.5, 1.5]).fill({
       color: 0xffffff,
@@ -519,7 +524,7 @@ export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: n
   }
 
   // 눈 (시야)
-  const eye = 1.8 + t.vision * 3.2;
+  const eye = 1.8 + vision01 * 3.2;
   g.circle(len * 0.5, -wid * 0.35, eye).fill({ color: 0xffffff });
   g.circle(len * 0.5 + eye * 0.3, -wid * 0.35, eye * 0.55).fill({ color: 0x0a0a0a });
 

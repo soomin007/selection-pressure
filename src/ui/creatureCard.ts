@@ -171,7 +171,7 @@ export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
       const valEl = traitVals.get(key);
       if (valEl) valEl.textContent = key === "diet" ? dietWord(v) : v.toFixed(2);
       const fillEl = traitFills.get(key);
-      if (fillEl) fillEl.style.width = Math.round(Math.max(0, Math.min(1, v)) * 100) + "%";
+      if (fillEl) fillEl.style.width = Math.round(Math.max(0, Math.min(100, v))) + "%"; // 형질 0~100
     }
   };
 

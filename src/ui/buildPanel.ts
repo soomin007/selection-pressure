@@ -11,7 +11,7 @@ export interface BuildData {
 
 /** 식성값을 쉬운 범주로. (형질 도감과 같은 경계) */
 function dietWord(v: number): string {
-  return v < 0.35 ? "초식" : v > 0.7 ? "육식" : "잡식";
+  return v < 35 ? "초식" : v > 70 ? "육식" : "잡식";
 }
 
 export interface BuildPanel {
@@ -92,7 +92,7 @@ export function createBuildPanel(): BuildPanel {
       name.textContent = TRAIT_LABELS[key];
       name.style.cssText = "color:#aeb7c4;";
       const val = document.createElement("span");
-      val.textContent = key === "diet" ? dietWord(v) : v.toFixed(2);
+      val.textContent = key === "diet" ? dietWord(v) : String(Math.round(v));
       val.style.cssText = "color:#dfe6ee; font-weight:700; font-variant-numeric:tabular-nums;";
       top.append(name, val);
       row.appendChild(top);
@@ -100,7 +100,7 @@ export function createBuildPanel(): BuildPanel {
         const track = document.createElement("div");
         track.style.cssText = "margin-top:2px; height:4px; border-radius:3px; background:#1a2230; overflow:hidden;";
         const fill = document.createElement("div");
-        const pct = Math.round(Math.max(0, Math.min(1, v)) * 100);
+        const pct = Math.round(Math.max(0, Math.min(100, v))); // 형질 0~100
         fill.style.cssText = "height:100%; width:" + pct + "%; border-radius:3px; background:#6cc24a;";
         track.appendChild(fill);
         row.appendChild(track);
