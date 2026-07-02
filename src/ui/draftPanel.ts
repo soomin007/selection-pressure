@@ -72,7 +72,7 @@ function formatEffects(card: Card): string {
   for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
     const v = card.effects[key] ?? 0;
     const sign = v >= 0 ? "+" : "";
-    parts.push(`${TRAIT_LABELS[key]} ${sign}${v.toFixed(2)}`);
+    parts.push(`${TRAIT_LABELS[key]} ${sign}${Math.round(v)}`); // 형질 0~100 자연수
   }
   return parts.join("  ·  ");
 }
