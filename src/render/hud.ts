@@ -15,14 +15,15 @@ const LEGEND_W = 150;
 const LEGEND_PAD = 7;
 const LEGEND_ROW = 18;
 const LEGEND_SWATCH = 6; // 색 동그라미 반지름
-// 타임라인 마커 라벨 박스 아래 끝(모바일 166·데스크톱 214)보다 아래로 둬 "종 안내" 버튼이 첫 보스
-// 마커 표지와 안 겹치게 한다(전엔 164/212 라 2px 겹쳤다).
-const LEGEND_Y_MOBILE = 172; // 정보 박스 → 타임라인 막대 → 마커 라벨 → (여기) 범례 순
-const LEGEND_Y_DESKTOP = 220;
+// 모바일: 정보 박스 → 타임라인 막대(140) → 마커 라벨(~166) → (여기) 범례(172).
+// 데스크톱: 타임라인은 상단 중앙으로 옮겼으므로, 범례는 정보 박스 바로 아래(death 행 y184 + 6px 여유).
+const LEGEND_Y_MOBILE = 172;
+const LEGEND_Y_DESKTOP = 190;
 
-// 런 진행 타임라인 막대 — 정보 박스 아래(상단 노치에 가리지 않게). full-width, 아래에 마커 라벨.
+// 런 진행 타임라인 막대. 모바일=정보 박스 아래 full-width(노치 회피). 데스크톱=상단 중앙에 짧게
+// (updateTimeline 에서 중앙 정렬·폭 제한). full-width 는 넓은 화면에서 안 예뻐 데스크톱만 위로 올렸다.
 const TIMELINE_Y_MOBILE = 140;
-const TIMELINE_Y_DESKTOP = 188;
+const TIMELINE_Y_DESKTOP = 16;
 const TIMELINE_H = 8;
 
 // worldView.ts 의 FOOD_COLORS 와 동기화 유지(먹이 종류별 색: 연두 / 청록 / 노랑풀).
@@ -254,10 +255,22 @@ export class Hud {
     timeline: { progress: number; markers: readonly { kind: string; at: number }[] },
     screenW: number,
   ): void {
-    const barX = 12;
-    const barY = this.isDesktop ? TIMELINE_Y_DESKTOP : TIMELINE_Y_MOBILE;
     const barH = TIMELINE_H;
-    const barW = Math.max(60, screenW - 24);
+    let barX: number;
+    let barY: number;
+    let barW: number;
+    if (this.isDesktop) {
+      // 데스크탑: 상단 중앙에 짧게. full-width 는 안 예쁘다. 정보 박스(좌, x≤244)와 컨트롤바/빌드
+      // 패널(우, x≥screenW−150) 사이 중앙 갭에 둔다(양쪽 260px 여유로 어느 UI 와도 안 겹침). 라벨은
+      // barY 아래 ~y42 로, 상단 중앙 하이라이트 flash(y56~84)보다 위라 세로로 분리된다.
+      barW = Math.max(120, Math.min(420, screenW - 520));
+      barX = Math.round((screenW - barW) / 2);
+      barY = TIMELINE_Y_DESKTOP;
+    } else {
+      barX = 12;
+      barW = Math.max(60, screenW - 24);
+      barY = TIMELINE_Y_MOBILE;
+    }
     this.timelineG.clear();
     this.timelineG
       .roundRect(barX, barY, barW, barH, 4)
