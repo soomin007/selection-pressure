@@ -9,7 +9,8 @@ import { DEBUG, DEBUG_ACTIVE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
 import { Hud } from "@/render/hud";
-import { Game } from "@/game/game";
+import { Game, type ExtinctionType } from "@/game/game";
+import { BOSS_TYPES, bossName, type BossType } from "@/sim/boss";
 import { createDraftPanel } from "@/ui/draftPanel";
 import { createPresetPanel } from "@/ui/presetPanel";
 import { createResultPanel } from "@/ui/resultPanel";
@@ -194,6 +195,32 @@ async function boot(): Promise<void> {
       "color:#ffe08a; font-family:system-ui,-apple-system,sans-serif; font-size:13px;" +
       "font-weight:700; pointer-events:none; user-select:none;";
     document.body.appendChild(debugBadge);
+  }
+
+  // ?dev — 위협 소환 버튼 패널. 관전 중 아무 보스/시련/대멸종을 즉시 띄워 반복 플레이 없이 확인한다.
+  // (게임을 시작해 관전 상태여야 동작 — debugSummon 이 phase 를 확인한다.)
+  if (DEBUG.devSummon) {
+    const panel = document.createElement("div");
+    panel.style.cssText =
+      "position:fixed; left:6px; right:6px; bottom:52px; z-index:31; display:flex; flex-wrap:wrap;" +
+      "gap:4px; justify-content:center; pointer-events:none;";
+    const threats: { kind: BossType | ExtinctionType; label: string }[] = [
+      ...BOSS_TYPES.map((t) => ({ kind: t as BossType | ExtinctionType, label: bossName(t) })),
+      { kind: "cold", label: "한파" },
+      { kind: "famine", label: "가뭄" },
+      { kind: "heat", label: "폭염" },
+      { kind: "plague", label: "역병" },
+    ];
+    for (const th of threats) {
+      const btn = document.createElement("button");
+      btn.textContent = th.label;
+      btn.style.cssText =
+        "pointer-events:auto; padding:6px 9px; background:rgba(11,14,20,0.92); border:1px solid" +
+        " #4a4030; border-radius:7px; color:#ffe08a; font:700 12px system-ui,-apple-system;";
+      btn.addEventListener("click", () => game.debugSummon(th.kind));
+      panel.appendChild(btn);
+    }
+    document.body.appendChild(panel);
   }
 
   // 카메라(평상시 내 무리 추적, 보스 땐 보스 추적 줌) + 하이라이트 이벤트 감지 상태

@@ -22,6 +22,8 @@ export const DEBUG = {
   freezeRotation: params.has("norot"),
   noInterp: params.has("nointerp"),
   showAlpha: params.has("showalpha"),
+  // ?dev — 화면 하단에 위협 소환 버튼 패널(각 보스/시련/대멸종을 즉시 띄워 반복 없이 확인).
+  devSummon: params.has("dev"),
 } as const;
 
 // 회전 떨림 튜닝(폰에서 URL 로 즉시 조절 → 한 번 배포로 여러 값을 시험).

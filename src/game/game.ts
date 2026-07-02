@@ -26,7 +26,7 @@ export interface RunTimeline {
   progress: number; // 전체 진행 0~1(왼→오 차오름)
   markers: TimelineMarker[];
 }
-type ExtinctionType = "cold" | "famine" | "heat" | "plague";
+export type ExtinctionType = "cold" | "famine" | "heat" | "plague";
 
 const EXTINCTION_TYPES: readonly ExtinctionType[] = ["cold", "famine", "heat", "plague"];
 
@@ -212,6 +212,27 @@ export class Game {
 
   get secondsLeft(): number {
     return Math.max(0, Math.ceil(this.stageTicksLeft / SIM.stepsPerSecond));
+  }
+
+  /**
+   * 디버그 전용 — 현재 관전 단계를 지정한 위협으로 즉시 교체한다(폰에서 특정 보스/시련을 반복
+   * 플레이 없이 바로 확인). 통과 판정이 나지 않게 타이머를 넉넉히 둔다(관찰용). `?dev` 패널이 호출.
+   */
+  debugSummon(kind: BossType | ExtinctionType): void {
+    if (this.phase !== "watch") return;
+    this.clearStageState();
+    if ((BOSS_TYPES as readonly string[]).includes(kind)) {
+      const bt = kind as BossType;
+      this.world.boss = createBoss(bt, this.width, this.height);
+      this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
+      this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
+    } else {
+      const et = kind as ExtinctionType;
+      applyExtinction(this.world, et);
+      this.stageLabel = `대멸종 · ${extinctionName(et)}`;
+      this.preview = `대멸종 — ${extinctionPreview(et)}`;
+    }
+    this.stageTicksLeft = 99999; // 관찰용 — 타이머 만료로 통과 판정이 나지 않게
   }
 
   /** 레벨업 게이지 진행도 0~1 (HUD 표시용). */
