@@ -10,8 +10,8 @@
 import type { Genome, Traits } from "@/sim/genome";
 import { TRAIT_LABELS } from "@/sim/genome";
 
-/** 현재 행동에 연결된, 만질 수 있는 형질만 노출한다. */
-const EDITABLE: (keyof Traits)[] = ["speed", "vision", "metabolism", "fertility"];
+/** 현재 행동에 연결된, 만질 수 있는 형질만 노출한다. (날개=비행은 65 넘기면 산·물을 난다) */
+const EDITABLE: (keyof Traits)[] = ["speed", "vision", "metabolism", "fertility", "wings"];
 
 export interface TraitPanelOptions {
   genome: Genome;

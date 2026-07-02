@@ -22,7 +22,8 @@ describe("바다 먹이 틈새 (지형 결합)", () => {
 
   it("육지 먹이는 육지 타일에만 생긴다 (물 위에 안 생김)", () => {
     const w = new World("env-1", W, H, defaultGenome());
-    const land = w.food.filter((f) => !f.aquatic);
+    // 바다 먹이(aquatic)·고산 먹이(mountainous)를 뺀 순수 육지 먹이만 검사.
+    const land = w.food.filter((f) => !f.aquatic && !f.mountainous);
     expect(land.length).toBeGreaterThan(0);
     for (const f of land) expect(w.terrain.kindAt(f.x, f.y)).toBe(TILE.land);
   });

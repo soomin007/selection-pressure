@@ -23,8 +23,8 @@ describe("드래프트", () => {
 });
 
 describe("시작 프리셋", () => {
-  it("5종이고 id 가 고유하다", () => {
-    expect(PRESET_CARDS.length).toBe(5);
+  it("6종이고 id 가 고유하다", () => {
+    expect(PRESET_CARDS.length).toBe(6);
     const ids = PRESET_CARDS.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -45,6 +45,15 @@ describe("시작 프리셋", () => {
     const g = defaultGenome(); // swimming 0.5
     applyCard(g, sea);
     expect(g.traits.swimming).toBeGreaterThanOrEqual(SIM.swimThreshold);
+  });
+
+  it("하늘 개척자는 시작부터 날 수 있다(날개 >= 임계)", () => {
+    const sky = PRESET_CARDS.find((c) => c.id === "preset_sky");
+    expect(sky).toBeDefined();
+    if (!sky) return;
+    const g = defaultGenome(); // wings 0
+    applyCard(g, sky);
+    expect(g.traits.wings).toBeGreaterThanOrEqual(SIM.flyThreshold);
   });
 
   it("적용하면 식성 구간이 의도대로(초식 무리=초식, 육식 사냥꾼=육식)", () => {

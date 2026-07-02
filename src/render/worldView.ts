@@ -138,8 +138,12 @@ export class WorldView {
     this.foodG.clear();
     for (const f of world.food) {
       if (!f.available) continue;
-      // 육지 식물은 종류별 자연색, 바다 먹이는 청록(수영 종만 먹는 바다 틈새를 한눈에).
-      const color = f.aquatic ? SEA_FOOD_COLOR : (FOOD_COLORS[f.kind] ?? 0x9bee5a);
+      // 육지 식물은 종류별 자연색, 바다 먹이는 청록, 고산 먹이는 흰빛(각각 수영·날개 종만 먹는 틈새를 한눈에).
+      const color = f.mountainous
+        ? MOUNTAIN_FOOD_COLOR
+        : f.aquatic
+          ? SEA_FOOD_COLOR
+          : (FOOD_COLORS[f.kind] ?? 0x9bee5a);
       this.foodG.circle(f.x, f.y, 4).fill({ color, alpha: 1 });
     }
 
@@ -414,6 +418,8 @@ const HORDE_COLORS: Partial<Record<BossType, HordeColor>> = {
 const FOOD_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
 // 바다 먹이 색 — 물 위에서 밝게 빛나는 청록(수영 종만 먹는 틈새 강조).
 const SEA_FOOD_COLOR = 0x7fe9ff;
+// 고산 먹이 색 — 산 위에서 밝게 빛나는 흰빛(눈 위 열매 느낌 — 날개 종만 먹는 틈새 강조. 바다 청록의 하늘 대칭).
+const MOUNTAIN_FOOD_COLOR = 0xfff0c0;
 // 밤 오버레이 — 짙은 남색을 daylight 에 반비례해 덮는다(자정에 가장 어둑하되 생물은 보이게).
 const NIGHT_COLOR = 0x0a1030;
 const NIGHT_MAX_ALPHA = 0.4;
@@ -519,6 +525,19 @@ export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: n
 
   const len = 9 + speed01 * 6; // 몸 반길이 (빠를수록 길쭉)
   const wid = 7 - speed01 * 2.2; // 몸 반너비
+
+  // 날개 (비행) — 몸통 양옆으로 펼친 한 쌍. 맨 뒤(아래 레이어)에 깔리게 먼저 그린다.
+  const wing01 = t.wings / TRAIT_MAX;
+  if (wing01 > 0.05) {
+    const wl = wid + 5 + wing01 * 11; // 날개가 바깥으로 뻗는 폭 (날개 클수록 넓게)
+    const wc = darken(color, 0.82); // 몸통보다 살짝 어둡게(그늘진 날개 느낌)
+    for (const s of [-1, 1]) {
+      // 위(-1)·아래(+1) 대칭 날개 — 앞쪽으로 살짝 스윕한 삼각형(나는 새 실루엣).
+      g.poly([len * 0.35, s * wid * 0.5, -len * 0.1, s * wl, -len * 0.5, s * wid * 0.6]).fill({
+        color: wc,
+      });
+    }
+  }
 
   // 등가시 (공격력) — 위쪽 삼각형들
   const spikes = Math.round(attack01 * 5);

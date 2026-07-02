@@ -27,6 +27,7 @@ const HIGH_ADJ: Record<AdjKey, string> = {
   fertility: "번식이 왕성한",
   swimming: "헤엄치는",
   echo: "초음파로 듣는",
+  wings: "하늘을 나는",
 };
 const LOW_ADJ: Record<AdjKey, string> = {
   speed: "발이 느린",
@@ -37,6 +38,7 @@ const LOW_ADJ: Record<AdjKey, string> = {
   fertility: "번식이 더딘",
   swimming: "뭍에만 사는",
   echo: "초음파가 없는",
+  wings: "땅에 붙어 사는",
 };
 const ADJ_KEYS: readonly AdjKey[] = [
   "speed",
@@ -47,6 +49,7 @@ const ADJ_KEYS: readonly AdjKey[] = [
   "fertility",
   "swimming",
   "echo",
+  "wings",
 ];
 
 const dietNoun = (diet: number): string =>
@@ -55,8 +58,8 @@ const dietNoun = (diet: number): string =>
 /** 게놈 → "이 종은 어떤 종이었나" 한 줄 묘사 (가장 두드러진 형질 1~2개 + 식성). */
 export function describeSpecies(genome: Genome): string {
   const t = genome.traits;
-  // echo(초음파)는 기본 0 인 특화 감각이라 0 기준 편차(있으면 특징, 없으면 무특징). 나머지는 50 기준.
-  const scored = ADJ_KEYS.map((k) => ({ k, dev: k === "echo" ? t.echo : t[k] - 50 })).sort(
+  // echo(초음파)·wings(날개)는 기본 0 인 특화 형질이라 0 기준 편차(있으면 특징). 나머지는 50 기준.
+  const scored = ADJ_KEYS.map((k) => ({ k, dev: k === "echo" || k === "wings" ? t[k] : t[k] - 50 })).sort(
     (a, b) => Math.abs(b.dev) - Math.abs(a.dev),
   );
   const adjs: string[] = [];

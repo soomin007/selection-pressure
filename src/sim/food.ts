@@ -9,8 +9,9 @@ export interface Food {
   available: boolean;
   regrowTimer: number; // available=false 일 때 남은 재생 틱
   aquatic: boolean; // true = 바다 먹이(수영 형질이 충분한 종만 먹는다). false = 육지 식물.
+  mountainous: boolean; // true = 고산 먹이(날개 형질이 충분한 종만 먹는다 — 산 위 무경쟁 틈새). 바다 먹이의 하늘 대칭.
 }
 
-export function createFood(x: number, y: number, kind: number, aquatic = false): Food {
-  return { x, y, kind, available: true, regrowTimer: 0, aquatic };
+export function createFood(x: number, y: number, kind: number, aquatic = false, mountainous = false): Food {
+  return { x, y, kind, available: true, regrowTimer: 0, aquatic, mountainous };
 }

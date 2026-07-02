@@ -62,6 +62,14 @@ export const PRESET_CARDS: readonly Card[] = [
     effects: { speed: 6 },
     color: 0x5aa0f0, // 하늘 파랑
   },
+  {
+    id: "preset_sky",
+    name: "하늘 개척자",
+    desc: "날아서 산과 바다를 넘나들고 산 위의 먹이를 먹습니다. 높이 날아 멀리 봅니다. 대신 배가 빨리 고픕니다.",
+    set: { diet: 40, wings: 70 },
+    effects: { vision: 6 },
+    color: 0xf0c840, // 황금빛(하늘·맹금) — 기존 프리셋 색과 구분
+  },
 ];
 
 export const CARD_POOL: readonly Card[] = [
@@ -308,6 +316,21 @@ export const CARD_POOL: readonly Card[] = [
     name: "물갈퀴 발",
     desc: "물에서 잘 움직입니다. 수영과 속도가 함께 조금 늡니다.",
     effects: { swimming: 16, speed: 6 },
+  },
+
+  // 날개 비행 — 날개를 키우면 산·물을 날아 넘고 산 위 고산 먹이를 먹는다(지상 종은 못 넘는 무경쟁 틈새).
+  // 대사 대가는 sim(비행 = 날갯짓)에서. 기본 날개 0 이라 큰 효과로(두 장 or 프리셋이면 비행 전환).
+  {
+    id: "wings",
+    name: "날개",
+    desc: "날아서 산과 바다를 넘고 산 위의 먹이를 먹습니다. 대신 나느라 배가 빨리 고픕니다.",
+    effects: { wings: 42 },
+  },
+  {
+    id: "strong_wings",
+    name: "튼튼한 날개",
+    desc: "더 멀리 잘 납니다. 날개가 커지고 조금 빨라집니다.",
+    effects: { wings: 30, speed: 6 },
   },
 
   // 초음파 감각 — 눈 대신 귀. 시야를 잃는 대신 전방위(어둠·수풀 무관) 근거리 탐지(눈 vs 귀 트레이드오프).

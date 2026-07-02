@@ -57,6 +57,10 @@ export function makeKinSpecies(id: number, rng: Rng): Species {
       g.traits.echo = 0; // 친척은 초음파 없음(눈으로). rng 없이 설정 → 기존 rng 스트림 보존
       continue;
     }
+    if (key === "wings") {
+      g.traits.wings = 0; // 친척은 지상(내 종 옆). rng 없이 설정 → 기존 rng 스트림 보존
+      continue;
+    }
     g.traits[key] = clampTrait(50 + rng.range(-10, 10)); // 균형 원형에서 미세하게만 흔든다
   }
   g.traits.diet = clampTrait(30 + rng.range(-5, 5)); // 초식쪽(내 종과 먹이 경쟁·사냥 완화)
@@ -177,6 +181,10 @@ export function generateWildSpecies(rng: Rng): Species[] {
       }
       if (key === "echo") {
         g.traits.echo = arch.traits.echo ?? 0; // 야생종 초음파 기본 없음. rng 없이 → rng 스트림 보존
+        continue;
+      }
+      if (key === "wings") {
+        g.traits.wings = arch.traits.wings ?? 0; // 야생종 날개 기본 없음(고산 종만 값). rng 없이 → rng 스트림 보존
         continue;
       }
       const base = arch.traits[key] ?? 50;

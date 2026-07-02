@@ -371,6 +371,22 @@ describe("지형 이동 차단 (P1 결합)", () => {
     }
     expect(landViolation).toBe(0);
   });
+
+  it("비행 종(날개≥flyThreshold)은 산을 넘어 산 위를 난다", () => {
+    // 내 종만 비행(날개 70)으로 만든다. 야생종은 날개 0 이라 여전히 산을 못 넘는다.
+    const g = defaultGenome();
+    g.traits.wings = 70;
+    const w = new World("env-1", W, H, g);
+    let onMountain = 0;
+    for (let i = 0; i < 1500; i++) {
+      w.step();
+      for (const e of w.entities) {
+        if (e.species.isPlayer && w.terrain.kindAt(e.x, e.y) === TILE.mountain) onMountain += 1;
+      }
+    }
+    expect(onMountain).toBeGreaterThan(0); // 비행 종은 지상 종과 달리 산 위를 지난다(고산 먹이 찾아)
+    expect(w.population).toBeGreaterThan(0); // 그래도 자생한다
+  });
 });
 
 describe("야생 진화(살아있는 생태)", () => {

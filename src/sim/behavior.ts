@@ -29,21 +29,27 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const metabolism01 = t.metabolism / TRAIT_MAX;
   const herding01 = t.herding / TRAIT_MAX;
   const fertility01 = t.fertility / TRAIT_MAX;
-  // 험지(거친 땅)에선 이동이 느려진다 — speed 형질이 높을수록 덜 느려진다(속도가 지형에서 가치).
-  const maxSpeed = SIM.maxSpeedBase * (0.4 + speed01) * roughSpeedFactor(world, e.x, e.y, speed01);
+  // 날개≥flyThreshold 면 비행 — 산·물을 날아 넘고, 험지 감속을 무시하며, 높이 날아 시야가 넓다.
+  // 대신 계속 날갯짓이라 대사가 더 든다(비행의 대가). 날개 0 인 종은 canFly=false → 전부 영향 0(밸런스 보존).
+  const canFly = t.wings >= SIM.flyThreshold;
+  // 험지(거친 땅)에선 이동이 느려진다 — speed 형질이 높을수록 덜 느려진다(속도가 지형에서 가치). 비행은 무시.
+  const maxSpeed =
+    SIM.maxSpeedBase * (0.4 + speed01) * (canFly ? 1 : roughSpeedFactor(world, e.x, e.y, speed01));
   // 밤엔 시야가 준다(낮=영향 없음). vision 형질이 높을수록 밤에도 잘 본다 → 야행성 틈새(큰 눈).
   // 시야 반경 = visionBase × (시야/100). 하한이 없어 시야 0 이면 아무것도 못 본다(감각 형질의 대가).
+  // 비행 종은 높이 날아 시야가 넓다(× (1+flyVisionBonus)).
   const vision =
     SIM.visionBase *
     vision01 *
     nightVisionFactor(world.daylight, vision01) *
-    grassVisionFactor(world, e.x, e.y, vision01);
-  const drain = SIM.metabolismDrain * (0.5 + metabolism01);
+    grassVisionFactor(world, e.x, e.y, vision01) *
+    (canFly ? 1 + SIM.flyVisionBonus : 1);
+  const drain = SIM.metabolismDrain * (0.5 + metabolism01) * (canFly ? 1 + SIM.flyMetabolismCost : 1);
   const maxAge = SIM.baseMaxAge;
   // 식성 구간: 초식(<35) 식물만 / 잡식(35~70) 둘 다 / 육식(>70) 사냥만.
   const canHunt = t.diet > SIM.dietHuntMin;
   const canGraze = t.diet < SIM.dietGrazeMax;
-  // 수영 종만 물에 들어가고(산은 누구도 못 넘는다), 물 전용(수영 아주 높음)은 육지에 못 올라온다.
+  // 수영 종만 물에 들어가고(산은 못 넘되 비행은 예외), 물 전용(수영 아주 높음)은 육지에 못 올라온다.
   const canSwim = t.swimming >= SIM.swimThreshold;
   const canLand = t.swimming < SIM.aquaticOnlyThreshold;
 
@@ -54,7 +60,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   let desired: Vec;
   let turn: number = SIM.steerTurn;
 
-  const flee = computeFlee(e, world, t, maxSpeed, canSwim, canLand);
+  const flee = computeFlee(e, world, t, maxSpeed, canSwim, canLand, canFly);
   const fleeing = flee !== null;
   if (flee) {
     desired = flee;
@@ -63,7 +69,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     const goal = chooseGoal(e, world, vision, SIM.echoBase * (t.echo / TRAIT_MAX), canHunt, canGraze);
     if (goal) {
       // 지형 길찾기: 목표가 직선으로 보이면 직진, 막혀 있으면 격자 BFS 경로를 따라 우회한다.
-      const nav = navTo(e, world, goal, canSwim, canLand);
+      const nav = navTo(e, world, goal, canSwim, canLand, canFly);
       // 최종 목표가 직선으로 보일 때만 도착 감속(arrive) — 가까울수록 줄여 오버슈트(와리가리)를 없앤다.
       // 사냥은 표적이 움직이므로 더 짧게(추격력 보존). 경유 웨이포인트는 감속 없이 전속 통과.
       const r = nav.final ? (e.targetPrey !== null ? SIM.huntArriveRadius : SIM.arriveRadius) : 0;
@@ -103,9 +109,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // (완전 반사보다 스티킹·떨림이 적다). maxSpeed < 타일폭이라 한 틱에 타일을 건너뛰지 않는다.
   const nx = e.x + e.vx;
   const ny = e.y + e.vy;
-  if (world.terrain.isPassable(nx, e.y, canSwim, canLand)) e.x = nx;
+  if (world.terrain.isPassable(nx, e.y, canSwim, canLand, canFly)) e.x = nx;
   else e.vx = 0;
-  if (world.terrain.isPassable(e.x, ny, canSwim, canLand)) e.y = ny;
+  if (world.terrain.isPassable(e.x, ny, canSwim, canLand, canFly)) e.y = ny;
   else e.vy = 0;
   if (e.x < 0) {
     e.x = 0;
@@ -193,7 +199,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     const cx = e.x + world.rng.range(-6, 6);
     const cy = e.y + world.rng.range(-6, 6);
     // 막힌 타일에 태어나면 갇히므로 가장 가까운 통행 타일로 스냅(rng 미사용 → 결정론·밸런스 보존).
-    const spot = world.terrain.nearestPassable(cx, cy, canSwim, canLand);
+    const spot = world.terrain.nearestPassable(cx, cy, canSwim, canLand, canFly);
     newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, childEnergy));
     world.emit("birth", spot.x, spot.y); // 연출: 탄생(초록 반짝)
   }
@@ -207,6 +213,7 @@ function computeFlee(
   maxSpeed: number,
   canSwim: boolean,
   canLand: boolean,
+  canFly: boolean,
 ): Vec | null {
   const boss = world.boss;
   if (boss && boss.members.length > 0) {
@@ -227,13 +234,13 @@ function computeFlee(
     }
     const visionPad = boss.cullVisionResist > 0 ? SIM.stalkerVisionFlee * (t.vision / TRAIT_MAX) : 0;
     const fr = boss.killRadius + SIM.fleeRadiusPad + visionPad;
-    if (best2 < fr * fr) return clearFleeDir(e, world, bx, by, maxSpeed, canSwim, canLand);
+    if (best2 < fr * fr) return clearFleeDir(e, world, bx, by, maxSpeed, canSwim, canLand, canFly);
   } else if (boss && boss.killRadius > 0) {
     const bdx = e.x - boss.x;
     const bdy = e.y - boss.y;
     const bd2 = bdx * bdx + bdy * bdy;
     const fr = boss.killRadius + SIM.fleeRadiusPad + boss.visionFlee * (t.vision / TRAIT_MAX);
-    if (bd2 < fr * fr) return clearFleeDir(e, world, bdx, bdy, maxSpeed, canSwim, canLand);
+    if (bd2 < fr * fr) return clearFleeDir(e, world, bdx, bdy, maxSpeed, canSwim, canLand, canFly);
   }
   const predator = world.grid.nearestMatching(
     e.x,
@@ -244,7 +251,7 @@ function computeFlee(
       p.genome.traits.diet > SIM.dietHuntMin && p.genome.traits.attack >= t.attack,
   );
   if (predator) {
-    return clearFleeDir(e, world, e.x - predator.x, e.y - predator.y, maxSpeed, canSwim, canLand);
+    return clearFleeDir(e, world, e.x - predator.x, e.y - predator.y, maxSpeed, canSwim, canLand, canFly);
   }
   return null;
 }
@@ -263,13 +270,14 @@ function clearFleeDir(
   maxSpeed: number,
   canSwim: boolean,
   canLand: boolean,
+  canFly: boolean,
 ): Vec {
   const d = Math.hypot(awayX, awayY);
   if (d < 1e-6) return { x: 0, y: 0 };
   const base = Math.atan2(awayY, awayX);
   const probe = world.terrain.cellSize * SIM.fleeProbeTiles;
-  // 도망 방향이 probe 거리까지 트였으면 그대로(대부분).
-  if (fleeClear(world, e.x, e.y, base, probe, canSwim, canLand)) {
+  // 도망 방향이 probe 거리까지 트였으면 그대로(대부분). 비행 종은 지형에 안 막혀 항상 트임.
+  if (fleeClear(world, e.x, e.y, base, probe, canSwim, canLand, canFly)) {
     return { x: Math.cos(base) * maxSpeed, y: Math.sin(base) * maxSpeed };
   }
   // 막힘 — away 유지 + 헤딩 일관성으로 통행 가능한 최선 방향을 고른다.
@@ -278,7 +286,7 @@ function clearFleeDir(
   let bestScore = -Infinity;
   for (const off of FLEE_OFFSETS) {
     const a = base + off;
-    if (!fleeClear(world, e.x, e.y, a, probe, canSwim, canLand)) continue;
+    if (!fleeClear(world, e.x, e.y, a, probe, canSwim, canLand, canFly)) continue;
     const score = Math.cos(off) + SIM.fleeHeadingWeight * Math.cos(a - heading);
     if (score > bestScore) {
       bestScore = score;
@@ -297,9 +305,10 @@ function fleeClear(
   probe: number,
   canSwim: boolean,
   canLand: boolean,
+  canFly: boolean,
 ): boolean {
   return world.terrain.lineOfSight(
-    x, y, x + Math.cos(ang) * probe, y + Math.sin(ang) * probe, canSwim, canLand,
+    x, y, x + Math.cos(ang) * probe, y + Math.sin(ang) * probe, canSwim, canLand, canFly,
   );
 }
 
@@ -392,10 +401,11 @@ function navTo(
   goal: Vec,
   canSwim: boolean,
   canLand: boolean,
+  canFly: boolean,
 ): { x: number; y: number; final: boolean } {
   const terr = world.terrain;
-  // 1) 직선으로 보이면 직진 — 경로 버림.
-  if (terr.lineOfSight(e.x, e.y, goal.x, goal.y, canSwim, canLand)) {
+  // 1) 직선으로 보이면 직진 — 경로 버림. 비행 종은 지형에 안 막혀 늘 직진(BFS 안 탐).
+  if (terr.lineOfSight(e.x, e.y, goal.x, goal.y, canSwim, canLand, canFly)) {
     if (e.path.length > 0) {
       e.path.length = 0;
       e.pathGoalTile = -1;
@@ -405,13 +415,13 @@ function navTo(
   // 2) 막힘 — 목표 타일이 바뀌었거나 경로가 없으면 BFS 재계산(그 외엔 캐시 재사용).
   const goalTile = terr.tileIndex(goal.x, goal.y);
   if (e.pathGoalTile !== goalTile || e.path.length === 0) {
-    e.path = terr.findPath(e.x, e.y, goal.x, goal.y, canSwim, canLand);
+    e.path = terr.findPath(e.x, e.y, goal.x, goal.y, canSwim, canLand, canFly);
     e.pathGoalTile = goalTile;
   }
   // 3) 경로 단축(funnel): 다음 웨이포인트가 보이면 현재 것을 건너뛴다.
   while (e.path.length >= 2) {
     const w1 = e.path[1] as number;
-    if (terr.lineOfSight(e.x, e.y, terr.tileCenterX(w1), terr.tileCenterY(w1), canSwim, canLand)) {
+    if (terr.lineOfSight(e.x, e.y, terr.tileCenterX(w1), terr.tileCenterY(w1), canSwim, canLand, canFly)) {
       e.path.shift();
     } else break;
   }
@@ -446,11 +456,14 @@ function nearestFood(
 ): Food | null {
   const kinds = e.species.foodKinds;
   const canSwim = e.genome.traits.swimming >= SIM.swimThreshold;
+  const canFly = e.genome.traits.wings >= SIM.flyThreshold;
   // 먹이 공간 격자로 감지 반경 안만 검사(완전탐색 대신 — 큰 맵 성능). available·종류·감지는 pred 로.
   return world.foodGrid.nearest(e.x, e.y, senseRange, (f) => {
     if (!f.available) return false;
     if (f.aquatic) {
       if (!canSwim) return false; // 바다 먹이는 수영 형질이 충분한 종만 먹는다(육상 종엔 무경쟁 틈새)
+    } else if (f.mountainous) {
+      if (!canFly) return false; // 고산 먹이는 날개 형질이 충분한 종만 먹는다(비행 종의 무경쟁 틈새 — 바다 대칭)
     } else if (!kinds.includes(f.kind)) {
       return false; // 이 종이 못 먹는 먹이 종류는 건너뛴다(먹이 분할)
     }

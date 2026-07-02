@@ -54,6 +54,8 @@ const SVG = {
     '<svg viewBox="0 0 140 90"><circle cx="42" cy="45" r="12" fill="#9bee5a"/><circle cx="70" cy="45" r="12" fill="#5ad6b0"/><circle cx="98" cy="45" r="12" fill="#d8de5a"/></svg>',
   swimming:
     '<svg viewBox="0 0 140 90"><path d="M14 36 q12 -9 24 0 t24 0 t24 0 t24 0" fill="none" stroke="#5ad6f0" stroke-width="3"/><path d="M14 62 q12 -9 24 0 t24 0 t24 0 t24 0" fill="none" stroke="#5ad6f0" stroke-width="3" opacity="0.6"/><ellipse cx="76" cy="49" rx="16" ry="9" fill="#6cc24a"/><polygon points="62,49 50,42 50,56" fill="#6cc24a"/></svg>',
+  wings:
+    '<svg viewBox="0 0 140 90"><polygon points="16,80 42,50 68,80" fill="#5a6474" opacity="0.55"/><polygon points="72,80 100,46 128,80" fill="#5a6474" opacity="0.55"/><polygon points="56,40 24,26 46,42" fill="#f0c840"/><polygon points="84,40 116,26 94,42" fill="#f0c840"/><ellipse cx="70" cy="40" rx="13" ry="8" fill="#6cc24a"/></svg>',
   energy:
     '<svg viewBox="0 0 140 90"><rect x="22" y="37" width="96" height="18" rx="9" fill="#1a2230" stroke="#3b465c" stroke-width="2"/><rect x="25" y="40" width="58" height="12" rx="6" fill="#6cff7a"/></svg>',
   chaser:
@@ -187,9 +189,19 @@ const SECTIONS: readonly Section[] = [
         desc: "바다에 적응하는 정도입니다. 충분히 높으면 바다의 먹이를 먹을 수 있습니다. 바다 먹이는 육상 종이 못 먹어 경쟁이 없습니다.",
         rows: [
           { k: "65 미만 (기본 50)", v: "바다 먹이 못 먹음", base: true },
-          { k: "0.65 이상", v: "바다 먹이 먹음 (무경쟁 틈새)" },
+          { k: "65 이상", v: "바다 먹이 먹음 (무경쟁 틈새)" },
         ],
         note: "지느러미·물갈퀴 발 카드로 키웁니다. 바다는 경쟁자가 없어 한번 열면 풍족합니다.",
+      },
+      {
+        term: "날개",
+        svg: SVG.wings,
+        desc: "날아서 산과 바다를 넘고 산 위의 고산 먹이를 먹습니다. 지상 종은 산을 못 넘어 못 먹는 무경쟁 틈새입니다. 높이 날아 시야도 넓지만, 계속 날갯짓하느라 배가 빨리 고픕니다.",
+        rows: [
+          { k: "65 미만 (기본 0)", v: "못 낢 (산·바다에 막힘)", base: true },
+          { k: "65 이상", v: "산·물을 날아 넘고 고산 먹이 (무경쟁 틈새)" },
+        ],
+        note: "하늘 개척자 프리셋이나 날개·튼튼한 날개 카드로 켭니다. 수영(바다)의 하늘 대칭입니다.",
       },
     ],
   },
@@ -200,9 +212,9 @@ const SECTIONS: readonly Section[] = [
       {
         term: "내 종",
         svg: creature("#6cc24a"),
-        desc: "당신이 기르는 종입니다. 시작 프리셋(균형 잡식·다산 초식 무리·날쌘 육식 사냥꾼·느긋한 정찰자·바다 개척자)으로 출발 방향을 정하고, 카드로 계속 특화시키세요.",
+        desc: "당신이 기르는 종입니다. 시작 프리셋(균형 잡식·다산 초식 무리·날쌘 육식 사냥꾼·느긋한 정찰자·바다 개척자·하늘 개척자)으로 출발 방향을 정하고, 카드로 계속 특화시키세요.",
         rows: [
-          { k: "시작", v: "프리셋 5종 중 하나" },
+          { k: "시작", v: "프리셋 6종 중 하나" },
           { k: "시작 수", v: "36마리" },
           { k: "특징", v: "프리셋으로 출발, 카드로 무엇이든 될 수 있음" },
         ],

@@ -117,8 +117,9 @@ export class World {
     this.spawnEntities();
     // 친척은 spawnEntities(메인 rng) 대신 "독립 rng"로 내 종 근처에 스폰 → 메인 소비 순서 보존(밸런스 불변).
     this.spawnKin(new Rng(String(seed) + "-kinpos"));
-    // 바다 먹이는 "독립 rng"로 생물 스폰 뒤에 — this.rng 상태(=step 동역학)를 안 건드려 밸런스 보존.
+    // 바다·고산 먹이는 "독립 rng"로 생물 스폰 뒤에 — this.rng 상태(=step 동역학)를 안 건드려 밸런스 보존.
     this.spawnSeaFood(new Rng(String(seed) + "-seafood"));
+    this.spawnMountainFood(new Rng(String(seed) + "-mtnfood"));
     this.grid.rebuild(this.entities);
     // 먹이 위치는 불변이라 격자를 한 번만 빌드한다(available 토글은 탐색 시 거른다).
     this.foodGrid = new FoodGrid(width, height, SIM.gridCellSize);
@@ -267,12 +268,19 @@ export class World {
     this.spawnFoodOnTiles(rng, count, true, (kind) => (kind === TILE.water ? 1 : 0));
   }
 
+  /** 산 타일에 고산 먹이(날개 형질로만 먹는 무경쟁 틈새 — 바다 먹이의 하늘 대칭). 독립 rng → 동역학 불변. */
+  private spawnMountainFood(rng: Rng): void {
+    const count = Math.round(SIM.mountainFoodPatches * this.areaScale);
+    this.spawnFoodOnTiles(rng, count, false, (kind) => (kind === TILE.mountain ? 1 : 0), true);
+  }
+
   /** 지형 타일 단위 가중 추첨으로 먹이 count 개를 놓는다(정밀 배치). 타일별 weight 는 콜백이 정한다. */
   private spawnFoodOnTiles(
     rng: Rng,
     count: number,
     aquatic: boolean,
     tileWeight: (kind: TileKind, fertility: number) => number,
+    mountainous = false,
   ): void {
     const terr = this.terrain;
     const cs = terr.cellSize;
@@ -302,7 +310,7 @@ export class World {
       const x = Math.min(this.width, (cx + rng.unit()) * cs);
       const y = Math.min(this.height, (cy + rng.unit()) * cs);
       const kind = rng.int(0, SIM.foodKindCount - 1);
-      this.food.push(createFood(x, y, kind, aquatic));
+      this.food.push(createFood(x, y, kind, aquatic, mountainous));
     }
   }
 
@@ -331,9 +339,10 @@ export class World {
       // 환경 적응: 추운 곳에 사는 무리일수록 고대사(추위 견딤)로 천천히 수렴. (형질 0~100 스케일)
       const metaTarget = clampTrait(30 + avgCold * 60);
       t.metabolism = clampTrait(t.metabolism + (metaTarget - t.metabolism) * SIM.wildAdaptRate);
-      // 형질별 미세 드리프트(독립 rng). swimming 은 수생/육상 정체성이라 제외(드리프트로 뒤집히면 어색).
+      // 형질별 미세 드리프트(독립 rng). swimming·wings 는 수생/비행 정체성이라 제외(드리프트로 뒤집히면
+      // 어색 — 비행 종이 날개를 잃으면 산에서 굶는다).
       for (const key of TRAIT_KEYS) {
-        if (key === "swimming") continue;
+        if (key === "swimming" || key === "wings") continue;
         t[key] = clampTrait(t[key] + this.wildEvoRng.range(-SIM.wildDriftStep, SIM.wildDriftStep));
       }
     }
@@ -353,11 +362,12 @@ export class World {
       if ((counts.get(sp.id) ?? 0) >= floor) continue;
       const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
       const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
+      const canFly = sp.genome.traits.wings >= SIM.flyThreshold;
       for (let k = 0; k < batch; k++) {
         // rng 소비 순서(width→height)를 보존한 뒤 막힌 타일이면 통행 타일로 스냅(스냅은 rng 미사용).
         const ix = this.rng.range(0, this.width);
         const iy = this.rng.range(0, this.height);
-        const spot = this.terrain.nearestPassable(ix, iy, canSwim, canLand);
+        const spot = this.terrain.nearestPassable(ix, iy, canSwim, canLand, canFly);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }
@@ -374,11 +384,12 @@ export class World {
       // 야생종은 좁은 영역에 모여 태어나(영역화 → 공존), 내 종(주인공)은 맵 전체에 얇게 퍼진다.
       const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
       const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
+      const canFly = sp.genome.traits.wings >= SIM.flyThreshold;
       // 물 전용 내 종은 보금자리를 가장 가까운 바다로 옮긴다(육지 home 이면 흩어져 고립). 스냅은 rng 미사용.
       let baseX = homeX;
       let baseY = homeY;
       if (sp.isPlayer && !canLand) {
-        const wh = this.terrain.nearestPassable(homeX, homeY, canSwim, canLand);
+        const wh = this.terrain.nearestPassable(homeX, homeY, canSwim, canLand, canFly);
         baseX = wh.x;
         baseY = wh.y;
       }
@@ -394,8 +405,8 @@ export class World {
       for (let i = 0; i < count; i++) {
         const x = Math.max(0, Math.min(this.width, baseX + this.rng.range(-spread, spread)));
         const y = Math.max(0, Math.min(this.height, baseY + this.rng.range(-spread, spread)));
-        // 막힌 타일에 떨어지면 통행 타일로 스냅(물 전용은 물로). rng 미사용 → 스폰 rng 소비 보존.
-        const spot = this.terrain.nearestPassable(x, y, canSwim, canLand);
+        // 막힌 타일에 떨어지면 통행 타일로 스냅(물 전용은 물로, 비행은 어디든). rng 미사용 → 스폰 rng 소비 보존.
+        const spot = this.terrain.nearestPassable(x, y, canSwim, canLand, canFly);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }
@@ -412,13 +423,14 @@ export class World {
     if (!kin) return;
     const canSwim = kin.genome.traits.swimming >= SIM.swimThreshold;
     const canLand = kin.genome.traits.swimming < SIM.aquaticOnlyThreshold;
+    const canFly = kin.genome.traits.wings >= SIM.flyThreshold;
     const homeX = rng.range(0.14, 0.86) * this.width;
     const homeY = rng.range(0.14, 0.86) * this.height;
     const spread = 72 * Math.sqrt(this.areaScale);
     for (let i = 0; i < kin.initialCount; i++) {
       const x = Math.max(0, Math.min(this.width, homeX + rng.range(-spread, spread)));
       const y = Math.max(0, Math.min(this.height, homeY + rng.range(-spread, spread)));
-      const spot = this.terrain.nearestPassable(x, y, canSwim, canLand);
+      const spot = this.terrain.nearestPassable(x, y, canSwim, canLand, canFly);
       this.entities.push(createEntity(this.nextId(), spot.x, spot.y, kin, SIM.startEnergy));
     }
   }
