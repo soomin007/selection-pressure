@@ -283,8 +283,9 @@ export class WorldView {
     const boss = world.boss;
     const pulse = (this.frame % 60) / 60; // 주목 펄스(가독성 §7)
     if (boss && boss.members.length > 0) {
-      // 사나운 무리 — 떼가 무리 대형으로 몰려온다. 떼 전체를 감싸는 붉은 위협 오라 + 개별 붉은 점으로
-      // "한 무리가 사납게 덮쳐온다"를 보인다(개별 점만 있으면 "무리"로 안 읽힌다).
+      // 개체형 떼 시련 — 떼가 무리 대형으로 몰려온다. 종류마다 색을 달리하고(구분), 떼 전체를 감싸는
+      // 위협 오라 + 개별 점으로 "한 무리가 덮쳐온다"를 보인다(개별 점만 있으면 "무리"로 안 읽힌다).
+      const hc = HORDE_COLORS[boss.type] ?? HORDE_DEFAULT;
       const pts = boss.members.map((m) => ({
         x: m.prevX + (m.x - m.prevX) * interp,
         y: m.prevY + (m.y - m.prevY) * interp,
@@ -302,14 +303,14 @@ export class WorldView {
         const d = Math.hypot(p.x - cx, p.y - cy);
         if (d > maxR) maxR = d;
       }
-      // 무리를 감싸는 붉은 위협 오라(맥동) — 어디를 덮치는 무리인지 한눈에.
-      this.bossG.circle(cx, cy, maxR + 22).fill({ color: 0x9a1a0e, alpha: 0.1 + pulse * 0.06 });
-      this.bossG.circle(cx, cy, maxR + 22).stroke({ color: 0xd8321a, width: 2, alpha: 0.3 });
-      for (const p of pts) this.drawPredatorDot(p.x, p.y, boss.killRadius, pulse, 7);
+      // 무리를 감싸는 위협 오라(맥동) — 어디를 덮치는 무리인지 한눈에.
+      this.bossG.circle(cx, cy, maxR + 22).fill({ color: hc.aura, alpha: 0.1 + pulse * 0.06 });
+      this.bossG.circle(cx, cy, maxR + 22).stroke({ color: hc.ring, width: 2, alpha: 0.3 });
+      for (const p of pts) this.drawPredatorDot(p.x, p.y, boss.killRadius, pulse, 7, hc.dot);
     } else if (boss && boss.killRadius > 0) {
       const bx = boss.prevX + (boss.x - boss.prevX) * interp;
       const by = boss.prevY + (boss.y - boss.prevY) * interp;
-      this.drawPredatorDot(bx, by, boss.killRadius, pulse, 14);
+      this.drawPredatorDot(bx, by, boss.killRadius, pulse, 14, HORDE_DEFAULT.dot);
     }
 
     // 낮/밤 + 대멸종 화면 틴트 (둘 다 overlayG — 밤을 먼저 깔고 대멸종 틴트를 그 위에)
@@ -333,10 +334,9 @@ export class WorldView {
       tint = 0x5a7a3a; // 병색(칙칙한 녹황)
       tintAlpha = 0.16;
     } else if (boss && boss.killRadius === 0) {
-      // 전역 시련(약탈자·외톨이 사냥꾼·그림자 매복자·독 안개) — 위치 무관하게 사방에서 솎거나 흡수한다.
-      // 시각=로직 1:1(known_issues): 전역이라 화면 전체로 표현한다. 종류마다 색·맥동을 달리해 "지금
-      // 무엇이 덮치는지"를 한눈에 구분한다. 개체형(추격자·사나운 무리)은 killRadius>0 이라 여기 안 오고
-      // 위의 점+반경으로 그려진다(사나운 무리는 이제 실제 떼 개체로 실재화됨).
+      // 전역 시련(독 안개) — 위치 무관하게 온 땅의 에너지를 흡수한다. 시각=로직 1:1(known_issues):
+      // 진짜 전역 재난이라 화면 전체 틴트로 표현한다. 나머지 시련(약탈자·외톨이·매복자)은 실제 떼
+      // 개체로 실재화돼 killRadius>0 이라 여기 안 오고 위의 점+오라로 그려진다.
       const v = TRIAL_VISUALS[boss.type];
       if (v) {
         tint = v.color;
@@ -348,20 +348,25 @@ export class WorldView {
   }
 
   /** 쫓아와 무는 개체 하나(추격자 또는 무리의 한 마리)를 물기 반경 + 맥동 고리 + 점으로 그린다. */
-  private drawPredatorDot(x: number, y: number, killRadius: number, pulse: number, dot: number): void {
-    this.bossG.circle(x, y, killRadius).fill({ color: 0xe0402a, alpha: 0.3 });
+  private drawPredatorDot(
+    x: number,
+    y: number,
+    killRadius: number,
+    pulse: number,
+    dot: number,
+    color: number,
+  ): void {
+    this.bossG.circle(x, y, killRadius).fill({ color, alpha: 0.3 });
     this.bossG
       .circle(x, y, dot + 2 + pulse * dot * 1.8)
-      .stroke({ color: 0xff5535, width: 2.5, alpha: 0.55 * (1 - pulse) });
-    this.bossG.circle(x, y, dot).fill({ color: 0xff5535, alpha: 1 });
+      .stroke({ color, width: 2.5, alpha: 0.55 * (1 - pulse) });
+    this.bossG.circle(x, y, dot).fill({ color, alpha: 1 });
     this.bossG.circle(x, y, dot).stroke({ color: 0x3a0d06, width: 3 });
   }
 }
 
-// 전역 시련별 화면 틴트 — 종류마다 색·맥동을 달리해 "무엇이 덮치는지" 한눈에 갈린다(시각=로직 1:1,
-// known_issues). 색은 서로·대멸종 틴트(한파 파랑·폭염 주황·역병 녹황)와 겹치지 않게 벌렸고, 맥동
-// 속도/진폭으로 질감(우글거림·파상·냉혹·은신)까지 구분한다. tintAlpha = base + amp·sin(frame·speed).
-// 개체형 보스(추격자/거대 포식자)는 화면 틴트가 없어(점+반경으로 그림) 여기 없다.
+// 전역 시련 화면 틴트 — 지금은 독 안개만(진짜 전역 재난). 나머지 시련은 실제 떼 개체로 실재화돼
+// HORDE_COLORS 로 그린다. tintAlpha = base + amp·sin(frame·speed).
 interface TrialVisual {
   color: number;
   baseAlpha: number;
@@ -369,15 +374,23 @@ interface TrialVisual {
   pulseSpeed: number;
 }
 const TRIAL_VISUALS: Partial<Record<BossType, TrialVisual>> = {
-  // (사나운 무리 swarm 은 실제 떼 개체로 실재화 — 전역 틴트가 아니라 점으로 그린다. 여기 없음.)
-  // 약탈자 무리 — 파상으로 달려든다. 핏빛 진홍을 큰 진폭으로 느리게 맥동(밀려왔다 빠지는 공격).
-  raider: { color: 0xb0142e, baseAlpha: 0.17, pulseAmp: 0.08, pulseSpeed: 0.05 },
-  // 외톨이 사냥꾼 — 무리에서 떨어진 개체를 노린다. 차가운 청록빛 남색을 느리게(냉혹·고립).
-  isolation: { color: 0x1f6f88, baseAlpha: 0.16, pulseAmp: 0.05, pulseSpeed: 0.035 },
-  // 그림자 매복자 — 숨어 있다 덮친다. 어두운 자주를 은은하게(수풀 속 그림자).
-  stalker: { color: 0x5a1a4a, baseAlpha: 0.15, pulseAmp: 0.06, pulseSpeed: 0.04 },
-  // 독 안개 — 온 땅의 에너지를 빨아들인다. 진한 녹황을 느리게 맥동(살아 움직이는 독). 기존 값 유지.
+  // 독 안개 — 온 땅의 에너지를 빨아들인다. 진한 녹황을 느리게 맥동(살아 움직이는 독).
   poison: { color: 0x5f8f36, baseAlpha: 0.22, pulseAmp: 0.07, pulseSpeed: 0.06 },
+};
+
+// 개체형 떼 시련의 색 — 종류마다 확연히 달리해 "무엇이 덮치는지" 구분한다(점·오라·물기 반경 공용).
+//   dot 개별 점, aura 무리 감싸는 오라(채움), ring 오라 테두리.
+interface HordeColor {
+  dot: number;
+  aura: number;
+  ring: number;
+}
+const HORDE_DEFAULT: HordeColor = { dot: 0xff5535, aura: 0x9a1a0e, ring: 0xd8321a };
+const HORDE_COLORS: Partial<Record<BossType, HordeColor>> = {
+  swarm: { dot: 0xff7a2a, aura: 0x7a2a08, ring: 0xd8641a }, // 성난 주황(사나운 무리)
+  raider: { dot: 0xff2e5a, aura: 0x7a0a24, ring: 0xd81a44 }, // 핏빛 진홍(약탈)
+  isolation: { dot: 0x33c0d8, aura: 0x0a3a4a, ring: 0x1f92b0 }, // 청록(외톨이 사냥꾼)
+  stalker: { dot: 0xc060d0, aura: 0x3a0a3a, ring: 0x8a2a9a }, // 자주(그림자 매복)
 };
 
 // 먹이 종류별 색 — 모두 식물처럼 자연스럽되 구분되게(연두 / 청록 / 노랑풀).

@@ -8,6 +8,7 @@
 // 통과 = 관전 끝까지 개체 수가 기준 이상 생존. 순수 TS, 결정론(무작위는 world.rng).
 
 import type { World } from "@/sim/world";
+import type { Entity } from "@/sim/entity";
 import type { Rng } from "@/sim/rng";
 
 export type BossType = "chaser" | "swarm" | "poison" | "titan" | "raider" | "isolation" | "stalker";
@@ -109,44 +110,47 @@ const PRESETS: Record<BossType, Preset> = {
   },
   raider: {
     name: "약탈자 무리",
-    speed: 2.2,
-    killRadius: 0,
+    speed: 2.5, // 도망 차단(swarm 과 동일). 카운터는 공격력(근접 시 반격).
+    killRadius: 8,
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0.006, // 기본 솎임이 매섭되, 공격력으로 맞서 싸워 줄인다
+    globalKillRate: 0,
     globalDrain: 0,
-    cullAttackResist: 0.92, // 공격력 높을수록 거의 안 솎임
+    cullAttackResist: 0.9, // 근접 시 공격력 높으면 반격해 생존(확률: kill = rng < 1 - this×attack)
     cullGroupResist: 0,
     cullVisionResist: 0,
-    threat: "사방에서 약탈자가 달려들어 약한 개체부터 쓰러뜨립니다.",
+    memberCount: 5, // 떼로 달려든다
+    threat: "약탈자 무리가 떼로 달려들어 약한 개체부터 쓰러뜨립니다.",
     counter: "공격력(이빨·뿔)이 높아야 맞서 싸워 버팁니다.",
   },
   isolation: {
     name: "외톨이 사냥꾼",
-    speed: 2.4,
-    killRadius: 0,
+    speed: 2.5,
+    killRadius: 8,
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0.008, // 외톨이는 매섭게 솎이되, 무리에 섞이면 안전. 시야각 도입으로 개체수↑ 만큼 재튠(0.006→0.008, 프로브: 무리33통과·외톨이1탈락)
+    globalKillRate: 0,
     globalDrain: 0,
     cullAttackResist: 0,
-    cullGroupResist: 0.9, // 이웃이 많을수록 거의 안 솎임
+    cullGroupResist: 0.9, // 근접 시 무리 성향 높으면 함께 뭉쳐 생존(확률: kill = rng < 1 - this×herding)
     cullVisionResist: 0,
-    threat: "무리에서 떨어진 외톨이부터 노려 하나씩 잡아갑니다.",
+    memberCount: 3, // 무리 사이를 헤집는 소수 사냥꾼
+    threat: "사냥꾼이 무리에서 떨어진 외톨이를 노려 잡아갑니다.",
     counter: "무리 성향이 높아 함께 뭉쳐 다녀야 안전합니다.",
   },
   stalker: {
     name: "그림자 매복자",
-    speed: 2.2,
-    killRadius: 0,
+    speed: 2.5,
+    killRadius: 8,
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0.011, // 프로브 재튠(먹이 육지화 후): 시야0.9통과(여유)·기본0.5통과·시야0.1탈락(시야 게이트)
+    globalKillRate: 0,
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0,
-    cullVisionResist: 0.9, // 시야 높을수록 거의 안 솎임
-    threat: "수풀에 숨어 있다 덮칩니다. 미리 알아채지 못한 개체부터 당합니다.",
+    cullVisionResist: 0.9, // 근접해도 시야 높으면 미리 보고 피한다(확률: kill = rng < 1 - this×vision)
+    memberCount: 3, // 숨어 있다 덮치는 매복자들
+    threat: "매복자가 숨어 있다 다가온 개체를 덮칩니다.",
     counter: "시야가 넓어야 일찍 보고 피합니다.",
   },
 };
@@ -233,9 +237,10 @@ export function pickBossType(rng: Rng): BossType {
 
 /** 보스 한 틱. 타입별로 다른 압박을 가한다. */
 export function stepBoss(boss: Boss, world: World): void {
-  // 사나운 무리 — 각 떼 개체가 가장 가까운 개체로 몰려와 닿으면 물어뜯는다(전역 솎기가 아니라 실재 개체).
+  // 개체형 떼 시련(사나운 무리·약탈자·외톨이 사냥꾼·그림자 매복자) — 실제 개체가 몰려와 문다.
+  // 무엇이 죽느냐만 타입별로 다르다(memberKills): 무조건/공격력 반격/무리 이탈/시야 회피.
   if (boss.members.length > 0) {
-    stepSwarm(boss, world);
+    stepMemberHorde(boss, world);
     return;
   }
 
@@ -292,10 +297,11 @@ const SWARM_SEPARATION = 0.7; // 너무 가까운 동료에서 밀어냄 — 겹
 const SWARM_SEP_DIST = 34; // 이 거리보다 가까운 동료가 있으면 분리력이 작동(떼 대형의 개체 간격).
 
 /**
- * 사나운 무리 한 틱 — 떼 전체가 "하나의 목표"(무게중심에서 가장 가까운 개체)를 함께 쫓아 무리 대형
+ * 개체형 떼 시련 한 틱 — 떼 전체가 "하나의 목표"(무게중심에서 가장 가까운 개체)를 함께 쫓아 무리 대형
  * (응집으로 뭉치고 분리로 안 겹침)으로 몰려온다. 각자 다른 최근접을 쫓으면 따로 놀아 "무리"가 안 된다.
+ * 닿은 개체를 죽일지는 타입별(memberKills) — 카운터 형질이 높으면 살아남는다.
  */
-function stepSwarm(boss: Boss, world: World): void {
+function stepMemberHorde(boss: Boss, world: World): void {
   const killR2 = boss.killRadius * boss.killRadius;
   // 떼 무게중심(응집 기준).
   let cx = 0;
@@ -306,7 +312,7 @@ function stepSwarm(boss: Boss, world: World): void {
   }
   cx /= boss.members.length;
   cy /= boss.members.length;
-  // 공통 목표 — 무게중심에서 가장 가까운 산 개체. 무리 전체가 이 한 마리(무리)를 향해 함께 몰려간다.
+  // 공통 목표 — 무게중심에서 가장 가까운 개체. 떼 전체가 이 한 무리를 향해 함께 몰려간다.
   let best = Infinity;
   let tx = 0;
   let ty = 0;
@@ -329,13 +335,28 @@ function stepSwarm(boss: Boss, world: World): void {
       if (!e.alive) continue;
       const dx = e.x - m.x;
       const dy = e.y - m.y;
-      if (dx * dx + dy * dy < killR2) {
+      if (dx * dx + dy * dy < killR2 && memberKills(e, boss, world)) {
         e.alive = false;
         world.recordDeath(e.species, "boss");
         world.emit("kill", e.x, e.y); // 연출: 떼 개체가 문 자리
       }
     }
   }
+}
+
+/**
+ * 닿은 개체를 실제로 죽이는가 — 카운터 형질이 높으면 살아남는다(시각=로직: 화면의 떼가 무는 것과 일치).
+ *   공격력 저항(약탈자): 공격력이 높으면 반격해 생존.
+ *   무리 저항(외톨이):   무리 성향이 높으면(함께 뭉쳐) 생존.
+ *   시야 저항(매복자):   시야가 높으면 미리 보고 피함.
+ *   저항 없음(사나운 무리): 닿으면 무조건. (모두 kill = rng < 1 - resist×형질)
+ */
+function memberKills(e: Entity, boss: Boss, world: World): boolean {
+  const t = e.genome.traits;
+  if (boss.cullAttackResist > 0) return world.rng.unit() >= boss.cullAttackResist * t.attack;
+  if (boss.cullGroupResist > 0) return world.rng.unit() >= boss.cullGroupResist * t.herding;
+  if (boss.cullVisionResist > 0) return world.rng.unit() >= boss.cullVisionResist * t.vision;
+  return true;
 }
 
 /** 떼 개체 하나 이동 — 공통 목표로 향하되(주), 무게중심으로 응집 + 가까운 동료에서 분리(무리 대형). */

@@ -197,7 +197,8 @@ function computeFlee(
 ): Vec | null {
   const boss = world.boss;
   if (boss && boss.members.length > 0) {
-    // 사나운 무리 — 가장 가까운 떼 개체로부터 도망친다(사방에서 오니 완전 회피는 어렵다).
+    // 개체형 떼 시련 — 가장 가까운 떼 개체로부터 도망친다(사방에서 오니 완전 회피는 어렵다).
+    // 그림자 매복자(cullVisionResist>0)는 시야가 넓을수록 더 멀리서 알아채 미리 피한다(시야 카운터).
     let best2 = Infinity;
     let bx = 0;
     let by = 0;
@@ -211,7 +212,8 @@ function computeFlee(
         by = dy;
       }
     }
-    const fr = boss.killRadius + SIM.fleeRadiusPad;
+    const visionPad = boss.cullVisionResist > 0 ? SIM.stalkerVisionFlee * t.vision : 0;
+    const fr = boss.killRadius + SIM.fleeRadiusPad + visionPad;
     if (best2 < fr * fr) return clearFleeDir(e, world, bx, by, maxSpeed, canSwim, canLand);
   } else if (boss && boss.killRadius > 0) {
     const bdx = e.x - boss.x;
