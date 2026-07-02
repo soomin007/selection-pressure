@@ -283,12 +283,29 @@ export class WorldView {
     const boss = world.boss;
     const pulse = (this.frame % 60) / 60; // 주목 펄스(가독성 §7)
     if (boss && boss.members.length > 0) {
-      // 사나운 무리 — 여러 떼 개체가 각자 몰려온다(작은 점 여러 개). 큰 무리로 흩어져 버텨야 산다.
-      for (const m of boss.members) {
-        const mx = m.prevX + (m.x - m.prevX) * interp;
-        const my = m.prevY + (m.y - m.prevY) * interp;
-        this.drawPredatorDot(mx, my, boss.killRadius, pulse, 9);
+      // 사나운 무리 — 떼가 무리 대형으로 몰려온다. 떼 전체를 감싸는 붉은 위협 오라 + 개별 붉은 점으로
+      // "한 무리가 사납게 덮쳐온다"를 보인다(개별 점만 있으면 "무리"로 안 읽힌다).
+      const pts = boss.members.map((m) => ({
+        x: m.prevX + (m.x - m.prevX) * interp,
+        y: m.prevY + (m.y - m.prevY) * interp,
+      }));
+      let cx = 0;
+      let cy = 0;
+      for (const p of pts) {
+        cx += p.x;
+        cy += p.y;
       }
+      cx /= pts.length;
+      cy /= pts.length;
+      let maxR = 0;
+      for (const p of pts) {
+        const d = Math.hypot(p.x - cx, p.y - cy);
+        if (d > maxR) maxR = d;
+      }
+      // 무리를 감싸는 붉은 위협 오라(맥동) — 어디를 덮치는 무리인지 한눈에.
+      this.bossG.circle(cx, cy, maxR + 22).fill({ color: 0x9a1a0e, alpha: 0.1 + pulse * 0.06 });
+      this.bossG.circle(cx, cy, maxR + 22).stroke({ color: 0xd8321a, width: 2, alpha: 0.3 });
+      for (const p of pts) this.drawPredatorDot(p.x, p.y, boss.killRadius, pulse, 7);
     } else if (boss && boss.killRadius > 0) {
       const bx = boss.prevX + (boss.x - boss.prevX) * interp;
       const by = boss.prevY + (boss.y - boss.prevY) * interp;

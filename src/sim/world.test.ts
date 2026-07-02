@@ -143,7 +143,7 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     const w = new World("env-1", W, H, defaultGenome());
     for (let i = 0; i < 750; i++) w.step();
     w.boss = createBoss("swarm", W, H);
-    expect(w.boss.members.length).toBe(4); // 사방에서 몰려드는 떼 4마리
+    expect(w.boss.members.length).toBe(6); // 무리 대형으로 몰려드는 떼 6마리
     for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) w.step();
     expect(w.deaths.boss).toBeGreaterThan(0); // 떼가 문 사망이 실제로 발생
   });

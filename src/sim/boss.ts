@@ -81,7 +81,7 @@ const PRESETS: Record<BossType, Preset> = {
     speed: 2.5, // 내 종 최고속(~2.38)보다 빨라 순수 도망은 무의미 → chaser(단일 초고속)와 달리 다수
     // 포위 소모전. 잘 성장한 큰 무리(빠르고 잘 먹어 수가 많은 종)는 흩어져 버티고, 부진한 작은 무리는
     // 따라잡혀 전멸(프로브: 기본 40%·부진형 0% 통과). speed 는 성장(채집)으로 개체수에 기여.
-    killRadius: 8, // 각 떼 개체의 즉사 반경(생물 스프라이트 크기와 맞춤 — "닿으면 문다"가 자연스럽게)
+    killRadius: 4, // 각 떼 개체의 즉사 반경(무리 대형으로 겹쳐 다녀 작게 — 총 위협은 수·응집으로)
     visionFlee: 0,
     auraRadius: 0,
     globalKillRate: 0, // 전역 솎기 제거 — 이제 실제 떼 개체(members)가 쫓아와 문다(시각=로직 1:1)
@@ -89,7 +89,7 @@ const PRESETS: Record<BossType, Preset> = {
     cullAttackResist: 0,
     cullGroupResist: 0,
     cullVisionResist: 0,
-    memberCount: 4, // 사방에서 몰려드는 떼의 수(프로브로 튜닝 — 건강한 큰 무리만 버틴다)
+    memberCount: 6, // 떼답게 여럿(응집+분리로 무리 대형을 이뤄 몰려온다). 건강한 큰 무리만 버틴다.
     threat: "사나운 무리가 사방에서 몰려들어 닿는 개체를 물어뜯습니다.",
     counter: "수가 많고 빠르게 번식해야 솎여도 메우며 버팁니다.",
   },
@@ -283,11 +283,25 @@ export function stepBoss(boss: Boss, world: World): void {
   }
 }
 
-/** 사나운 무리 한 틱 — 각 떼 개체가 최근접 개체로 이동하고, killRadius 안에 든 개체를 즉사시킨다. */
+// 떼가 "무리"로 보이게 하는 boids 조향(사냥 방향이 주 1.0, 아래는 보조).
+const SWARM_COHESION = 0.4; // 떼 무게중심으로 끌림 — 한 덩어리로 뭉쳐 몰려온다(뿔뿔이면 "무리"로 안 보임).
+const SWARM_SEPARATION = 0.7; // 너무 가까운 동료에서 밀어냄 — 겹쳐 한 점에 집중(전멸)하지 않고 넓은 대형으로.
+const SWARM_SEP_DIST = 34; // 이 거리보다 가까운 동료가 있으면 분리력이 작동(떼 대형의 개체 간격).
+
+/** 사나운 무리 한 틱 — 떼가 뭉치되(응집) 겹치지 않게(분리) 무리 대형으로 몰려오고, 닿으면 즉사시킨다. */
 function stepSwarm(boss: Boss, world: World): void {
   const killR2 = boss.killRadius * boss.killRadius;
+  // 떼 무게중심 — 서로 이쪽으로 약간 끌려 하나의 무리로 뭉쳐 다닌다(응집).
+  let cx = 0;
+  let cy = 0;
   for (const m of boss.members) {
-    moveMemberTowardNearest(m, boss.speed, world);
+    cx += m.x;
+    cy += m.y;
+  }
+  cx /= boss.members.length;
+  cy /= boss.members.length;
+  for (const m of boss.members) {
+    moveMember(m, boss.speed, world, cx, cy, boss.members);
     for (const e of world.entities) {
       if (!e.alive) continue;
       const dx = e.x - m.x;
@@ -301,8 +315,15 @@ function stepSwarm(boss: Boss, world: World): void {
   }
 }
 
-/** 떼 개체 하나를 가장 가까운 산 개체 쪽으로 speed 만큼 옮긴다(moveTowardNearest 의 멤버 버전). */
-function moveMemberTowardNearest(m: BossMember, speed: number, world: World): void {
+/** 떼 개체 하나 이동 — 최근접 개체로 향하되(주), 무게중심으로 응집 + 가까운 동료에서 분리(무리 대형). */
+function moveMember(
+  m: BossMember,
+  speed: number,
+  world: World,
+  herdCx: number,
+  herdCy: number,
+  members: readonly BossMember[],
+): void {
   if (speed <= 0) return;
   let best = Infinity;
   let tx = 0;
@@ -321,9 +342,34 @@ function moveMemberTowardNearest(m: BossMember, speed: number, world: World): vo
     }
   }
   if (!found) return;
-  const d = Math.sqrt(best) || 1;
-  m.x += ((tx - m.x) / d) * speed;
-  m.y += ((ty - m.y) / d) * speed;
+  // 사냥 방향(단위 벡터)
+  const hd = Math.sqrt(best) || 1;
+  let vx = (tx - m.x) / hd;
+  let vy = (ty - m.y) / hd;
+  // 응집: 떼 무게중심 방향(단위 벡터)을 SWARM_COHESION 만큼.
+  const chx = herdCx - m.x;
+  const chy = herdCy - m.y;
+  const cd = Math.sqrt(chx * chx + chy * chy);
+  if (cd > 1) {
+    vx += (chx / cd) * SWARM_COHESION;
+    vy += (chy / cd) * SWARM_COHESION;
+  }
+  // 분리: SWARM_SEP_DIST 안의 동료에서 밀어냄(겹쳐 한 점 집중 방지 → 넓은 무리 대형).
+  const sep2 = SWARM_SEP_DIST * SWARM_SEP_DIST;
+  for (const o of members) {
+    if (o === m) continue;
+    const ox = m.x - o.x;
+    const oy = m.y - o.y;
+    const od2 = ox * ox + oy * oy;
+    if (od2 > 0 && od2 < sep2) {
+      const od = Math.sqrt(od2);
+      vx += (ox / od) * SWARM_SEPARATION;
+      vy += (oy / od) * SWARM_SEPARATION;
+    }
+  }
+  const vl = Math.sqrt(vx * vx + vy * vy) || 1;
+  m.x += (vx / vl) * speed;
+  m.y += (vy / vl) * speed;
 }
 
 function moveTowardNearest(boss: Boss, world: World): void {
