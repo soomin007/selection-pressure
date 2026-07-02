@@ -66,10 +66,13 @@
 다음을 읽고 "직전까지 한 것 / 다음 후보 / 추천 한 가지"를 정리해 제안한 뒤 시작한다:
 0. **`ACTIVE_WORK.md`(작업 조율판) — 가장 먼저.** 다른 세션이 claim 한 범위를 피해 내 범위를 정하고
    내 블록을 추가한 뒤 시작한다(아래 "동시 세션 루틴" 참고). 파일이 없으면 동시 세션이 없는 것.
-1. [`docs/design/backlog.md`](docs/design/backlog.md) — 다음 작업의 단일 소스
-2. 최신 [`session_logs/YYYY-MM-DD.md`](session_logs/) — 직전 세션 상태·결정·미해결
-3. [`docs/design/known_issues.md`](docs/design/known_issues.md) — 반복 금지 함정/오류
-4. `git log --oneline -10` + `git status` — 누적 변경
+1. [`docs/design/backlog.md`](docs/design/backlog.md) — 다음 작업의 **단기** 후보(당장 할 것)
+2. [`docs/ROADMAP.md`](docs/ROADMAP.md) — **장기 형질/시스템 로드맵**(P3 감각·P4 이동 형질·P5 전투 등).
+   backlog 에 없는 큰 그림이 여기 있다. **추천할 때 backlog 만 보지 말고 ROADMAP 의 다음 단계도
+   반드시 후보로 올린다** — 여기 적힌 초음파·날개/지느러미/다리·독침/원거리 같은 형질 확장을 놓치지 말 것.
+3. 최신 [`session_logs/YYYY-MM-DD.md`](session_logs/) — 직전 세션 상태·결정·미해결
+4. [`docs/design/known_issues.md`](docs/design/known_issues.md) — 반복 금지 함정/오류
+5. `git log --oneline -10` + `git status` — 누적 변경
 사용자가 곧장 작업을 지시하면 그것부터 하되, 위 파일로 맥락을 먼저 맞춘다.
 
 ### Git push 루틴
