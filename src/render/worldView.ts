@@ -174,7 +174,7 @@ export class WorldView {
           const v01 = e.genome.traits.vision / TRAIT_MAX;
           const eVision =
             SIM.visionBase *
-            (0.4 + v01) *
+            v01 *
             nightVisionFactor(world.daylight, v01) *
             grassVisionFactor(world, e.x, e.y, v01);
           const hd = this.heading.get(e.id);

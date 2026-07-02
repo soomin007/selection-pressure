@@ -32,9 +32,10 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 험지(거친 땅)에선 이동이 느려진다 — speed 형질이 높을수록 덜 느려진다(속도가 지형에서 가치).
   const maxSpeed = SIM.maxSpeedBase * (0.4 + speed01) * roughSpeedFactor(world, e.x, e.y, speed01);
   // 밤엔 시야가 준다(낮=영향 없음). vision 형질이 높을수록 밤에도 잘 본다 → 야행성 틈새(큰 눈).
+  // 시야 반경 = visionBase × (시야/100). 하한이 없어 시야 0 이면 아무것도 못 본다(감각 형질의 대가).
   const vision =
     SIM.visionBase *
-    (0.4 + vision01) *
+    vision01 *
     nightVisionFactor(world.daylight, vision01) *
     grassVisionFactor(world, e.x, e.y, vision01);
   const drain = SIM.metabolismDrain * (0.5 + metabolism01);

@@ -101,7 +101,7 @@ export const SIM = {
   eatRadius: 9,
   metabolismDrain: 0.13, // 틱당 에너지 소모 (×(0.5+metabolism))
   maxSpeedBase: 1.7, // 최대 속도 (×(0.4+speed))
-  visionBase: 130, // 시야 반경 (×(0.4+vision))
+  visionBase: 200, // 시야 반경 최댓값(px). 시야 반경 = visionBase × (vision/100). 시야 0 이면 0(안 보임)
   wanderTurn: 0.15, // 먹이가 안 보일 때 헤딩을 매 틱 흔드는 폭(라디안). 크면 제자리 떨림 → 작게 누적
   baseMaxAge: 1700, // 수명 (×(1.2-0.5*metabolism)) → 대사 높으면 단명
 
