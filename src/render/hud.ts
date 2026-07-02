@@ -15,8 +15,10 @@ const LEGEND_W = 150;
 const LEGEND_PAD = 7;
 const LEGEND_ROW = 18;
 const LEGEND_SWATCH = 6; // 색 동그라미 반지름
-const LEGEND_Y_MOBILE = 164; // 정보 박스 → 타임라인 막대 → (여기) 범례 순
-const LEGEND_Y_DESKTOP = 212;
+// 타임라인 마커 라벨 박스 아래 끝(모바일 166·데스크톱 214)보다 아래로 둬 "종 안내" 버튼이 첫 보스
+// 마커 표지와 안 겹치게 한다(전엔 164/212 라 2px 겹쳤다).
+const LEGEND_Y_MOBILE = 172; // 정보 박스 → 타임라인 막대 → 마커 라벨 → (여기) 범례 순
+const LEGEND_Y_DESKTOP = 220;
 
 // 런 진행 타임라인 막대 — 정보 박스 아래(상단 노치에 가리지 않게). full-width, 아래에 마커 라벨.
 const TIMELINE_Y_MOBILE = 140;
