@@ -35,7 +35,7 @@ const SVG = {
   speed:
     '<svg viewBox="0 0 140 90"><line x1="14" y1="32" x2="46" y2="32" stroke="#7b8595" stroke-width="5"/><polygon points="46,25 60,32 46,39" fill="#7b8595"/><line x1="14" y1="60" x2="104" y2="60" stroke="#6cff7a" stroke-width="5"/><polygon points="104,52 120,60 104,68" fill="#6cff7a"/></svg>',
   vision:
-    '<svg viewBox="0 0 140 90"><circle cx="70" cy="45" r="38" fill="none" stroke="#7ec8ff" stroke-width="2" stroke-dasharray="5 4"/><circle cx="70" cy="45" r="19" fill="none" stroke="#7ec8ff" stroke-width="2" stroke-dasharray="3 3" opacity="0.55"/><circle cx="70" cy="45" r="6" fill="#6cff7a"/></svg>',
+    '<svg viewBox="0 0 140 90"><path d="M34 45 L41 3 A44 44 0 0 1 41 87 Z" fill="#7ec8ff" opacity="0.14"/><path d="M34 45 L41 3 A44 44 0 0 1 41 87" fill="none" stroke="#7ec8ff" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.6"/><circle cx="34" cy="45" r="7" fill="#6cff7a"/><circle cx="30" cy="45" r="2.6" fill="#0a2a0a"/><circle cx="94" cy="29" r="4" fill="#d8de5a"/></svg>',
   metabolism:
     '<svg viewBox="0 0 140 90"><path d="M70 16 C84 36 94 46 84 64 C79 76 58 77 54 62 C51 50 64 50 60 36 C67 41 66 28 70 16Z" fill="#ff7a3a" stroke="#ffb070" stroke-width="2"/></svg>',
   fertility:
@@ -107,13 +107,13 @@ const SECTIONS: readonly Section[] = [
       {
         term: "시야",
         svg: SVG.vision,
-        desc: "먹이와 위험을 얼마나 멀리서 알아채는지 정합니다. 관전 중 내 종에 파란 원으로 보입니다.",
+        desc: "먹이와 위험을 얼마나 멀리서 알아채는지 정합니다. 보는 방향 앞쪽 부채꼴로 봅니다(등 뒤는 사각). 관전 중 내 종에 파란 부채꼴로 보이고, 밤이나 수풀에 들어가면 시야가 줄어 부채꼴이 작아집니다.",
         rows: [
           { k: "0", v: "반경 52", bar: 0.29 },
           { k: "50 (기본)", v: "반경 117", bar: 0.64, base: true },
           { k: "100", v: "반경 182", bar: 1 },
         ],
-        note: "화면 너비가 540이니, 시야 1.0이면 가로의 약 1/3을 봅니다.",
+        note: "화면 너비가 540이니, 시야 100이면 가로의 약 1/3을 봅니다. 수풀 안에선 절반까지 줄어듭니다.",
       },
       {
         term: "대사",

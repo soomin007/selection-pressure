@@ -12,6 +12,7 @@ import { TRAIT_KEYS, TRAIT_MAX, type Genome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 import { DEBUG, TUNE } from "@/debug";
 import { personalityScale, personalityTint } from "@/render/creatureLook";
+import { grassVisionFactor, nightVisionFactor } from "@/sim/behavior";
 
 export class WorldView {
   readonly container = new Container();
@@ -147,7 +148,6 @@ export class WorldView {
     const ringPulse = 0.5 + 0.5 * Math.sin((this.frame % 70) / 70 * Math.PI * 2);
     let i = 0;
     let visionRings = 0; // 시야 반경은 일부 개체에만 옅게(클러터 없이 "얼마나 멀리 보는지" 감)
-    const playerVision = SIM.visionBase * (0.4 + world.playerSpecies.genome.traits.vision / TRAIT_MAX);
     for (const e of world.entities) {
       // 보간 위치(목표) → 렌더 전용 저역통과로 평활. 약 50ms 지연이라 관전엔 무해하고,
       // 제자리 떨림/먹이 앞 급정거 같은 고주파 진동을 흡수한다.
@@ -169,16 +169,24 @@ export class WorldView {
         // 시야(이 종이 먹이를 어느 방향·얼마나 멀리 보는지) — 보는 방향(진행방향) 기준 부채꼴로.
         // 정지(헤딩이 거의 0)면 두리번거리므로 원으로. 일부 개체에만 옅게(클러터 없이 시야각 감).
         if (visionRings < 14) {
+          // behavior 의 시야 계산과 똑같이 개체별로 — 밤·수풀에서 줄어드는 실제 시야를 그대로 그린다
+          // (시각=로직 1:1). 수풀에 든 개체는 부채꼴이 눈에 띄게 줄어 "시야가 가려짐"이 보인다.
+          const v01 = e.genome.traits.vision / TRAIT_MAX;
+          const eVision =
+            SIM.visionBase *
+            (0.4 + v01) *
+            nightVisionFactor(world.daylight, v01) *
+            grassVisionFactor(world, e.x, e.y, v01);
           const hd = this.heading.get(e.id);
           if (hd && Math.hypot(hd.x, hd.y) > 0.02) {
             const fa = Math.atan2(hd.y, hd.x);
             this.playerG
               .moveTo(rx, ry)
-              .arc(rx, ry, playerVision, fa - VISION_FOV_HALF, fa + VISION_FOV_HALF)
+              .arc(rx, ry, eVision, fa - VISION_FOV_HALF, fa + VISION_FOV_HALF)
               .lineTo(rx, ry)
               .stroke({ color: 0x7ec8ff, width: 1, alpha: 0.08 });
           } else {
-            this.playerG.circle(rx, ry, playerVision).stroke({ color: 0x7ec8ff, width: 1, alpha: 0.06 });
+            this.playerG.circle(rx, ry, eVision).stroke({ color: 0x7ec8ff, width: 1, alpha: 0.06 });
           }
           visionRings++;
         }
