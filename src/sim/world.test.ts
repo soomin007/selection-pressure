@@ -119,8 +119,8 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     // 형질 게이트가 불안정해(시야의 성장 효과와 얽힘) "매복자가 실제로 솎는다"만 견고하게 본다(폰 체감 조정).
     const w = new World("env-1", W, H, defaultGenome());
     for (let i = 0; i < 750; i++) w.step();
-    w.boss = createBoss("stalker", W, H);
-    expect(w.boss.members.length).toBe(3);
+    w.boss = createBoss("stalker", W, H); // terrain 없이 = 기본 위치(수풀 스폰은 game 이 terrain 전달)
+    expect(w.boss.members.length).toBe(4);
     for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) w.step();
     expect(w.deaths.boss).toBeGreaterThan(0);
   });

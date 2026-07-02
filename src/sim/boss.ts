@@ -9,6 +9,7 @@
 
 import type { World } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
+import type { Terrain } from "@/sim/terrain";
 import type { Rng } from "@/sim/rng";
 import { TRAIT_MAX } from "@/sim/genome";
 
@@ -142,15 +143,15 @@ const PRESETS: Record<BossType, Preset> = {
   stalker: {
     name: "그림자 매복자",
     speed: 2.5,
-    killRadius: 8,
+    killRadius: 10,
     visionFlee: 0,
     auraRadius: 0,
     globalKillRate: 0,
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0,
-    cullVisionResist: 0.9, // 근접해도 시야 높으면 미리 보고 피한다(확률: kill = rng < 1 - this×vision)
-    memberCount: 3, // 숨어 있다 덮치는 매복자들
+    cullVisionResist: 0.9, // 근접해도 시야 높으면 미리 보고 피한다(수풀 밖). 수풀 안에선 저항 감소(memberKills)
+    memberCount: 4, // 수풀에 숨어 덮치는 매복자들(수풀 스폰이라 위협이 분산돼 수를 늘림)
     threat: "매복자가 숨어 있다 다가온 개체를 덮칩니다.",
     counter: "시야가 넓어야 일찍 보고 피합니다.",
   },
@@ -167,22 +168,28 @@ export const BOSS_TYPES: readonly BossType[] = [
   "stalker",
 ];
 
-export function createBoss(type: BossType, width: number, height: number): Boss {
+export function createBoss(type: BossType, width: number, height: number, terrain?: Terrain): Boss {
   const p = PRESETS[type];
   const x = width * 0.5;
   const y = height * 0.22;
   const members: BossMember[] = [];
   const count = p.memberCount ?? 0;
   if (count > 0) {
-    // 무리로 뭉쳐 한쪽(위 가장자리)에서 몰려온다 — 작은 원으로 모아 스폰한다(사방 분산은 "무리"로
-    // 안 보이고 따로 논다). rng 무사용 → 결정론.
-    const ox = width * 0.5;
-    const oy = height * 0.08;
-    for (let i = 0; i < count; i++) {
-      const ang = (i / count) * Math.PI * 2;
-      const mx = clampTo(ox + Math.cos(ang) * 26, 0, width);
-      const my = clampTo(oy + Math.sin(ang) * 26, 0, height);
-      members.push({ x: mx, y: my, prevX: mx, prevY: my });
+    // 그림자 매복자는 수풀에 숨어 스폰한다(수풀이 매복자의 사냥터). 수풀이 충분치 않으면 아래 기본으로.
+    const grassSpots = type === "stalker" && terrain ? terrain.grassSpots(count) : [];
+    if (grassSpots.length === count) {
+      for (const s of grassSpots) members.push({ x: s.x, y: s.y, prevX: s.x, prevY: s.y });
+    } else {
+      // 무리로 뭉쳐 한쪽(위 가장자리)에서 몰려온다 — 작은 원으로 모아 스폰(사방 분산은 "무리"로 안
+      // 보이고 따로 논다). rng 무사용 → 결정론.
+      const ox = width * 0.5;
+      const oy = height * 0.08;
+      for (let i = 0; i < count; i++) {
+        const ang = (i / count) * Math.PI * 2;
+        const mx = clampTo(ox + Math.cos(ang) * 26, 0, width);
+        const my = clampTo(oy + Math.sin(ang) * 26, 0, height);
+        members.push({ x: mx, y: my, prevX: mx, prevY: my });
+      }
     }
   }
   return {
@@ -354,7 +361,12 @@ function memberKills(e: Entity, boss: Boss, world: World): boolean {
   const t = e.genome.traits;
   if (boss.cullAttackResist > 0) return world.rng.unit() >= boss.cullAttackResist * (t.attack / TRAIT_MAX);
   if (boss.cullGroupResist > 0) return world.rng.unit() >= boss.cullGroupResist * (t.herding / TRAIT_MAX);
-  if (boss.cullVisionResist > 0) return world.rng.unit() >= boss.cullVisionResist * (t.vision / TRAIT_MAX);
+  if (boss.cullVisionResist > 0) {
+    // 그림자 매복자 — 수풀 안에선 시야가 안 통해 미리 못 알아챈다(저항 40%로 감소 → 수풀이 사냥터).
+    // 트인 곳에선 시야로 멀찍이 알아채 피한다. 시야 형질은 수풀 밖에서 진가를 낸다(지형×형질).
+    const resist = world.terrain.isGrass(e.x, e.y) ? boss.cullVisionResist * 0.4 : boss.cullVisionResist;
+    return world.rng.unit() >= resist * (t.vision / TRAIT_MAX);
+  }
   return true;
 }
 

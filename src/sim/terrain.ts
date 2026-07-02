@@ -121,6 +121,22 @@ export class Terrain {
   }
 
   /**
+   * 수풀 타일 중심 좌표를 최대 n개 균등 샘플한다(결정론, rng 무사용 — 인덱스 기반). 수풀이 없으면
+   * 빈 배열. 그림자 매복자를 수풀에 숨겨 스폰하는 데 쓴다(수풀이 매복자의 사냥터).
+   */
+  grassSpots(n: number): { x: number; y: number }[] {
+    const grass: number[] = [];
+    for (let i = 0; i < this.tiles.length; i++) if (this.tiles[i] === TILE.grass) grass.push(i);
+    if (grass.length === 0) return [];
+    const out: { x: number; y: number }[] = [];
+    for (let k = 0; k < n; k++) {
+      const idx = grass[Math.floor((k / Math.max(1, n)) * grass.length)] ?? grass[0] ?? 0;
+      out.push({ x: this.tileCenterX(idx), y: this.tileCenterY(idx) });
+    }
+    return out;
+  }
+
+  /**
    * 이 좌표를 (canSwim·canLand 인 종이) 지나갈 수 있는가.
    * 산은 누구도 못 넘고, 물은 수영 형질이 충분한 종(canSwim)만, 육지는 canLand 인 종만 통행한다.
    * canLand=false 는 물 전용(진짜 물고기) — 육지에 못 올라온다. rng 미사용 → 결정론.

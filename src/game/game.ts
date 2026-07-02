@@ -223,7 +223,7 @@ export class Game {
     this.clearStageState();
     if ((BOSS_TYPES as readonly string[]).includes(kind)) {
       const bt = kind as BossType;
-      this.world.boss = createBoss(bt, this.width, this.height);
+      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain);
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
     } else {
@@ -369,7 +369,7 @@ export class Game {
     const kind = this.currentKind();
     if (kind === "boss") {
       const bt = this.bossQueue.shift() ?? this.stageRng.pick(BOSS_TYPES);
-      this.world.boss = createBoss(bt, this.width, this.height);
+      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain);
       // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
