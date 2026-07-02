@@ -102,6 +102,8 @@ export const SIM = {
   metabolismDrain: 0.13, // 틱당 에너지 소모 (×(0.5+metabolism))
   maxSpeedBase: 1.7, // 최대 속도 (×(0.4+speed))
   visionBase: 200, // 시야 반경 최댓값(px). 시야 반경 = visionBase × (vision/100). 시야 0 이면 0(안 보임)
+  echoBase: 130, // 초음파 반경 최댓값(px). 전방위(부채꼴 무시)·밤/수풀 무시지만 근거리(시야보다 짧다).
+  // 초음파로 사는 종은 시야를 안 키워도 사방을 "듣는다"(짧게). 시야(전방·원거리·밝기 의존)와 트레이드오프.
   wanderTurn: 0.15, // 먹이가 안 보일 때 헤딩을 매 틱 흔드는 폭(라디안). 크면 제자리 떨림 → 작게 누적
   baseMaxAge: 1700, // 수명 (×(1.2-0.5*metabolism)) → 대사 높으면 단명
 

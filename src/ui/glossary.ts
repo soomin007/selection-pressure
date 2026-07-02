@@ -36,6 +36,8 @@ const SVG = {
     '<svg viewBox="0 0 140 90"><line x1="14" y1="32" x2="46" y2="32" stroke="#7b8595" stroke-width="5"/><polygon points="46,25 60,32 46,39" fill="#7b8595"/><line x1="14" y1="60" x2="104" y2="60" stroke="#6cff7a" stroke-width="5"/><polygon points="104,52 120,60 104,68" fill="#6cff7a"/></svg>',
   vision:
     '<svg viewBox="0 0 140 90"><path d="M34 45 L41 3 A44 44 0 0 1 41 87 Z" fill="#7ec8ff" opacity="0.14"/><path d="M34 45 L41 3 A44 44 0 0 1 41 87" fill="none" stroke="#7ec8ff" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.6"/><circle cx="34" cy="45" r="7" fill="#6cff7a"/><circle cx="30" cy="45" r="2.6" fill="#0a2a0a"/><circle cx="94" cy="29" r="4" fill="#d8de5a"/></svg>',
+  echo:
+    '<svg viewBox="0 0 140 90"><circle cx="70" cy="45" r="7" fill="#6cff7a"/><circle cx="70" cy="45" r="19" fill="none" stroke="#c07aff" stroke-width="2" opacity="0.65"/><circle cx="70" cy="45" r="31" fill="none" stroke="#c07aff" stroke-width="2" opacity="0.4"/><circle cx="70" cy="45" r="43" fill="none" stroke="#c07aff" stroke-width="2" opacity="0.2"/></svg>',
   metabolism:
     '<svg viewBox="0 0 140 90"><path d="M70 16 C84 36 94 46 84 64 C79 76 58 77 54 62 C51 50 64 50 60 36 C67 41 66 28 70 16Z" fill="#ff7a3a" stroke="#ffb070" stroke-width="2"/></svg>',
   fertility:
@@ -114,6 +116,17 @@ const SECTIONS: readonly Section[] = [
           { k: "100", v: "반경 200", bar: 1 },
         ],
         note: "화면 너비가 540이니, 시야 100이면 가로의 약 1/3을 봅니다. 시야 0이면 아무것도 못 보고, 밤·수풀 안에선 더 줄어듭니다.",
+      },
+      {
+        term: "초음파",
+        svg: SVG.echo,
+        desc: "눈 대신 소리로 사방을 감지합니다. 시야는 앞만 보고 밤·수풀에서 줄지만, 초음파는 사방(등 뒤도) 빛·각도·어둠과 무관하게 근거리에서 알아챕니다. 시야와 트레이드오프 — 초음파를 키우면 시야가 줄어듭니다.",
+        rows: [
+          { k: "0", v: "초음파 없음", bar: 0 },
+          { k: "50", v: "전방위 반경 65", bar: 0.5 },
+          { k: "100", v: "전방위 반경 130", bar: 1 },
+        ],
+        note: "시야 0이어도 초음파만으로 살 수 있습니다(박쥐·두더지형). 대신 초음파는 시야보다 가까이만 봅니다.",
       },
       {
         term: "대사",

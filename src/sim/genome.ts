@@ -10,7 +10,7 @@
 import type { Rng } from "@/sim/rng";
 
 /** 현재 게놈 스키마 버전. 형질을 추가/변경하면 올리고 migrate 에 단계를 더한다. */
-export const GENOME_VERSION = 3 as const;
+export const GENOME_VERSION = 4 as const;
 
 /** 형질 값 범위 — 0~100 자연수. 시뮬은 TRAIT_MAX 로 나눠 0~1 로 해석한다. */
 export const TRAIT_MAX = 100 as const;
@@ -55,9 +55,20 @@ export interface GenomeV3 {
   traits: TraitsV2;
 }
 
+/** v4 — 초음파(반향정위) 감각을 더했다. 켜면 시야 대신 전방위(빛·각도·밤·수풀 무시)로 근처를 탐지한다. */
+export interface TraitsV4 extends TraitsV2 {
+  /** 초음파 (전방위 근거리 탐지). 높이면 시야가 약해도 사방을 "듣는다" — 시야와 트레이드오프. */
+  echo: number;
+}
+
+export interface GenomeV4 {
+  genomeVersion: 4;
+  traits: TraitsV4;
+}
+
 /** 항상 "현재 버전" 을 가리킨다. 코드 다른 곳은 이 별칭만 쓴다. */
-export type Genome = GenomeV3;
-export type Traits = TraitsV2;
+export type Genome = GenomeV4;
+export type Traits = TraitsV4;
 
 /**
  * 형질 키 목록 (순회용). swimming 은 **맨 끝**에 둔다 — generateWildSpecies 가 이 순서로 rng 를
@@ -72,6 +83,7 @@ export const TRAIT_KEYS = [
   "fertility",
   "diet",
   "swimming",
+  "echo", // swimming 과 함께 맨 끝 — 야생종 생성이 rng 없이 기본값만 설정해 기존 rng 스트림 보존
 ] as const satisfies readonly (keyof Traits)[];
 
 /**
@@ -87,6 +99,7 @@ export const TRAIT_LABELS: Record<keyof Traits, string> = {
   fertility: "번식력",
   diet: "식성",
   swimming: "수영",
+  echo: "초음파",
 };
 
 /** 형질 값을 0~100 자연수로 강제(반올림 + 범위 클램프). */
@@ -108,6 +121,7 @@ export function defaultGenome(): Genome {
       fertility: 50,
       diet: 50,
       swimming: 50,
+      echo: 0, // 초음파는 특화 감각 — 기본 종은 눈(시야)으로 본다. 카드로 켜면 시야 대신 전방위 탐지.
     },
   };
 }
@@ -145,14 +159,19 @@ export function migrateGenome(raw: unknown): Genome {
   const version = (raw as { genomeVersion?: unknown }).genomeVersion;
   switch (version) {
     case 1: {
-      // v1(0~1) → v3: 수영을 채우고(육상 기준 중간) 전 형질을 0~100 스케일로 올린다.
+      // v1(0~1) → v4: 수영을 채우고(육상 기준 중간) 0~100 스케일로 올린다. 초음파는 scaleUp 이 0 으로.
       const v1 = raw as GenomeV1;
-      return clampGenome(scaleUp({ genomeVersion: 3, traits: { ...v1.traits, swimming: 0.5 } }));
+      return clampGenome(scaleUp({ traits: { ...v1.traits, swimming: 0.5 } } as unknown as Genome));
     }
     case 2:
-      // v2(0~1) → v3: 형질 값을 ×100 해 0~100 스케일로.
+      // v2(0~1) → v4: 형질 값을 ×100 해 0~100 스케일로. 초음파는 scaleUp 이 0 으로.
       return clampGenome(scaleUp(raw as GenomeV2 as unknown as Genome));
-    case 3:
+    case 3: {
+      // v3(0~100) → v4: 초음파(echo)를 0(초음파 없던 종)으로 채운다.
+      const v3 = raw as GenomeV3;
+      return clampGenome({ genomeVersion: 4, traits: { ...v3.traits, echo: 0 } });
+    }
+    case 4:
       // (실전에선 여기서 형질 키 존재/타입을 검증한다.)
       return clampGenome(raw as Genome);
     default:
@@ -160,10 +179,12 @@ export function migrateGenome(raw: unknown): Genome {
   }
 }
 
-/** 0~1 스케일 게놈을 0~100 으로 올린다(v1/v2 마이그레이션용). */
+/** 0~1 스케일 게놈을 0~100 으로 올린다(v1/v2 마이그레이션용). echo 는 구버전에 없으니 0. */
 function scaleUp(genome: Genome): Genome {
   const traits = {} as Traits;
-  for (const key of TRAIT_KEYS) traits[key] = clampTrait((genome.traits[key] ?? 0.5) * TRAIT_MAX);
+  for (const key of TRAIT_KEYS) {
+    traits[key] = key === "echo" ? 0 : clampTrait((genome.traits[key] ?? 0.5) * TRAIT_MAX);
+  }
   return { genomeVersion: GENOME_VERSION, traits };
 }
 

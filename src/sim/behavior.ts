@@ -60,7 +60,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     desired = flee;
     turn = SIM.fleeTurn; // 도망은 빠르게 반응(생존)
   } else {
-    const goal = chooseGoal(e, world, vision, canHunt, canGraze);
+    const goal = chooseGoal(e, world, vision, SIM.echoBase * (t.echo / TRAIT_MAX), canHunt, canGraze);
     if (goal) {
       // 지형 길찾기: 목표가 직선으로 보이면 직진, 막혀 있으면 격자 BFS 경로를 따라 우회한다.
       const nav = navTo(e, world, goal, canSwim, canLand);
@@ -316,10 +316,13 @@ function chooseGoal(
   e: Entity,
   world: World,
   vision: number,
+  echoRange: number,
   canHunt: boolean,
   canGraze: boolean,
 ): Vec | null {
-  const keep2 = (vision * SIM.targetKeepFactor) ** 2;
+  // 감지 범위 = 시야(전방·원거리)와 초음파(전방위·근거리) 중 넓은 쪽. 목표 유지도 이 기준.
+  const senseRange = Math.max(vision, echoRange);
+  const keep2 = (senseRange * SIM.targetKeepFactor) ** 2;
 
   // 식성으로 못 먹게 된 목표는 버린다(예: 드래프트로 육식이 되면 식물 목표 해제).
   if (!canHunt) e.targetPrey = null;
@@ -337,22 +340,30 @@ function chooseGoal(
     e.targetFood = null;
   }
 
-  // 2) 새 목표 탐색 — 시야각(부채꼴): 움직일 때는 보는 방향(=이동 방향) 기준 FOV 안만 새로 발견한다.
-  //    (이미 쫓던 목표는 1)에서 유지 — 인지한 건 시야각 밖이라도 계속 본다. 정지·저속이면 전방위로 두리번.)
+  // 2) 새 목표 탐색 — 감지 = 시야(전방 부채꼴·vision 반경) 또는 초음파(전방위·echoRange). 초음파로 사는
+  //    종은 시야가 좁아도(또는 없어도) 사방을 짧게 듣는다. 정지·저속이면 시야도 전방위(두리번).
+  const vision2 = vision * vision;
+  const echo2 = echoRange * echoRange;
   const inFov = makeFovTest(e);
+  const canSense = (x: number, y: number): boolean => {
+    const dx = x - e.x;
+    const dy = y - e.y;
+    const d2 = dx * dx + dy * dy;
+    return (d2 < vision2 && inFov(x, y)) || d2 < echo2;
+  };
   let prey: Entity | null = null;
   let food: Food | null = null;
   if (canHunt) {
     prey = world.grid.nearestMatching(
       e.x,
       e.y,
-      vision,
+      senseRange,
       (p) =>
         p.alive && p !== e && p.species.id !== e.species.id &&
-        !areFriends(e.species, p.species) && inFov(p.x, p.y),
+        !areFriends(e.species, p.species) && canSense(p.x, p.y),
     );
   }
-  if (canGraze) food = nearestFood(e, world, vision, inFov);
+  if (canGraze) food = nearestFood(e, world, senseRange, canSense);
   if (prey && food) {
     if (dist2(e, prey) <= dist2(e, food)) food = null;
     else prey = null;
@@ -430,20 +441,20 @@ function wanderDesired(e: Entity, world: World, maxSpeed: number): Vec {
 function nearestFood(
   e: Entity,
   world: World,
-  vision: number,
-  inFov: (tx: number, ty: number) => boolean,
+  senseRange: number,
+  canSense: (tx: number, ty: number) => boolean,
 ): Food | null {
   const kinds = e.species.foodKinds;
   const canSwim = e.genome.traits.swimming >= SIM.swimThreshold;
-  // 먹이 공간 격자로 시야 반경 안만 검사(완전탐색 대신 — 큰 맵 성능). available·종류·시야각은 pred 로.
-  return world.foodGrid.nearest(e.x, e.y, vision, (f) => {
+  // 먹이 공간 격자로 감지 반경 안만 검사(완전탐색 대신 — 큰 맵 성능). available·종류·감지는 pred 로.
+  return world.foodGrid.nearest(e.x, e.y, senseRange, (f) => {
     if (!f.available) return false;
     if (f.aquatic) {
       if (!canSwim) return false; // 바다 먹이는 수영 형질이 충분한 종만 먹는다(육상 종엔 무경쟁 틈새)
     } else if (!kinds.includes(f.kind)) {
       return false; // 이 종이 못 먹는 먹이 종류는 건너뛴다(먹이 분할)
     }
-    return inFov(f.x, f.y); // 시야각(부채꼴) 밖 — 보는 방향에서 벗어난 먹이는 아직 못 본다
+    return canSense(f.x, f.y); // 시야(전방 부채꼴) 또는 초음파(전방위)로 감지되는 먹이만
   });
 }
 

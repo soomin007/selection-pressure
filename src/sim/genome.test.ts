@@ -9,12 +9,13 @@ import {
 } from "@/sim/genome";
 
 describe("게놈 v2 마이그레이션", () => {
-  it("기본 게놈은 v2 + 모든 형질 0.5(수영 포함)", () => {
+  it("기본 게놈은 현재 버전 + 형질 50(초음파는 0 — 특화 감각)", () => {
     const g = defaultGenome();
     expect(g.genomeVersion).toBe(GENOME_VERSION);
-    expect(GENOME_VERSION).toBe(3);
-    for (const k of TRAIT_KEYS) expect(g.traits[k]).toBe(50);
+    expect(GENOME_VERSION).toBe(4);
+    for (const k of TRAIT_KEYS) expect(g.traits[k]).toBe(k === "echo" ? 0 : 50);
     expect(g.traits.swimming).toBe(50);
+    expect(g.traits.echo).toBe(0);
   });
 
   it("v1 게놈을 받으면 swimming 0.5 를 채워 v2 로 올린다", () => {
@@ -23,7 +24,7 @@ describe("게놈 v2 마이그레이션", () => {
       traits: { speed: 0.7, attack: 0.3, vision: 0.6, herding: 0.4, metabolism: 0.5, fertility: 0.2, diet: 0.8 },
     };
     const g = migrateGenome(v1);
-    expect(g.genomeVersion).toBe(3);
+    expect(g.genomeVersion).toBe(4);
     expect(g.traits.speed).toBe(70);
     expect(g.traits.diet).toBe(80);
     expect(g.traits.swimming).toBe(50); // v1 엔 없던 형질을 기본값으로 채움
@@ -34,7 +35,7 @@ describe("게놈 v2 마이그레이션", () => {
     g.traits.swimming = 90;
     const round = deserializeGenome(serializeGenome(g));
     expect(round.traits.swimming).toBe(90);
-    expect(round.genomeVersion).toBe(3);
+    expect(round.genomeVersion).toBe(4);
   });
 
   it("알 수 없는 버전은 거부", () => {

@@ -53,6 +53,10 @@ export function makeKinSpecies(id: number, rng: Rng): Species {
       g.traits.swimming = 50; // 친척은 육상(내 종 옆에서 함께)
       continue;
     }
+    if (key === "echo") {
+      g.traits.echo = 0; // 친척은 초음파 없음(눈으로). rng 없이 설정 → 기존 rng 스트림 보존
+      continue;
+    }
     g.traits[key] = clampTrait(50 + rng.range(-10, 10)); // 균형 원형에서 미세하게만 흔든다
   }
   g.traits.diet = clampTrait(30 + rng.range(-5, 5)); // 초식쪽(내 종과 먹이 경쟁·사냥 완화)
@@ -169,6 +173,10 @@ export function generateWildSpecies(rng: Rng): Species[] {
       // (나중에 수생 야생종을 넣을 때 아키타입에 swimming 을 주면 된다.)
       if (key === "swimming") {
         g.traits.swimming = arch.traits.swimming ?? 50;
+        continue;
+      }
+      if (key === "echo") {
+        g.traits.echo = arch.traits.echo ?? 0; // 야생종 초음파 기본 없음. rng 없이 → rng 스트림 보존
         continue;
       }
       const base = arch.traits[key] ?? 50;

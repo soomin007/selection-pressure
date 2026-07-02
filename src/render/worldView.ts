@@ -178,15 +178,24 @@ export class WorldView {
             nightVisionFactor(world.daylight, v01) *
             grassVisionFactor(world, e.x, e.y, v01);
           const hd = this.heading.get(e.id);
-          if (hd && Math.hypot(hd.x, hd.y) > 0.02) {
-            const fa = Math.atan2(hd.y, hd.x);
+          if (eVision > 1) {
+            if (hd && Math.hypot(hd.x, hd.y) > 0.02) {
+              const fa = Math.atan2(hd.y, hd.x);
+              this.playerG
+                .moveTo(rx, ry)
+                .arc(rx, ry, eVision, fa - VISION_FOV_HALF, fa + VISION_FOV_HALF)
+                .lineTo(rx, ry)
+                .stroke({ color: 0x7ec8ff, width: 1, alpha: 0.08 });
+            } else {
+              this.playerG.circle(rx, ry, eVision).stroke({ color: 0x7ec8ff, width: 1, alpha: 0.06 });
+            }
+          }
+          // 초음파 — 전방위 원(보라). 시야 부채꼴과 달리 사방·밝기 무관. 시야 없이 초음파로 사는 종 표시.
+          const echo01 = e.genome.traits.echo / TRAIT_MAX;
+          if (echo01 > 0) {
             this.playerG
-              .moveTo(rx, ry)
-              .arc(rx, ry, eVision, fa - VISION_FOV_HALF, fa + VISION_FOV_HALF)
-              .lineTo(rx, ry)
-              .stroke({ color: 0x7ec8ff, width: 1, alpha: 0.08 });
-          } else {
-            this.playerG.circle(rx, ry, eVision).stroke({ color: 0x7ec8ff, width: 1, alpha: 0.06 });
+              .circle(rx, ry, SIM.echoBase * echo01)
+              .stroke({ color: 0xc07aff, width: 1, alpha: 0.09 });
           }
           visionRings++;
         }
