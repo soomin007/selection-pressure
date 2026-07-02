@@ -414,8 +414,10 @@ async function boot(): Promise<void> {
     const s = `${game.stageNumber}/${game.totalStages}`;
     // 모바일에서 한 줄이 길어 잘리던 문제 → 2줄(단계·시간 / 환경)로 나눈다.
     if (game.phase === "draft") return `단계 ${s} · 카드 선택\n${env}`;
+    // 관전 첫 줄은 무슨 단계인지(시련/보스 이름)만 둔다 — 단계 번호(N/M)는 타임라인 막대가 대신
+    // 보여줘 중복이고, 긴 시련 이름(그림자 매복자 등)이 우상단 낮밤 타이머와 겹치지 않게 짧게 유지한다.
     if (game.phase === "watch")
-      return `단계 ${s} · ${game.stageLabel}\n${game.secondsLeft}초${game.paused ? " (멈춤)" : ""} · ${env}`;
+      return `${game.stageLabel}\n${game.secondsLeft}초${game.paused ? " (멈춤)" : ""} · ${env}`;
     return env;
   }
 }

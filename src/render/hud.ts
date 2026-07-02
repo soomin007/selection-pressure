@@ -56,9 +56,11 @@ const PANEL_H_DESKTOP_DEATH = 176; // + 사망 알림
 const DEATH_Y_MOBILE = 108; // 경험치 게이지(88) 아래
 const DEATH_Y_DESKTOP = 158; // 경험치 게이지(138) 아래
 
-// 낮밤 타이머 — 정보 박스 둘째 줄(상태) 우측. 개체 수(첫 줄)가 길어져도 겹치지 않게 수직 분리.
+// 낮밤 타이머 — 정보 박스 첫 줄(개체 수 stat) 우측. 상태줄(단계·시련 이름)이 길어져도 세로로
+// 분리돼 안 겹친다. 개체 수는 소수 개체라 짧아 우측 여백이 안정적(전엔 둘째 줄이라 긴 시련 이름
+// "그림자 매복자"·"외톨이 사냥꾼" 과 겹쳤다).
 const DAY_DOT_X = PANEL_X + PANEL_W - 16;
-const DAY_DOT_Y = 52;
+const DAY_DOT_Y = 26;
 const DAY_DOT_COLOR = 0xffd24a; // 낮(밝은 노랑)
 const NIGHT_DOT_COLOR = 0x2a3a6a; // 밤(어두운 남색)
 
@@ -151,7 +153,7 @@ export class Hud {
       style: new TextStyle({ fill: 0xccd3df, fontSize: 12, fontWeight: "600" }),
     });
     this.dayLabel.anchor.set(1, 0);
-    this.dayLabel.position.set(DAY_DOT_X - 11, 46);
+    this.dayLabel.position.set(DAY_DOT_X - 11, 20); // 첫 줄(개체 수 stat)과 같은 높이로
 
     // 레벨 라벨(경험치 게이지 왼쪽).
     this.levelText = new Text({
