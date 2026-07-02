@@ -428,6 +428,9 @@ const LAND_COOL: RGB = [78, 96, 92];
 // 수풀 — 무성한 진초록(트인 육지보다 어둡고 짙어 "시야를 가리는 덤불"로 읽힌다).
 const GRASS_DEEP: RGB = [30, 74, 34];
 const GRASS_LUSH: RGB = [40, 96, 40];
+// 험지 — 거친 회갈색 자갈밭(산 아래. 바위·돌이 많아 "느리게 통과하는 땅"으로 읽힌다).
+const ROUGH_LO: RGB = [96, 88, 76];
+const ROUGH_HI: RGB = [124, 116, 104];
 // 렌더 음영용 표고 밴드(terrain 의 기본 분류 경계와 맞춤 — 시각 전용이라 근사면 충분).
 const WATER_BAND = 0.32;
 const MOUNTAIN_BAND = 0.76;
@@ -454,6 +457,11 @@ function terrainColor(kind: TileKind, elev: number, cold: number, fert: number):
   if (kind === TILE.grass) {
     // 수풀 — 비옥할수록 짙은 초록. 트인 육지보다 어두워 "덤불"로 읽힌다. 추우면 차갑게.
     return pack(mix(mix(GRASS_DEEP, GRASS_LUSH, fert), LAND_COOL, cold * 0.3));
+  }
+  if (kind === TILE.rough) {
+    // 험지 — 산 아래 거친 자갈밭. 표고가 높을수록 밝은 바위색. 추우면 차갑게.
+    const t = (elev - 0.7) / (MOUNTAIN_BAND - 0.7);
+    return pack(mix(mix(ROUGH_LO, ROUGH_HI, t), LAND_COOL, cold * 0.3));
   }
   // 육지 — 비옥하면 초록, 척박하면 황갈. 추운 땅은 차갑게.
   return pack(mix(mix(LAND_BARREN, LAND_LUSH, fert), LAND_COOL, cold * 0.35));

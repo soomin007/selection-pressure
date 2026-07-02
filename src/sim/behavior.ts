@@ -29,7 +29,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const metabolism01 = t.metabolism / TRAIT_MAX;
   const herding01 = t.herding / TRAIT_MAX;
   const fertility01 = t.fertility / TRAIT_MAX;
-  const maxSpeed = SIM.maxSpeedBase * (0.4 + speed01);
+  // 험지(거친 땅)에선 이동이 느려진다 — speed 형질이 높을수록 덜 느려진다(속도가 지형에서 가치).
+  const maxSpeed = SIM.maxSpeedBase * (0.4 + speed01) * roughSpeedFactor(world, e.x, e.y, speed01);
   // 밤엔 시야가 준다(낮=영향 없음). vision 형질이 높을수록 밤에도 잘 본다 → 야행성 틈새(큰 눈).
   const vision =
     SIM.visionBase *
@@ -479,6 +480,16 @@ export function nightVisionFactor(daylight: number, vision: number): number {
 export function grassVisionFactor(world: World, x: number, y: number, vision: number): number {
   if (!world.terrain.isGrass(x, y)) return 1;
   return Math.min(1, SIM.grassVisionFloor + SIM.grassVisionBonus * vision);
+}
+
+/**
+ * 험지 이동 배율 — 험지 안이면 속도가 준다(speed 0 → roughSpeedFloor 배). speed 형질이 높을수록
+ * 감속이 사라진다(speed 1 이면 거의 1.0). 험지 밖이면 1.0. 속도가 지형에서 가치를 갖게 하는 지점.
+ * 인자 speed 는 0~1 정규화 값. (수풀 시야 grassVisionFactor 와 대칭.)
+ */
+export function roughSpeedFactor(world: World, x: number, y: number, speed: number): number {
+  if (!world.terrain.isRough(x, y)) return 1;
+  return Math.min(1, SIM.roughSpeedFloor + SIM.roughSpeedBonus * speed);
 }
 
 /** (dx,dy) 를 길이 len 으로 정규화. 0 벡터는 0 그대로. */

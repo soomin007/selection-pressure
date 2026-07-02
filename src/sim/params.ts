@@ -61,6 +61,12 @@ export const SIM = {
   grassVisionFloor: 0.5,
   grassVisionBonus: 0.5, // vision 형질이 수풀 시야를 끌어올리는 정도(vision 1 이면 감쇠가 거의 사라짐)
 
+  // --- 험지 지형(이동 감속) (지형×형질) ---
+  // 험지(산 아래 거친 땅)에선 이동 속도가 이 배율까지 준다(speed 0 기준). speed 형질이 높을수록 덜
+  // 느려진다 → 속도가 "험한 맵"에서 가치를 갖는다(수풀=시야와 대칭).
+  roughSpeedFloor: 0.85,
+  roughSpeedBonus: 0.15, // speed 형질이 험지 속도를 끌어올리는 정도(speed 1 이면 감속이 사라짐)
+
   coldPenalty: 0.3, // 추운 칸 추가 소모 (틱당, ×coldness×(1-metabolism)) — 추운 맵=고대사 유리
   globalColdLethality: 1.4, // 대멸종 한파(globalCold)는 평상시 추위보다 이만큼 더 매섭다(클라이맥스 필터). 야생 동맹(청소부가 초식 안 잡음)으로 초식이 살짝 번성→내 종 먹이 경쟁↑→고대사 통과가 경계(2)로. 한파 전용 지점만 완화(1.5→1.4, 프로브: 고대사 통과·저대사 탈락)
   plagueFertilityResist: 0.9, // 대역병 솎임을 번식력으로 저항: rate ×= 1 - this×fertility (번식력 카운터)
