@@ -12,6 +12,14 @@ import type { Rng } from "@/sim/rng";
 
 export type BossType = "chaser" | "swarm" | "poison" | "titan" | "raider" | "isolation" | "stalker";
 
+/** 사나운 무리의 추격 개체 하나(떼의 한 마리). 각자 가장 가까운 개체로 이동해 killRadius 로 물어뜯는다. */
+export interface BossMember {
+  x: number;
+  y: number;
+  prevX: number; // 직전 스텝 위치 (렌더 보간용)
+  prevY: number;
+}
+
 export interface Boss {
   type: BossType;
   name: string;
@@ -23,17 +31,20 @@ export interface Boss {
   killRadius: number; // 닿으면 즉사하는 반경 (0 = 없음)
   visionFlee: number; // 도망 반경에 시야를 곱해 더하는 정도(titan: 시야가 카운터)
   auraRadius: number; // 시각용 위험 반경(독 안개)
-  globalKillRate: number; // 매 틱 개체가 솎일 확률(swarm/raider/isolation 의 기본값)
+  globalKillRate: number; // 매 틱 개체가 솎일 확률(raider/isolation/stalker 의 기본값)
   globalDrain: number; // 매 틱 전역 에너지 흡수 (×(0.3+metabolism)) (poison)
   cullAttackResist: number; // 솎기를 공격력으로 저항(raider): rate ×= 1 - this×attack
   cullGroupResist: number; // 솎기를 무리 성향으로 저항(isolation): rate ×= 1 - this×herding
   cullVisionResist: number; // 솎기를 시야로 저항(stalker): rate ×= 1 - this×vision
+  // 다수 추격 개체(사나운 무리). 비어있으면 단일 개체(x,y) 모드. 각 멤버가 killRadius 로 즉사시킨다.
+  members: BossMember[];
 }
 
-interface Preset extends Omit<Boss, "type" | "name" | "x" | "y" | "prevX" | "prevY"> {
+interface Preset extends Omit<Boss, "type" | "name" | "x" | "y" | "prevX" | "prevY" | "members"> {
   name: string;
   threat: string;
   counter: string;
+  memberCount?: number; // 다수 추격 개체 떼의 수(swarm). 없으면 단일 개체.
 }
 
 const PRESETS: Record<BossType, Preset> = {
@@ -67,17 +78,20 @@ const PRESETS: Record<BossType, Preset> = {
   },
   swarm: {
     name: "사나운 무리",
-    speed: 2.0,
-    killRadius: 0,
+    speed: 2.5, // 내 종 최고속(~2.38)보다 빨라 순수 도망은 무의미 → chaser(단일 초고속)와 달리 다수
+    // 포위 소모전. 잘 성장한 큰 무리(빠르고 잘 먹어 수가 많은 종)는 흩어져 버티고, 부진한 작은 무리는
+    // 따라잡혀 전멸(프로브: 기본 40%·부진형 0% 통과). speed 는 성장(채집)으로 개체수에 기여.
+    killRadius: 8, // 각 떼 개체의 즉사 반경(생물 스프라이트 크기와 맞춤 — "닿으면 문다"가 자연스럽게)
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0.0024, // 매 틱 약 0.24% 솎임 (건강한 큰 무리만 버틴다)
+    globalKillRate: 0, // 전역 솎기 제거 — 이제 실제 떼 개체(members)가 쫓아와 문다(시각=로직 1:1)
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0,
     cullVisionResist: 0,
-    threat: "쉴 새 없이 개체를 하나씩 솎아냅니다.",
-    counter: "개체 수가 많고 건강해야 버팁니다.",
+    memberCount: 4, // 사방에서 몰려드는 떼의 수(프로브로 튜닝 — 건강한 큰 무리만 버틴다)
+    threat: "사나운 무리가 사방에서 몰려들어 닿는 개체를 물어뜯습니다.",
+    counter: "수가 많고 빠르게 번식해야 솎여도 메우며 버팁니다.",
   },
   poison: {
     name: "독 안개",
@@ -152,6 +166,17 @@ export function createBoss(type: BossType, width: number, height: number): Boss 
   const p = PRESETS[type];
   const x = width * 0.5;
   const y = height * 0.22;
+  const members: BossMember[] = [];
+  const count = p.memberCount ?? 0;
+  if (count > 0) {
+    // 사방(맵 가장자리 여러 각도)에서 몰려든다 — "포위"가 보이게 분산 배치(rng 무사용 → 결정론).
+    for (let i = 0; i < count; i++) {
+      const ang = (i / count) * Math.PI * 2;
+      const mx = clampTo(width * 0.5 + Math.cos(ang) * width * 0.55, 0, width);
+      const my = clampTo(height * 0.5 + Math.sin(ang) * height * 0.55, 0, height);
+      members.push({ x: mx, y: my, prevX: mx, prevY: my });
+    }
+  }
   return {
     type,
     name: p.name,
@@ -168,7 +193,12 @@ export function createBoss(type: BossType, width: number, height: number): Boss 
     cullAttackResist: p.cullAttackResist,
     cullGroupResist: p.cullGroupResist,
     cullVisionResist: p.cullVisionResist,
+    members,
   };
+}
+
+function clampTo(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
 }
 
 /** 전투 전 위협 예고 문구 (쉬운 말). */
@@ -200,6 +230,12 @@ export function pickBossType(rng: Rng): BossType {
 
 /** 보스 한 틱. 타입별로 다른 압박을 가한다. */
 export function stepBoss(boss: Boss, world: World): void {
+  // 사나운 무리 — 각 떼 개체가 가장 가까운 개체로 몰려와 닿으면 물어뜯는다(전역 솎기가 아니라 실재 개체).
+  if (boss.members.length > 0) {
+    stepSwarm(boss, world);
+    return;
+  }
+
   moveTowardNearest(boss, world);
 
   if (boss.killRadius > 0) {
@@ -245,6 +281,49 @@ export function stepBoss(boss: Boss, world: World): void {
       }
     }
   }
+}
+
+/** 사나운 무리 한 틱 — 각 떼 개체가 최근접 개체로 이동하고, killRadius 안에 든 개체를 즉사시킨다. */
+function stepSwarm(boss: Boss, world: World): void {
+  const killR2 = boss.killRadius * boss.killRadius;
+  for (const m of boss.members) {
+    moveMemberTowardNearest(m, boss.speed, world);
+    for (const e of world.entities) {
+      if (!e.alive) continue;
+      const dx = e.x - m.x;
+      const dy = e.y - m.y;
+      if (dx * dx + dy * dy < killR2) {
+        e.alive = false;
+        world.recordDeath(e.species, "boss");
+        world.emit("kill", e.x, e.y); // 연출: 떼 개체가 문 자리
+      }
+    }
+  }
+}
+
+/** 떼 개체 하나를 가장 가까운 산 개체 쪽으로 speed 만큼 옮긴다(moveTowardNearest 의 멤버 버전). */
+function moveMemberTowardNearest(m: BossMember, speed: number, world: World): void {
+  if (speed <= 0) return;
+  let best = Infinity;
+  let tx = 0;
+  let ty = 0;
+  let found = false;
+  for (const e of world.entities) {
+    if (!e.alive) continue;
+    const dx = e.x - m.x;
+    const dy = e.y - m.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < best) {
+      best = d2;
+      tx = e.x;
+      ty = e.y;
+      found = true;
+    }
+  }
+  if (!found) return;
+  const d = Math.sqrt(best) || 1;
+  m.x += ((tx - m.x) / d) * speed;
+  m.y += ((ty - m.y) / d) * speed;
 }
 
 function moveTowardNearest(boss: Boss, world: World): void {

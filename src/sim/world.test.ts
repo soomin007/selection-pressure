@@ -125,6 +125,29 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     expect(hi).toBeGreaterThan(lo);
   });
 
+  it("사나운 무리: 잘 성장한 큰 무리는 버티고 부진한 작은 무리는 못 버틴다", () => {
+    // swarm 은 전역 솎기가 아니라 실제 추격 떼(members). 순수 도망은 speed 2.5 로 막혀(chaser 와 차별),
+    // 잘 성장해 수가 많은 무리만 흩어져 버틴다(카운터 = 개체수/성장). env-1 단일 시드로 대비.
+    const strong = afterGate(tune({ vision: 0.8, speed: 0.7, fertility: 0.7 }), GAME.bossSeconds, (w) => {
+      w.boss = createBoss("swarm", W, H);
+    });
+    const weak = afterGate(tune({ vision: 0.2, speed: 0.2, fertility: 0.2 }), GAME.bossSeconds, (w) => {
+      w.boss = createBoss("swarm", W, H);
+    });
+    expect(strong).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
+    expect(weak).toBeLessThan(GAME.bossPassThreshold);
+    expect(strong).toBeGreaterThan(weak);
+  });
+
+  it("사나운 무리: 떼 개체(members)가 실제로 개체를 솎는다", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 750; i++) w.step();
+    w.boss = createBoss("swarm", W, H);
+    expect(w.boss.members.length).toBe(4); // 사방에서 몰려드는 떼 4마리
+    for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) w.step();
+    expect(w.deaths.boss).toBeGreaterThan(0); // 떼가 문 사망이 실제로 발생
+  });
+
   it("한파 대멸종: 고대사는 통과, 저대사는 실패", () => {
     const hi = afterGate(tune({ metabolism: 0.9 }), GAME.extinctionSeconds, (w) => {
       w.globalCold = 1.3;

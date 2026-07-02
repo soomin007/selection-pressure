@@ -276,21 +276,23 @@ export class WorldView {
       }
     }
 
-    // 보스 시각은 로직과 1:1 (known_issues). 즉사 반경이 있는 "개체형 보스(추격자)"만 실제 개체라
-    // 점 + 즉사 반경 + 주목 펄스로 그린다(도망 대상). 전역 솎기/흡수 시련(위치 무관)은 개체가 없으므로
-    // 여기서 안 그리고 아래 전체 화면 틴트(overlay)로만 표현한다 — "저기 있는데 왜 여기서 죽지"를 없앤다.
+    // 보스 시각은 로직과 1:1 (known_issues). 실제로 쫓아와 무는 개체만 점 + 물기 반경 + 주목 펄스로
+    // 그린다(도망 대상): 단일 추격자(chaser) 또는 사나운 무리(members 여러 마리가 사방에서 몰려온다).
+    // 전역 솎기/흡수 시련(위치 무관)은 개체가 없으므로 여기서 안 그리고 아래 전체 화면 틴트로만 표현한다.
     this.bossG.clear();
     const boss = world.boss;
-    if (boss && boss.killRadius > 0) {
+    const pulse = (this.frame % 60) / 60; // 주목 펄스(가독성 §7)
+    if (boss && boss.members.length > 0) {
+      // 사나운 무리 — 여러 떼 개체가 각자 몰려온다(작은 점 여러 개). 큰 무리로 흩어져 버텨야 산다.
+      for (const m of boss.members) {
+        const mx = m.prevX + (m.x - m.prevX) * interp;
+        const my = m.prevY + (m.y - m.prevY) * interp;
+        this.drawPredatorDot(mx, my, boss.killRadius, pulse, 9);
+      }
+    } else if (boss && boss.killRadius > 0) {
       const bx = boss.prevX + (boss.x - boss.prevX) * interp;
       const by = boss.prevY + (boss.y - boss.prevY) * interp;
-      this.bossG.circle(bx, by, boss.killRadius).fill({ color: 0xe0402a, alpha: 0.3 });
-      const pulse = (this.frame % 60) / 60; // 주목 펄스(가독성 §7)
-      this.bossG
-        .circle(bx, by, 16 + pulse * 26)
-        .stroke({ color: 0xff5535, width: 2.5, alpha: 0.55 * (1 - pulse) });
-      this.bossG.circle(bx, by, 14).fill({ color: 0xff5535, alpha: 1 });
-      this.bossG.circle(bx, by, 14).stroke({ color: 0x3a0d06, width: 3 });
+      this.drawPredatorDot(bx, by, boss.killRadius, pulse, 14);
     }
 
     // 낮/밤 + 대멸종 화면 틴트 (둘 다 overlayG — 밤을 먼저 깔고 대멸종 틴트를 그 위에)
@@ -314,10 +316,10 @@ export class WorldView {
       tint = 0x5a7a3a; // 병색(칙칙한 녹황)
       tintAlpha = 0.16;
     } else if (boss && boss.killRadius === 0) {
-      // 전역 시련(사나운 무리·약탈자·외톨이 사냥꾼·그림자 매복자·독 안개) — 위치 무관하게 사방에서
-      // 솎거나 흡수한다. 시각=로직 1:1(known_issues): 전역이라 화면 전체로 표현한다. 종류마다 색·맥동을
-      // 달리해 "지금 무엇이 덮치는지"를 한눈에 구분한다(전엔 4종이 다 같은 붉은색이라 못 갈랐다).
-      // 개체형(추격자/거대 포식자)은 killRadius>0 이라 여기 안 오고 위의 점+반경으로 그려진다.
+      // 전역 시련(약탈자·외톨이 사냥꾼·그림자 매복자·독 안개) — 위치 무관하게 사방에서 솎거나 흡수한다.
+      // 시각=로직 1:1(known_issues): 전역이라 화면 전체로 표현한다. 종류마다 색·맥동을 달리해 "지금
+      // 무엇이 덮치는지"를 한눈에 구분한다. 개체형(추격자·사나운 무리)은 killRadius>0 이라 여기 안 오고
+      // 위의 점+반경으로 그려진다(사나운 무리는 이제 실제 떼 개체로 실재화됨).
       const v = TRIAL_VISUALS[boss.type];
       if (v) {
         tint = v.color;
@@ -326,6 +328,16 @@ export class WorldView {
     }
     if (tintAlpha > 0)
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });
+  }
+
+  /** 쫓아와 무는 개체 하나(추격자 또는 무리의 한 마리)를 물기 반경 + 맥동 고리 + 점으로 그린다. */
+  private drawPredatorDot(x: number, y: number, killRadius: number, pulse: number, dot: number): void {
+    this.bossG.circle(x, y, killRadius).fill({ color: 0xe0402a, alpha: 0.3 });
+    this.bossG
+      .circle(x, y, dot + 2 + pulse * dot * 1.8)
+      .stroke({ color: 0xff5535, width: 2.5, alpha: 0.55 * (1 - pulse) });
+    this.bossG.circle(x, y, dot).fill({ color: 0xff5535, alpha: 1 });
+    this.bossG.circle(x, y, dot).stroke({ color: 0x3a0d06, width: 3 });
   }
 }
 
@@ -340,8 +352,7 @@ interface TrialVisual {
   pulseSpeed: number;
 }
 const TRIAL_VISUALS: Partial<Record<BossType, TrialVisual>> = {
-  // 사나운 무리 — 사방에서 우글우글 솎아낸다. 성난 주황빛 붉은을 빠르게 맥동(들끓는 느낌).
-  swarm: { color: 0xd23a12, baseAlpha: 0.15, pulseAmp: 0.07, pulseSpeed: 0.1 },
+  // (사나운 무리 swarm 은 실제 떼 개체로 실재화 — 전역 틴트가 아니라 점으로 그린다. 여기 없음.)
   // 약탈자 무리 — 파상으로 달려든다. 핏빛 진홍을 큰 진폭으로 느리게 맥동(밀려왔다 빠지는 공격).
   raider: { color: 0xb0142e, baseAlpha: 0.17, pulseAmp: 0.08, pulseSpeed: 0.05 },
   // 외톨이 사냥꾼 — 무리에서 떨어진 개체를 노린다. 차가운 청록빛 남색을 느리게(냉혹·고립).

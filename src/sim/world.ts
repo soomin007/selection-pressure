@@ -137,6 +137,10 @@ export class World {
     if (this.boss) {
       this.boss.prevX = this.boss.x;
       this.boss.prevY = this.boss.y;
+      for (const m of this.boss.members) {
+        m.prevX = m.x;
+        m.prevY = m.y;
+      }
     }
 
     const newborns: Entity[] = [];

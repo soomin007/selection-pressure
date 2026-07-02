@@ -196,7 +196,24 @@ function computeFlee(
   canLand: boolean,
 ): Vec | null {
   const boss = world.boss;
-  if (boss && boss.killRadius > 0) {
+  if (boss && boss.members.length > 0) {
+    // 사나운 무리 — 가장 가까운 떼 개체로부터 도망친다(사방에서 오니 완전 회피는 어렵다).
+    let best2 = Infinity;
+    let bx = 0;
+    let by = 0;
+    for (const m of boss.members) {
+      const dx = e.x - m.x;
+      const dy = e.y - m.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < best2) {
+        best2 = d2;
+        bx = dx;
+        by = dy;
+      }
+    }
+    const fr = boss.killRadius + SIM.fleeRadiusPad;
+    if (best2 < fr * fr) return clearFleeDir(e, world, bx, by, maxSpeed, canSwim, canLand);
+  } else if (boss && boss.killRadius > 0) {
     const bdx = e.x - boss.x;
     const bdy = e.y - boss.y;
     const bd2 = bdx * bdx + bdy * bdy;
