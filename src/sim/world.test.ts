@@ -5,7 +5,7 @@ import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
-import { nightVisionFactor, makeFovTest } from "@/sim/behavior";
+import { nightVisionFactor, makeFovTest, grassVisionFactor } from "@/sim/behavior";
 import { areFriends } from "@/sim/species";
 import { createEntity, type Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
@@ -123,6 +123,29 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     expect(hi).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
     expect(lo).toBeLessThan(GAME.bossPassThreshold);
     expect(hi).toBeGreaterThan(lo);
+  });
+
+  it("수풀 지형: 수풀 안에선 시야가 줄고 시야 형질이 완화한다(지형×형질)", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    const cs = w.terrain.cellSize;
+    let grass: { x: number; y: number } | null = null;
+    let open: { x: number; y: number } | null = null;
+    for (let cy = 0; cy < w.terrain.rows && !(grass && open); cy++) {
+      for (let cx = 0; cx < w.terrain.cols; cx++) {
+        const x = (cx + 0.5) * cs;
+        const y = (cy + 0.5) * cs;
+        if (!grass && w.terrain.isGrass(x, y)) grass = { x, y };
+        if (!open && w.terrain.kindAt(x, y) === TILE.land) open = { x, y };
+      }
+    }
+    expect(grass).not.toBeNull(); // 맵에 수풀이 생성된다
+    if (grass) {
+      const lo = grassVisionFactor(w, grass.x, grass.y, 0.1); // 시야 낮으면 크게 가려짐
+      const hi = grassVisionFactor(w, grass.x, grass.y, 0.9); // 시야 높으면 덜 가려짐
+      expect(lo).toBeLessThan(1);
+      expect(hi).toBeGreaterThan(lo);
+    }
+    if (open) expect(grassVisionFactor(w, open.x, open.y, 0.5)).toBe(1); // 트인 육지는 감쇠 없음
   });
 
   it("사나운 무리: 잘 성장한 큰 무리는 버티고 부진한 작은 무리는 못 버틴다", () => {

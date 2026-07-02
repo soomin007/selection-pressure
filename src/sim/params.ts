@@ -55,6 +55,12 @@ export const SIM = {
   nightVisionFloor: 0.5, // 자정(가장 어두움) 시야 배율 하한(vision 0 기준). 밤엔 시야가 이만큼까지 준다
   nightVisionBonus: 0.4, // vision 형질이 밤 시야를 끌어올리는 정도(야행성 틈새 — 큰 눈은 밤에도 본다)
 
+  // --- 수풀 지형(시야 가림) (지형×형질) ---
+  // 수풀 안에선 시야가 이 배율까지 준다(vision 0 기준). vision 형질이 높을수록 수풀에서도 잘 본다
+  // → 시야가 "수풀 많은 맵"에서 가치를 갖는다(그림자 매복자 카운터와 자연 연계: 수풀서 늦게 봄).
+  grassVisionFloor: 0.5,
+  grassVisionBonus: 0.5, // vision 형질이 수풀 시야를 끌어올리는 정도(vision 1 이면 감쇠가 거의 사라짐)
+
   coldPenalty: 0.3, // 추운 칸 추가 소모 (틱당, ×coldness×(1-metabolism)) — 추운 맵=고대사 유리
   globalColdLethality: 1.4, // 대멸종 한파(globalCold)는 평상시 추위보다 이만큼 더 매섭다(클라이맥스 필터). 야생 동맹(청소부가 초식 안 잡음)으로 초식이 살짝 번성→내 종 먹이 경쟁↑→고대사 통과가 경계(2)로. 한파 전용 지점만 완화(1.5→1.4, 프로브: 고대사 통과·저대사 탈락)
   plagueFertilityResist: 0.9, // 대역병 솎임을 번식력으로 저항: rate ×= 1 - this×fertility (번식력 카운터)

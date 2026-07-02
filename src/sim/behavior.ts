@@ -24,7 +24,11 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const t = e.genome.traits;
   const maxSpeed = SIM.maxSpeedBase * (0.4 + t.speed);
   // 밤엔 시야가 준다(낮=영향 없음). vision 형질이 높을수록 밤에도 잘 본다 → 야행성 틈새(큰 눈).
-  const vision = SIM.visionBase * (0.4 + t.vision) * nightVisionFactor(world.daylight, t.vision);
+  const vision =
+    SIM.visionBase *
+    (0.4 + t.vision) *
+    nightVisionFactor(world.daylight, t.vision) *
+    grassVisionFactor(world, e.x, e.y, t.vision);
   const drain = SIM.metabolismDrain * (0.5 + t.metabolism);
   const maxAge = SIM.baseMaxAge;
   // 식성 구간: 초식(<0.35) 식물만 / 잡식(0.35~0.7) 둘 다 / 육식(>0.7) 사냥만.
@@ -459,6 +463,15 @@ export function makeFovTest(e: Entity): (tx: number, ty: number) => boolean {
 export function nightVisionFactor(daylight: number, vision: number): number {
   const nightMin = SIM.nightVisionFloor + SIM.nightVisionBonus * vision;
   return nightMin + (1 - nightMin) * daylight;
+}
+
+/**
+ * 수풀 시야 배율 — 수풀 안이면 시야가 준다(vision 0 → grassVisionFloor 배). vision 형질이 높을수록
+ * 감쇠가 사라진다(vision 1 이면 거의 1.0). 수풀 밖이면 1.0. 시야가 지형에서 가치를 갖게 하는 지점.
+ */
+export function grassVisionFactor(world: World, x: number, y: number, vision: number): number {
+  if (!world.terrain.isGrass(x, y)) return 1;
+  return Math.min(1, SIM.grassVisionFloor + SIM.grassVisionBonus * vision);
 }
 
 /** (dx,dy) 를 길이 len 으로 정규화. 0 벡터는 0 그대로. */

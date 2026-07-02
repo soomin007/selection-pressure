@@ -9,22 +9,24 @@
 
 import type { Rng } from "@/sim/rng";
 
-/** 타일 종류. 0 바다 · 1 육지 · 2 산. (숫자라 Uint 배열로도 가볍게 다룰 수 있다.) */
-export type TileKind = 0 | 1 | 2;
-export const TILE = { water: 0, land: 1, mountain: 2 } as const;
+/** 타일 종류. 0 바다 · 1 육지 · 2 산 · 3 수풀. (수풀은 통행은 육지와 같되 시야를 가린다.) */
+export type TileKind = 0 | 1 | 2 | 3;
+export const TILE = { water: 0, land: 1, mountain: 2, grass: 3 } as const;
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 export interface TerrainOptions {
   /** 표고가 이보다 낮으면 바다. (정규화된 표고 기준) */
   waterLevel: number;
+  /** 표고가 waterLevel~이 사이(물가 저지대)면 수풀. 이보다 높으면 트인 육지. */
+  grassLevel: number;
   /** 표고가 이보다 높으면 산. */
   mountainLevel: number;
   /** 표고 노이즈 블러 횟수 — 많을수록 큰 대륙/바다 덩어리. */
   blurPasses: number;
 }
 
-const DEFAULTS: TerrainOptions = { waterLevel: 0.32, mountainLevel: 0.76, blurPasses: 4 };
+const DEFAULTS: TerrainOptions = { waterLevel: 0.32, grassLevel: 0.46, mountainLevel: 0.76, blurPasses: 4 };
 
 export class Terrain {
   readonly cols: number;
@@ -78,7 +80,15 @@ export class Terrain {
     for (let i = 0; i < f.length; i++) {
       const e = clamp01(((f[i] ?? 0.5) - lo) / span);
       elevation[i] = e;
-      tiles[i] = e < opt.waterLevel ? TILE.water : e > opt.mountainLevel ? TILE.mountain : TILE.land;
+      // 낮을수록 바다 → 물가 저지대 수풀 → 트인 육지 → 높으면 산.
+      tiles[i] =
+        e < opt.waterLevel
+          ? TILE.water
+          : e > opt.mountainLevel
+            ? TILE.mountain
+            : e < opt.grassLevel
+              ? TILE.grass
+              : TILE.land;
     }
     return new Terrain(cols, rows, cellSize, elevation, tiles);
   }
@@ -103,6 +113,11 @@ export class Terrain {
 
   isMountain(x: number, y: number): boolean {
     return this.kindAt(x, y) === TILE.mountain;
+  }
+
+  /** 이 좌표가 수풀인가 — 수풀 안에선 시야가 가려진다(behavior 의 시야 계산에서 참조). */
+  isGrass(x: number, y: number): boolean {
+    return this.kindAt(x, y) === TILE.grass;
   }
 
   /**
