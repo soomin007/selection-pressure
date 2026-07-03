@@ -33,6 +33,16 @@
   `gh api --method POST repos/<owner>/<repo>/pages -f build_type=workflow`
   (Git Bash 는 leading slash 를 경로로 오인하니 슬래시 없이). 그 후 워크플로 재실행.
 
+### GitHub Pages 배포가 "Deployment failed, try again later"로 계속 실패(배포 stuck) → 옛 버전만 뜸
+- 증상: 빌드(artifact 생성)는 성공하는데 `deploy-pages` 단계가 "Deployment failed, try again later"로
+  실패. 여러 커밋 동안 반복 → 최신 코드가 사이트에 안 올라가고 옛 버전만 뜬다(폰·시크릿 창 모두). "새
+  기능이 화면에 안 보인다"를 코드/캐시 문제로 오해하기 쉽다(실제론 배포가 안 된 것).
+- 원인: 이전 Pages 배포가 GitHub 백엔드에서 stuck. 특히 짧은 간격으로 여러 번 push 하면(concurrency
+  `cancel-in-progress` 로 cancelled 가 쌓임) 배포 큐가 엉켜 이후 배포가 전부 거부된다.
+- 재발 방지책: **"안 보인다"는 피드백이 오면 코드/캐시보다 `gh run list` 로 최근 Deploy 성공 여부부터
+  본다.** 실패면 `gh run rerun <run-id> --failed`(deploy job만 재실행)로 대개 풀린다. 여러 커밋을 몰아
+  push 하지 말고 하나씩 배포를 확인. 지속되면 `gh api repos/<o>/<r>/pages` 로 `build_type=workflow` 확인.
+
 ### sim 행동을 바꾸면 개체 수 스케일이 변해 절대 기준 밸런스 테스트가 깨진다
 - 증상: 이동 로직(관성/목표 고정)을 매끄럽게 했더니 채집 효율이 올라 개체 수가 전반 상승,
   한파 대멸종 필터의 절대 통과기준(저대사<10) 테스트가 실패(저대사가 14로 생존).
