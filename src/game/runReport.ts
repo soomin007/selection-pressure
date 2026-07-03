@@ -29,7 +29,7 @@ const HIGH_ADJ: Record<AdjKey, string> = {
   swimming: "헤엄치는",
   echo: "초음파로 듣는",
   wings: "하늘을 나는",
-  venom: "독을 뿜는",
+  venom: "독을 지닌",
   ranged: "멀리서 치는",
 };
 const LOW_ADJ: Record<AdjKey, string> = {

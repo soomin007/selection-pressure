@@ -390,20 +390,21 @@ describe("지형 이동 차단 (P1 결합)", () => {
 });
 
 describe("전투 형질 (P5)", () => {
-  it("독침 종은 먹잇감에 독을 걸며(약화시켜) 사냥하고 자생한다", () => {
-    // 공격력이 약해도(attack 20) 독을 쌓아 약해진 먹이를 잡는다(즉사 확률에 독 누적이 기여).
+  it("방어 독 — 독 지닌 먹이를 삼킨 포식자가 중독된다(잡아먹으면 손해)", () => {
+    // 독 지닌 초식(피식자)을 야생 포식자가 잡아먹으면 독이 옮아 포식자가 중독된다(독개구리·독뱀).
     const g = defaultGenome();
-    g.traits.diet = 65; // 육식쪽 잡식(사냥+식물로 자생)
-    g.traits.venom = 100;
-    g.traits.attack = 20;
+    g.traits.diet = 20; // 초식(피식자)
+    g.traits.venom = 100; // 강한 방어 독
     const w = new World("env-1", W, H, g);
-    let maxPoison = 0;
+    let maxPredPoison = 0;
     for (let i = 0; i < 1500; i++) {
       w.step();
-      for (const e of w.entities) if (e.poison > maxPoison) maxPoison = e.poison;
+      for (const e of w.entities) {
+        if (!e.species.isPlayer && e.poison > maxPredPoison) maxPredPoison = e.poison;
+      }
     }
-    expect(maxPoison).toBeGreaterThan(0); // 독이 실제로 먹잇감에 걸린다
-    expect(w.playerPopulation).toBeGreaterThan(0); // 독으로 사냥하며 자생
+    expect(maxPredPoison).toBeGreaterThan(0); // 독먹이를 삼킨 포식자가 중독된다
+    expect(w.playerPopulation).toBeGreaterThan(0); // 독으로 포식을 막아 자생
   });
 
   it("원거리 종은 늘어난 사거리로 사냥하며 자생한다", () => {

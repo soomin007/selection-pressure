@@ -72,11 +72,19 @@ export const PRESET_CARDS: readonly Card[] = [
   },
   {
     id: "preset_venom",
-    name: "독 사냥꾼",
-    desc: "물어서 독으로 사냥합니다. 공격력은 약해도 독이 먹잇감을 서서히 쓰러뜨립니다.",
-    set: { diet: 60, venom: 70 },
-    effects: { attack: -6 },
+    name: "독 살갗",
+    desc: "몸에 독이 있어 잡아먹으려는 포식자가 중독됩니다. 잘 안 잡아먹히는 초식 종으로 버팁니다.",
+    set: { diet: 30, venom: 70 },
+    effects: { herding: 8 },
     color: 0x9c27b0, // 독 보라 — 기존 프리셋 색과 구분
+  },
+  {
+    id: "preset_ranged",
+    name: "원거리 사냥꾼",
+    desc: "멀리서 먼저 찌릅니다. 먹잇감이 도망·반격하기 전에 타격해 안전하게 사냥합니다.",
+    set: { diet: 60, ranged: 70 },
+    effects: { vision: 8 },
+    color: 0x4aa0a0, // 청록빛 — 기존 프리셋 색과 구분
   },
 ];
 
@@ -355,18 +363,18 @@ export const CARD_POOL: readonly Card[] = [
     effects: { echo: 34, vision: -30 },
   },
 
-  // 전투 형질 (P5) — 독침(물면 독이 퍼져 약해짐)·원거리(사거리). 기본 0 이라 큰 값(카드로 켜야 전투가 바뀐다).
+  // 전투 형질 (P5) — 독침(방어 독: 잡아먹으면 포식자 중독)·원거리(사거리). 기본 0 이라 큰 값(카드로 켜야 바뀐다).
   {
     id: "venom_fang",
-    name: "독니",
-    desc: "물면 독이 퍼져 먹잇감이 서서히 약해집니다. 공격력이 약해도 독으로 잡습니다.",
+    name: "독 살갗",
+    desc: "몸에 독이 있어 잡아먹으려는 포식자가 중독됩니다. 잡아먹기 꺼려지는 먹이가 됩니다.",
     effects: { venom: 42 },
   },
   {
     id: "venom_gland",
     name: "독샘",
-    desc: "독이 더 강해집니다. 독에 완전히 의지해 약하게 물어도 치명적입니다.",
-    effects: { venom: 34, attack: -12 },
+    desc: "독이 더 강해집니다. 당신을 삼킨 포식자는 크게 중독돼 위험에 빠집니다.",
+    effects: { venom: 40 },
   },
   {
     id: "long_horn",
@@ -376,9 +384,9 @@ export const CARD_POOL: readonly Card[] = [
   },
   {
     id: "spit",
-    name: "독침 뱉기",
-    desc: "멀리서 독침을 뱉습니다. 사거리가 늘고 독도 함께 오릅니다(원거리 독).",
-    effects: { ranged: 28, venom: 20 },
+    name: "독 가시",
+    desc: "몸에 독가시가 돋아 멀리까지 찌릅니다. 사거리가 늘고, 잡아먹는 포식자는 가시독에 중독됩니다.",
+    effects: { ranged: 26, venom: 22 },
   },
 ];
 

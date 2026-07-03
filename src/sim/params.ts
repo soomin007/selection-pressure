@@ -43,7 +43,9 @@ export const SIM = {
   seaFoodPatches: 55, // 바다 타일에 놓는 바다 먹이 수(소수 개체에 맞춤). 독립 rng 라 메인 밸런스 영향 최소
   swimThreshold: 65, // 수영 형질이 이 이상이면 물에 들어가고 바다 먹이를 먹는다(기본 50 → 카드 1장으로 도달)
   aquaticOnlyThreshold: 90, // 수영이 이 이상이면 물 전용(육지에 못 들어감) — 진짜 물고기. 65~90 은 수륙양용
-  mountainFoodPatches: 30, // 산 타일에 놓는 고산 먹이 수(날개 종만 먹는 무경쟁 틈새). 독립 rng. 산은 바다보다 좁아 적게
+  mountainFoodPatches: 10, // 산 보물 수 — 흔한 먹이가 아니라 희소한 대박(날개 종만). 산엔 많은 먹이가 없다
+  mountainTreasureSpawn: 3, // 보물을 먹으면 즉시 태어나는 동족 수(무리가 확 불어나는 대박 보상)
+  mountainTreasureRegrow: 4, // 보물 재생은 일반 먹이의 이 배수만큼 느리다(귀하니까)
   flyThreshold: 65, // 날개 형질이 이 이상이면 비행(산·물을 날아 넘고 고산 먹이를 먹는다). swimThreshold 의 하늘 대칭
 
   // --- 시야각(부채꼴) (P3 감각) ---
@@ -108,11 +110,10 @@ export const SIM = {
   // --- 전투 형질 (P5) ---
   // 원거리(ranged): 사거리 = attackRange + ranged01 × rangedBonus. 멀리서 먼저 쳐 선제 사냥.
   rangedBonus: 22, // 원거리 100 이면 사거리 12 → 34(약 3배). 프로브로 튠
-  // 독침(venom): 사거리 안에서 물면 매 틱 독을 주입(누적). poison 풀은 매 틱 venomTickDamage 만큼
-  // 에너지를 깎으며 소진 → 약공격도 독으로 서서히 죽인다. 프로브로 튠(압도·무의미 사이).
-  venomOnHit: 8, // 사거리 안에서 무는 틱마다 거는 독량(× venom01). 여러 틱 물면 누적
-  venomTickDamage: 1.5, // 중독 상태에서 틱당 깎이는 에너지(약한 DoT — 도망친 먹이를 서서히 마무리)
-  venomKillBonus: 2.5, // 쌓인 독(poison/100)이 즉사 확률에 더하는 가중 — 독으로 약해진 먹이는 잡기 쉽다
+  // 독침(venom) = 방어 독: 독 지닌 먹이를 문 포식자가 중독된다(잡아먹으면 손해 — 독개구리·독뱀). poison
+  // 풀은 매 틱 venomTickDamage 만큼 포식자 에너지를 깎으며 소진. 프로브로 튠(포식 방어가 되되 압도 안 하게).
+  venomOnHit: 100, // 독먹이를 물 때 포식자에 쌓이는 독량(× 먹이 venom01). 즉사로 삼켜도 크게 중독
+  venomTickDamage: 15.0, // 중독 상태에서 틱당 깎이는 포식자 에너지(독먹이를 삼킨 대가)
 
   // --- 행동/형질 스케일 ---
   eatRadius: 9,

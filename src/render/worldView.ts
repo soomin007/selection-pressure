@@ -602,11 +602,12 @@ export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: n
     const horn = 6 + ranged01 * 16;
     g.poly([len - 1, -2, len + horn, 0, len - 1, 2]).fill({ color: darken(color, 0.68) });
   }
-  // 독침 (venom) — 앞쪽에 보라 독니/독액 방울 한 쌍. 독 종을 한눈에(공격 색과 대비되는 독 보라).
+  // 독침 (venom) = 방어 독 — 몸에 보라 독 반점(경고색: 잡아먹으면 중독). 독 지닌 종을 한눈에.
   if (venom01 > 0.1) {
-    const vr = 1.6 + venom01 * 2.4;
-    g.circle(len * 0.82, wid * 0.28, vr).fill({ color: 0xc030e0 });
-    g.circle(len * 0.82, -wid * 0.28, vr).fill({ color: 0xc030e0 });
+    const vr = 1.4 + venom01 * 2;
+    g.circle(-len * 0.25, wid * 0.35, vr).fill({ color: 0xc030e0 });
+    g.circle(len * 0.3, -wid * 0.4, vr).fill({ color: 0xc030e0 });
+    g.circle(len * 0.05, wid * 0.5, vr * 0.8).fill({ color: 0xc030e0 });
   }
 
   // 고해상도로 생성(작은 스프라이트가 뭉개지지 않게 슈퍼샘플).

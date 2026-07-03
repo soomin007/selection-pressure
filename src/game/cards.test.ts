@@ -23,8 +23,8 @@ describe("드래프트", () => {
 });
 
 describe("시작 프리셋", () => {
-  it("7종이고 id 가 고유하다", () => {
-    expect(PRESET_CARDS.length).toBe(7);
+  it("8종이고 id 가 고유하다", () => {
+    expect(PRESET_CARDS.length).toBe(8);
     const ids = PRESET_CARDS.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -56,13 +56,22 @@ describe("시작 프리셋", () => {
     expect(g.traits.wings).toBeGreaterThanOrEqual(SIM.flyThreshold);
   });
 
-  it("독 사냥꾼은 시작부터 독을 지닌다(venom > 0)", () => {
+  it("독 살갗은 시작부터 독을 지닌다(venom > 0)", () => {
     const v = PRESET_CARDS.find((c) => c.id === "preset_venom");
     expect(v).toBeDefined();
     if (!v) return;
     const g = defaultGenome(); // venom 0
     applyCard(g, v);
     expect(g.traits.venom).toBeGreaterThan(0);
+  });
+
+  it("원거리 사냥꾼은 시작부터 사거리를 지닌다(ranged > 0)", () => {
+    const r = PRESET_CARDS.find((c) => c.id === "preset_ranged");
+    expect(r).toBeDefined();
+    if (!r) return;
+    const g = defaultGenome(); // ranged 0
+    applyCard(g, r);
+    expect(g.traits.ranged).toBeGreaterThan(0);
   });
 
   it("적용하면 식성 구간이 의도대로(초식 무리=초식, 육식 사냥꾼=육식)", () => {

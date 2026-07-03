@@ -136,17 +136,10 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     // 원거리(ranged): 사거리 = 근접 + 형질. 멀리서 먼저 쳐 먹잇감이 도망·반격하기 전에 타격.
     const atkRange = SIM.attackRange + (t.ranged / TRAIT_MAX) * SIM.rangedBonus;
     if (dx * dx + dy * dy <= atkRange * atkRange) {
-      // 독침(venom): 무는 틱마다 상대에 독을 주입(누적) + 독 출처를 기록(독사 시 내가 에너지 획득).
-      if (t.venom > 0) {
-        prey.poison += SIM.venomOnHit * (t.venom / TRAIT_MAX);
-        prey.poisonSource = e;
-      }
-      // 즉사 확률 — 공격력(즉발) + 독으로 약해진 정도(누적). 독 종은 attack 이 약해도 여러 번 물어 독을
-      // 쌓아 약해진 먹이를 잡는다(attack=즉발 / venom=누적 트레이드오프). 독은 매 틱 DoT 도 준다(아래).
+      // 즉사 확률 — 공격력 기반(독은 방어라 사냥 성공과 무관).
+      const preyVenom = prey.genome.traits.venom;
       const chance = clamp(
-        SIM.killChanceBias +
-          ((t.attack - prey.genome.traits.attack) / TRAIT_MAX) * SIM.killChanceScale +
-          (prey.poison / TRAIT_MAX) * SIM.venomKillBonus,
+        SIM.killChanceBias + ((t.attack - prey.genome.traits.attack) / TRAIT_MAX) * SIM.killChanceScale,
         0.05,
         0.95,
       );
@@ -154,7 +147,10 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         prey.alive = false;
         world.recordDeath(prey.species, "predation");
         world.emit("kill", prey.x, prey.y); // 연출: 잡아먹힘(빨강 터짐)
-        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.predationEnergy);
+        // 방어 독(venom): 독먹이를 삼키면(잡으면) 포식자가 중독되고 영양도 못 얻는다 — 독개구리·독뱀을
+        // 삼킨 대가. venom 이 강할수록 독은 크게 옮고 사냥 이득은 준다("잡아먹으면 손해"의 포식 방어).
+        if (preyVenom > 0) e.poison += SIM.venomOnHit * (preyVenom / TRAIT_MAX);
+        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX));
         e.targetPrey = null;
       }
     }
@@ -163,11 +159,28 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     const dx = food.x - e.x;
     const dy = food.y - e.y;
     if (dx * dx + dy * dy <= SIM.eatRadius * SIM.eatRadius) {
-      e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy);
+      if (food.mountainous) {
+        // 산 보물 — 에너지 만땅 + 동족 여럿 즉시 태어남(무리가 확 불어나는 대박). 희소한 보상(날개 종만).
+        e.energy = SIM.maxEnergy;
+        for (let k = 0; k < SIM.mountainTreasureSpawn; k++) {
+          if (world.entities.length + newborns.length >= world.cap) break;
+          const bx = e.x + world.rng.range(-12, 12);
+          const by = e.y + world.rng.range(-12, 12);
+          const spot = world.terrain.nearestPassable(bx, by, canSwim, canLand, canFly);
+          newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, SIM.startEnergy));
+          world.emit("birth", spot.x, spot.y); // 연출: 대박 탄생(초록 반짝 여럿)
+        }
+        food.regrowTimer = Math.round(
+          SIM.foodRegrowTicks * world.foodRegrowMultiplier * SIM.mountainTreasureRegrow,
+        );
+      } else {
+        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy);
+        food.regrowTimer = Math.round(SIM.foodRegrowTicks * world.foodRegrowMultiplier);
+      }
       food.available = false;
-      food.regrowTimer = Math.round(SIM.foodRegrowTicks * world.foodRegrowMultiplier);
       e.targetFood = null;
-      if (e.species.isPlayer) world.playerFoodEaten += 1; // 레벨업 경험치 소스(내 종 섭취만)
+      // 레벨업 경험치 소스(내 종 섭취만) — 보물은 크게(즉시 레벨업 쪽으로).
+      if (e.species.isPlayer) world.playerFoodEaten += food.mountainous ? SIM.mountainTreasureSpawn : 1;
     }
   }
 
@@ -189,10 +202,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   if (e.energy <= 0) {
     let cause: DeathCause = "starve";
     if (poisonDmg > 0 && poisonDmg >= coldDrain && poisonDmg >= heatDrain && poisonDmg >= drain) {
-      cause = "venom";
-      // 독으로 죽으면 마지막에 문 포식자가 먹이 에너지를 얻는다(즉사와 동등 — 독 종의 사냥 이득).
-      const src = e.poisonSource;
-      if (src && src.alive) src.energy = Math.min(SIM.maxEnergy, src.energy + SIM.predationEnergy);
+      cause = "venom"; // 방어 독으로 중독사 — 독먹이를 삼킨 포식자가 되갚음당해 죽는다
     } else if (coldDrain >= heatDrain && coldDrain > drain) cause = "cold";
     else if (heatDrain > coldDrain && heatDrain > drain) cause = "heat";
     e.alive = false;
