@@ -128,6 +128,27 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     e.vy = -e.vy;
   }
 
+  // --- 끼임 감지: 목표가 있는데 이번 스텝 거의 못 움직였으면(물벽 등에 막힘) 카운트. 오래 막히면 도달
+  // 불가로 보고 목표를 버려 다른 먹이를 찾게 한다 — 물가 먹이에 억지로 들이대다 갇히는 것을 푼다. ---
+  if ((e.targetFood || e.targetPrey) && !fleeing) {
+    const dxm = e.x - e.prevX;
+    const dym = e.y - e.prevY;
+    if (dxm * dxm + dym * dym < SIM.stuckMinMove * SIM.stuckMinMove) {
+      e.stuckTicks += 1;
+      if (e.stuckTicks >= SIM.stuckLimit) {
+        e.targetFood = null;
+        e.targetPrey = null;
+        e.path.length = 0;
+        e.pathGoalTile = -1;
+        e.stuckTicks = 0;
+      }
+    } else {
+      e.stuckTicks = 0;
+    }
+  } else {
+    e.stuckTicks = 0;
+  }
+
   // --- 섭취 / 사냥 (쫓던 목표가 사정거리면) ---
   if (!fleeing && e.targetPrey && e.targetPrey.alive) {
     const prey = e.targetPrey;

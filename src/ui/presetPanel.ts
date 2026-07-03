@@ -91,7 +91,7 @@ export function createPresetPanel(
   traitsEl.style.cssText = "display:grid; grid-template-columns:1fr 1fr; gap:3px 12px; margin-top:12px;";
   // 외형 읽는 법 — 형태가 무슨 형질을 뜻하는지(외형만으론 미묘하니 말로 거든다).
   const hintEl = document.createElement("div");
-  hintEl.textContent = "몸이 길수록 빠르고, 눈이 클수록 멀리 봅니다. 등가시는 공격력, 뾰족한 입은 사냥꾼.";
+  hintEl.textContent = "날렵한 몸은 빠른 발, 큰 눈은 넓은 시야. 등의 톱니 능선은 힘, 날카로운 주둥이는 사냥꾼입니다.";
   hintEl.style.cssText = "font-size:11px; color:#7b8595; line-height:1.5; margin-top:10px; word-break:keep-all;";
 
   const selectBtn = document.createElement("button");

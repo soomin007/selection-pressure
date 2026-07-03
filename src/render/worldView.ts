@@ -503,6 +503,14 @@ function darken(color: number, f: number): number {
   return (r << 16) | (g << 8) | b;
 }
 
+/** 색을 흰색 쪽으로 f(0~1)만큼 섞는다(하이라이트/입체감용). */
+function lighten(color: number, f: number): number {
+  const r = Math.round(((color >> 16) & 0xff) + (255 - ((color >> 16) & 0xff)) * f);
+  const g = Math.round(((color >> 8) & 0xff) + (255 - ((color >> 8) & 0xff)) * f);
+  const b = Math.round((color & 0xff) + (255 - (color & 0xff)) * f);
+  return (r << 16) | (g << 8) | b;
+}
+
 // 게놈을 텍스처 캐시 키로 만든다 — 형질을 0.05(=1/20) 단위로 반올림해 서명. 같은 세대(같은 게놈)면
 // 같은 키라 텍스처를 재사용하고, 레벨업으로 형질이 바뀌면 새 서명 = 새 텍스처(그때 태어난 세대 모습).
 function genomeSignature(g: Genome): string {
@@ -529,79 +537,114 @@ export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: n
   const venom01 = t.venom / TRAIT_MAX;
   const ranged01 = t.ranged / TRAIT_MAX;
   const g = new Graphics();
-  const dark = darken(color, 0.55);
-  const fin = darken(color, 0.72); // 지느러미·꼬리(몸통보다 어둡게)
+  const shade = darken(color, 0.5); // 윤곽선·그림자
+  const belly = darken(color, 0.72); // 배(아래) 그림자
+  const glow = lighten(color, 0.42); // 등(위) 하이라이트
+  const fin = darken(color, 0.68); // 지느러미·꼬리
 
   const len = 8 + speed01 * 10; // 몸 반길이 (빠를수록 길쭉·날렵 — 8~18)
   const wid = 8.5 - speed01 * 4; // 몸 반너비 (느릴수록 통통 — 8.5~4.5)
 
-  // 날개 (비행) — 몸통 양옆으로 펼친 한 쌍. 맨 뒤(아래 레이어)에 깔리게 먼저 그린다.
+  // 날개 (비행) — 맨 뒤 레이어. 곡선으로 펼친 한 쌍(펄럭이는 새 실루엣).
   if (wing01 > 0.05) {
-    const wl = wid + 6 + wing01 * 13; // 날개가 바깥으로 뻗는 폭 (날개 클수록 넓게)
-    const wc = darken(color, 0.82); // 몸통보다 살짝 어둡게(그늘진 날개 느낌)
+    const wl = wid + 6 + wing01 * 13;
     for (const s of [-1, 1]) {
-      // 위(-1)·아래(+1) 대칭 날개 — 앞쪽으로 살짝 스윕한 삼각형(나는 새 실루엣).
-      g.poly([len * 0.35, s * wid * 0.5, -len * 0.15, s * wl, -len * 0.55, s * wid * 0.6]).fill({
-        color: wc,
-      });
+      g.moveTo(len * 0.4, s * wid * 0.4)
+        .quadraticCurveTo(len * 0.05, s * wl, -len * 0.2, s * wl * 0.85)
+        .quadraticCurveTo(-len * 0.5, s * wl * 0.45, -len * 0.55, s * wid * 0.5)
+        .fill({ color: darken(color, 0.8) });
     }
   }
 
-  // 지느러미 (수영) — 수영 종(60↑)에만. 꼬리(뒤) 부채꼴 + 등(위) 삼각으로 물고기 실루엣.
+  // 꼬리지느러미 (수영) — 수영 종(60↑)에만. 뒤로 뻗은 부채꼴 꼬리(물고기 실루엣).
   if (swim01 > 0.6) {
-    const f = (swim01 - 0.6) / 0.4; // 0.6~1 → 0~1
-    g.poly([-len, 0, -len - (5 + f * 8), -wid * 0.9 - f * 4, -len - (5 + f * 8), wid * 0.9 + f * 4]).fill({
-      color: fin,
-    });
-    g.poly([-len * 0.1, -wid, len * 0.25, -wid - (4 + f * 7), len * 0.4, -wid]).fill({ color: fin });
+    const f = (swim01 - 0.6) / 0.4;
+    const tl = 6 + f * 9;
+    g.moveTo(-len * 0.8, 0)
+      .quadraticCurveTo(-len - tl, -wid - f * 5, -len - tl * 0.7, -wid * 0.25)
+      .quadraticCurveTo(-len - tl, 0, -len - tl * 0.7, wid * 0.25)
+      .quadraticCurveTo(-len - tl, wid + f * 5, -len * 0.8, 0)
+      .fill({ color: fin });
   }
 
-  // 등가시 (공격력) — 위쪽 삼각형들 (더 크고 뾰족하게)
-  const spikes = Math.round(attack01 * 5);
-  for (let s = 0; s < spikes; s++) {
-    const px = -len * 0.5 + (s / Math.max(1, spikes - 1)) * len;
-    const h = 4 + attack01 * 9;
-    g.poly([px - 3, -wid, px, -wid - h, px + 3, -wid]).fill({ color: dark });
+  // 몸통 — 유선형(머리 둥글고 꼬리로 좁아짐). 곡선으로 유기적 실루엣 + 윤곽선.
+  g.moveTo(len, 0)
+    .quadraticCurveTo(len * 0.8, -wid, len * 0.05, -wid)
+    .quadraticCurveTo(-len * 0.55, -wid * 0.95, -len, -wid * 0.28)
+    .quadraticCurveTo(-len * 1.06, 0, -len, wid * 0.28)
+    .quadraticCurveTo(-len * 0.55, wid * 0.95, len * 0.05, wid)
+    .quadraticCurveTo(len * 0.8, wid, len, 0)
+    .fill({ color })
+    .stroke({ color: shade, width: 1.4, alpha: 0.9 });
+
+  // 배 그림자(아래 절반 어둡게) + 등 하이라이트(위쪽 밝은 띠) — 빛 받는 입체감.
+  g.moveTo(len * 0.85, wid * 0.2)
+    .quadraticCurveTo(len * 0.05, wid, -len * 0.7, wid * 0.5)
+    .quadraticCurveTo(-len * 0.2, wid * 0.35, len * 0.85, wid * 0.2)
+    .fill({ color: belly, alpha: 0.5 });
+  g.moveTo(len * 0.7, -wid * 0.4)
+    .quadraticCurveTo(len * 0.05, -wid * 0.82, -len * 0.5, -wid * 0.42)
+    .quadraticCurveTo(len * 0.05, -wid * 0.55, len * 0.7, -wid * 0.4)
+    .fill({ color: glow, alpha: 0.45 });
+
+  // 등지느러미 능선 (공격력) — 힘셀수록 날카로운 톱니 능선(가시 대신 유기적).
+  if (attack01 > 0.08) {
+    const h = 3 + attack01 * 9;
+    const teeth = 3;
+    g.moveTo(len * 0.45, -wid * 0.8);
+    for (let s = 1; s <= teeth; s++) {
+      const px = len * 0.45 - (s / teeth) * len * 0.95;
+      g.lineTo(px + len * 0.12, -wid - h).lineTo(px, -wid * 0.72);
+    }
+    g.fill({ color: shade });
   }
 
-  // 몸통
-  g.ellipse(0, 0, len, wid).fill({ color }).stroke({ color: dark, width: 2 });
+  // 원거리 창 (ranged) — 앞으로 길게 뻗은 창/부리(멀리 닿는 무기). 크고 밝은 촉으로 뚜렷하게.
+  if (ranged01 > 0.1) {
+    const horn = 9 + ranged01 * 20;
+    g.moveTo(len - 1, -3)
+      .quadraticCurveTo(len + horn * 0.6, -1.5, len + horn, 0)
+      .quadraticCurveTo(len + horn * 0.6, 1.5, len - 1, 3)
+      .fill({ color: lighten(shade, 0.25) });
+    g.moveTo(len + horn * 0.45, -1.2)
+      .lineTo(len + horn, 0)
+      .lineTo(len + horn * 0.45, 1.2)
+      .fill({ color: 0xffffff });
+  }
 
-  // 초음파 귀 (echo) — 머리 위 큰 뾰족 귀 한 쌍(박쥐). 초음파로 사는 종을 한눈에.
+  // 머리 앞부분 (식성)
+  if (t.diet > SIM.dietGrazeMax) {
+    // 육식 — 날카로운 주둥이 + 흰 이빨
+    const snout = 6 + diet01 * 8;
+    g.moveTo(len * 0.55, -wid * 0.5)
+      .quadraticCurveTo(len + snout, -wid * 0.12, len + snout, 0)
+      .quadraticCurveTo(len + snout, wid * 0.12, len * 0.55, wid * 0.5)
+      .fill({ color: darken(color, 0.9) });
+    g.poly([len + snout * 0.55, -1.6, len + snout, 0, len + snout * 0.55, 1.6]).fill({ color: 0xffffff });
+  } else if (t.diet <= SIM.dietHuntMin) {
+    // 초식 — 부드러운 귀 두 개(길쭉 타원)
+    g.ellipse(len * 0.28, -wid * 0.9, 2.4, 4.2).fill({ color }).stroke({ color: shade, width: 0.8 });
+    g.ellipse(len * 0.28 + 5.5, -wid * 0.9, 2.4, 4.2).fill({ color }).stroke({ color: shade, width: 0.8 });
+  }
+
+  // 초음파 귀 (echo) — 머리 위 큰 뾰족 귀 한 쌍(박쥐).
   if (echo01 > 0.1) {
-    const eh = 5 + echo01 * 12; // 귀 높이
+    const eh = 5 + echo01 * 12;
     for (const s of [0, 1]) {
-      const bx = len * 0.32 + s * 5;
-      g.poly([bx - 3, -wid * 0.8, bx + 1, -wid * 0.8 - eh, bx + 4, -wid * 0.8]).fill({ color: dark });
-      g.poly([bx - 1, -wid * 0.8, bx + 1, -wid * 0.8 - eh * 0.65, bx + 2.5, -wid * 0.8]).fill({ color });
+      const bx = len * 0.28 + s * 5;
+      g.moveTo(bx - 3, -wid * 0.8).lineTo(bx + 1, -wid * 0.8 - eh).lineTo(bx + 4, -wid * 0.8).fill({ color: shade });
+      g.moveTo(bx - 1, -wid * 0.8).lineTo(bx + 1, -wid * 0.8 - eh * 0.6).lineTo(bx + 2.5, -wid * 0.8).fill({ color });
     }
   }
 
-  // 식성별 앞부분
-  if (t.diet > SIM.dietGrazeMax) {
-    // 육식 — 길고 뾰족한 주둥이 + 이빨
-    const snout = 8 + diet01 * 9;
-    g.poly([len - 2, -wid * 0.55, len - 2 + snout, 0, len - 2, wid * 0.55]).fill({ color });
-    g.poly([len + snout * 0.5, -2, len + snout, 0, len + snout * 0.5, 2]).fill({ color: 0xffffff });
-  } else if (t.diet > SIM.dietHuntMin) {
-    // 잡식 — 둥근 주둥이
-    g.circle(len, 0, wid * 0.55).fill({ color });
-  } else {
-    // 초식 — 위쪽 둥근 귀 두 개
-    g.circle(len * 0.2, -wid, 3.2).fill({ color });
-    g.circle(len * 0.2 + 6, -wid, 3.2).fill({ color });
-  }
+  // 눈 (시야) — 생동감: 흰자 + 동공 + 반짝 하이라이트. 시야 클수록 큰 눈.
+  const eye = 2 + vision01 * 4.5;
+  const ex = len * 0.55;
+  const ey = -wid * 0.32;
+  g.circle(ex, ey, eye).fill({ color: 0xffffff }).stroke({ color: shade, width: 0.6 });
+  g.circle(ex + eye * 0.22, ey, eye * 0.55).fill({ color: 0x10141a });
+  g.circle(ex + eye * 0.5, ey - eye * 0.32, eye * 0.24).fill({ color: 0xffffff });
 
-  // 눈 (시야) — 시야 클수록 큰 눈(2~7)
-  const eye = 2 + vision01 * 5;
-  g.circle(len * 0.5, -wid * 0.35, eye).fill({ color: 0xffffff });
-  g.circle(len * 0.5 + eye * 0.3, -wid * 0.35, eye * 0.55).fill({ color: 0x0a0a0a });
-
-  // 원거리 뿔 (ranged) — 앞으로 길게 뻗은 뿔/침(멀리 닿는 무기). 원거리 종을 한눈에.
-  if (ranged01 > 0.1) {
-    const horn = 6 + ranged01 * 16;
-    g.poly([len - 1, -2, len + horn, 0, len - 1, 2]).fill({ color: darken(color, 0.68) });
-  }
   // 독침 (venom) = 방어 독 — 몸에 보라 독 반점(경고색: 잡아먹으면 중독). 독 지닌 종을 한눈에.
   if (venom01 > 0.1) {
     const vr = 1.4 + venom01 * 2;
