@@ -516,59 +516,81 @@ function genomeSignature(g: Genome): string {
 export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: number): Texture {
   const t = genome.traits;
   // 형질은 0~100 저장 → 외형 계산은 0~1 로 정규화해 쓴다(식성 비교는 0~100 임계 그대로).
+  // 폰 검토라 미묘한 차이는 안 읽힌다 → 형질별 외형 폭을 크게 벌리고, 특화 형질(수영·초음파·날개)은
+  // 지느러미·큰 귀·날개로 뚜렷이 드러내 프리셋/빌드를 한눈에 구분한다.
   const speed01 = t.speed / TRAIT_MAX;
   const attack01 = t.attack / TRAIT_MAX;
   const diet01 = t.diet / TRAIT_MAX;
   const vision01 = t.vision / TRAIT_MAX;
+  const swim01 = t.swimming / TRAIT_MAX;
+  const echo01 = t.echo / TRAIT_MAX;
+  const wing01 = t.wings / TRAIT_MAX;
   const g = new Graphics();
   const dark = darken(color, 0.55);
+  const fin = darken(color, 0.72); // 지느러미·꼬리(몸통보다 어둡게)
 
-  const len = 9 + speed01 * 6; // 몸 반길이 (빠를수록 길쭉)
-  const wid = 7 - speed01 * 2.2; // 몸 반너비
+  const len = 8 + speed01 * 10; // 몸 반길이 (빠를수록 길쭉·날렵 — 8~18)
+  const wid = 8.5 - speed01 * 4; // 몸 반너비 (느릴수록 통통 — 8.5~4.5)
 
   // 날개 (비행) — 몸통 양옆으로 펼친 한 쌍. 맨 뒤(아래 레이어)에 깔리게 먼저 그린다.
-  const wing01 = t.wings / TRAIT_MAX;
   if (wing01 > 0.05) {
-    const wl = wid + 5 + wing01 * 11; // 날개가 바깥으로 뻗는 폭 (날개 클수록 넓게)
+    const wl = wid + 6 + wing01 * 13; // 날개가 바깥으로 뻗는 폭 (날개 클수록 넓게)
     const wc = darken(color, 0.82); // 몸통보다 살짝 어둡게(그늘진 날개 느낌)
     for (const s of [-1, 1]) {
       // 위(-1)·아래(+1) 대칭 날개 — 앞쪽으로 살짝 스윕한 삼각형(나는 새 실루엣).
-      g.poly([len * 0.35, s * wid * 0.5, -len * 0.1, s * wl, -len * 0.5, s * wid * 0.6]).fill({
+      g.poly([len * 0.35, s * wid * 0.5, -len * 0.15, s * wl, -len * 0.55, s * wid * 0.6]).fill({
         color: wc,
       });
     }
   }
 
-  // 등가시 (공격력) — 위쪽 삼각형들
+  // 지느러미 (수영) — 수영 종(60↑)에만. 꼬리(뒤) 부채꼴 + 등(위) 삼각으로 물고기 실루엣.
+  if (swim01 > 0.6) {
+    const f = (swim01 - 0.6) / 0.4; // 0.6~1 → 0~1
+    g.poly([-len, 0, -len - (5 + f * 8), -wid * 0.9 - f * 4, -len - (5 + f * 8), wid * 0.9 + f * 4]).fill({
+      color: fin,
+    });
+    g.poly([-len * 0.1, -wid, len * 0.25, -wid - (4 + f * 7), len * 0.4, -wid]).fill({ color: fin });
+  }
+
+  // 등가시 (공격력) — 위쪽 삼각형들 (더 크고 뾰족하게)
   const spikes = Math.round(attack01 * 5);
   for (let s = 0; s < spikes; s++) {
     const px = -len * 0.5 + (s / Math.max(1, spikes - 1)) * len;
-    const h = 4 + attack01 * 5;
+    const h = 4 + attack01 * 9;
     g.poly([px - 3, -wid, px, -wid - h, px + 3, -wid]).fill({ color: dark });
   }
 
   // 몸통
   g.ellipse(0, 0, len, wid).fill({ color }).stroke({ color: dark, width: 2 });
 
-  // 식성별 앞부분
-  if (t.diet > SIM.dietGrazeMax) {
-    // 육식 — 뾰족한 주둥이 + 이빨
-    const snout = 7 + diet01 * 7;
-    g.poly([len - 2, -wid * 0.55, len - 2 + snout, 0, len - 2, wid * 0.55]).fill({ color });
-    g.poly([len + snout * 0.5, -1.5, len + snout, 0, len + snout * 0.5, 1.5]).fill({
-      color: 0xffffff,
-    });
-  } else if (t.diet > SIM.dietHuntMin) {
-    // 잡식 — 둥근 주둥이
-    g.circle(len, 0, wid * 0.5).fill({ color });
-  } else {
-    // 초식 — 위쪽 작은 귀 두 개
-    g.circle(len * 0.2, -wid, 3).fill({ color });
-    g.circle(len * 0.2 + 6, -wid, 3).fill({ color });
+  // 초음파 귀 (echo) — 머리 위 큰 뾰족 귀 한 쌍(박쥐). 초음파로 사는 종을 한눈에.
+  if (echo01 > 0.1) {
+    const eh = 5 + echo01 * 12; // 귀 높이
+    for (const s of [0, 1]) {
+      const bx = len * 0.32 + s * 5;
+      g.poly([bx - 3, -wid * 0.8, bx + 1, -wid * 0.8 - eh, bx + 4, -wid * 0.8]).fill({ color: dark });
+      g.poly([bx - 1, -wid * 0.8, bx + 1, -wid * 0.8 - eh * 0.65, bx + 2.5, -wid * 0.8]).fill({ color });
+    }
   }
 
-  // 눈 (시야)
-  const eye = 1.8 + vision01 * 3.2;
+  // 식성별 앞부분
+  if (t.diet > SIM.dietGrazeMax) {
+    // 육식 — 길고 뾰족한 주둥이 + 이빨
+    const snout = 8 + diet01 * 9;
+    g.poly([len - 2, -wid * 0.55, len - 2 + snout, 0, len - 2, wid * 0.55]).fill({ color });
+    g.poly([len + snout * 0.5, -2, len + snout, 0, len + snout * 0.5, 2]).fill({ color: 0xffffff });
+  } else if (t.diet > SIM.dietHuntMin) {
+    // 잡식 — 둥근 주둥이
+    g.circle(len, 0, wid * 0.55).fill({ color });
+  } else {
+    // 초식 — 위쪽 둥근 귀 두 개
+    g.circle(len * 0.2, -wid, 3.2).fill({ color });
+    g.circle(len * 0.2 + 6, -wid, 3.2).fill({ color });
+  }
+
+  // 눈 (시야) — 시야 클수록 큰 눈(2~7)
+  const eye = 2 + vision01 * 5;
   g.circle(len * 0.5, -wid * 0.35, eye).fill({ color: 0xffffff });
   g.circle(len * 0.5 + eye * 0.3, -wid * 0.35, eye * 0.55).fill({ color: 0x0a0a0a });
 

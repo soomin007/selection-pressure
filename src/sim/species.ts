@@ -46,24 +46,37 @@ export function makePlayerSpecies(genome: Genome, initialCount: number): Species
  * 잡식이라 내 종(전 종류 잡식)보다 사냥을 안 하고, 위치는 내 종 보금자리 근처에 함께 태어난다.
  * 게놈은 독립 rng 로 만들어 메인 스트림(기존 밸런스)을 건드리지 않는다.
  */
-export function makeKinSpecies(id: number, rng: Rng): Species {
+// 친척이 플레이어(같은 데서 갈라진 무리)를 얼마나 닮는가.
+const KIN_MOVE_FOLLOW = 0.9; // 이동/감각 특화(수영·날개·초음파): "나는 무리/헤엄치는 무리" 정체성이라 거의 그대로
+const KIN_DIET_FOLLOW = 0.3; // 식성: 플레이어 방향을 약하게만 따른다(초식 우세 유지 — 내 종과 사냥 경쟁 완화)
+
+/**
+ * 우호적 친척 종 — 내 종과 "같은 데서 갈라진" 무리라, 시작 프리셋의 이동 방식을 닮는다(비행 프리셋이면
+ * 친척도 날고, 바다면 헤엄치고, 초음파면 초음파). 반면 **능력치(속도·공격·시야·무리·대사·번식)는 플레이어와
+ * 독립(균형 원형 50±10)** — 능력치까지 닮으면 같은 환경 압력을 함께 버텨 과경쟁하고, 극단 게놈에서 통과기준
+ * 밸런스가 흔들린다(그래서 이동/감각/식성만 반영). 식성은 방향을 약하게 따르되 초식 우세로 당겨 사냥 경쟁을
+ * 줄인다. 게놈은 독립 rng(-kin)로 만들고 rng 호출 횟수를 기존과 동일하게 유지해 스트림을 보존한다.
+ */
+export function makeKinSpecies(id: number, rng: Rng, playerGenome: Genome): Species {
+  const p = playerGenome.traits;
   const g = defaultGenome();
+  const blend = (v: number, follow: number): number => 50 + (v - 50) * follow;
   for (const key of TRAIT_KEYS) {
-    if (key === "swimming") {
-      g.traits.swimming = 50; // 친척은 육상(내 종 옆에서 함께)
+    if (key === "swimming" || key === "wings") {
+      g.traits[key] = clampTrait(blend(p[key], KIN_MOVE_FOLLOW)); // 이동 정체성 유지. rng 없이 → 스트림 보존
       continue;
     }
     if (key === "echo") {
-      g.traits.echo = 0; // 친척은 초음파 없음(눈으로). rng 없이 설정 → 기존 rng 스트림 보존
+      g.traits.echo = clampTrait(p.echo * KIN_MOVE_FOLLOW); // 초음파는 0 기준 특화. rng 없이 → 스트림 보존
       continue;
     }
-    if (key === "wings") {
-      g.traits.wings = 0; // 친척은 지상(내 종 옆). rng 없이 설정 → 기존 rng 스트림 보존
-      continue;
-    }
-    g.traits[key] = clampTrait(50 + rng.range(-10, 10)); // 균형 원형에서 미세하게만 흔든다
+    if (key === "diet") continue; // 아래서 따로
+    // 능력치는 플레이어와 독립(기존과 동일 50±10) → 극단 게놈에서도 밸런스 이동 없음.
+    g.traits[key] = clampTrait(50 + rng.range(-10, 10));
   }
-  g.traits.diet = clampTrait(30 + rng.range(-5, 5)); // 초식쪽(내 종과 먹이 경쟁·사냥 완화)
+  // 식성: 플레이어 방향을 약하게 따르되 초식 우세로 당긴다. 기본 플레이어(diet 50)면 30 = 기존 친척과
+  // 동일 → 기본 밸런스 보존. 육식 프리셋이면 살짝 잡식쪽(친척다움)이되 사냥 경쟁은 억제.
+  g.traits.diet = clampTrait(blend(p.diet, KIN_DIET_FOLLOW) - 20 + rng.range(-5, 5));
   return {
     id,
     name: "친척 무리",

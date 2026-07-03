@@ -111,7 +111,7 @@ export class World {
     this.playerSpecies = makePlayerSpecies(genome, baseStart);
     // 우호적 친척 종 — 게놈 변형은 "독립 rng"라 메인 스트림(기존 밸런스)을 안 건드린다. id 는 야생 뒤 고유값.
     const wild = generateWildSpecies(this.rng);
-    const kin = makeKinSpecies(wild.length + 1, new Rng(String(seed) + "-kin"));
+    const kin = makeKinSpecies(wild.length + 1, new Rng(String(seed) + "-kin"), genome);
     this.species = [this.playerSpecies, kin, ...wild];
     this.spawnFood();
     this.spawnEntities();
