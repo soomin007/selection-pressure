@@ -235,7 +235,8 @@ export class WorldView {
       sp.y = ry;
       // 개체별 미세 개성(크기·명암) — 같은 종이라도 한 마리씩 달라 보이게. id 결정론, sim 무관.
       sp.scale.set(personalityScale(e.id));
-      sp.tint = personalityTint(e.id);
+      // 독(중독) 걸린 개체는 보라빛으로 — "독이 퍼지는 중"이 한눈에(지속 피해의 시각 피드백).
+      sp.tint = e.poison > 0 ? 0xcc66ff : personalityTint(e.id);
       // 회전: 떨림(좌우 진동)의 원인은 회전 "목표"가 매 스텝의 미세 이동 방향이라 노이즈가 크다는 것.
       // → 진행방향 벡터를 저역통과(headK)해 평균 방향만 목표로 삼는다. 방향이 한 스텝씩 홱홱 뒤집혀도
       // 평활된 헤딩은 거의 안 움직여 회전이 안정된다(제자리·이동 중 둘 다). 진짜 전환은 서서히 따라감.
@@ -525,6 +526,8 @@ export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: n
   const swim01 = t.swimming / TRAIT_MAX;
   const echo01 = t.echo / TRAIT_MAX;
   const wing01 = t.wings / TRAIT_MAX;
+  const venom01 = t.venom / TRAIT_MAX;
+  const ranged01 = t.ranged / TRAIT_MAX;
   const g = new Graphics();
   const dark = darken(color, 0.55);
   const fin = darken(color, 0.72); // 지느러미·꼬리(몸통보다 어둡게)
@@ -593,6 +596,18 @@ export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: n
   const eye = 2 + vision01 * 5;
   g.circle(len * 0.5, -wid * 0.35, eye).fill({ color: 0xffffff });
   g.circle(len * 0.5 + eye * 0.3, -wid * 0.35, eye * 0.55).fill({ color: 0x0a0a0a });
+
+  // 원거리 뿔 (ranged) — 앞으로 길게 뻗은 뿔/침(멀리 닿는 무기). 원거리 종을 한눈에.
+  if (ranged01 > 0.1) {
+    const horn = 6 + ranged01 * 16;
+    g.poly([len - 1, -2, len + horn, 0, len - 1, 2]).fill({ color: darken(color, 0.68) });
+  }
+  // 독침 (venom) — 앞쪽에 보라 독니/독액 방울 한 쌍. 독 종을 한눈에(공격 색과 대비되는 독 보라).
+  if (venom01 > 0.1) {
+    const vr = 1.6 + venom01 * 2.4;
+    g.circle(len * 0.82, wid * 0.28, vr).fill({ color: 0xc030e0 });
+    g.circle(len * 0.82, -wid * 0.28, vr).fill({ color: 0xc030e0 });
+  }
 
   // 고해상도로 생성(작은 스프라이트가 뭉개지지 않게 슈퍼샘플).
   const tex = renderer.generateTexture({ target: g, resolution: 3, antialias: true });

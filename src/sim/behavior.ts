@@ -133,9 +133,20 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     const prey = e.targetPrey;
     const dx = prey.x - e.x;
     const dy = prey.y - e.y;
-    if (dx * dx + dy * dy <= SIM.attackRange * SIM.attackRange) {
+    // 원거리(ranged): 사거리 = 근접 + 형질. 멀리서 먼저 쳐 먹잇감이 도망·반격하기 전에 타격.
+    const atkRange = SIM.attackRange + (t.ranged / TRAIT_MAX) * SIM.rangedBonus;
+    if (dx * dx + dy * dy <= atkRange * atkRange) {
+      // 독침(venom): 무는 틱마다 상대에 독을 주입(누적) + 독 출처를 기록(독사 시 내가 에너지 획득).
+      if (t.venom > 0) {
+        prey.poison += SIM.venomOnHit * (t.venom / TRAIT_MAX);
+        prey.poisonSource = e;
+      }
+      // 즉사 확률 — 공격력(즉발) + 독으로 약해진 정도(누적). 독 종은 attack 이 약해도 여러 번 물어 독을
+      // 쌓아 약해진 먹이를 잡는다(attack=즉발 / venom=누적 트레이드오프). 독은 매 틱 DoT 도 준다(아래).
       const chance = clamp(
-        SIM.killChanceBias + ((t.attack - prey.genome.traits.attack) / TRAIT_MAX) * SIM.killChanceScale,
+        SIM.killChanceBias +
+          ((t.attack - prey.genome.traits.attack) / TRAIT_MAX) * SIM.killChanceScale +
+          (prey.poison / TRAIT_MAX) * SIM.venomKillBonus,
         0.05,
         0.95,
       );
@@ -168,13 +179,21 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const coldField = env.coldness + world.globalCold * SIM.globalColdLethality;
   const coldDrain = SIM.coldPenalty * coldField * (1 - metabolism01) * warmthFactor;
   const heatDrain = SIM.heatPenalty * world.heat * metabolism01;
-  e.energy -= drain + coldDrain + heatDrain;
+  // 독(중독) — 누적 독이 있으면 매 틱 에너지를 깎는다(지속 피해). poison 풀이 소진될 때까지.
+  const poisonDmg = e.poison > 0 ? Math.min(e.poison, SIM.venomTickDamage) : 0;
+  if (poisonDmg > 0) e.poison -= poisonDmg;
+  e.energy -= drain + coldDrain + heatDrain + poisonDmg;
   e.age += 1;
 
-  // --- 죽음 (사망 원인 집계, §7). 추위/폭염 소모가 기본 대사 소모보다 크면 그쪽으로 귀속. ---
+  // --- 죽음 (사망 원인 집계, §7). 이번 틱 가장 큰 소모로 귀속(독>추위/폭염>기본 대사). ---
   if (e.energy <= 0) {
     let cause: DeathCause = "starve";
-    if (coldDrain >= heatDrain && coldDrain > drain) cause = "cold";
+    if (poisonDmg > 0 && poisonDmg >= coldDrain && poisonDmg >= heatDrain && poisonDmg >= drain) {
+      cause = "venom";
+      // 독으로 죽으면 마지막에 문 포식자가 먹이 에너지를 얻는다(즉사와 동등 — 독 종의 사냥 이득).
+      const src = e.poisonSource;
+      if (src && src.alive) src.energy = Math.min(SIM.maxEnergy, src.energy + SIM.predationEnergy);
+    } else if (coldDrain >= heatDrain && coldDrain > drain) cause = "cold";
     else if (heatDrain > coldDrain && heatDrain > drain) cause = "heat";
     e.alive = false;
     world.recordDeath(e.species, cause);

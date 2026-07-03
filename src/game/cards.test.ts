@@ -23,8 +23,8 @@ describe("드래프트", () => {
 });
 
 describe("시작 프리셋", () => {
-  it("6종이고 id 가 고유하다", () => {
-    expect(PRESET_CARDS.length).toBe(6);
+  it("7종이고 id 가 고유하다", () => {
+    expect(PRESET_CARDS.length).toBe(7);
     const ids = PRESET_CARDS.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -54,6 +54,15 @@ describe("시작 프리셋", () => {
     const g = defaultGenome(); // wings 0
     applyCard(g, sky);
     expect(g.traits.wings).toBeGreaterThanOrEqual(SIM.flyThreshold);
+  });
+
+  it("독 사냥꾼은 시작부터 독을 지닌다(venom > 0)", () => {
+    const v = PRESET_CARDS.find((c) => c.id === "preset_venom");
+    expect(v).toBeDefined();
+    if (!v) return;
+    const g = defaultGenome(); // venom 0
+    applyCard(g, v);
+    expect(g.traits.venom).toBeGreaterThan(0);
   });
 
   it("적용하면 식성 구간이 의도대로(초식 무리=초식, 육식 사냥꾼=육식)", () => {

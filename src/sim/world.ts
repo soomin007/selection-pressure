@@ -18,11 +18,11 @@ import { stepBoss, type Boss } from "@/sim/boss";
 import { SIM } from "@/sim/params";
 
 /** 한 마리가 죽은 이유 (가독성 §7: "왜 내 종이 죽었나"). 사람이 읽는 한글 라벨은 game 층에서. */
-export type DeathCause = "starve" | "cold" | "heat" | "age" | "boss" | "predation" | "plague";
+export type DeathCause = "starve" | "cold" | "heat" | "age" | "boss" | "predation" | "plague" | "venom";
 export type DeathTally = Record<DeathCause, number>;
 
 export function emptyDeathTally(): DeathTally {
-  return { starve: 0, cold: 0, heat: 0, age: 0, boss: 0, predation: 0, plague: 0 };
+  return { starve: 0, cold: 0, heat: 0, age: 0, boss: 0, predation: 0, plague: 0, venom: 0 };
 }
 
 /** 형질(0~100) 클램프 + 반올림. */

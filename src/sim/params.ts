@@ -100,10 +100,19 @@ export const SIM = {
   dietGrazeMax: 70, // diet 가 이보다 작으면 식물 섭취 가능(초식/잡식)
   gridCellSize: 80, // 개체 공간 격자 한 칸(이웃 질의)
   predatorSenseRange: 78, // 이 안에 (나보다 센) 포식자가 있으면 도망친다
-  attackRange: 12, // 사냥 시 닿았다고 보는 거리
+  attackRange: 12, // 사냥 시 닿았다고 보는 거리(근접). 원거리 형질이 이 사거리를 늘린다.
   predationEnergy: 36, // 사냥 성공 시 얻는 에너지 (너무 높으면 포식자가 생태계를 붕괴)
   killChanceBias: 0.5, // 기본 사냥 성공 확률
   killChanceScale: 1.3, // (내 공격력 - 상대 공격력) 당 확률 가감
+
+  // --- 전투 형질 (P5) ---
+  // 원거리(ranged): 사거리 = attackRange + ranged01 × rangedBonus. 멀리서 먼저 쳐 선제 사냥.
+  rangedBonus: 22, // 원거리 100 이면 사거리 12 → 34(약 3배). 프로브로 튠
+  // 독침(venom): 사거리 안에서 물면 매 틱 독을 주입(누적). poison 풀은 매 틱 venomTickDamage 만큼
+  // 에너지를 깎으며 소진 → 약공격도 독으로 서서히 죽인다. 프로브로 튠(압도·무의미 사이).
+  venomOnHit: 8, // 사거리 안에서 무는 틱마다 거는 독량(× venom01). 여러 틱 물면 누적
+  venomTickDamage: 1.5, // 중독 상태에서 틱당 깎이는 에너지(약한 DoT — 도망친 먹이를 서서히 마무리)
+  venomKillBonus: 2.5, // 쌓인 독(poison/100)이 즉사 확률에 더하는 가중 — 독으로 약해진 먹이는 잡기 쉽다
 
   // --- 행동/형질 스케일 ---
   eatRadius: 9,

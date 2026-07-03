@@ -56,6 +56,10 @@ const SVG = {
     '<svg viewBox="0 0 140 90"><path d="M14 36 q12 -9 24 0 t24 0 t24 0 t24 0" fill="none" stroke="#5ad6f0" stroke-width="3"/><path d="M14 62 q12 -9 24 0 t24 0 t24 0 t24 0" fill="none" stroke="#5ad6f0" stroke-width="3" opacity="0.6"/><ellipse cx="76" cy="49" rx="16" ry="9" fill="#6cc24a"/><polygon points="62,49 50,42 50,56" fill="#6cc24a"/></svg>',
   wings:
     '<svg viewBox="0 0 140 90"><polygon points="16,80 42,50 68,80" fill="#5a6474" opacity="0.55"/><polygon points="72,80 100,46 128,80" fill="#5a6474" opacity="0.55"/><polygon points="56,40 24,26 46,42" fill="#f0c840"/><polygon points="84,40 116,26 94,42" fill="#f0c840"/><ellipse cx="70" cy="40" rx="13" ry="8" fill="#6cc24a"/></svg>',
+  venom:
+    '<svg viewBox="0 0 140 90"><ellipse cx="56" cy="46" rx="26" ry="15" fill="#6cc24a"/><polygon points="82,42 96,50 82,58" fill="#6cc24a"/><circle cx="92" cy="38" r="5" fill="#c030e0"/><circle cx="92" cy="58" r="5" fill="#c030e0"/><circle cx="108" cy="30" r="3.5" fill="#c030e0" opacity="0.6"/><circle cx="114" cy="46" r="2.5" fill="#c030e0" opacity="0.4"/></svg>',
+  ranged:
+    '<svg viewBox="0 0 140 90"><ellipse cx="42" cy="46" rx="24" ry="14" fill="#6cc24a"/><circle cx="56" cy="40" r="4" fill="#fff"/><line x1="66" y1="46" x2="116" y2="46" stroke="#aeb7c4" stroke-width="4"/><polygon points="116,39 130,46 116,53" fill="#aeb7c4"/></svg>',
   energy:
     '<svg viewBox="0 0 140 90"><rect x="22" y="37" width="96" height="18" rx="9" fill="#1a2230" stroke="#3b465c" stroke-width="2"/><rect x="25" y="40" width="58" height="12" rx="6" fill="#6cff7a"/></svg>',
   chaser:
@@ -203,6 +207,26 @@ const SECTIONS: readonly Section[] = [
         ],
         note: "하늘 개척자 프리셋이나 날개·튼튼한 날개 카드로 켭니다. 수영(바다)의 하늘 대칭입니다.",
       },
+      {
+        term: "독침",
+        svg: SVG.venom,
+        desc: "물면 독이 퍼져 먹잇감이 서서히 약해집니다(지속 피해). 공격력이 약해도 독이 쌓이면 약해진 먹이를 잡을 수 있어, 힘센 먹잇감도 독으로 쓰러뜨립니다.",
+        rows: [
+          { k: "0 (기본)", v: "독 없음", base: true },
+          { k: "높을수록", v: "물 때 독이 강함 → 약해진 먹이를 잡기 쉬움" },
+        ],
+        note: "독니·독샘·독 사냥꾼으로 키웁니다. 공격력을 안 키우고도 사냥하는 길입니다. 독 걸린 먹이는 보라로 보입니다.",
+      },
+      {
+        term: "원거리",
+        svg: SVG.ranged,
+        desc: "사거리가 늘어 멀리서 먼저 칩니다. 먹잇감이 도망·반격하기 전에 타격해 사냥이 잘 됩니다.",
+        rows: [
+          { k: "0 (기본)", v: "근접만 (사거리 12)", base: true },
+          { k: "100", v: "사거리 34 (약 3배)" },
+        ],
+        note: "긴 뿔·독침 뱉기로 키웁니다. 멀리서 치니 위험을 덜 감수합니다.",
+      },
     ],
   },
   {
@@ -212,9 +236,9 @@ const SECTIONS: readonly Section[] = [
       {
         term: "내 종",
         svg: creature("#6cc24a"),
-        desc: "당신이 기르는 종입니다. 시작 프리셋(균형 잡식·다산 초식 무리·날쌘 육식 사냥꾼·느긋한 정찰자·바다 개척자·하늘 개척자)으로 출발 방향을 정하고, 카드로 계속 특화시키세요.",
+        desc: "당신이 기르는 종입니다. 시작 프리셋(균형 잡식·다산 초식 무리·날쌘 육식 사냥꾼·느긋한 정찰자·바다 개척자·하늘 개척자·독 사냥꾼)으로 출발 방향을 정하고, 카드로 계속 특화시키세요.",
         rows: [
-          { k: "시작", v: "프리셋 6종 중 하나" },
+          { k: "시작", v: "프리셋 7종 중 하나" },
           { k: "시작 수", v: "36마리" },
           { k: "특징", v: "프리셋으로 출발, 카드로 무엇이든 될 수 있음" },
         ],

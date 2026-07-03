@@ -389,6 +389,35 @@ describe("지형 이동 차단 (P1 결합)", () => {
   });
 });
 
+describe("전투 형질 (P5)", () => {
+  it("독침 종은 먹잇감에 독을 걸며(약화시켜) 사냥하고 자생한다", () => {
+    // 공격력이 약해도(attack 20) 독을 쌓아 약해진 먹이를 잡는다(즉사 확률에 독 누적이 기여).
+    const g = defaultGenome();
+    g.traits.diet = 65; // 육식쪽 잡식(사냥+식물로 자생)
+    g.traits.venom = 100;
+    g.traits.attack = 20;
+    const w = new World("env-1", W, H, g);
+    let maxPoison = 0;
+    for (let i = 0; i < 1500; i++) {
+      w.step();
+      for (const e of w.entities) if (e.poison > maxPoison) maxPoison = e.poison;
+    }
+    expect(maxPoison).toBeGreaterThan(0); // 독이 실제로 먹잇감에 걸린다
+    expect(w.playerPopulation).toBeGreaterThan(0); // 독으로 사냥하며 자생
+  });
+
+  it("원거리 종은 늘어난 사거리로 사냥하며 자생한다", () => {
+    const g = defaultGenome();
+    g.traits.diet = 65;
+    g.traits.attack = 55;
+    g.traits.ranged = 100; // 사거리 12 → 34
+    const w = new World("env-1", W, H, g);
+    for (let i = 0; i < 1500; i++) w.step();
+    expect(w.playerPopulation).toBeGreaterThan(0);
+    expect(w.deaths.predation).toBeGreaterThan(0); // 사냥이 실제로 일어난다
+  });
+});
+
 describe("야생 진화(살아있는 생태)", () => {
   const wildMeta = (w: World): number => {
     const alive = w.species.filter((s) => !s.isPlayer && w.entities.some((e) => e.species.id === s.id));

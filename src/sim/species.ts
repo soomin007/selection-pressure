@@ -63,11 +63,11 @@ export function makeKinSpecies(id: number, rng: Rng, playerGenome: Genome): Spec
   const blend = (v: number, follow: number): number => 50 + (v - 50) * follow;
   for (const key of TRAIT_KEYS) {
     if (key === "swimming" || key === "wings") {
-      g.traits[key] = clampTrait(blend(p[key], KIN_MOVE_FOLLOW)); // 이동 정체성 유지. rng 없이 → 스트림 보존
+      g.traits[key] = clampTrait(blend(p[key], KIN_MOVE_FOLLOW)); // 이동 정체성(50 기준). rng 없이 → 스트림 보존
       continue;
     }
-    if (key === "echo") {
-      g.traits.echo = clampTrait(p.echo * KIN_MOVE_FOLLOW); // 초음파는 0 기준 특화. rng 없이 → 스트림 보존
+    if (key === "echo" || key === "venom" || key === "ranged") {
+      g.traits[key] = clampTrait(p[key] * KIN_MOVE_FOLLOW); // 감각·전투는 0 기준 특화. rng 없이 → 스트림 보존
       continue;
     }
     if (key === "diet") continue; // 아래서 따로
@@ -198,6 +198,10 @@ export function generateWildSpecies(rng: Rng): Species[] {
       }
       if (key === "wings") {
         g.traits.wings = arch.traits.wings ?? 0; // 야생종 날개 기본 없음(고산 종만 값). rng 없이 → rng 스트림 보존
+        continue;
+      }
+      if (key === "venom" || key === "ranged") {
+        g.traits[key] = arch.traits[key] ?? 0; // 야생종 전투 형질 기본 없음. rng 없이 → rng 스트림 보존
         continue;
       }
       const base = arch.traits[key] ?? 50;

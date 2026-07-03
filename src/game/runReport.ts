@@ -14,6 +14,7 @@ const DEATH_LABELS: Record<DeathCause, string> = {
   starve: "굶음",
   age: "노화",
   plague: "역병",
+  venom: "중독",
 };
 
 /** 형질이 높을 때/낮을 때의 한 단어 묘사 (식성 diet 는 명사라 제외). */
@@ -28,6 +29,8 @@ const HIGH_ADJ: Record<AdjKey, string> = {
   swimming: "헤엄치는",
   echo: "초음파로 듣는",
   wings: "하늘을 나는",
+  venom: "독을 뿜는",
+  ranged: "멀리서 치는",
 };
 const LOW_ADJ: Record<AdjKey, string> = {
   speed: "발이 느린",
@@ -39,6 +42,8 @@ const LOW_ADJ: Record<AdjKey, string> = {
   swimming: "뭍에만 사는",
   echo: "초음파가 없는",
   wings: "땅에 붙어 사는",
+  venom: "독이 없는",
+  ranged: "근접만 하는",
 };
 const ADJ_KEYS: readonly AdjKey[] = [
   "speed",
@@ -50,6 +55,8 @@ const ADJ_KEYS: readonly AdjKey[] = [
   "swimming",
   "echo",
   "wings",
+  "venom",
+  "ranged",
 ];
 
 const dietNoun = (diet: number): string =>
@@ -58,8 +65,9 @@ const dietNoun = (diet: number): string =>
 /** 게놈 → "이 종은 어떤 종이었나" 한 줄 묘사 (가장 두드러진 형질 1~2개 + 식성). */
 export function describeSpecies(genome: Genome): string {
   const t = genome.traits;
-  // echo(초음파)·wings(날개)는 기본 0 인 특화 형질이라 0 기준 편차(있으면 특징). 나머지는 50 기준.
-  const scored = ADJ_KEYS.map((k) => ({ k, dev: k === "echo" || k === "wings" ? t[k] : t[k] - 50 })).sort(
+  // echo·wings·venom·ranged 는 기본 0 인 특화 형질이라 0 기준 편차(있으면 특징). 나머지는 50 기준.
+  const zeroBase = (k: AdjKey): boolean => k === "echo" || k === "wings" || k === "venom" || k === "ranged";
+  const scored = ADJ_KEYS.map((k) => ({ k, dev: zeroBase(k) ? t[k] : t[k] - 50 })).sort(
     (a, b) => Math.abs(b.dev) - Math.abs(a.dev),
   );
   const adjs: string[] = [];

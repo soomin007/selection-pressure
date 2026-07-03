@@ -70,6 +70,14 @@ export const PRESET_CARDS: readonly Card[] = [
     effects: { vision: 6 },
     color: 0xf0c840, // 황금빛(하늘·맹금) — 기존 프리셋 색과 구분
   },
+  {
+    id: "preset_venom",
+    name: "독 사냥꾼",
+    desc: "물어서 독으로 사냥합니다. 공격력은 약해도 독이 먹잇감을 서서히 쓰러뜨립니다.",
+    set: { diet: 60, venom: 70 },
+    effects: { attack: -6 },
+    color: 0x9c27b0, // 독 보라 — 기존 프리셋 색과 구분
+  },
 ];
 
 export const CARD_POOL: readonly Card[] = [
@@ -345,6 +353,32 @@ export const CARD_POOL: readonly Card[] = [
     name: "박쥐의 귀",
     desc: "초음파에 완전히 의지합니다. 눈이 거의 멀지만 밤에도 사방을 훤히 듣습니다.",
     effects: { echo: 34, vision: -30 },
+  },
+
+  // 전투 형질 (P5) — 독침(물면 독이 퍼져 약해짐)·원거리(사거리). 기본 0 이라 큰 값(카드로 켜야 전투가 바뀐다).
+  {
+    id: "venom_fang",
+    name: "독니",
+    desc: "물면 독이 퍼져 먹잇감이 서서히 약해집니다. 공격력이 약해도 독으로 잡습니다.",
+    effects: { venom: 42 },
+  },
+  {
+    id: "venom_gland",
+    name: "독샘",
+    desc: "독이 더 강해집니다. 독에 완전히 의지해 약하게 물어도 치명적입니다.",
+    effects: { venom: 34, attack: -12 },
+  },
+  {
+    id: "long_horn",
+    name: "긴 뿔",
+    desc: "멀리서 먼저 찌릅니다. 먹잇감이 도망·반격하기 전에 타격합니다.",
+    effects: { ranged: 42 },
+  },
+  {
+    id: "spit",
+    name: "독침 뱉기",
+    desc: "멀리서 독침을 뱉습니다. 사거리가 늘고 독도 함께 오릅니다(원거리 독).",
+    effects: { ranged: 28, venom: 20 },
   },
 ];
 

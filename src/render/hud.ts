@@ -92,6 +92,7 @@ const CAUSE_LABEL: Record<DeathCause, string> = {
   boss: "보스",
   predation: "잡아먹힘",
   plague: "역병",
+  venom: "중독",
 };
 
 export class Hud {
