@@ -81,7 +81,7 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_ranged",
     name: "원거리 사냥꾼",
-    desc: "멀리서 먼저 찌릅니다. 먹잇감이 도망·반격하기 전에 타격해 안전하게 사냥합니다.",
+    desc: "먹잇감에 다가가지 않고 멀리서 가시를 쏩니다. 반격·도망 전에 안전하게 사냥합니다.",
     set: { diet: 60, ranged: 70 },
     effects: { vision: 8 },
     color: 0x4aa0a0, // 청록빛 — 기존 프리셋 색과 구분
@@ -114,16 +114,10 @@ export const CARD_POOL: readonly Card[] = [
 
   // 조합 (작은 상승 두 개)
   {
-    id: "adapt",
-    name: "적응",
-    desc: "속도와 시야가 조금씩 늡니다.",
-    effects: { speed: 8, vision: 8 },
-  },
-  {
     id: "eagle_eye",
     name: "매의 눈",
-    desc: "시야가 넓어지고 조금 빨라집니다.",
-    effects: { vision: 20, speed: 5 },
+    desc: "멀리 보며 조금 빨라지지만, 시야에만 골몰해 홀로 다니게 됩니다.",
+    effects: { vision: 20, speed: 5, herding: -6 },
   },
   {
     id: "pack_hunt",
@@ -160,8 +154,8 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "loner",
     name: "외톨이",
-    desc: "흩어져 빠르게 움직입니다. 무리 성향은 줄어듭니다.",
-    effects: { speed: 13, herding: -18 },
+    desc: "무리를 떠나 홀로 아주 빠르게 움직입니다. 무리 성향을 크게 잃는 대신 발이 매우 빨라집니다.",
+    effects: { speed: 20, herding: -18 },
   },
   {
     id: "giant",
@@ -186,8 +180,8 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "savage",
     name: "사나운 이빨",
-    desc: "공격력이 크게 늘고 조금 빨라집니다.",
-    effects: { attack: 24, speed: 5 },
+    desc: "공격력이 크게 늘고 조금 빨라지지만, 사냥에 몰두해 번식이 줍니다.",
+    effects: { attack: 24, speed: 5, fertility: -6 },
   },
   {
     id: "predator",
@@ -248,8 +242,8 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "phalanx",
     name: "철벽 대형",
-    desc: "함께 뭉쳐 맞서 싸웁니다. 무리 성향과 공격력이 함께 크게 늡니다.",
-    effects: { herding: 22, attack: 12 },
+    desc: "함께 뭉쳐 맞서 싸웁니다. 무리 성향과 공격력이 크게 늘지만, 싸움에 힘써 번식이 줍니다.",
+    effects: { herding: 22, attack: 12, fertility: -6 },
   },
   {
     id: "lone_warrior",
@@ -274,8 +268,8 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "nest_herd",
     name: "둥지 무리",
-    desc: "무리 속에서 안전하게 새끼를 칩니다. 번식과 무리 성향이 늡니다.",
-    effects: { fertility: 16, herding: 10 },
+    desc: "무리 속에서 안전하게 새끼를 칩니다. 번식과 무리 성향이 늘지만, 둥지를 지키느라 느려집니다.",
+    effects: { fertility: 16, herding: 10, speed: -6 },
   },
   {
     id: "farsight",
@@ -359,8 +353,8 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "bat_ear",
     name: "박쥐의 귀",
-    desc: "초음파에 완전히 의지합니다. 눈이 거의 멀지만 밤에도 사방을 훤히 듣습니다.",
-    effects: { echo: 34, vision: -30 },
+    desc: "초음파에 완전히 의지합니다. 눈이 거의 멀지만 그만큼 사방을 아주 멀리까지 훤히 듣습니다.",
+    effects: { echo: 48, vision: -30 },
   },
 
   // 전투 형질 (P5) — 독침(방어 독: 잡아먹으면 포식자 중독)·원거리(사거리). 기본 0 이라 큰 값(카드로 켜야 바뀐다).
@@ -373,19 +367,19 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "venom_gland",
     name: "독샘",
-    desc: "독이 더 강해집니다. 당신을 삼킨 포식자는 크게 중독돼 위험에 빠집니다.",
-    effects: { venom: 40 },
+    desc: "독이 훨씬 강해집니다. 당신을 삼킨 포식자는 치명적으로 중독되지만, 독을 만드느라 몸이 약해 번식이 줍니다.",
+    effects: { venom: 48, fertility: -6 },
   },
   {
     id: "long_horn",
-    name: "긴 뿔",
-    desc: "멀리서 먼저 찌릅니다. 먹잇감이 도망·반격하기 전에 타격합니다.",
+    name: "가시 쏘기",
+    desc: "날카로운 가시를 멀리 쏩니다. 붙지 않고 먼 거리에서 먹잇감을 맞혀 도망·반격 전에 잡습니다.",
     effects: { ranged: 42 },
   },
   {
     id: "spit",
     name: "독 가시",
-    desc: "몸에 독가시가 돋아 멀리까지 찌릅니다. 사거리가 늘고, 잡아먹는 포식자는 가시독에 중독됩니다.",
+    desc: "가시를 멀리 쏘고, 몸의 독으로 잡아먹는 포식자도 막습니다. 사거리와 방어 독이 함께 늡니다.",
     effects: { ranged: 26, venom: 22 },
   },
 ];

@@ -203,6 +203,15 @@ export class WorldView {
           }
           visionRings++;
         }
+        // 원거리 종 — 겨눈 먹잇감으로 발사 궤적 선(붙지 않고 멀리서 쏜다). 근접 종은 안 그린다.
+        const rng01 = e.genome.traits.ranged / TRAIT_MAX;
+        if (rng01 > 0.35 && e.targetPrey && e.targetPrey.alive) {
+          const tp = e.targetPrey;
+          this.playerG
+            .moveTo(rx, ry)
+            .lineTo(tp.x, tp.y)
+            .stroke({ color: 0xfff0a0, width: 1.2, alpha: 0.4 });
+        }
         this.playerG.circle(rx, ry, 13).fill({ color: 0x6cff7a, alpha: 0.1 });
         this.playerG
           .circle(rx, ry, 12.5)

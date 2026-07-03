@@ -32,6 +32,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 날개≥flyThreshold 면 비행 — 산·물을 날아 넘고, 험지 감속을 무시하며, 높이 날아 시야가 넓다.
   // 대신 계속 날갯짓이라 대사가 더 든다(비행의 대가). 날개 0 인 종은 canFly=false → 전부 영향 0(밸런스 보존).
   const canFly = t.wings >= SIM.flyThreshold;
+  // 원거리(ranged) 사거리 — 사냥 사정거리이자, 원거리 종이 먹잇감에 붙지 않고 멈춰 쏘는 거리(kiting).
+  const atkRange = SIM.attackRange + (t.ranged / TRAIT_MAX) * SIM.rangedBonus;
   // 험지(거친 땅)에선 이동이 느려진다 — speed 형질이 높을수록 덜 느려진다(속도가 지형에서 가치). 비행은 무시.
   const maxSpeed =
     SIM.maxSpeedBase * (0.4 + speed01) * (canFly ? 1 : roughSpeedFactor(world, e.x, e.y, speed01));
@@ -71,8 +73,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       // 지형 길찾기: 목표가 직선으로 보이면 직진, 막혀 있으면 격자 BFS 경로를 따라 우회한다.
       const nav = navTo(e, world, goal, canSwim, canLand, canFly);
       // 최종 목표가 직선으로 보일 때만 도착 감속(arrive) — 가까울수록 줄여 오버슈트(와리가리)를 없앤다.
-      // 사냥은 표적이 움직이므로 더 짧게(추격력 보존). 경유 웨이포인트는 감속 없이 전속 통과.
-      const r = nav.final ? (e.targetPrey !== null ? SIM.huntArriveRadius : SIM.arriveRadius) : 0;
+      // 사냥: 원거리 종은 사거리에서 멈춰 쏜다(붙지 않음 — kiting). 근접 종은 사정거리(공격 사거리)까지 바짝.
+      const huntR = Math.max(SIM.huntArriveRadius, atkRange * 0.85);
+      const r = nav.final ? (e.targetPrey !== null ? huntR : SIM.arriveRadius) : 0;
       desired = toward(nav.x - e.x, nav.y - e.y, maxSpeed, r);
     } else {
       e.path.length = 0; // 목표가 없으면 경로 버림(배회로 전환)
@@ -154,8 +157,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     const prey = e.targetPrey;
     const dx = prey.x - e.x;
     const dy = prey.y - e.y;
-    // 원거리(ranged): 사거리 = 근접 + 형질. 멀리서 먼저 쳐 먹잇감이 도망·반격하기 전에 타격.
-    const atkRange = SIM.attackRange + (t.ranged / TRAIT_MAX) * SIM.rangedBonus;
+    // 원거리 종은 이 넓은 사거리(atkRange, 상단 계산)에서 쏜다 — 붙지 않고 멀리서 명중.
     if (dx * dx + dy * dy <= atkRange * atkRange) {
       // 즉사 확률 — 공격력 기반(독은 방어라 사냥 성공과 무관).
       const preyVenom = prey.genome.traits.venom;
