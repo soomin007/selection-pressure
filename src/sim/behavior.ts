@@ -508,11 +508,14 @@ function nearestFood(
 ): Food | null {
   const kinds = e.species.foodKinds;
   const canSwim = e.genome.traits.swimming >= SIM.swimThreshold;
+  const aquaticOnly = e.genome.traits.swimming >= SIM.aquaticOnlyThreshold; // 물 전용(진짜 물고기)
   const canFly = e.genome.traits.wings >= SIM.flyThreshold;
   // 먹이 공간 격자로 감지 반경 안만 검사(완전탐색 대신 — 큰 맵 성능). available·종류·감지는 pred 로.
   return world.foodGrid.nearest(e.x, e.y, senseRange, (f) => {
     if (!f.available) return false;
-    if (f.aquatic) {
+    if (f.deep) {
+      if (!aquaticOnly) return false; // 깊은 바다 먹이는 물 전용 종(물고기)만 — 양용 종(바다 풀뜯이) 배제
+    } else if (f.aquatic) {
       if (!canSwim) return false; // 바다 먹이는 수영 형질이 충분한 종만 먹는다(육상 종엔 무경쟁 틈새)
     } else if (f.mountainous) {
       if (!canFly) return false; // 고산 먹이는 날개 형질이 충분한 종만 먹는다(비행 종의 무경쟁 틈새 — 바다 대칭)

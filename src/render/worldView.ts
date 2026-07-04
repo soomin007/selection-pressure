@@ -141,12 +141,14 @@ export class WorldView {
     this.foodG.clear();
     for (const f of world.food) {
       if (!f.available) continue;
-      // 육지 식물은 종류별 자연색, 바다 먹이는 청록, 고산 먹이는 흰빛(각각 수영·날개 종만 먹는 틈새를 한눈에).
+      // 육지 식물은 종류별 자연색, 얕은 바다는 청록, 깊은 바다는 진한 남청(물고기 전용), 고산은 흰빛.
       const color = f.mountainous
         ? MOUNTAIN_FOOD_COLOR
-        : f.aquatic
-          ? SEA_FOOD_COLOR
-          : (FOOD_COLORS[f.kind] ?? 0x9bee5a);
+        : f.deep
+          ? DEEP_FOOD_COLOR
+          : f.aquatic
+            ? SEA_FOOD_COLOR
+            : (FOOD_COLORS[f.kind] ?? 0x9bee5a);
       this.foodG.circle(f.x, f.y, 4).fill({ color, alpha: 1 });
     }
 
@@ -230,6 +232,24 @@ export class WorldView {
         this.playerG
           .circle(rx, ry, 11.5)
           .stroke({ color: 0xffcf6a, width: 1.2, alpha: 0.22 + 0.14 * ringPulse });
+      }
+
+      // 중독(독 걸림) 표식 — 종 불문. sp.tint 곱셈만으론 초록 생물이 탁해질 뿐 "보라"가 안 나므로,
+      // 둘레에 맥동하는 보라 오라 + 피어오르는 독 방울로 "쟤 지금 중독됐다(독먹이를 삼킴)"를 확실히 보여준다.
+      if (e.poison > 0) {
+        const pInt = Math.min(1, e.poison / SIM.venomOnHit); // 독 세기 0~1(한 번 삼킨 양 기준)
+        const pulse = 0.5 + 0.5 * Math.sin(this.frame * 0.16);
+        const rr = 10 + pInt * 5;
+        this.playerG
+          .circle(rx, ry, rr)
+          .stroke({ color: 0xd23bff, width: 1.6 + pInt, alpha: 0.4 + 0.4 * pulse });
+        for (let b = 0; b < 3; b++) {
+          const ang = (b / 3) * Math.PI * 2 - this.frame * 0.06; // 천천히 도는 독 방울
+          const br = rr + 2 + 3 * pulse; // 오라 밖으로 피어오른다
+          this.playerG
+            .circle(rx + Math.cos(ang) * br, ry + Math.sin(ang) * br, 1.5 + pInt)
+            .fill({ color: 0xe066ff, alpha: 0.35 + 0.45 * pulse });
+        }
       }
 
       let sp = this.pool[i];
@@ -431,6 +451,8 @@ const HORDE_COLORS: Partial<Record<BossType, HordeColor>> = {
 const FOOD_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
 // 바다 먹이 색 — 물 위에서 밝게 빛나는 청록(수영 종만 먹는 틈새 강조).
 const SEA_FOOD_COLOR = 0x7fe9ff;
+// 깊은 바다 먹이 색 — 진한 남청 반짝임(물 전용 종=물고기만 먹는 전용 틈새. 얕은 청록과 구분).
+const DEEP_FOOD_COLOR = 0x3a7bff;
 // 고산 먹이 색 — 산 위에서 밝게 빛나는 흰빛(눈 위 열매 느낌 — 날개 종만 먹는 틈새 강조. 바다 청록의 하늘 대칭).
 const MOUNTAIN_FOOD_COLOR = 0xfff0c0;
 // 밤 오버레이 — 짙은 남색을 daylight 에 반비례해 덮는다(자정에 가장 어둑하되 생물은 보이게).

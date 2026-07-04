@@ -153,7 +153,10 @@ export class World {
     this.spawnKin(new Rng(String(seed) + "-kinpos"));
     // 바다·고산 먹이는 "독립 rng"로 생물 스폰 뒤에 — this.rng 상태(=step 동역학)를 안 건드려 밸런스 보존.
     this.spawnSeaFood(new Rng(String(seed) + "-seafood"));
+    this.spawnDeepFood(new Rng(String(seed) + "-deepfood"));
     this.spawnMountainFood(new Rng(String(seed) + "-mtnfood"));
+    // 물고기 떼를 "떼"답게 독립 rng 로 보강 — 무리 행동·진화가 눈에 보이려면 어느 정도 수가 필요하다.
+    this.spawnWildHerdPadding(new Rng(String(seed) + "-herdpad"));
     this.grid.rebuild(this.entities);
     // 먹이 위치는 불변이라 격자를 한 번만 빌드한다(available 토글은 탐색 시 거른다).
     this.foodGrid = new FoodGrid(width, height, SIM.gridCellSize);
@@ -308,6 +311,13 @@ export class World {
     this.spawnFoodOnTiles(rng, count, false, (kind) => (kind === TILE.mountain ? 1 : 0), true);
   }
 
+  /** 바다 타일에 깊은 바다 먹이(물 전용 종=진짜 물고기만 먹는 전용 틈새). 얕은 바다 먹이와 같은 물 타일에
+   * 놓이되 deep 플래그로 양용 종을 배제 — 물고기 학교가 바다 풀뜯이와 경쟁 없이 유지된다. 독립 rng. */
+  private spawnDeepFood(rng: Rng): void {
+    const count = Math.round(SIM.deepFoodPatches * this.areaScale);
+    this.spawnFoodOnTiles(rng, count, true, (kind) => (kind === TILE.water ? 1 : 0), false, true);
+  }
+
   /** 지형 타일 단위 가중 추첨으로 먹이 count 개를 놓는다(정밀 배치). 타일별 weight 는 콜백이 정한다. */
   private spawnFoodOnTiles(
     rng: Rng,
@@ -315,6 +325,7 @@ export class World {
     aquatic: boolean,
     tileWeight: (kind: TileKind, fertility: number) => number,
     mountainous = false,
+    deep = false,
   ): void {
     const terr = this.terrain;
     const cs = terr.cellSize;
@@ -344,7 +355,7 @@ export class World {
       const x = Math.min(this.width, (cx + rng.unit()) * cs);
       const y = Math.min(this.height, (cy + rng.unit()) * cs);
       const kind = rng.int(0, SIM.foodKindCount - 1);
-      this.food.push(createFood(x, y, kind, aquatic, mountainous));
+      this.food.push(createFood(x, y, kind, aquatic, mountainous, deep));
     }
   }
 
@@ -482,6 +493,32 @@ export class World {
       const y = Math.max(0, Math.min(this.height, homeY + rng.range(-spread, spread)));
       const spot = this.terrain.nearestPassable(x, y, canSwim, canLand, canFly);
       this.entities.push(createEntity(this.nextId(), spot.x, spot.y, kin, SIM.startEnergy));
+    }
+  }
+
+  /**
+   * 물 전용 야생종(물고기 떼)을 독립 rng 로 보강해 진짜 "떼"로 만든다. 기본 소수 스폰(≈5)만으론 무리
+   * 짓기·진화(속도·무리 상승)가 눈에 안 들어온다("물고기 떼"인데 5마리). 바다는 육지 생태와 격리된
+   * 니치(물고기는 바다 먹이만 먹고 육지 종·포식자와 안 겹친다)라, 늘려도 통과기준 밸런스에 안 걸린다.
+   * 독립 rng → 메인 스트림(step 동역학) 불변. 물 전용(swimming ≥ aquaticOnlyThreshold) 종만 대상.
+   */
+  private spawnWildHerdPadding(rng: Rng): void {
+    // 개체 수는 절대(맵 크기 무관 — 소수 개체 게임). areaScale 은 먹이 밀도·상한에만 쓴다(기본 스폰과 동일).
+    const pad = SIM.seaHerdPad;
+    if (pad <= 0) return;
+    const spread = 72 * Math.sqrt(this.areaScale);
+    for (const sp of this.species) {
+      if (sp.isPlayer || sp.friendly) continue;
+      if (sp.genome.traits.swimming < SIM.aquaticOnlyThreshold) continue; // 물 전용(진짜 물고기)만
+      const homeX = rng.range(0.14, 0.86) * this.width;
+      const homeY = rng.range(0.14, 0.86) * this.height;
+      for (let i = 0; i < pad; i++) {
+        const x = Math.max(0, Math.min(this.width, homeX + rng.range(-spread, spread)));
+        const y = Math.max(0, Math.min(this.height, homeY + rng.range(-spread, spread)));
+        // 물 전용: 바다로만 스냅(canSwim=true·canLand=false). rng 미사용 스냅이라 소비 순서 보존.
+        const spot = this.terrain.nearestPassable(x, y, true, false, false);
+        this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
+      }
     }
   }
 }
