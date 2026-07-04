@@ -577,12 +577,11 @@ function wildGenomeSignature(g: Genome): string {
 }
 
 // 게놈에서 한 종의 생물 스프라이트 텍스처를 만든다(앞쪽 = +x). 형질이 형태로 드러난다.
-// 나중에 더 정교한 아트로 바꿀 땐 이 함수만 손보면 된다. (프리셋 선택 창의 외형 미리보기도 재사용)
+// 아트 방향: "스티커/인디게임" 스타일 — 전체를 감싸는 **굵은 윤곽선** + **불투명 플랫 음영**(반투명
+// 겹침으로 탁해지지 않게) + **크고 또렷한 눈**. 사실적으로 그리려다 조잡해지는 대신, 단순하고 개성 있는
+// 실루엣으로 "일부러 이런 스타일"로 읽히게 한다. 형질은 여전히 형태로 드러난다(프리셋/빌드 구분).
 export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: number): Texture {
   const t = genome.traits;
-  // 형질은 0~100 저장 → 외형 계산은 0~1 로 정규화해 쓴다(식성 비교는 0~100 임계 그대로).
-  // 폰 검토라 미묘한 차이는 안 읽힌다 → 형질별 외형 폭을 크게 벌리고, 특화 형질(수영·초음파·날개)은
-  // 지느러미·큰 귀·날개로 뚜렷이 드러내 프리셋/빌드를 한눈에 구분한다.
   const speed01 = t.speed / TRAIT_MAX;
   const attack01 = t.attack / TRAIT_MAX;
   const diet01 = t.diet / TRAIT_MAX;
@@ -593,120 +592,128 @@ export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: n
   const venom01 = t.venom / TRAIT_MAX;
   const ranged01 = t.ranged / TRAIT_MAX;
   const g = new Graphics();
-  const shade = darken(color, 0.5); // 윤곽선·그림자
-  const belly = darken(color, 0.72); // 배(아래) 그림자
-  const glow = lighten(color, 0.42); // 등(위) 하이라이트
-  const fin = darken(color, 0.68); // 지느러미·꼬리
 
-  const len = 8 + speed01 * 10; // 몸 반길이 (빠를수록 길쭉·날렵 — 8~18)
-  const wid = 8.5 - speed01 * 4; // 몸 반너비 (느릴수록 통통 — 8.5~4.5)
+  // 색: 전부 불투명(alpha 겹침 없음 → 탁하지 않다). 진한 통일 윤곽선 + 배 그림자 + 등 하이라이트.
+  const line = darken(color, 0.42); // 굵은 윤곽선(어둡되 색 계열이라 부드럽다)
+  const belly = darken(color, 0.72); // 배(아래) 그림자 — 불투명 패치
+  const back = lighten(color, 0.44); // 등(위) 하이라이트 — 불투명 패치
+  const limb = darken(color, 0.86); // 주둥이·꼬리 등 어두운 부속
+  const OW = 2.3; // 윤곽선 두께(굵게 = 스티커 느낌)
 
-  // 날개 (비행) — 맨 뒤 레이어. 곡선으로 펼친 한 쌍(펄럭이는 새 실루엣).
+  const len = 9 + speed01 * 9; // 몸 반길이 (빠를수록 길쭉·날렵 — 9~18)
+  const wid = 8.5 - speed01 * 3.2; // 몸 반너비 (느릴수록 통통 — 8.5~5.3)
+
+  // === 뒤 레이어(몸통 아래): 날개 / 꼬리지느러미 — 윤곽선 있는 깔끔한 한 쌍 ===
   if (wing01 > 0.05) {
-    const wl = wid + 6 + wing01 * 13;
+    const wl = wid + 6 + wing01 * 12;
+    const wingCol = lighten(color, 0.16);
     for (const s of [-1, 1]) {
-      g.moveTo(len * 0.4, s * wid * 0.4)
-        .quadraticCurveTo(len * 0.05, s * wl, -len * 0.2, s * wl * 0.85)
-        .quadraticCurveTo(-len * 0.5, s * wl * 0.45, -len * 0.55, s * wid * 0.5)
-        .fill({ color: darken(color, 0.8) });
+      g.moveTo(len * 0.32, s * wid * 0.35)
+        .quadraticCurveTo(-len * 0.05, s * wl * 1.05, -len * 0.5, s * wl * 0.72)
+        .quadraticCurveTo(-len * 0.62, s * wl * 0.3, -len * 0.15, s * wid * 0.45)
+        .closePath()
+        .fill({ color: wingCol })
+        .stroke({ color: line, width: 1.7 });
     }
   }
-
-  // 꼬리지느러미 (수영) — 수영 종(60↑)에만. 뒤로 뻗은 부채꼴 꼬리(물고기 실루엣).
   if (swim01 > 0.6) {
     const f = (swim01 - 0.6) / 0.4;
-    const tl = 6 + f * 9;
-    g.moveTo(-len * 0.8, 0)
-      .quadraticCurveTo(-len - tl, -wid - f * 5, -len - tl * 0.7, -wid * 0.25)
-      .quadraticCurveTo(-len - tl, 0, -len - tl * 0.7, wid * 0.25)
-      .quadraticCurveTo(-len - tl, wid + f * 5, -len * 0.8, 0)
-      .fill({ color: fin });
+    const tl = 7 + f * 9;
+    g.moveTo(-len * 0.72, 0)
+      .quadraticCurveTo(-len - tl, -wid - f * 4, -len - tl * 0.55, -wid * 0.2)
+      .quadraticCurveTo(-len - tl * 0.9, 0, -len - tl * 0.55, wid * 0.2)
+      .quadraticCurveTo(-len - tl, wid + f * 4, -len * 0.72, 0)
+      .closePath()
+      .fill({ color: limb })
+      .stroke({ color: line, width: 1.7 });
   }
 
-  // 몸통 — 유선형(머리 둥글고 꼬리로 좁아짐). 곡선으로 유기적 실루엣 + 윤곽선.
+  // === 몸통 — 매끈한 물방울형(머리 둥글고 꼬리로 좁아짐) + 굵은 통일 윤곽선 ===
   g.moveTo(len, 0)
-    .quadraticCurveTo(len * 0.8, -wid, len * 0.05, -wid)
-    .quadraticCurveTo(-len * 0.55, -wid * 0.95, -len, -wid * 0.28)
-    .quadraticCurveTo(-len * 1.06, 0, -len, wid * 0.28)
-    .quadraticCurveTo(-len * 0.55, wid * 0.95, len * 0.05, wid)
-    .quadraticCurveTo(len * 0.8, wid, len, 0)
+    .quadraticCurveTo(len * 0.74, -wid, len * 0.02, -wid)
+    .quadraticCurveTo(-len * 0.62, -wid, -len, -wid * 0.34)
+    .quadraticCurveTo(-len * 1.04, 0, -len, wid * 0.34)
+    .quadraticCurveTo(-len * 0.62, wid, len * 0.02, wid)
+    .quadraticCurveTo(len * 0.74, wid, len, 0)
+    .closePath()
     .fill({ color })
-    .stroke({ color: shade, width: 1.4, alpha: 0.9 });
+    .stroke({ color: line, width: OW });
 
-  // 배 그림자(아래 절반 어둡게) + 등 하이라이트(위쪽 밝은 띠) — 빛 받는 입체감.
-  g.moveTo(len * 0.85, wid * 0.2)
-    .quadraticCurveTo(len * 0.05, wid, -len * 0.7, wid * 0.5)
-    .quadraticCurveTo(-len * 0.2, wid * 0.35, len * 0.85, wid * 0.2)
-    .fill({ color: belly, alpha: 0.5 });
-  g.moveTo(len * 0.7, -wid * 0.4)
-    .quadraticCurveTo(len * 0.05, -wid * 0.82, -len * 0.5, -wid * 0.42)
-    .quadraticCurveTo(len * 0.05, -wid * 0.55, len * 0.7, -wid * 0.4)
-    .fill({ color: glow, alpha: 0.45 });
+  // 배 그림자 + 등 하이라이트 — 불투명 타원 패치(몸 안에 들어가게 크기 조절 → 윤곽선 안 넘음).
+  g.ellipse(-len * 0.04, wid * 0.44, len * 0.6, wid * 0.44).fill({ color: belly });
+  g.ellipse(len * 0.06, -wid * 0.5, len * 0.52, wid * 0.28).fill({ color: back });
 
-  // 등지느러미 능선 (공격력) — 힘셀수록 날카로운 톱니 능선(가시 대신 유기적).
+  // === 등지느러미 능선 (공격력) — 힘셀수록 크고 날카로운 톱니(윤곽선 있는 삼각 능선) ===
   if (attack01 > 0.08) {
     const h = 3 + attack01 * 9;
     const teeth = 3;
-    g.moveTo(len * 0.45, -wid * 0.8);
+    g.moveTo(len * 0.42, -wid * 0.78);
     for (let s = 1; s <= teeth; s++) {
-      const px = len * 0.45 - (s / teeth) * len * 0.95;
-      g.lineTo(px + len * 0.12, -wid - h).lineTo(px, -wid * 0.72);
+      const px = len * 0.42 - (s / teeth) * len * 0.9;
+      g.lineTo(px + len * 0.13, -wid - h).lineTo(px, -wid * 0.7);
     }
-    g.fill({ color: shade });
+    g.closePath().fill({ color: limb }).stroke({ color: line, width: 1.3 });
   }
 
-  // 원거리 창 (ranged) — 앞으로 길게 뻗은 창/부리(멀리 닿는 무기). 크고 밝은 촉으로 뚜렷하게.
+  // === 원거리 창 (ranged) — 앞으로 길게 뻗은 창/부리 + 밝은 촉 ===
   if (ranged01 > 0.1) {
-    const horn = 9 + ranged01 * 20;
-    g.moveTo(len - 1, -3)
-      .quadraticCurveTo(len + horn * 0.6, -1.5, len + horn, 0)
-      .quadraticCurveTo(len + horn * 0.6, 1.5, len - 1, 3)
-      .fill({ color: lighten(shade, 0.25) });
-    g.moveTo(len + horn * 0.45, -1.2)
-      .lineTo(len + horn, 0)
-      .lineTo(len + horn * 0.45, 1.2)
-      .fill({ color: 0xffffff });
+    const horn = 9 + ranged01 * 18;
+    g.moveTo(len - 1, -2.6)
+      .quadraticCurveTo(len + horn * 0.6, -1.4, len + horn, 0)
+      .quadraticCurveTo(len + horn * 0.6, 1.4, len - 1, 2.6)
+      .closePath()
+      .fill({ color: lighten(line, 0.3) })
+      .stroke({ color: line, width: 1.2 });
+    g.poly([len + horn * 0.5, -1.3, len + horn, 0, len + horn * 0.5, 1.3]).fill({ color: 0xffffff });
   }
 
-  // 머리 앞부분 (식성)
+  // === 머리 앞부분 (식성) ===
   if (t.diet > SIM.dietGrazeMax) {
-    // 육식 — 날카로운 주둥이 + 흰 이빨
-    const snout = 6 + diet01 * 8;
-    g.moveTo(len * 0.55, -wid * 0.5)
-      .quadraticCurveTo(len + snout, -wid * 0.12, len + snout, 0)
-      .quadraticCurveTo(len + snout, wid * 0.12, len * 0.55, wid * 0.5)
-      .fill({ color: darken(color, 0.9) });
-    g.poly([len + snout * 0.55, -1.6, len + snout, 0, len + snout * 0.55, 1.6]).fill({ color: 0xffffff });
+    // 육식 — 뭉툭·힘있는 주둥이 + 흰 이빨(윤곽선으로 또렷)
+    const snout = 5 + diet01 * 7;
+    g.moveTo(len * 0.5, -wid * 0.52)
+      .quadraticCurveTo(len + snout, -wid * 0.16, len + snout, 0)
+      .quadraticCurveTo(len + snout, wid * 0.16, len * 0.5, wid * 0.52)
+      .closePath()
+      .fill({ color: limb })
+      .stroke({ color: line, width: 1.2 });
+    g.poly([len + snout * 0.5, -1.5, len + snout * 0.98, 0, len + snout * 0.5, 1.5]).fill({ color: 0xffffff });
   } else if (t.diet <= SIM.dietHuntMin) {
-    // 초식 — 부드러운 귀 두 개(길쭉 타원)
-    g.ellipse(len * 0.28, -wid * 0.9, 2.4, 4.2).fill({ color }).stroke({ color: shade, width: 0.8 });
-    g.ellipse(len * 0.28 + 5.5, -wid * 0.9, 2.4, 4.2).fill({ color }).stroke({ color: shade, width: 0.8 });
+    // 초식 — 부드러운 귀 두 개(둥근, 윤곽선)
+    for (const dx of [0, 5.4]) {
+      g.ellipse(len * 0.26 + dx, -wid * 0.98, 2.6, 4.4).fill({ color }).stroke({ color: line, width: 1.1 });
+    }
   }
 
-  // 초음파 귀 (echo) — 머리 위 큰 뾰족 귀 한 쌍(박쥐).
+  // === 초음파 귀 (echo) — 머리 위 큰 뾰족 귀 한 쌍(박쥐, 윤곽선) ===
   if (echo01 > 0.1) {
     const eh = 5 + echo01 * 12;
     for (const s of [0, 1]) {
-      const bx = len * 0.28 + s * 5;
-      g.moveTo(bx - 3, -wid * 0.8).lineTo(bx + 1, -wid * 0.8 - eh).lineTo(bx + 4, -wid * 0.8).fill({ color: shade });
-      g.moveTo(bx - 1, -wid * 0.8).lineTo(bx + 1, -wid * 0.8 - eh * 0.6).lineTo(bx + 2.5, -wid * 0.8).fill({ color });
+      const bx = len * 0.24 + s * 5.4;
+      g.moveTo(bx - 3, -wid * 0.78)
+        .lineTo(bx + 1, -wid * 0.78 - eh)
+        .lineTo(bx + 4, -wid * 0.78)
+        .closePath()
+        .fill({ color })
+        .stroke({ color: line, width: 1.1 });
     }
   }
 
-  // 눈 (시야) — 생동감: 흰자 + 동공 + 반짝 하이라이트. 시야 클수록 큰 눈.
-  const eye = 2 + vision01 * 4.5;
-  const ex = len * 0.55;
-  const ey = -wid * 0.32;
-  g.circle(ex, ey, eye).fill({ color: 0xffffff }).stroke({ color: shade, width: 0.6 });
-  g.circle(ex + eye * 0.22, ey, eye * 0.55).fill({ color: 0x10141a });
-  g.circle(ex + eye * 0.5, ey - eye * 0.32, eye * 0.24).fill({ color: 0xffffff });
+  // === 눈 (시야) — 크고 또렷: 어두운 테 + 흰자 + 동공 + 반짝. 시야 클수록 큰 눈(개성의 핵심). ===
+  const eye = 2.6 + vision01 * 4;
+  const ex = len * 0.5;
+  const ey = -wid * 0.28;
+  g.circle(ex, ey, eye + 0.7).fill({ color: line });
+  g.circle(ex, ey, eye).fill({ color: 0xffffff });
+  g.circle(ex + eye * 0.24, ey + eye * 0.06, eye * 0.52).fill({ color: 0x14171d });
+  g.circle(ex + eye * 0.52, ey - eye * 0.34, eye * 0.28).fill({ color: 0xffffff });
 
-  // 독침 (venom) = 방어 독 — 몸에 보라 독 반점(경고색: 잡아먹으면 중독). 독 지닌 종을 한눈에.
+  // === 독침 (venom) = 방어 독 — 몸에 보라 경고 반점(윤곽선으로 또렷) ===
   if (venom01 > 0.1) {
-    const vr = 1.4 + venom01 * 2;
-    g.circle(-len * 0.25, wid * 0.35, vr).fill({ color: 0xc030e0 });
-    g.circle(len * 0.3, -wid * 0.4, vr).fill({ color: 0xc030e0 });
-    g.circle(len * 0.05, wid * 0.5, vr * 0.8).fill({ color: 0xc030e0 });
+    const vr = 1.6 + venom01 * 2;
+    for (const [dx, dy, sc] of [[-0.25, 0.35, 1], [0.3, -0.4, 1], [0.05, 0.5, 0.82]] as const) {
+      g.circle(len * dx, wid * dy, vr * sc).fill({ color: 0xc030e0 }).stroke({ color: 0x6a1080, width: 0.8 });
+    }
   }
 
   // 고해상도로 생성(작은 스프라이트가 뭉개지지 않게 슈퍼샘플).
