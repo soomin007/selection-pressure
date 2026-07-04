@@ -5,14 +5,14 @@
 // 초식은 식물(food)을, 육식은 다른 종을 먹는다. 먹이/사냥 경쟁이 창발한다.
 
 import { Rng } from "@/sim/rng";
-import { TRAIT_KEYS, TRAIT_MAX, type Genome } from "@/sim/genome";
+import { TRAIT_KEYS, TRAIT_MAX, type Genome, type Traits } from "@/sim/genome";
 import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
 import { Environment } from "@/sim/environment";
 import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
-import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, type Species } from "@/sim/species";
+import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, areFriends, type Species } from "@/sim/species";
 import { stepEntity } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
 import { SIM } from "@/sim/params";
@@ -30,6 +30,40 @@ const clampTrait = (v: number): number => {
   const n = Math.round(v);
   return n < 0 ? 0 : n > TRAIT_MAX ? TRAIT_MAX : n;
 };
+
+/** 야생종 한 무리가 겪는 압력 측정치(0~1). maybeEvolveWild 가 재서 adaptWildTraits 에 넘긴다. */
+export interface WildPressure {
+  /** 무리 평균 추위(0=따뜻 ~ 1=한랭) */
+  avgCold: number;
+  /** 무리 평균 에너지 비율(0=빈사 ~ 1=포만) — 낮으면 먹이 부족 */
+  avgEnergy01: number;
+  /** 무리 중 포식자에 노출된 개체 비율(0~1) */
+  predFrac: number;
+}
+
+/**
+ * 측정한 압력으로 야생종 공유 게놈 형질을 "한 스텝" 적응시킨다(제자리 수정). 순수 함수 — rng 미사용이라
+ * 결정론적이고 단위 테스트가 쉽다(미세 무작위 드리프트는 호출부에서 별도로 한다). 적응 세 갈래:
+ *   · 대사: 추위는 위로(체온), 먹이 부족은 아래로(효율). 둘이 대사 하나를 두고 밀당한다.
+ *   · 포식 노출: 속도·무리 성향을 위로(빠르고 뭉쳐서 안 잡아먹힌다).
+ * 각 형질은 목표를 향해 wildAdaptRate 만큼만 다가가 세대에 걸쳐 천천히 수렴한다.
+ */
+export function adaptWildTraits(t: Traits, p: WildPressure): void {
+  // (1) 대사 — 추위 위로, 먹이 부족 아래로. 굶주림 끌기는 임계 밑에서만 켜져 배부른 무리는 기존과 동일.
+  const coldPull = p.avgCold * SIM.wildColdMetaGain;
+  const thr = SIM.wildScarcityEnergyThreshold;
+  const scarcity = p.avgEnergy01 < thr ? (thr - p.avgEnergy01) / thr : 0; // 0~1
+  const metaTarget = clampTrait(SIM.wildMetaBase + coldPull - scarcity * SIM.wildScarcityMetaDrop);
+  t.metabolism = clampTrait(t.metabolism + (metaTarget - t.metabolism) * SIM.wildAdaptRate);
+
+  // (2) 포식 압력 — 노출 비율만큼 속도·무리 목표를 현재치 위로. 노출 0이면 목표=현재라 안 움직인다.
+  if (p.predFrac > 0) {
+    const speedTarget = clampTrait(t.speed + p.predFrac * SIM.wildPredSpeedRange);
+    const herdTarget = clampTrait(t.herding + p.predFrac * SIM.wildPredHerdRange);
+    t.speed = clampTrait(t.speed + (speedTarget - t.speed) * SIM.wildAdaptRate);
+    t.herding = clampTrait(t.herding + (herdTarget - t.herding) * SIM.wildAdaptRate);
+  }
+}
 
 /** 화면 연출용 1회성 사건(전 종, 위치 포함). 렌더가 매 프레임 읽고 비운다. rng 미사용 → 결정론 무관. */
 export type VisualEventKind = "birth" | "death" | "kill";
@@ -316,29 +350,45 @@ export class World {
 
   /** 야생 이주 — 멸종했거나 적은 야생종을 주기적으로 소수 보충(다양성 바닥). 내 종은 제외. */
   /**
-   * 야생종도 진화한다(스포어식 살아있는 생태). 주기적으로 각 야생종 게놈을 ① 자기가 사는 환경에 적응
-   * (추운 곳 무리일수록 고대사로 수렴) ② 형질별 미세 무작위 드리프트(종마다 조금씩 달라짐)로 옮긴다.
-   * 종 게놈을 바꾸면 그 종 모든 개체가 즉시 반영(공유 게놈). 드리프트 무작위는 독립 rng → 메인 스트림
-   * 보존(기존 결정론 유지). 내 종은 제외 — 내 종의 진화 방향은 플레이어(카드=선택압)가 쥔다.
+   * 야생종도 진화한다(스포어식 살아있는 생태). 주기적으로 각 야생종 게놈을 ① 자기 무리가 실제로 겪는
+   * 압력에 적응 ② 형질별 미세 무작위 드리프트(종마다 조금씩 달라짐)로 옮긴다. 적응하는 압력 세 가지:
+   *   · 추위 → 고대사(체온 유지). 먹이 부족 → 저대사(적게 먹고 오래 버팀). 둘은 대사 하나를 두고 밀당한다.
+   *   · 포식자 노출 → 속도·무리 성향 상승(빠르고 뭉쳐서 잡아먹히지 않는다).
+   * 종 게놈을 바꾸면 그 종 모든 개체가 즉시 반영(공유 게놈). 압력 측정·적응은 rng 미사용(결정론) —
+   * 미세 드리프트만 독립 rng(wildEvoRng)라 메인 스트림 보존. 내 종은 제외 — 내 종의 진화 방향은
+   * 플레이어(카드=선택압)가 쥔다. 짧은 시련엔 거의 안 변하고(밸런스 보존), 긴 런에서 뚜렷이 갈라진다.
    */
   private maybeEvolveWild(): void {
     if (this.tick % SIM.wildEvolveInterval !== 0) return;
     for (const sp of this.species) {
       if (sp.isPlayer) continue;
+      const t = sp.genome.traits;
+      // 이 종 무리를 한 번 훑어 압력을 측정한다: 추위·평균 에너지(먹이 사정)·포식자 노출.
       let n = 0;
       let coldSum = 0;
+      let energySum = 0;
+      let exposed = 0; // 감지 범위 안에 자기를 위협하는 포식자가 있는 개체 수
       for (const e of this.entities) {
-        if (e.species.id === sp.id) {
-          coldSum += this.environment.sampleAt(e.x, e.y).coldness;
-          n += 1;
-        }
+        if (e.species.id !== sp.id) continue;
+        coldSum += this.environment.sampleAt(e.x, e.y).coldness;
+        energySum += e.energy;
+        // 도망 판정과 같은 기준의 포식자(비우호 타종 + 사냥 식성 + 내 공격력 이상)가 근처에 있나.
+        const predator = this.grid.nearestMatching(
+          e.x, e.y, SIM.predatorSenseRange,
+          (p) => p.alive && p.species.id !== sp.id && !areFriends(sp, p.species) &&
+            p.genome.traits.diet > SIM.dietHuntMin && p.genome.traits.attack >= t.attack,
+        );
+        if (predator) exposed += 1;
+        n += 1;
       }
       if (n === 0) continue;
-      const avgCold = coldSum / n;
-      const t = sp.genome.traits;
-      // 환경 적응: 추운 곳에 사는 무리일수록 고대사(추위 견딤)로 천천히 수렴. (형질 0~100 스케일)
-      const metaTarget = clampTrait(30 + avgCold * 60);
-      t.metabolism = clampTrait(t.metabolism + (metaTarget - t.metabolism) * SIM.wildAdaptRate);
+      // 측정한 압력으로 형질을 한 스텝 적응(순수·결정론). 배부르고 안 추운 무리에 포식자도 없으면 무변화.
+      adaptWildTraits(t, {
+        avgCold: coldSum / n,
+        avgEnergy01: energySum / n / SIM.maxEnergy, // 0(빈사)~1(포만)
+        predFrac: exposed / n, // 0~1 — 무리 중 포식자에 노출된 비율
+      });
+
       // 형질별 미세 드리프트(독립 rng). swimming·wings 는 수생/비행 정체성이라 제외(드리프트로 뒤집히면
       // 어색 — 비행 종이 날개를 잃으면 산에서 굶는다).
       for (const key of TRAIT_KEYS) {

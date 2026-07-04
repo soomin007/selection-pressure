@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { World } from "@/sim/world";
+import { World, adaptWildTraits, type WildPressure } from "@/sim/world";
 import { SIM } from "@/sim/params";
 import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
@@ -446,6 +446,42 @@ describe("야생 진화(살아있는 생태)", () => {
     const sig = (w: World): string =>
       w.species.filter((s) => !s.isPlayer).map((s) => s.genome.traits.metabolism.toFixed(5)).join(",");
     expect(sig(a)).toEqual(sig(b));
+  });
+
+  // --- 압력별 적응(순수 함수 adaptWildTraits) — 결정론적으로 방향성을 직접 검증 ---
+  const applyN = (t: Genome["traits"], p: WildPressure, times: number): void => {
+    for (let i = 0; i < times; i++) adaptWildTraits(t, p);
+  };
+  // 안 춥고(0) 배부르고(1) 포식자 없음(0) — 아무 압력 없는 기준 상태
+  const calm: WildPressure = { avgCold: 0, avgEnergy01: 1, predFrac: 0 };
+
+  it("포식자에 노출되면 속도·무리 성향이 오른다(포식 압력 적응)", () => {
+    const t = tune({ speed: 50, herding: 50 }).traits;
+    applyN(t, { avgCold: 0, avgEnergy01: 1, predFrac: 0.5 }, 60);
+    expect(t.speed).toBeGreaterThan(50); // 빨라져 도망
+    expect(t.herding).toBeGreaterThan(50); // 뭉쳐서 방어
+  });
+
+  it("포식자가 없으면 속도·무리 성향은 그대로다(포식 없는 곳에서 안 부풀린다)", () => {
+    const t = tune({ speed: 50, herding: 50 }).traits;
+    applyN(t, calm, 60);
+    expect(t.speed).toBe(50);
+    expect(t.herding).toBe(50);
+  });
+
+  it("먹이가 부족하면(평균 에너지 낮음) 저대사로 적응한다(효율)", () => {
+    const t = tune({ metabolism: 50 }).traits;
+    applyN(t, { avgCold: 0, avgEnergy01: 0, predFrac: 0 }, 60); // 굶주림
+    expect(t.metabolism).toBeLessThan(30); // 기준값(30)보다도 아래로 — 적게 먹고 버틴다
+  });
+
+  it("추위와 먹이 부족은 대사를 두고 밀당한다(같이 굶주리면 덜 오른다)", () => {
+    const cold = tune({ metabolism: 50 }).traits;
+    applyN(cold, { avgCold: 1, avgEnergy01: 1, predFrac: 0 }, 80); // 춥고 배부름
+    const coldHungry = tune({ metabolism: 50 }).traits;
+    applyN(coldHungry, { avgCold: 1, avgEnergy01: 0, predFrac: 0 }, 80); // 춥고 굶주림
+    expect(cold.metabolism).toBeGreaterThan(60); // 추위만이면 고대사로 크게
+    expect(coldHungry.metabolism).toBeLessThan(cold.metabolism); // 굶주림이 상승을 깎는다
   });
 });
 

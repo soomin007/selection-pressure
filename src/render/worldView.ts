@@ -87,11 +87,14 @@ export class WorldView {
     this.dispPos.clear();
   }
 
-  /** 개체의 텍스처(캐시). 내 종은 세대별 게놈 서명으로, 야생은 종 id 로 캐시해 필요할 때 만든다. */
+  /** 개체의 텍스처(캐시). 내 종은 세대별 게놈 서명으로, 야생은 종 id + 거친 게놈 서명으로 캐시한다.
+   * 야생은 진화(공유 게놈 변화)하므로 서명을 붙여야 겉모습이 따라 바뀐다 — 안 붙이면 게놈이 변해도
+   * 첫 모습 그대로라 진화가 화면에 안 보인다. 거친 버킷이라 미세 드리프트엔 안 바뀌고, 압력 적응처럼
+   * 형질이 크게 움직일 때만 새 텍스처(캐시 폭증 방지 + 눈에 띄는 변화만 반영). */
   private textureFor(e: Entity): Texture {
     const key = e.species.isPlayer
       ? "p" + e.species.id + ":" + genomeSignature(e.genome)
-      : "s" + e.species.id;
+      : "s" + e.species.id + ":" + wildGenomeSignature(e.genome);
     let tex = this.texCache.get(key);
     if (!tex) {
       tex = makeCreatureTexture(this.renderer, e.genome, e.species.color);
@@ -526,6 +529,16 @@ function genomeSignature(g: Genome): string {
   const t = g.traits;
   let s = "";
   for (const k of TRAIT_KEYS) s += Math.round(t[k] * 20) + ",";
+  return s;
+}
+
+// 야생종용 거친 게놈 서명 — 형질(0~100)을 12 단위 버킷으로 뭉뚱그린다. 진화로 형질이 눈에 띄게(약 12↑)
+// 움직여야 새 텍스처가 나므로, 매 진화의 미세 드리프트(±1.2)엔 캐시가 안 늘고 압력 적응 같은 큰 변화만
+// 겉모습에 반영된다(한 종당 버킷 조합 소수 → 텍스처 캐시 상한).
+function wildGenomeSignature(g: Genome): string {
+  const t = g.traits;
+  let s = "";
+  for (const k of TRAIT_KEYS) s += Math.round(t[k] / 12) + ",";
   return s;
 }
 
