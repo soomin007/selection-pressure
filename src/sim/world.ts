@@ -12,7 +12,8 @@ import { Environment } from "@/sim/environment";
 import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
-import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, areFriends, type Species } from "@/sim/species";
+import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, BIOME_FOOD_KIND, areFriends, type Species } from "@/sim/species";
+import type { Biome } from "@/sim/environment";
 import { stepEntity } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
 import { SIM } from "@/sim/params";
@@ -147,7 +148,9 @@ export class World {
     // 우호적 친척 종 — 게놈 변형은 "독립 rng"라 메인 스트림(기존 밸런스)을 안 건드린다. id 는 야생 뒤 고유값.
     const wild = generateWildSpecies(this.rng);
     const kin = makeKinSpecies(wild.length + 1, new Rng(String(seed) + "-kin"), genome);
-    this.species = [this.playerSpecies, kin, ...wild];
+    // 바이옴 특화종(사막·빙하·우림) — "독립 rng"로 생성(메인 스트림 보존). 각자 고향 바이옴에만 스폰된다.
+    const biomeSpecies = makeBiomeSpecies(wild.length + 2, new Rng(String(seed) + "-biome"));
+    this.species = [this.playerSpecies, kin, ...wild, ...biomeSpecies];
     this.spawnFood();
     this.spawnEntities();
     // 친척은 spawnEntities(메인 rng) 대신 "독립 rng"로 내 종 근처에 스폰 → 메인 소비 순서 보존(밸런스 불변).
@@ -156,8 +159,12 @@ export class World {
     this.spawnSeaFood(new Rng(String(seed) + "-seafood"));
     this.spawnDeepFood(new Rng(String(seed) + "-deepfood"));
     this.spawnMountainFood(new Rng(String(seed) + "-mtnfood"));
+    // 바이옴 전용 먹이(특화종만 먹음) — 특화종을 육지 먹이 경쟁에서 격리 + 자생시킨다. 독립 rng.
+    this.spawnBiomeFood(new Rng(String(seed) + "-biomefood"));
     // 물고기 떼를 "떼"답게 독립 rng 로 보강 — 무리 행동·진화가 눈에 보이려면 어느 정도 수가 필요하다.
     this.spawnWildHerdPadding(new Rng(String(seed) + "-herdpad"));
+    // 바이옴 특화종을 각자 고향 바이옴에 스폰(독립 rng). 그 바이옴이 이 맵에 없으면 그 종은 안 나온다.
+    this.spawnBiomeAnimals(new Rng(String(seed) + "-biomepos"));
     this.grid.rebuild(this.entities);
     // 먹이 위치는 불변이라 격자를 한 번만 빌드한다(available 토글은 탐색 시 거른다).
     this.foodGrid = new FoodGrid(width, height, SIM.gridCellSize);
@@ -319,6 +326,32 @@ export class World {
     this.spawnFoodOnTiles(rng, count, true, (kind) => (kind === TILE.water ? 1 : 0), false, true);
   }
 
+  /**
+   * 바이옴 전용 먹이(kind = BIOME_FOOD_KIND)를 특화종 바이옴(사막·침엽수림·우림)의 육지 타일에 놓는다.
+   * 이 먹이는 특화종만 먹어(그들 foodKinds=[3], 내 종·야생은 [0..2]) — 육지 먹이 경쟁을 분리(밸런스 격리)
+   * 하고 특화종을 제 바이옴에서 자생시킨다. 그 바이옴이 맵에 없으면 안 놓인다. 독립 rng → step 동역학 불변.
+   */
+  private spawnBiomeFood(rng: Rng): void {
+    const count = Math.round(SIM.biomeFoodPatches * this.areaScale);
+    const terr = this.terrain;
+    const cs = terr.cellSize;
+    const biomes: Biome[] = ["desert", "taiga", "rainforest"];
+    const cells: number[] = [];
+    for (let i = 0; i < terr.tiles.length; i++) {
+      if ((terr.tiles[i] ?? TILE.land) !== TILE.land) continue; // 트인 육지에만(일반 먹이와 동일 — 물·산·수풀·험지 제외)
+      const cx = ((i % terr.cols) + 0.5) * cs;
+      const cy = (Math.floor(i / terr.cols) + 0.5) * cs;
+      if (biomes.includes(this.environment.biomeAt(cx, cy))) cells.push(i);
+    }
+    if (cells.length === 0) return; // 특화종 바이옴이 이 맵에 없음(또는 그 바이옴에 트인 육지가 없음)
+    for (let n = 0; n < count; n++) {
+      const cell = cells[Math.floor(rng.unit() * cells.length)] ?? cells[0] ?? 0;
+      const x = Math.min(this.width, ((cell % terr.cols) + rng.unit()) * cs);
+      const y = Math.min(this.height, (Math.floor(cell / terr.cols) + rng.unit()) * cs);
+      this.food.push(createFood(x, y, BIOME_FOOD_KIND));
+    }
+  }
+
   /** 지형 타일 단위 가중 추첨으로 먹이 count 개를 놓는다(정밀 배치). 타일별 weight 는 콜백이 정한다. */
   private spawnFoodOnTiles(
     rng: Rng,
@@ -420,7 +453,8 @@ export class World {
     const counts = new Map<number, number>();
     for (const e of this.entities) counts.set(e.species.id, (counts.get(e.species.id) ?? 0) + 1);
     for (const sp of this.species) {
-      if (sp.isPlayer || sp.friendly) continue; // 친척은 이주로 보충 안 함(내 편 — 멸종하면 사라진다)
+      // 친척·바이옴 특화종은 이주로 보충 안 함(친척=내 편, 바이옴종=제 바이옴에서만 산다 — 멸종하면 사라짐).
+      if (sp.isPlayer || sp.friendly || sp.homeBiome) continue;
       if ((counts.get(sp.id) ?? 0) >= floor) continue;
       const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
       const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
@@ -448,8 +482,8 @@ export class World {
 
   private spawnEntities(): void {
     for (const sp of this.species) {
-      // 친척(우호 종)은 여기서 스폰하지 않는다 — spawnKin(독립 rng)이 맡아 메인 rng 소비 순서를 보존한다.
-      if (sp.friendly) continue;
+      // 친척(우호 종)·바이옴 특화종은 여기서 스폰하지 않는다 — 각자 독립 rng 스폰이 맡아 메인 rng 소비 순서 보존.
+      if (sp.friendly || sp.homeBiome) continue;
       // 야생종은 고유한 영역(보금자리)에 모여 태어난다 — 환경 비옥도 차이 + 무리 성향과 맞물려
       // 경쟁 배제를 늦춰 더 많은 종이 공존한다. 내 종(주인공)은 맵 전체에 넓게 퍼뜨린다.
       const homeX = this.rng.range(0.14, 0.86) * this.width;
@@ -524,7 +558,7 @@ export class World {
   private spawnWildHerdPadding(rng: Rng): void {
     const spread = 72 * Math.sqrt(this.areaScale);
     for (const sp of this.species) {
-      if (sp.isPlayer || sp.friendly) continue;
+      if (sp.isPlayer || sp.friendly || sp.homeBiome) continue; // 바이옴 특화종은 자기 스폰이 따로(중복 방지)
       const tr = sp.genome.traits;
       let pad = 0;
       if (tr.swimming >= SIM.aquaticOnlyThreshold) {
@@ -543,6 +577,39 @@ export class World {
         const y = Math.max(0, Math.min(this.height, home.y + rng.range(-spread, spread)));
         // 통행 타일로 스냅(rng 미사용 → 소비 순서 보존). 물 전용은 큰 바다로, 육지 종은 육지로.
         const spot = this.snapSpawn(x, y, canSwim, canLand, canFly);
+        this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
+      }
+    }
+  }
+
+  /**
+   * 바이옴 특화종(homeBiome 있는 종)을 각자 고향 바이옴 구역에 스폰한다 — 사막 도마뱀은 사막에, 빙하 큰곰은
+   * 빙하에. 그 지형에 사는 특화 종이 보이면 "바이옴이 생물에 영향을 준다"가 눈에 띈다. 고향 바이옴 타일이
+   * 맵에 없으면(이번 맵에 그 바이옴이 안 뜸) 그 종은 이번 맵에 안 나온다(바이옴 조건부 등장). 독립 rng →
+   * 메인 스트림 불변. 육지 통행 타일 중 그 바이옴인 것만 후보로 모아 rng 로 보금자리를 고른다.
+   */
+  private spawnBiomeAnimals(rng: Rng): void {
+    const terr = this.terrain;
+    const spread = 72 * Math.sqrt(this.areaScale);
+    for (const sp of this.species) {
+      if (!sp.homeBiome) continue;
+      // 고향 바이옴이면서 통행 가능한 육지 타일을 후보로 모은다(물·산 제외 — 바이옴종은 육지 거주).
+      const cells: number[] = [];
+      for (let i = 0; i < terr.tiles.length; i++) {
+        const k = terr.tiles[i] ?? TILE.land;
+        if (k === TILE.water || k === TILE.mountain) continue;
+        const cx = (i % terr.cols + 0.5) * terr.cellSize;
+        const cy = (Math.floor(i / terr.cols) + 0.5) * terr.cellSize;
+        if (this.environment.biomeAt(cx, cy) === sp.homeBiome) cells.push(i);
+      }
+      if (cells.length === 0) continue; // 이 바이옴이 맵에 없음 → 이 종은 이번 맵에 등장 안 함
+      const home = cells[Math.floor(rng.unit() * cells.length)] ?? cells[0] ?? 0;
+      const baseX = (home % terr.cols + 0.5) * terr.cellSize;
+      const baseY = (Math.floor(home / terr.cols) + 0.5) * terr.cellSize;
+      for (let i = 0; i < sp.initialCount; i++) {
+        const x = Math.max(0, Math.min(this.width, baseX + rng.range(-spread, spread)));
+        const y = Math.max(0, Math.min(this.height, baseY + rng.range(-spread, spread)));
+        const spot = terr.nearestPassable(x, y, false, true, false); // 육지 거주(수영·비행 아님)
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }

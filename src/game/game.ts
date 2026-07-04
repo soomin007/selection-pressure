@@ -494,6 +494,6 @@ function extinctionPreview(type: ExtinctionType): string {
 function applyExtinction(world: World, type: ExtinctionType): void {
   if (type === "cold") world.globalCold = 1.3;
   else if (type === "famine") world.foodRegrowMultiplier = 3.6;
-  else if (type === "plague") world.plagueRate = 0.005;
-  else world.heat = 0.9;
+  else if (type === "plague") world.plagueRate = 0.006; // 0.005→0.006: 바이옴 생태 추가로 저산 필터가 경계(3)로 → 복원.
+  else world.heat = 1.1; // 폭염 — 0.9→1.1: 바이옴 동물이 env 생태를 바꿔 고대사 필터가 경계(3)로 약해져 복원.
 }

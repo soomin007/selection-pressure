@@ -448,8 +448,9 @@ const HORDE_COLORS: Partial<Record<BossType, HordeColor>> = {
   stalker: { dot: 0xc060d0, aura: 0x3a0a3a, ring: 0x8a2a9a }, // 자주(그림자 매복)
 };
 
-// 먹이 종류별 색 — 모두 식물처럼 자연스럽되 구분되게(연두 / 청록 / 노랑풀).
-const FOOD_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a];
+// 먹이 종류별 색 — 모두 식물처럼 자연스럽되 구분되게(연두 / 청록 / 노랑풀 / 바이옴 전용=주황 열매).
+// 종류 3 = 바이옴 전용 먹이(사막·침엽수림·우림에, 특화종만 먹음) — 주황빛 열매로 일반 먹이와 구분.
+const FOOD_COLORS: readonly number[] = [0x9bee5a, 0x5ad6b0, 0xd8de5a, 0xf0a848];
 // 바다 먹이 색 — 물 위에서 밝게 빛나는 청록(수영 종만 먹는 틈새 강조).
 const SEA_FOOD_COLOR = 0x7fe9ff;
 // 깊은 바다 먹이 색 — 진한 남청 반짝임(물 전용 종=물고기만 먹는 전용 틈새. 얕은 청록과 구분).

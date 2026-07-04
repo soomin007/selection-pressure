@@ -5,6 +5,7 @@
 import type { Rng } from "@/sim/rng";
 import { defaultGenome, clampGenome, TRAIT_KEYS, type Genome, type Traits } from "@/sim/genome";
 import { SIM } from "@/sim/params";
+import type { Biome } from "@/sim/environment";
 
 export interface Species {
   id: number;
@@ -23,6 +24,8 @@ export interface Species {
    * (cohesion·통과기준)를 안 건드려 밸런스가 안전하다.
    */
   faction: number;
+  /** 바이옴 특화종의 고향 바이옴(있으면). 이 바이옴 구역에만 스폰된다(사막 도마뱀=사막 등). 없으면 어디든. */
+  homeBiome?: Biome;
 }
 
 export function isCarnivore(genome: Genome): boolean {
@@ -217,6 +220,79 @@ export function generateWildSpecies(rng: Rng): Species[] {
       foodKinds: arch.foodKinds.slice(),
       friendly: false,
       faction: arch.faction ?? 0, // 동맹 아키타입만 편(faction)을 갖고, 나머지는 중립(0)
+    });
+  }
+  return out;
+}
+
+// 바이옴 특화 야생종 — 각자 고향 바이옴에만 산다(그 지형에 사는 특화 종이 보이면 "바이옴이 생물에 영향
+// 준다"가 눈에 띈다). 대사가 정반대로 갈려(사막=저대사 더위 견딤, 빙하=고대사 추위 견딤) 엉뚱한 바이옴에
+// 가면 힘들어한다. WILD_ARCHETYPES 와 별개로 두고 "독립 rng"로 생성·스폰 → 메인 스트림(밸런스) 보존.
+interface BiomeArchetype extends Archetype {
+  homeBiome: Biome;
+}
+// 바이옴 특화종은 "바이옴 전용 먹이"(먹이 종류 BIOME_FOOD_KIND)만 먹는 초식이다 — 내 종·야생과 먹이를 안
+// 나눠(물고기의 깊은 바다 먹이처럼 격리) 육지 생태·통과기준을 안 건드리고, 제 바이옴에서 자생한다. 모두
+// 초식(diet<사냥임계)이라 사냥으로 남을 건드리지도 않는다. 대사만 정반대로 갈려(사막=저대사·설원=고대사)
+// 엉뚱한 바이옴에 가면 힘들어한다(빛나는 조건부 형질).
+export const BIOME_FOOD_KIND = 3; // 0~2 는 일반 먹이(내 종·야생), 3 은 바이옴 전용(특화종만)
+const BIOME_ARCHETYPES: readonly BiomeArchetype[] = [
+  {
+    // 사막 도마뱀 — 저대사(더위에 강함)로 뜨거운 사막에서 산다. 먹이 귀한 사막이라 멀리 보고 아껴 먹는다.
+    name: "사막 도마뱀",
+    homeBiome: "desert",
+    color: 0xc85028, // 녹슨 주황빛 — 모래빛 사막 바탕에서 도드라진다
+    initialCount: 8,
+    foodKinds: [BIOME_FOOD_KIND],
+    traits: { diet: 16, metabolism: 20, vision: 62, speed: 52, fertility: 46, attack: 26, herding: 24 },
+  },
+  {
+    // 설원 큰곰 — 고대사(추위에 강함)로 추운 침엽수림에 산다(먹이 없는 빙하가 아니라 숲). 크고 드문 초식.
+    name: "설원 큰곰",
+    homeBiome: "taiga",
+    color: 0x5a4634, // 짙은 갈색 — 서늘한 침엽수림 위에서 크게 대비
+    initialCount: 6,
+    foodKinds: [BIOME_FOOD_KIND],
+    traits: { diet: 30, metabolism: 80, vision: 46, speed: 40, fertility: 40, attack: 34, herding: 34 },
+  },
+  {
+    // 우림 새떼 — 먹이 넘치는 열대우림에서 빠르게 번식한다(다산). 무리 지어 다니는 화려한 새.
+    name: "우림 새떼",
+    homeBiome: "rainforest",
+    color: 0xffcc40, // 밝은 열대 노랑 — 짙은 밀림 초록에서 확 튄다
+    initialCount: 9,
+    foodKinds: [BIOME_FOOD_KIND],
+    traits: { diet: 18, metabolism: 46, vision: 46, speed: 52, fertility: 76, attack: 18, herding: 66 },
+  },
+];
+
+/**
+ * 바이옴 특화종들을 만든다(독립 rng 로 약간 흔들되 스트림은 호출부와 무관). id 는 기존 종들 뒤 고유값.
+ * 실제 스폰(고향 바이옴 위치)은 world 가 맡는다 — 그 바이옴이 맵에 없으면 그 종은 이번 맵에 안 나온다.
+ */
+export function makeBiomeSpecies(startId: number, rng: Rng): Species[] {
+  const out: Species[] = [];
+  let id = startId;
+  for (const arch of BIOME_ARCHETYPES) {
+    const g = defaultGenome();
+    for (const key of TRAIT_KEYS) {
+      if (key === "swimming" || key === "echo" || key === "wings" || key === "venom" || key === "ranged") {
+        g.traits[key] = arch.traits[key] ?? (key === "swimming" ? 50 : 0);
+        continue;
+      }
+      g.traits[key] = clampTrait((arch.traits[key] ?? 50) + rng.range(-6, 6));
+    }
+    out.push({
+      id: id++,
+      name: arch.name,
+      genome: clampGenome(g),
+      isPlayer: false,
+      color: arch.color,
+      initialCount: arch.initialCount,
+      foodKinds: arch.foodKinds.slice(),
+      friendly: false,
+      faction: 0,
+      homeBiome: arch.homeBiome,
     });
   }
   return out;

@@ -207,10 +207,10 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
 
   it("폭염 대멸종: 저대사는 통과, 고대사는 실패", () => {
     const lo = afterGate(tune({ metabolism: 10 }), GAME.extinctionSeconds, (w) => {
-      w.heat = 0.9;
+      w.heat = 1.1; // 게임 applyExtinction 과 동일(폭염 세기)
     });
     const hi = afterGate(tune({ metabolism: 90 }), GAME.extinctionSeconds, (w) => {
-      w.heat = 0.9;
+      w.heat = 1.1;
     });
     expect(lo).toBeGreaterThanOrEqual(GAME.extinctionPassThreshold);
     expect(hi).toBeLessThan(GAME.extinctionPassThreshold);
@@ -218,10 +218,10 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
 
   it("대역병 대멸종: 번식력이 높으면 통과, 낮으면 실패", () => {
     const hi = afterGate(tune({ fertility: 90 }), GAME.extinctionSeconds, (w) => {
-      w.plagueRate = 0.005;
+      w.plagueRate = 0.006; // 게임 applyExtinction 과 동일(대역병 세기)
     });
     const lo = afterGate(tune({ fertility: 10 }), GAME.extinctionSeconds, (w) => {
-      w.plagueRate = 0.005;
+      w.plagueRate = 0.006; // 게임 applyExtinction 과 동일(대역병 세기)
     });
     expect(hi).toBeGreaterThanOrEqual(GAME.extinctionPassThreshold);
     expect(lo).toBeLessThan(GAME.extinctionPassThreshold);
@@ -256,13 +256,15 @@ describe("Phase 6 — 사망 원인 집계", () => {
 });
 
 describe("종 다양성", () => {
-  it("내 종 + 친척 1 + 야생 8 = 10종으로 시작한다", () => {
+  it("내 종 + 친척 1 + 야생 8 + 바이옴 특화 3 = 13종으로 시작한다", () => {
     const w = new World("env-1", W, H, defaultGenome());
-    expect(w.species.length).toBe(10);
+    expect(w.species.length).toBe(13); // 10 + 바이옴 특화종(사막·빙하·우림) 3
     expect(w.species.filter((s) => s.isPlayer).length).toBe(1);
     // 우호적 친척 종이 정확히 하나(내 종은 friendly 아님).
     expect(w.species.filter((s) => s.friendly).length).toBe(1);
     expect(w.species.filter((s) => s.friendly && s.isPlayer).length).toBe(0);
+    // 바이옴 특화종 3(사막·빙하·우림) — homeBiome 을 가진다.
+    expect(w.species.filter((s) => s.homeBiome).length).toBe(3);
   });
 
   it("친척 종은 내 종과 서로 우호(사냥/도망 대상 제외), 야생과는 아니다", () => {
