@@ -30,8 +30,9 @@ import { isPredatorBoss } from "@/sim/boss";
 import { SIM } from "@/sim/params";
 import type { Entity } from "@/sim/entity";
 
-// 맵 배율 — 월드를 화면의 이 배수만큼 크게. 소수 개체(한 무리)를 카메라가 따라가며 약간의 탐험.
-const MAP_SCALE = 1.5;
+// 맵 배율 — 월드를 화면의 이 배수만큼 크게. 소수 개체(한 무리)를 카메라가 따라가며 탐험. 바이옴(사막·빙하·
+// 우림)이 뚜렷한 구역으로 펼쳐지도록 넓게. 개체는 절대 수(소수)라 먹이 밀도·상한만 면적 비례(areaScale).
+const MAP_SCALE = 2.0;
 
 async function boot(): Promise<void> {
   const layout = chooseLayout();

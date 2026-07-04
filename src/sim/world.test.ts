@@ -427,13 +427,15 @@ describe("야생 진화(살아있는 생태)", () => {
       : 0;
   };
 
-  it("추운 맵에서 야생종이 고대사로 적응한다(환경 진화)", () => {
-    const w = new World("s3", W, H, defaultGenome()); // s3 는 추운 맵(평균 추위 ~0.89)
-    const start = w.species
-      .filter((s) => !s.isPlayer)
-      .reduce((a, s) => a + s.genome.traits.metabolism, 0) / 8;
-    for (let i = 0; i < 2000; i++) w.step();
-    expect(wildMeta(w)).toBeGreaterThan(start); // 추위에 적응해 대사가 올라간다
+  it("추운 맵(빙하) 야생이 더운 맵 야생보다 고대사로 적응한다(바이옴 진화)", () => {
+    // 바이옴이 한 맵에 섞여 "맵 평균"만으론 약하다(추운 맵도 평균 추위 ~0.33). 대신 추운 맵 vs 더운 맵을
+    // 비교하면 방향이 뚜렷하다 — 빙하가 넓은 맵의 야생이 더운 맵보다 확실히 고대사로 수렴(결정론).
+    const runWildMeta = (seed: string): number => {
+      const w = new World(seed, W, H, defaultGenome());
+      for (let i = 0; i < 2000; i++) w.step();
+      return wildMeta(w);
+    };
+    expect(runWildMeta("cold-1")).toBeGreaterThan(runWildMeta("env-2")); // 추운 맵(빙하) > 더운 맵
   });
 
   it("야생 진화는 독립 rng 라 같은 시드면 동일하게 진화한다(결정론)", () => {

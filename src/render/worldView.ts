@@ -8,6 +8,7 @@ import type { World } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
 import type { BossType } from "@/sim/boss";
 import { TILE, type TileKind } from "@/sim/terrain";
+import type { Biome } from "@/sim/environment";
 import { TRAIT_KEYS, TRAIT_MAX, type Genome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 import { DEBUG, TUNE } from "@/debug";
@@ -114,11 +115,11 @@ export class WorldView {
         const i = cy * terr.cols + cx;
         const kind = terr.tiles[i] ?? TILE.land;
         const elev = terr.elevation[i] ?? 0.5;
-        // 이 타일 중심의 환경(추위/비옥도)을 샘플 — 육지 색조·산 눈에 반영.
+        // 이 타일 중심의 환경(바이옴/추위/비옥도)을 샘플 — 바이옴별 육지 색·산 눈에 반영.
         const s = env.sampleAt((cx + 0.5) * cs, (cy + 0.5) * cs);
         this.envG
           .rect(cx * cs, cy * cs, cs, cs)
-          .fill({ color: terrainColor(kind, elev, s.coldness, s.fertility), alpha: 1 });
+          .fill({ color: terrainColor(kind, elev, s.biome, s.coldness, s.fertility), alpha: 1 });
       }
     }
   }
@@ -480,15 +481,25 @@ const WATER_DEEP: RGB = [16, 38, 72];
 const WATER_SHALLOW: RGB = [46, 112, 150];
 const ROCK: RGB = [86, 82, 94];
 const SNOW: RGB = [206, 212, 222];
-const LAND_BARREN: RGB = [122, 106, 64];
-const LAND_LUSH: RGB = [54, 110, 50];
-const LAND_COOL: RGB = [78, 96, 92];
-// 수풀 — 무성한 진초록(트인 육지보다 어둡고 짙어 "시야를 가리는 덤불"로 읽힌다).
-const GRASS_DEEP: RGB = [30, 74, 34];
-const GRASS_LUSH: RGB = [40, 96, 40];
 // 험지 — 거친 회갈색 자갈밭(산 아래. 바위·돌이 많아 "느리게 통과하는 땅"으로 읽힌다).
 const ROUGH_LO: RGB = [96, 88, 76];
 const ROUGH_HI: RGB = [124, 116, 104];
+// 바이옴 바탕색(척박/건조 상태) — 한눈에 사막/빙하/우림이 갈리게 뚜렷이 구분. 비옥할수록 BIOME_LUSH 로 섞인다.
+const BIOME_COLORS: Record<Biome, RGB> = {
+  glacier: [198, 214, 230], // 얼음 벌판 — 창백한 하늘빛 흰색
+  desert: [204, 178, 116], // 사막 — 모래빛 황갈
+  grassland: [128, 148, 78], // 초원 — 마른 풀빛
+  wetland: [72, 122, 104], // 습지 — 축축한 청록
+  rainforest: [46, 108, 52], // 열대우림 — 짙은 밀림 초록
+};
+// 바이옴별 비옥(먹이 풍부) 쪽 색 — 바탕색보다 생기 있는 초록. fert 로 바탕↔이쪽 보간.
+const BIOME_LUSH: Record<Biome, RGB> = {
+  glacier: [176, 200, 196], // 얼음에도 이끼 낀 청록빛
+  desert: [150, 156, 86], // 오아시스 관목의 마른 초록
+  grassland: [86, 138, 60], // 무성한 초원
+  wetland: [40, 118, 84], // 짙은 습지 수풀
+  rainforest: [28, 104, 44], // 가장 짙은 밀림
+};
 // 렌더 음영용 표고 밴드(terrain 의 기본 분류 경계와 맞춤 — 시각 전용이라 근사면 충분).
 const WATER_BAND = 0.32;
 const MOUNTAIN_BAND = 0.76;
@@ -502,7 +513,7 @@ function pack(c: RGB): number {
   return (clamp255(c[0]) << 16) | (clamp255(c[1]) << 8) | clamp255(c[2]);
 }
 
-function terrainColor(kind: TileKind, elev: number, cold: number, fert: number): number {
+function terrainColor(kind: TileKind, elev: number, biome: Biome, cold: number, fert: number): number {
   if (kind === TILE.water) {
     // 표고가 낮을수록(깊을수록) 어두운 남색, 해안에 가까울수록 청록.
     return pack(mix(WATER_DEEP, WATER_SHALLOW, elev / WATER_BAND));
@@ -512,17 +523,15 @@ function terrainColor(kind: TileKind, elev: number, cold: number, fert: number):
     const t = (elev - MOUNTAIN_BAND) / (1 - MOUNTAIN_BAND);
     return pack(mix(ROCK, SNOW, t * 0.7 + cold * 0.5));
   }
-  if (kind === TILE.grass) {
-    // 수풀 — 비옥할수록 짙은 초록. 트인 육지보다 어두워 "덤불"로 읽힌다. 추우면 차갑게.
-    return pack(mix(mix(GRASS_DEEP, GRASS_LUSH, fert), LAND_COOL, cold * 0.3));
-  }
+  // 육지 계열(트인 육지·수풀·험지) — 바이옴 색이 바탕. 비옥할수록 조금 짙게(생기), 수풀은 더 어둡게(덤불),
+  // 험지는 바위 쪽으로 섞어 거칠게. 바이옴이 사막/빙하/우림 등으로 한눈에 갈린다.
+  const base = mix(BIOME_COLORS[biome], BIOME_LUSH[biome], fert * 0.5);
+  if (kind === TILE.grass) return pack(mix(base, [0, 0, 0], 0.22)); // 수풀 = 덤불(짙게)
   if (kind === TILE.rough) {
-    // 험지 — 산 아래 거친 자갈밭. 표고가 높을수록 밝은 바위색. 추우면 차갑게.
     const t = (elev - 0.7) / (MOUNTAIN_BAND - 0.7);
-    return pack(mix(mix(ROUGH_LO, ROUGH_HI, t), LAND_COOL, cold * 0.3));
+    return pack(mix(base, mix(ROUGH_LO, ROUGH_HI, t), 0.55)); // 험지 = 바위 자갈밭
   }
-  // 육지 — 비옥하면 초록, 척박하면 황갈. 추운 땅은 차갑게.
-  return pack(mix(mix(LAND_BARREN, LAND_LUSH, fert), LAND_COOL, cold * 0.35));
+  return pack(base);
 }
 
 function clampRange(v: number, lo: number, hi: number): number {

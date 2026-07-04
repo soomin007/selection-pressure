@@ -126,7 +126,8 @@ export class World {
     this.areaScale = areaScale;
     this.rng = new Rng(seed);
     this.genome = genome;
-    this.environment = Environment.generate(this.rng, width, height, SIM.cellSize);
+    // 환경(바이옴)도 지형처럼 "독립된 rng"로 생성 → 앞으로 환경을 손봐도 메인 sim 동역학 스트림과 무관.
+    this.environment = Environment.generate(new Rng(String(seed) + "-env"), width, height, SIM.cellSize);
     // 지형은 메인 rng 와 "독립된 rng"로 생성 → 기존 sim 동역학(결정론·밸런스)을 1비트도 안 건드린다.
     this.terrain = Terrain.generate(
       new Rng(String(seed) + "-terrain"),

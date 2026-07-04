@@ -211,10 +211,12 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const env = world.environment.sampleAt(e.x, e.y);
   const huddle = nb ? Math.min(1, (nb.count - 1) / SIM.huddleFull) * herding01 : 0;
   const warmthFactor = 1 - SIM.huddleWarmth * huddle;
-  // 평상시 추위(env.coldness)는 그대로, 대멸종 한파(globalCold)만 더 매섭게(클라이맥스 필터).
+  // 평상시 추위(빙하 바이옴 env.coldness)는 그대로, 대멸종 한파(globalCold)만 더 매섭게(클라이맥스 필터).
   const coldField = env.coldness + world.globalCold * SIM.globalColdLethality;
   const coldDrain = SIM.coldPenalty * coldField * (1 - metabolism01) * warmthFactor;
-  const heatDrain = SIM.heatPenalty * world.heat * metabolism01;
+  // 열기 = 국소 사막·열대우림 열기(env.heat) + 대멸종 폭염(world.heat). 둘 다 고대사(고에너지) 개체에 불리.
+  const heatField = env.heat + world.heat;
+  const heatDrain = SIM.heatPenalty * heatField * metabolism01;
   // 독(중독) — 누적 독이 있으면 매 틱 에너지를 깎는다(지속 피해). poison 풀이 소진될 때까지.
   const poisonDmg = e.poison > 0 ? Math.min(e.poison, SIM.venomTickDamage) : 0;
   if (poisonDmg > 0) e.poison -= poisonDmg;
