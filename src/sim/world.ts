@@ -497,26 +497,35 @@ export class World {
   }
 
   /**
-   * 물 전용 야생종(물고기 떼)을 독립 rng 로 보강해 진짜 "떼"로 만든다. 기본 소수 스폰(≈5)만으론 무리
-   * 짓기·진화(속도·무리 상승)가 눈에 안 들어온다("물고기 떼"인데 5마리). 바다는 육지 생태와 격리된
-   * 니치(물고기는 바다 먹이만 먹고 육지 종·포식자와 안 겹친다)라, 늘려도 통과기준 밸런스에 안 걸린다.
-   * 독립 rng → 메인 스트림(step 동역학) 불변. 물 전용(swimming ≥ aquaticOnlyThreshold) 종만 대상.
+   * 야생 "떼종"을 독립 rng 로 보강한다 — 기본 소수 스폰만으론 무리·진화가 눈에 안 들어오고("물고기 떼"인데
+   * 5마리), 먹이사슬 하위 초식이 소수면 생태가 부자연스럽다(하위일수록 많아야 자연스러운 개체수 피라미드).
+   *   · 물 전용 종(물고기): seaHerdPad 만큼(≈학교). 바다는 격리된 니치라 밸런스 안 걸림.
+   *   · 육지 초식(diet<사냥임계, 물 아님): landHerbivorePad × 번식력/100 — 다산형일수록 많이(넓은 바닥).
+   * 독립 rng → 메인 스트림(step 동역학) 불변. 내 종·포식자·잡식은 대상 아님(소수 유지). 개체 수는 절대
+   * (맵 크기 무관 — 소수 개체 게임). areaScale 은 위치 분산에만(길이라 제곱근), 개수엔 안 쓴다.
    */
   private spawnWildHerdPadding(rng: Rng): void {
-    // 개체 수는 절대(맵 크기 무관 — 소수 개체 게임). areaScale 은 먹이 밀도·상한에만 쓴다(기본 스폰과 동일).
-    const pad = SIM.seaHerdPad;
-    if (pad <= 0) return;
     const spread = 72 * Math.sqrt(this.areaScale);
     for (const sp of this.species) {
       if (sp.isPlayer || sp.friendly) continue;
-      if (sp.genome.traits.swimming < SIM.aquaticOnlyThreshold) continue; // 물 전용(진짜 물고기)만
+      const tr = sp.genome.traits;
+      let pad = 0;
+      if (tr.swimming >= SIM.aquaticOnlyThreshold) {
+        pad = SIM.seaHerdPad; // 물 전용(진짜 물고기) — 학교로
+      } else if (tr.diet < SIM.dietHuntMin && tr.swimming < SIM.swimThreshold) {
+        pad = Math.round(SIM.landHerbivorePad * (tr.fertility / TRAIT_MAX)); // 육지 초식 — 다산형일수록 많이
+      }
+      if (pad <= 0) continue;
+      const canSwim = tr.swimming >= SIM.swimThreshold;
+      const canLand = tr.swimming < SIM.aquaticOnlyThreshold;
+      const canFly = tr.wings >= SIM.flyThreshold;
       const homeX = rng.range(0.14, 0.86) * this.width;
       const homeY = rng.range(0.14, 0.86) * this.height;
       for (let i = 0; i < pad; i++) {
         const x = Math.max(0, Math.min(this.width, homeX + rng.range(-spread, spread)));
         const y = Math.max(0, Math.min(this.height, homeY + rng.range(-spread, spread)));
-        // 물 전용: 바다로만 스냅(canSwim=true·canLand=false). rng 미사용 스냅이라 소비 순서 보존.
-        const spot = this.terrain.nearestPassable(x, y, true, false, false);
+        // 통행 타일로 스냅(rng 미사용 → 소비 순서 보존). 물 전용은 물로, 육지 종은 육지로.
+        const spot = this.terrain.nearestPassable(x, y, canSwim, canLand, canFly);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }
