@@ -428,10 +428,21 @@ export class World {
         // rng 소비 순서(width→height)를 보존한 뒤 막힌 타일이면 통행 타일로 스냅(스냅은 rng 미사용).
         const ix = this.rng.range(0, this.width);
         const iy = this.rng.range(0, this.height);
-        const spot = this.terrain.nearestPassable(ix, iy, canSwim, canLand, canFly);
+        // 물 전용 종은 큰 바다로 이주(웅덩이 갇힘 방지). 스냅은 rng 미사용 → 소비 순서 보존.
+        const spot = this.snapSpawn(ix, iy, canSwim, canLand, canFly);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }
+  }
+
+  /**
+   * 종의 통행 특성에 맞는 위치로 스냅한다(rng 미사용 → 스폰 rng 소비 순서·밸런스 무관). 물 전용 종
+   * (진짜 물고기 = 수영 O·육지 X)은 "충분히 큰 바다"에만 넣어 작은 웅덩이 갇힘·폐사를 막는다. 그 외
+   * (육지·양용·비행)은 통행 가능한 가장 가까운 타일(기존과 동일).
+   */
+  private snapSpawn(x: number, y: number, canSwim: boolean, canLand: boolean, canFly: boolean): { x: number; y: number } {
+    const minRegion = canSwim && !canLand && !canFly ? SIM.minWaterRegion : 1;
+    return this.terrain.nearestLargePassable(x, y, canSwim, canLand, canFly, minRegion);
   }
 
   private spawnEntities(): void {
@@ -446,11 +457,14 @@ export class World {
       const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
       const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
       const canFly = sp.genome.traits.wings >= SIM.flyThreshold;
-      // 물 전용 내 종은 보금자리를 가장 가까운 바다로 옮긴다(육지 home 이면 흩어져 고립). 스냅은 rng 미사용.
+      // 물 전용 내 종은 보금자리를 큰 바다로 옮긴다(육지 home 이면 흩어져 고립·웅덩이 갇힘). 스냅은 rng 미사용.
+      // 야생 물고기 base 위치는 여기서 안 바꾼다 — 통과기준 테스트(육지 게놈)가 1마리 경계라, 야생 물고기
+      // 위치를 어떻게든 바꾸면 step 난수 스트림이 밀려 경계가 어긋난다(물고기가 육지 종과 스트림 공유).
+      // 대신 학교의 대부분인 보강(패딩 +10)·이주를 큰 바다로 넣어 "떼"가 바다에 자리 잡게 한다.
       let baseX = homeX;
       let baseY = homeY;
       if (sp.isPlayer && !canLand) {
-        const wh = this.terrain.nearestPassable(homeX, homeY, canSwim, canLand, canFly);
+        const wh = this.snapSpawn(homeX, homeY, canSwim, canLand, canFly);
         baseX = wh.x;
         baseY = wh.y;
       }
@@ -466,8 +480,10 @@ export class World {
       for (let i = 0; i < count; i++) {
         const x = Math.max(0, Math.min(this.width, baseX + this.rng.range(-spread, spread)));
         const y = Math.max(0, Math.min(this.height, baseY + this.rng.range(-spread, spread)));
-        // 막힌 타일에 떨어지면 통행 타일로 스냅(물 전용은 물로, 비행은 어디든). rng 미사용 → 스폰 rng 소비 보존.
-        const spot = this.terrain.nearestPassable(x, y, canSwim, canLand, canFly);
+        // 내 종만 큰 바다 스냅(위 사유 — 야생 base 위치는 통과기준 보존 위해 기존 nearestPassable 유지).
+        const spot = sp.isPlayer
+          ? this.snapSpawn(x, y, canSwim, canLand, canFly)
+          : this.terrain.nearestPassable(x, y, canSwim, canLand, canFly);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }
@@ -519,13 +535,13 @@ export class World {
       const canSwim = tr.swimming >= SIM.swimThreshold;
       const canLand = tr.swimming < SIM.aquaticOnlyThreshold;
       const canFly = tr.wings >= SIM.flyThreshold;
-      const homeX = rng.range(0.14, 0.86) * this.width;
-      const homeY = rng.range(0.14, 0.86) * this.height;
+      // 보금자리를 종 특성에 맞는 큰 영역으로(물고기는 큰 바다). 인접 웅덩이에 흩어져 갇히는 것 방지.
+      const home = this.snapSpawn(rng.range(0.14, 0.86) * this.width, rng.range(0.14, 0.86) * this.height, canSwim, canLand, canFly);
       for (let i = 0; i < pad; i++) {
-        const x = Math.max(0, Math.min(this.width, homeX + rng.range(-spread, spread)));
-        const y = Math.max(0, Math.min(this.height, homeY + rng.range(-spread, spread)));
-        // 통행 타일로 스냅(rng 미사용 → 소비 순서 보존). 물 전용은 물로, 육지 종은 육지로.
-        const spot = this.terrain.nearestPassable(x, y, canSwim, canLand, canFly);
+        const x = Math.max(0, Math.min(this.width, home.x + rng.range(-spread, spread)));
+        const y = Math.max(0, Math.min(this.height, home.y + rng.range(-spread, spread)));
+        // 통행 타일로 스냅(rng 미사용 → 소비 순서 보존). 물 전용은 큰 바다로, 육지 종은 육지로.
+        const spot = this.snapSpawn(x, y, canSwim, canLand, canFly);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }

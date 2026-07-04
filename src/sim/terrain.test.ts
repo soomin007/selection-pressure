@@ -124,4 +124,20 @@ describe("길찾기(lineOfSight / findPath)", () => {
     const t = new Terrain(3, 1, 20, elev(3), [L, M, L] as TileKind[]);
     expect(t.findPath(10, 10, 50, 10, false)).toEqual([]);
   });
+
+  it("nearestLargePassable: 물 전용 종을 작은 웅덩이 대신 큰 바다에 놓는다", () => {
+    const Wt = TILE.water;
+    // 10×1: [웅덩이 물3 | 육지1 | 바다 물6]. 웅덩이=연결 3칸, 바다=연결 6칸.
+    const tiles = [Wt, Wt, Wt, L, Wt, Wt, Wt, Wt, Wt, Wt] as TileKind[];
+    const t = new Terrain(10, 1, 20, elev(10), tiles);
+    // 웅덩이 한가운데(idx1, x≈30)에서 물 전용(canSwim·!canLand), 큰 영역 기준 4칸 이상
+    const spot = t.nearestLargePassable(30, 10, true, false, false, 4);
+    expect(t.tileIndex(spot.x, spot.y)).toBeGreaterThanOrEqual(4); // 큰 바다(idx4~9)로 간다
+    // 반면 nearestPassable 은 그냥 가장 가까운 물(웅덩이)로 간다
+    expect(t.tileIndex(t.nearestPassable(30, 10, true, false, false).x, 10)).toBeLessThanOrEqual(2);
+    // 큰 영역이 아예 없으면(웅덩이만) 폴백으로 통행 가능한 웅덩이라도 준다(갇혀도 스폰은 됨)
+    const onlyPond = new Terrain(4, 1, 20, elev(4), [Wt, Wt, L, L] as TileKind[]);
+    const fb = onlyPond.nearestLargePassable(10, 10, true, false, false, 8);
+    expect(onlyPond.tileIndex(fb.x, fb.y)).toBeLessThanOrEqual(1); // 물칸(0~1)로 폴백
+  });
 });

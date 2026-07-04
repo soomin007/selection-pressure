@@ -325,6 +325,112 @@ export class Terrain {
     }
     return { x, y }; // 통행 가능 타일이 하나도 없을 때(실제론 육지가 항상 있어 도달 안 함)
   }
+
+  /**
+   * (x,y) 근처에서, 통행 가능하고 그 통행 영역(연결된 통행 타일 덩어리)이 minRegion 타일 이상인 곳의
+   * 중심을 돌려준다. 물 전용 종(진짜 물고기)을 작은 웅덩이(연결 물 타일 몇 개)에 스폰해 갇혀 뱅뱅 돌다
+   * 폐사시키지 않으려는 것 — "충분히 큰 바다"에만 넣는다. 그런 큰 영역이 하나도 없으면 nearestPassable
+   * 로 대체(자투리라도 통행 가능한 곳). rng 미사용 → 결정론(스폰 rng 소비 순서·밸런스 무관).
+   */
+  nearestLargePassable(
+    x: number,
+    y: number,
+    canSwim: boolean,
+    canLand = true,
+    canFly = false,
+    minRegion = 1,
+  ): { x: number; y: number } {
+    if (canFly || minRegion <= 1) return this.nearestPassable(x, y, canSwim, canLand, canFly);
+    const { label, size } = this.regionLabels(canSwim, canLand, canFly);
+    const big = (idx: number): boolean => {
+      const l = label[idx] ?? -1;
+      return l >= 0 && (size[l] ?? 0) >= minRegion;
+    };
+    const cs = this.cellSize;
+    const sx = clampIndex(Math.floor(x / cs), this.cols);
+    const sy = clampIndex(Math.floor(y / cs), this.rows);
+    // 시작 타일이 이미 큰 영역이면 그대로.
+    const startIdx = sy * this.cols + sx;
+    if (this.passableTile(sx, sy, canSwim, canLand, canFly) && big(startIdx)) {
+      return { x: (sx + 0.5) * cs, y: (sy + 0.5) * cs };
+    }
+    const maxR = Math.max(this.cols, this.rows);
+    for (let r = 1; r <= maxR; r++) {
+      let bestX = -1;
+      let bestY = -1;
+      let bestD2 = Infinity;
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const cx = sx + dx;
+          const cy = sy + dy;
+          if (cx < 0 || cx >= this.cols || cy < 0 || cy >= this.rows) continue;
+          const idx = cy * this.cols + cx;
+          if (!this.passableTile(cx, cy, canSwim, canLand, canFly) || !big(idx)) continue;
+          const px = (cx + 0.5) * cs;
+          const py = (cy + 0.5) * cs;
+          const d2 = (px - x) * (px - x) + (py - y) * (py - y);
+          if (d2 < bestD2) {
+            bestD2 = d2;
+            bestX = px;
+            bestY = py;
+          }
+        }
+      }
+      if (bestX >= 0) return { x: bestX, y: bestY };
+    }
+    // 큰 영역이 없으면(작은 맵 등) 통행 가능한 아무 곳이라도.
+    return this.nearestPassable(x, y, canSwim, canLand, canFly);
+  }
+
+  /**
+   * 통행 특성(canSwim·canLand·canFly)에 따른 연결 통행 영역을 4방향 flood fill 로 라벨링한다.
+   * label[i] = 그 타일이 속한 영역 번호(막힘 = -1), size[label] = 그 영역의 타일 수. 큰 바다/큰 대륙을
+   * 골라 스폰하는 데 쓴다. rng 미사용 → 결정론. 스폰 때만(드물게) 호출되고 순회 순서 고정.
+   */
+  private regionLabels(
+    canSwim: boolean,
+    canLand: boolean,
+    canFly: boolean,
+  ): { label: Int32Array; size: number[] } {
+    const n = this.cols * this.rows;
+    const label = new Int32Array(n).fill(-1);
+    const size: number[] = [];
+    for (let start = 0; start < n; start++) {
+      if (label[start] !== -1 || !this.passableIndex(start, canSwim, canLand, canFly)) continue;
+      const id = size.length;
+      const queue: number[] = [start];
+      label[start] = id;
+      let head = 0;
+      let count = 0;
+      while (head < queue.length) {
+        const cur = queue[head++] ?? 0;
+        count += 1;
+        const cx = cur % this.cols;
+        const cy = (cur - cx) / this.cols;
+        if (cx + 1 < this.cols) this.labelVisit(cur + 1, id, canSwim, canLand, canFly, label, queue);
+        if (cx - 1 >= 0) this.labelVisit(cur - 1, id, canSwim, canLand, canFly, label, queue);
+        if (cy + 1 < this.rows) this.labelVisit(cur + this.cols, id, canSwim, canLand, canFly, label, queue);
+        if (cy - 1 >= 0) this.labelVisit(cur - this.cols, id, canSwim, canLand, canFly, label, queue);
+      }
+      size.push(count);
+    }
+    return { label, size };
+  }
+
+  private labelVisit(
+    next: number,
+    id: number,
+    canSwim: boolean,
+    canLand: boolean,
+    canFly: boolean,
+    label: Int32Array,
+    queue: number[],
+  ): void {
+    if (label[next] !== -1 || !this.passableIndex(next, canSwim, canLand, canFly)) return;
+    label[next] = id;
+    queue.push(next);
+  }
 }
 
 function clampIndex(i: number, n: number): number {
