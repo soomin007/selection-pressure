@@ -389,20 +389,9 @@ function chooseGoal(
   if (!canHunt) e.targetPrey = null;
   if (!canGraze) e.targetFood = null;
 
-  // 1) 기존 목표 유지 (조금 더 멀어져도 commit — 진동 방지)
-  if (e.targetPrey) {
-    const p = e.targetPrey;
-    if (p.alive && p.species.id !== e.species.id && dist2(e, p) <= keep2) return { x: p.x, y: p.y };
-    e.targetPrey = null;
-  }
-  if (e.targetFood) {
-    const f = e.targetFood;
-    if (f.available && dist2(e, f) <= keep2) return { x: f.x, y: f.y };
-    e.targetFood = null;
-  }
-
-  // 2) 새 목표 탐색 — 감지 = 시야(전방 부채꼴·vision 반경) 또는 초음파(전방위·echoRange). 초음파로 사는
-  //    종은 시야가 좁아도(또는 없어도) 사방을 짧게 듣는다. 정지·저속이면 시야도 전방위(두리번).
+  // 1) 눈앞의 가장 가까운 새 후보(먹이·먹잇감)를 매 틱 살핀다 — 더 쉬운(가까운) 먹이가 나타나면 갈아타려고.
+  //    감지 = 시야(전방 부채꼴·vision 반경) 또는 초음파(전방위·echoRange). 초음파로 사는 종은 시야가
+  //    좁아도(또는 없어도) 사방을 짧게 듣는다. 정지·저속이면 시야도 전방위(두리번).
   const vision2 = vision * vision;
   const echo2 = echoRange * echoRange;
   const inFov = makeFovTest(e);
@@ -429,6 +418,29 @@ function chooseGoal(
     if (dist2(e, prey) <= dist2(e, food)) food = null;
     else prey = null;
   }
+  const cand2 = prey ? dist2(e, prey) : food ? dist2(e, food) : Infinity;
+
+  // 2) 기존 목표 유지 — 단 "히스테리시스": 새 후보가 확실히 더 가까울 때만(cand2 < cur2 × switchGain) 갈아탄다.
+  //    조금 더 가까운 정도로는 안 바꿔 목표 진동(떨림)을 막고, 눈앞의 훨씬 쉬운 먹이면 바꿔 불합리한 고집을
+  //    없앤다. 목표에 다가갈수록 cur2 가 줄어 더 끈질겨진다(합리적 — 거의 다 온 먹이는 안 놓는다).
+  if (e.targetPrey) {
+    const p = e.targetPrey;
+    if (p.alive && p.species.id !== e.species.id) {
+      const cur2 = dist2(e, p);
+      if (cur2 <= keep2 && cand2 >= cur2 * SIM.targetSwitchGain) return { x: p.x, y: p.y };
+    }
+    e.targetPrey = null;
+  }
+  if (e.targetFood) {
+    const f = e.targetFood;
+    if (f.available) {
+      const cur2 = dist2(e, f);
+      if (cur2 <= keep2 && cand2 >= cur2 * SIM.targetSwitchGain) return { x: f.x, y: f.y };
+    }
+    e.targetFood = null;
+  }
+
+  // 3) 새 후보 채택
   if (prey) {
     e.targetPrey = prey;
     return { x: prey.x, y: prey.y };
