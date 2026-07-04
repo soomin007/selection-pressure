@@ -10,8 +10,8 @@
 
 import type { Rng } from "@/sim/rng";
 
-/** 바이옴 종류 — 온도×습도로 분류. 렌더 색·UI 라벨·비옥도의 단일 기준. */
-export type Biome = "glacier" | "desert" | "rainforest" | "grassland" | "wetland";
+/** 바이옴 종류 — 온도×습도로 분류(각 온도대를 건조/습윤으로 나눔). 렌더 색·UI 라벨·비옥도의 단일 기준. */
+export type Biome = "glacier" | "taiga" | "desert" | "rainforest" | "grassland" | "wetland";
 
 export interface EnvSample {
   coldness: number;
@@ -24,18 +24,24 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 // 바이옴별 기준 비옥도 — 열대우림 가장 풍부, 사막·빙하 척박. (습도로 약간 가감)
 const BIOME_FERTILITY: Record<Biome, number> = {
-  glacier: 0.12,
-  desert: 0.1,
+  glacier: 0.1, // 얼음 벌판 — 거의 아무것도 안 자람
+  taiga: 0.32, // 침엽수림 — 추워도 숲이라 먹이가 좀 있음
+  desert: 0.1, // 사막 — 척박
   grassland: 0.45,
   wetland: 0.62,
   rainforest: 0.85,
 };
 
-/** 온도·습도로 바이옴을 정한다. 임계는 "한 맵에 여러 바이옴이 섞이게" 잡았다. */
+/**
+ * 온도·습도로 바이옴을 정한다. 각 온도대(한랭/온대/혹서)를 다시 건조/습윤으로 나눠 6바이옴 — 한 바이옴이
+ * 온도대 전체를 독차지하지 않게(빙하가 추운 곳을 통째로 먹어 유독 넓어 보이던 문제 해결). 임계는 "한 맵에
+ * 여러 바이옴이 섞이게" 잡았다.
+ */
 export function classifyBiome(temperature: number, moisture: number): Biome {
-  if (temperature < 0.34) return "glacier"; // 한랭 — 습도 무관 얼음 벌판
-  if (temperature > 0.66) return moisture < 0.45 ? "desert" : "rainforest"; // 혹서: 건조=사막 / 습윤=우림
-  return moisture < 0.45 ? "grassland" : "wetland"; // 온대: 건조=초원 / 습윤=습지
+  const wet = moisture >= 0.45;
+  if (temperature < 0.34) return wet ? "taiga" : "glacier"; // 한랭: 습윤=침엽수림 / 건조=빙하
+  if (temperature > 0.66) return wet ? "rainforest" : "desert"; // 혹서: 습윤=우림 / 건조=사막
+  return wet ? "wetland" : "grassland"; // 온대: 습윤=습지 / 건조=초원
 }
 
 export class Environment {

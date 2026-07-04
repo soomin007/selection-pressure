@@ -486,7 +486,8 @@ const ROUGH_LO: RGB = [96, 88, 76];
 const ROUGH_HI: RGB = [124, 116, 104];
 // 바이옴 바탕색(척박/건조 상태) — 한눈에 사막/빙하/우림이 갈리게 뚜렷이 구분. 비옥할수록 BIOME_LUSH 로 섞인다.
 const BIOME_COLORS: Record<Biome, RGB> = {
-  glacier: [198, 214, 230], // 얼음 벌판 — 창백한 하늘빛 흰색
+  glacier: [206, 220, 234], // 얼음 벌판 — 창백한 하늘빛 흰색
+  taiga: [96, 128, 120], // 침엽수림 — 서늘한 청록 회색(눈 덮인 침엽수)
   desert: [204, 178, 116], // 사막 — 모래빛 황갈
   grassland: [128, 148, 78], // 초원 — 마른 풀빛
   wetland: [72, 122, 104], // 습지 — 축축한 청록
@@ -494,7 +495,8 @@ const BIOME_COLORS: Record<Biome, RGB> = {
 };
 // 바이옴별 비옥(먹이 풍부) 쪽 색 — 바탕색보다 생기 있는 초록. fert 로 바탕↔이쪽 보간.
 const BIOME_LUSH: Record<Biome, RGB> = {
-  glacier: [176, 200, 196], // 얼음에도 이끼 낀 청록빛
+  glacier: [180, 204, 200], // 얼음에도 이끼 낀 청록빛
+  taiga: [60, 104, 78], // 짙은 침엽수 초록
   desert: [150, 156, 86], // 오아시스 관목의 마른 초록
   grassland: [86, 138, 60], // 무성한 초원
   wetland: [40, 118, 84], // 짙은 습지 수풀

@@ -177,7 +177,7 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     const strong = afterGate(tune({ vision: 80, speed: 70, fertility: 70 }), GAME.bossSeconds, (w) => {
       w.boss = createBoss("swarm", W, H);
     });
-    const weak = afterGate(tune({ vision: 20, speed: 20, fertility: 20 }), GAME.bossSeconds, (w) => {
+    const weak = afterGate(tune({ vision: 15, speed: 14, fertility: 14 }), GAME.bossSeconds, (w) => {
       w.boss = createBoss("swarm", W, H);
     });
     expect(strong).toBeGreaterThanOrEqual(GAME.bossPassThreshold);

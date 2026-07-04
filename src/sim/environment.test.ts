@@ -7,8 +7,9 @@ const H = 960;
 const CS = 24;
 
 describe("바이옴 환경", () => {
-  it("온도·습도로 바이옴이 갈린다(추움=빙하, 덥고 건조=사막, 덥고 습함=우림)", () => {
-    expect(classifyBiome(0.1, 0.5)).toBe("glacier"); // 한랭 = 빙하
+  it("온도·습도로 바이옴이 갈린다(각 온도대를 건조/습윤으로 나눔)", () => {
+    expect(classifyBiome(0.1, 0.2)).toBe("glacier"); // 한랭 + 건조 = 빙하
+    expect(classifyBiome(0.1, 0.8)).toBe("taiga"); // 한랭 + 습윤 = 침엽수림
     expect(classifyBiome(0.9, 0.2)).toBe("desert"); // 혹서 + 건조 = 사막
     expect(classifyBiome(0.9, 0.8)).toBe("rainforest"); // 혹서 + 습윤 = 우림
     expect(classifyBiome(0.5, 0.2)).toBe("grassland"); // 온대 + 건조 = 초원
@@ -18,8 +19,8 @@ describe("바이옴 환경", () => {
   it("사막·빙하는 척박하고 우림은 비옥하다(바이옴이 먹이량을 정한다)", () => {
     const env = Environment.generate(new Rng("bio-1-env"), W, H, CS);
     const sum: Record<Biome, { f: number; n: number }> = {
-      glacier: { f: 0, n: 0 }, desert: { f: 0, n: 0 }, grassland: { f: 0, n: 0 },
-      wetland: { f: 0, n: 0 }, rainforest: { f: 0, n: 0 },
+      glacier: { f: 0, n: 0 }, taiga: { f: 0, n: 0 }, desert: { f: 0, n: 0 },
+      grassland: { f: 0, n: 0 }, wetland: { f: 0, n: 0 }, rainforest: { f: 0, n: 0 },
     };
     for (let i = 0; i < env.fertility.length; i++) {
       const b = env.biome[i] as Biome;
