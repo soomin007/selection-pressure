@@ -211,12 +211,18 @@ export class WorldView {
               this.playerG.circle(rx, ry, eVision).stroke({ color: 0x7ec8ff, width: 1, alpha: 0.06 });
             }
           }
-          // 초음파 — 전방위 원(보라). 시야 부채꼴과 달리 사방·밝기 무관. 시야 없이 초음파로 사는 종 표시.
+          // 초음파 — 전방위 감지. 시야 부채꼴과 달리 사방·밝기 무관. "여기까지 사방을 듣는다"를 옅은 채움
+          // 원(감지 범위)으로 보이고, 안에서 밖으로 퍼지는 핑 파동으로 "초음파를 쏘고 있다"를 표현한다.
           const echo01 = e.genome.traits.echo / TRAIT_MAX;
           if (echo01 > 0) {
+            const er = SIM.echoBase * echo01;
+            this.playerG.circle(rx, ry, er).fill({ color: 0xc07aff, alpha: 0.05 });
+            this.playerG.circle(rx, ry, er).stroke({ color: 0xc07aff, width: 1, alpha: 0.18 });
+            // 핑(파동) — 개체마다 위상을 달리해(id) 사방에서 동시에 쏘지 않게. 안→밖으로 퍼지며 옅어진다.
+            const ping = ((this.frame + (e.id % 60)) % 60) / 60;
             this.playerG
-              .circle(rx, ry, SIM.echoBase * echo01)
-              .stroke({ color: 0xc07aff, width: 1, alpha: 0.09 });
+              .circle(rx, ry, er * ping)
+              .stroke({ color: 0xd6a0ff, width: 1.4, alpha: 0.32 * (1 - ping) });
           }
           visionRings++;
         }
@@ -377,15 +383,15 @@ export class WorldView {
       // 무리를 감싸는 위협 오라(맥동) — 어디를 덮치는 무리인지 한눈에.
       this.bossG.circle(cx, cy, maxR + 22).fill({ color: hc.aura, alpha: 0.1 + pulse * 0.06 });
       this.bossG.circle(cx, cy, maxR + 22).stroke({ color: hc.ring, width: 2, alpha: 0.3 });
-      // 각 떼 개체를 종류별 실루엣으로(사나운 무리=삼각·약탈자=화살촉·외톨이=칼날·매복자=눈).
+      // 각 떼 개체를 종류별 위압적 생물로(사나운 무리·약탈자·외톨이·매복자).
       for (const p of pts)
-        this.drawBossCreature(p.x, p.y, p.hx, p.hy, 8.5, boss.type, hc.dot, boss.killRadius, pulse);
+        this.drawBossCreature(p.x, p.y, p.hx, p.hy, 10, boss.type, hc.dot, boss.killRadius, pulse);
     } else if (boss && boss.killRadius > 0) {
       const bx = boss.prevX + (boss.x - boss.prevX) * interp;
       const by = boss.prevY + (boss.y - boss.prevY) * interp;
       const hc = HORDE_COLORS[boss.type] ?? HORDE_DEFAULT;
-      // 단일 추격자(chaser) — 크게 그려 "빠르게 돌진하는 한 마리"를 강조.
-      this.drawBossCreature(bx, by, boss.x - boss.prevX, boss.y - boss.prevY, 15, boss.type, hc.dot, boss.killRadius, pulse);
+      // 단일 추격자(chaser) — 크게 그려 "빠르게 돌진하는 한 마리 맹수"를 강조.
+      this.drawBossCreature(bx, by, boss.x - boss.prevX, boss.y - boss.prevY, 20, boss.type, hc.dot, boss.killRadius, pulse);
     }
 
     // 낮/밤 + 대멸종 화면 틴트 (둘 다 overlayG — 밤을 먼저 깔고 대멸종 틴트를 그 위에)
@@ -440,48 +446,105 @@ export class WorldView {
   ): void {
     const g = this.bossG;
     // 물기 반경(닿으면 즉사) + 맥동 고리 — 로직과 1:1(known_issues), 게임성 유지.
-    if (killRadius > 0) g.circle(x, y, killRadius).fill({ color, alpha: 0.26 });
-    g.circle(x, y, size + 2 + pulse * size * 1.5).stroke({ color, width: 2.4, alpha: 0.5 * (1 - pulse) });
+    if (killRadius > 0) g.circle(x, y, killRadius).fill({ color, alpha: 0.24 });
+    g.circle(x, y, size * 1.25 + pulse * size * 1.3).stroke({ color, width: 2.2, alpha: 0.45 * (1 - pulse) });
 
-    // 진행 방향(헤딩)으로 실루엣을 회전. 거의 안 움직이면 아래(+y)를 향하게 둔다(몰려오는 방향).
+    // 진행 방향(헤딩)으로 회전. 거의 안 움직이면 아래(+y)를 향하게 둔다(몰려오는 방향). 앞=+x.
     const mag = Math.hypot(hx, hy);
     const ca = mag > 0.02 ? hx / mag : 0;
     const sa = mag > 0.02 ? hy / mag : 1;
-    // 로컬(앞=+x, 옆=±y) 좌표를 월드로 — 진행 방향 기준.
-    const L = (fx: number, fy: number): [number, number] => [
-      x + fx * ca - fy * sa,
-      y + fx * sa + fy * ca,
-    ];
+    const L = (fx: number, fy: number): [number, number] => [x + fx * ca - fy * sa, y + fx * sa + fy * ca];
     const s = size;
     const line = BOSS_OUTLINE;
+    const dark = darken(color, 0.66); // 지느러미·뿔 등 어두운 부속
+    const pale = lighten(color, 0.28); // 밝은 배/음영
+
+    // 사나운 눈 — 어두운 테 + 밝은 홍채 + 세로 슬릿 동공(맹수의 눈). 위압감의 핵심.
+    const eye = (fx: number, fy: number, r: number, iris = 0xffdc3a): void => {
+      const [ex, ey] = L(fx, fy);
+      g.circle(ex, ey, r + 0.8).fill({ color: line });
+      g.circle(ex, ey, r).fill({ color: iris });
+      g.circle(ex, ey, r * 0.4).fill({ color: 0x170404 });
+    };
+    // 앞니(송곳니) 한 줄 — 벌린 아가리의 흰 이빨(dir +1=아래턱, -1=위턱).
+    const fangs = (fx0: number, span: number, n: number, dir: number, len: number): void => {
+      for (let k = 0; k < n; k++) {
+        const fx = fx0 - (k / Math.max(1, n - 1)) * span;
+        g.poly([...L(fx - 0.11 * s, 0), ...L(fx + 0.11 * s, 0), ...L(fx, dir * len)])
+          .fill({ color: 0xfff3e2 })
+          .stroke({ color: line, width: 0.7 });
+      }
+    };
 
     if (type === "chaser") {
-      // 빠른 추격자 — 길고 날카로운 화살촉(돌진하는 창끝).
-      const p = [...L(1.8 * s, 0), ...L(-0.7 * s, -0.82 * s), ...L(-0.3 * s, 0), ...L(-0.7 * s, 0.82 * s)];
-      g.poly(p).fill({ color }).stroke({ color: line, width: 2.4 });
+      // 빠른 추격자 — 어뢰형 맹수(상어). 등지느러미 + 꼬리 + 쩍 벌린 이빨 아가리 + 사나운 눈.
+      g.poly([...L(0.0 * s, -0.62 * s), ...L(-0.35 * s, -1.45 * s), ...L(-0.7 * s, -0.5 * s)])
+        .fill({ color: dark }).stroke({ color: line, width: 1.6 }); // 등지느러미
+      g.poly([...L(-1.15 * s, 0), ...L(-2.0 * s, -0.75 * s), ...L(-1.6 * s, 0), ...L(-2.0 * s, 0.75 * s)])
+        .fill({ color: dark }).stroke({ color: line, width: 1.6 }); // 꼬리
+      g.poly([
+        ...L(1.95 * s, 0.06 * s), ...L(0.5 * s, -0.72 * s), ...L(-1.15 * s, -0.42 * s),
+        ...L(-1.15 * s, 0.42 * s), ...L(0.5 * s, 0.72 * s),
+      ]).fill({ color }).stroke({ color: line, width: 2.4 }); // 몸통
+      g.ellipse(...L(-0.1 * s, 0.34 * s), s * 0.7, s * 0.24).fill({ color: pale }); // 밝은 배
+      g.poly([...L(1.95 * s, 0.06 * s), ...L(0.95 * s, 0.66 * s), ...L(0.5 * s, 0.12 * s)])
+        .fill({ color: 0x2a0808 }).stroke({ color: line, width: 1.1 }); // 벌린 아래턱(아가리)
+      fangs(1.62 * s, 0.9 * s, 4, 1, 0.34 * s); // 위 이빨
+      eye(0.62 * s, -0.34 * s, s * 0.26, 0xff5a3a);
     } else if (type === "raider") {
-      // 약탈자 무리 — 앞으로 벌린 화살촉/쐐기(떼로 달려드는 공격성).
-      const p = [
-        ...L(1.35 * s, 0), ...L(0.2 * s, -0.95 * s), ...L(-0.15 * s, -0.35 * s),
-        ...L(-0.75 * s, 0), ...L(-0.15 * s, 0.35 * s), ...L(0.2 * s, 0.95 * s),
-      ];
-      g.poly(p).fill({ color }).stroke({ color: line, width: 2 });
+      // 약탈자 — 두 뿔과 엄니를 앞세운 육중한 짐승 머리(떼로 들이받는다).
+      g.poly([...L(1.5 * s, -0.5 * s), ...L(2.3 * s, -1.15 * s), ...L(1.25 * s, -0.95 * s)])
+        .fill({ color: dark }).stroke({ color: line, width: 1.5 }); // 왼 뿔
+      g.poly([...L(1.5 * s, 0.5 * s), ...L(2.3 * s, 1.15 * s), ...L(1.25 * s, 0.95 * s)])
+        .fill({ color: dark }).stroke({ color: line, width: 1.5 }); // 오른 뿔
+      g.poly([
+        ...L(1.7 * s, 0), ...L(0.8 * s, -0.9 * s), ...L(-0.8 * s, -0.75 * s), ...L(-1.1 * s, 0),
+        ...L(-0.8 * s, 0.75 * s), ...L(0.8 * s, 0.9 * s),
+      ]).fill({ color }).stroke({ color: line, width: 2.4 }); // 머리·몸
+      fangs(1.5 * s, 0.5 * s, 2, 1, 0.4 * s); // 아래 엄니
+      fangs(1.5 * s, 0.5 * s, 2, -1, 0.34 * s); // 위 엄니
+      eye(0.55 * s, -0.4 * s, s * 0.22, 0xffd23a);
+      eye(0.55 * s, 0.4 * s, s * 0.22, 0xffd23a);
     } else if (type === "isolation") {
-      // 외톨이 사냥꾼 — 날렵한 칼날 마름모(홀로 헤집는 날카로움).
-      const p = [...L(1.5 * s, 0), ...L(0, -0.52 * s), ...L(-1.05 * s, 0), ...L(0, 0.52 * s)];
-      g.poly(p).fill({ color }).stroke({ color: line, width: 2 });
+      // 외톨이 사냥꾼 — 날렵한 늑대 머리(뾰족 귀 + 좁은 주둥이 + 매서운 눈).
+      g.poly([...L(0.3 * s, -0.7 * s), ...L(-0.1 * s, -1.5 * s), ...L(-0.55 * s, -0.6 * s)])
+        .fill({ color: dark }).stroke({ color: line, width: 1.4 }); // 귀
+      g.poly([...L(0.3 * s, 0.7 * s), ...L(-0.1 * s, 1.5 * s), ...L(-0.55 * s, 0.6 * s)])
+        .fill({ color: dark }).stroke({ color: line, width: 1.4 }); // 귀
+      g.poly([
+        ...L(1.8 * s, 0), ...L(0.7 * s, -0.6 * s), ...L(-0.9 * s, -0.7 * s), ...L(-1.15 * s, 0),
+        ...L(-0.9 * s, 0.7 * s), ...L(0.7 * s, 0.6 * s),
+      ]).fill({ color }).stroke({ color: line, width: 2.4 }); // 날렵한 머리·몸
+      fangs(1.7 * s, 0.35 * s, 2, 1, 0.3 * s); // 송곳니
+      eye(0.7 * s, -0.28 * s, s * 0.2, 0x9be8ff);
+      eye(0.7 * s, 0.28 * s, s * 0.2, 0x9be8ff);
     } else if (type === "stalker") {
-      // 그림자 매복자 — 둥근 그림자 몸 + 번뜩이는 눈(숨어 노려보다 덮친다).
-      g.circle(x, y, s * 0.98).fill({ color }).stroke({ color: line, width: 2 });
-      const [ex, ey] = L(s * 0.42, 0);
-      g.circle(ex, ey, s * 0.34).fill({ color: 0xffe14a });
-      g.circle(ex, ey, s * 0.16).fill({ color: 0x160616 });
+      // 그림자 매복자 — 어둠 덩어리 + 삐죽한 가시 + 여러 개의 번뜩이는 눈(공포).
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2;
+        const [sx, sy] = [x + Math.cos(a) * s * 1.05, y + Math.sin(a) * s * 1.05];
+        const [tx2, ty2] = [x + Math.cos(a) * s * 1.5, y + Math.sin(a) * s * 1.5];
+        const [px, py] = [x + Math.cos(a + 0.4) * s * 1.05, y + Math.sin(a + 0.4) * s * 1.05];
+        g.poly([sx, sy, tx2, ty2, px, py]).fill({ color: darken(color, 0.5) }); // 가시 왕관
+      }
+      g.circle(x, y, s * 1.02).fill({ color: darken(color, 0.8) }).stroke({ color: line, width: 2 });
+      // 세 개의 눈(가운데 크게) — 숨어 노려본다.
+      eye(0.45 * s, 0, s * 0.3, 0xff4af0);
+      eye(-0.2 * s, -0.5 * s, s * 0.19, 0xff8af6);
+      eye(-0.2 * s, 0.5 * s, s * 0.19, 0xff8af6);
     } else if (type === "swarm") {
-      // 사나운 무리 — 작고 뾰족한 삼각(떼로 몰려드는 성난 이빨).
-      const p = [...L(1.15 * s, 0), ...L(-0.78 * s, -0.9 * s), ...L(-0.78 * s, 0.9 * s)];
-      g.poly(p).fill({ color }).stroke({ color: line, width: 2 });
+      // 사나운 무리 — 성난 피라니아(작지만 큰 아가리·이빨·부라린 눈).
+      g.poly([...L(-0.9 * s, 0), ...L(-1.7 * s, -0.6 * s), ...L(-1.4 * s, 0), ...L(-1.7 * s, 0.6 * s)])
+        .fill({ color: dark }).stroke({ color: line, width: 1.3 }); // 꼬리
+      g.poly([
+        ...L(1.5 * s, 0.1 * s), ...L(0.3 * s, -0.85 * s), ...L(-0.9 * s, -0.5 * s),
+        ...L(-0.9 * s, 0.5 * s), ...L(0.3 * s, 0.85 * s),
+      ]).fill({ color }).stroke({ color: line, width: 2.2 }); // 통통한 몸
+      g.poly([...L(1.5 * s, 0.1 * s), ...L(0.75 * s, 0.6 * s), ...L(0.35 * s, 0.05 * s)])
+        .fill({ color: 0x2a0808 }).stroke({ color: line, width: 1 }); // 벌린 아가리
+      fangs(1.3 * s, 0.55 * s, 3, 1, 0.3 * s);
+      eye(0.5 * s, -0.38 * s, s * 0.26, 0xffdc3a);
     } else {
-      // 기타 — 기본 원(폴백).
       g.circle(x, y, s).fill({ color }).stroke({ color: line, width: 2.5 });
     }
   }
