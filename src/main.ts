@@ -14,6 +14,7 @@ import { BOSS_TYPES, bossName, type BossType } from "@/sim/boss";
 import { createDraftPanel } from "@/ui/draftPanel";
 import { createPresetPanel } from "@/ui/presetPanel";
 import { createResultPanel } from "@/ui/resultPanel";
+import { createMomentOverlay } from "@/ui/momentOverlay";
 import { createLobby } from "@/ui/lobby";
 import { createControls } from "@/ui/controls";
 import { createBuildPanel } from "@/ui/buildPanel";
@@ -184,9 +185,13 @@ async function boot(): Promise<void> {
     if (game.isChoosingPreset) presetPanel.show(cards, preview);
     else draft.show(cards, preview);
   };
+  // 승리·정복·멸종 순간 연출 — 결과 패널 직전에 전역 화면 클라이맥스를 얹는다.
+  const moment = createMomentOverlay();
   game.onResult = (res, summary, canContinue, newUnlocks) => {
     controls.setVisible(false);
-    result.show(res === "win", summary, canContinue, newUnlocks);
+    // 정복 = 마지막 시대 승리(더 이어갈 수 없음), 승리 = 한 시대 넘김(이어감), 멸종 = 패배.
+    const kind = res === "lose" ? "lose" : canContinue ? "win" : "conquest";
+    moment.play(kind, () => result.show(res === "win", summary, canContinue, newUnlocks));
   };
   // 카메라 상태 — onWorldChanged 가 game.start()에서 곧장 호출돼 camX/camY 를 스냅하므로, 그 콜백보다
   // 반드시 먼저 선언한다. (전엔 아래쪽에 뒀다가 TDZ ReferenceError 로 부팅이 통째로 죽었다 — known_issues.)
@@ -202,6 +207,7 @@ async function boot(): Promise<void> {
     view.refreshSpecies(world);
     hud.reset();
     effects.clear();
+    moment.clear(); // 멸종 암전 등 남은 순간 연출을 지운다(새 월드 시작).
     selectedId = null; // 새 월드 → 옛 선택(개체 id)은 무효
     currentSelected = null;
     manualCam = null; // 수동 조망도 초기화
