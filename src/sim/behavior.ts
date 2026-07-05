@@ -33,7 +33,14 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 대신 계속 날갯짓이라 대사가 더 든다(비행의 대가). 날개 0 인 종은 canFly=false → 전부 영향 0(밸런스 보존).
   const canFly = t.wings >= SIM.flyThreshold;
   // 원거리(ranged) 사거리 — 사냥 사정거리이자, 원거리 종이 먹잇감에 붙지 않고 멈춰 쏘는 거리(kiting).
-  const atkRange = SIM.attackRange + (t.ranged / TRAIT_MAX) * SIM.rangedBonus;
+  // 임계 기반: 임계(rangedThreshold) 이하는 기존 기울기(밸런스 불변), 초과분만 급한 기울기로 사거리가
+  // 확 는다 → 전문 원거리 종만 멀리서 쏜다(야생·부수적 ranged 는 근접 그대로).
+  const rangedLow = Math.min(t.ranged, SIM.rangedThreshold);
+  const rangedHigh = Math.max(0, t.ranged - SIM.rangedThreshold);
+  const atkRange =
+    SIM.attackRange +
+    (rangedLow / TRAIT_MAX) * SIM.rangedBonus +
+    (rangedHigh / TRAIT_MAX) * SIM.rangedBonusHigh;
   // 험지(거친 땅)에선 이동이 느려진다 — speed 형질이 높을수록 덜 느려진다(속도가 지형에서 가치). 비행은 무시.
   const maxSpeed =
     SIM.maxSpeedBase * (0.4 + speed01) * (canFly ? 1 : roughSpeedFactor(world, e.x, e.y, speed01));
