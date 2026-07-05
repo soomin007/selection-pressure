@@ -61,7 +61,9 @@ export const PRESET_CARDS: readonly Card[] = [
     id: "preset_sea",
     name: "바다 개척자",
     desc: "능숙하게 헤엄쳐 바다 먹이를 먹으면서 뭍도 오갑니다. 바다는 다투는 경쟁자가 적습니다.",
-    set: { diet: 40, swimming: 92, speed: 62 },
+    // 수영 88 = 수륙양용(뭍 O). 90(aquaticOnlyThreshold) 이상이면 물 전용이 돼 땅에 소환되면 못 움직이고
+    // 죽는다(버그). 설명대로 "뭍도 오가는" 종이라 90 미만으로 둔다.
+    set: { diet: 40, swimming: 88, speed: 62 },
     effects: {},
     color: 0x5aa0f0, // 하늘 파랑
   },
