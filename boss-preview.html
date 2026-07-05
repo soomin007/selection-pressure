@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>보스 실루엣 프리뷰</title>
+    <style>
+      body { margin: 0; background: #2a3320; font-family: system-ui, sans-serif; color: #e8ecdd; }
+      #app { display: inline-block; }
+      .hint { padding: 8px 12px; font-size: 13px; opacity: 0.8; }
+    </style>
+  </head>
+  <body>
+    <div class="hint">보스 5종 · 각 행: 오른쪽(→) / 아래(↓) / 왼위(↖) 회전 — 회전 안전·통일감 시각 검증용(dev 전용, 미배포)</div>
+    <div id="app"></div>
+    <script type="module">
+      import { Application, Graphics, Text } from "pixi.js";
+      import { drawBossShape } from "/src/render/worldView.ts";
+
+      const W = 820;
+      const H = 660;
+      const app = new Application();
+      await app.init({ width: W, height: H, background: 0x36432a, antialias: true, resolution: 2, autoDensity: true });
+      document.getElementById("app").appendChild(app.canvas);
+
+      const g = new Graphics();
+      app.stage.addChild(g);
+
+      // HORDE_COLORS(worldView) 와 같은 색으로 — 실제 게임에서 그려지는 그대로.
+      const bosses = [
+        { type: "chaser", color: 0xff4028, label: "chaser 빠른 추격자" },
+        { type: "swarm", color: 0xff7a2a, label: "swarm 사나운 무리" },
+        { type: "raider", color: 0xff2e5a, label: "raider 약탈자" },
+        { type: "isolation", color: 0x33c0d8, label: "isolation 외톨이 사냥꾼" },
+        { type: "stalker", color: 0xc060d0, label: "stalker 그림자 매복자" },
+      ];
+      // 회전 안전성 확인용 세 방향(오른쪽·아래·왼위).
+      const headings = [
+        [1, 0],
+        [0, 1],
+        [-0.7, -0.7],
+      ];
+      const size = 24;
+      const pulse = 0.25;
+      const rowH = 122;
+      const colX = [250, 480, 700];
+      const y0 = 96;
+
+      bosses.forEach((b, row) => {
+        const y = y0 + row * rowH;
+        const label = new Text({
+          text: b.label,
+          style: { fill: 0xe8ecdd, fontSize: 15, fontFamily: "system-ui, sans-serif" },
+        });
+        label.x = 16;
+        label.y = y - 8;
+        app.stage.addChild(label);
+        headings.forEach(([hx, hy], col) => {
+          drawBossShape(g, colX[col], y, hx, hy, size, b.type, b.color, 0, pulse);
+        });
+      });
+
+      // 스크린샷 스크립트가 렌더 완료를 기다릴 신호.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.__bossPreviewReady = true;
+        });
+      });
+    </script>
+  </body>
+</html>

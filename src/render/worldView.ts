@@ -458,7 +458,28 @@ export class WorldView {
     killRadius: number,
     pulse: number,
   ): void {
-    const g = this.bossG;
+    drawBossShape(this.bossG, x, y, hx, hy, size, type, color, killRadius, pulse);
+  }
+}
+
+/**
+ * 보스 실루엣을 Graphics 에 직접 그린다(월드 좌표, 진행 방향으로 회전). WorldView 밖으로 뺀 이유는
+ * 프리뷰 하니스(boss-preview.html)가 같은 함수로 5종을 렌더해 시각 검증하기 위함 — 화면과 검증이 1:1.
+ * 종류별 모양이 달라 "무엇이 덮치는지"가 색뿐 아니라 형태로도 읽힌다. 스타일은 makeCreatureTexture 와
+ * 통일(색 파생 굵은 윤곽선 + 플랫 2~3톤 + 큰 눈).
+ */
+export function drawBossShape(
+  g: Graphics,
+  x: number,
+  y: number,
+  hx: number,
+  hy: number,
+  size: number,
+  type: BossType,
+  color: number,
+  killRadius: number,
+  pulse: number,
+): void {
     // 물기 반경(닿으면 즉사) + 맥동 고리 — 로직과 1:1(known_issues), 게임성 유지.
     if (killRadius > 0) g.circle(x, y, killRadius).fill({ color, alpha: 0.24 });
     g.circle(x, y, size * 1.25 + pulse * size * 1.3).stroke({ color, width: 2.2, alpha: 0.45 * (1 - pulse) });
@@ -467,101 +488,149 @@ export class WorldView {
     const mag = Math.hypot(hx, hy);
     const ca = mag > 0.02 ? hx / mag : 0;
     const sa = mag > 0.02 ? hy / mag : 1;
-    const L = (fx: number, fy: number): [number, number] => [x + fx * ca - fy * sa, y + fx * sa + fy * ca];
     const s = size;
-    const line = BOSS_OUTLINE;
-    const dark = darken(color, 0.66); // 지느러미·뿔 등 어두운 부속
-    const pale = lighten(color, 0.28); // 밝은 배/음영
-
-    // 사나운 눈 — 어두운 테 + 밝은 홍채 + 세로 슬릿 동공(맹수의 눈). 위압감의 핵심.
-    const eye = (fx: number, fy: number, r: number, iris = 0xffdc3a): void => {
-      const [ex, ey] = L(fx, fy);
-      g.circle(ex, ey, r + 0.8).fill({ color: line });
-      g.circle(ex, ey, r).fill({ color: iris });
-      g.circle(ex, ey, r * 0.4).fill({ color: 0x170404 });
+    // 로컬 좌표(앞=+x, 등=-y 위쪽 밝게, 배=+y 아래쪽 어둡게)를 헤딩으로 돌려 화면 좌표로. 단위는 몸 크기 s 배수.
+    const P = (fx: number, fy: number): [number, number] => {
+      const ox = fx * s;
+      const oy = fy * s;
+      return [x + ox * ca - oy * sa, y + ox * sa + oy * ca];
     };
-    // 앞니(송곳니) 한 줄 — 벌린 아가리의 흰 이빨(dir +1=아래턱, -1=위턱).
+    const pol = (pts: ReadonlyArray<readonly [number, number]>): Graphics => {
+      const flat: number[] = [];
+      for (const [fx, fy] of pts) flat.push(...P(fx, fy));
+      return g.poly(flat);
+    };
+
+    // 생물(makeCreatureTexture)과 같은 톤 체계 — 색에서 파생한 굵은 단일 윤곽선 + 플랫 2~3톤.
+    const line = darken(color, 0.42); // 굵은 통일 윤곽선(고정 갈색이 아니라 보스 색 계열이라 붕 안 뜬다)
+    const back = lighten(color, 0.42); // 등(위) 하이라이트 — 불투명 밝은 패치
+    const limb = darken(color, 0.66); // 지느러미·뿔·귀 등 어두운 부속(보스는 대비를 살짝 세게)
+    const maw = darken(color, 0.14); // 벌린 아가리 안(거의 검게)
+    const OW = 2.6; // 윤곽선 두께(생물보다 살짝 굵게 = 위압)
+
+    // 큰 눈 — 생물과 통일(어두운 테 + 흰자 + 동공 + 반짝). 성난 눈썹으로 위압을 더한다.
+    const eye = (fx: number, fy: number, r: number, brow = true): void => {
+      const [ex, ey] = P(fx, fy);
+      g.circle(ex, ey, r + 0.9).fill({ color: line });
+      g.circle(ex, ey, r).fill({ color: 0xffffff });
+      g.circle(...P(fx + 0.05, fy + 0.02), r * 0.56).fill({ color: 0x140404 }); // 동공(앞을 노린다)
+      g.circle(...P(fx + 0.01, fy - 0.06), r * 0.24).fill({ color: 0xffffff }); // 반짝
+      // 눈 앞쪽이 낮게 처진 어두운 슬래브 = 노려보는 인상.
+      if (brow) pol([[fx + 0.2, fy - 0.24], [fx - 0.3, fy - 0.52], [fx - 0.18, fy - 0.24]]).fill({ color: line });
+    };
+    // 벌린 아가리의 흰 송곳니 한 줄(dir +1=아래로 뻗음, -1=위로 뻗음).
     const fangs = (fx0: number, span: number, n: number, dir: number, len: number): void => {
       for (let k = 0; k < n; k++) {
         const fx = fx0 - (k / Math.max(1, n - 1)) * span;
-        g.poly([...L(fx - 0.11 * s, 0), ...L(fx + 0.11 * s, 0), ...L(fx, dir * len)])
+        pol([[fx - 0.1, 0], [fx + 0.1, 0], [fx, dir * len]])
           .fill({ color: 0xfff3e2 })
-          .stroke({ color: line, width: 0.7 });
+          .stroke({ color: line, width: 0.8 });
       }
     };
 
     if (type === "chaser") {
-      // 빠른 추격자 — 어뢰형 맹수(상어). 등지느러미 + 꼬리 + 쩍 벌린 이빨 아가리 + 사나운 눈.
-      g.poly([...L(0.0 * s, -0.62 * s), ...L(-0.35 * s, -1.45 * s), ...L(-0.7 * s, -0.5 * s)])
-        .fill({ color: dark }).stroke({ color: line, width: 1.6 }); // 등지느러미
-      g.poly([...L(-1.15 * s, 0), ...L(-2.0 * s, -0.75 * s), ...L(-1.6 * s, 0), ...L(-2.0 * s, 0.75 * s)])
-        .fill({ color: dark }).stroke({ color: line, width: 1.6 }); // 꼬리
-      g.poly([
-        ...L(1.95 * s, 0.06 * s), ...L(0.5 * s, -0.72 * s), ...L(-1.15 * s, -0.42 * s),
-        ...L(-1.15 * s, 0.42 * s), ...L(0.5 * s, 0.72 * s),
-      ]).fill({ color }).stroke({ color: line, width: 2.4 }); // 몸통
-      g.ellipse(...L(-0.1 * s, 0.34 * s), s * 0.7, s * 0.24).fill({ color: pale }); // 밝은 배
-      g.poly([...L(1.95 * s, 0.06 * s), ...L(0.95 * s, 0.66 * s), ...L(0.5 * s, 0.12 * s)])
-        .fill({ color: 0x2a0808 }).stroke({ color: line, width: 1.1 }); // 벌린 아래턱(아가리)
-      fangs(1.62 * s, 0.9 * s, 4, 1, 0.34 * s); // 위 이빨
-      eye(0.62 * s, -0.34 * s, s * 0.26, 0xff5a3a);
+      // 빠른 추격자 — 어뢰형 붉은 맹수. 등지느러미·꼬리·쩍 벌린 이빨 아가리·부라린 눈.
+      pol([[-1.15, 0], [-2.05, -0.85], [-1.55, 0], [-2.05, 0.85]]) // 꼬리지느러미(뒤)
+        .fill({ color: limb }).stroke({ color: line, width: 1.8 });
+      pol([[0.05, -0.58], [-0.4, -1.5], [-0.75, -0.5]]) // 등지느러미(뒤)
+        .fill({ color: limb }).stroke({ color: line, width: 1.8 });
+      g.moveTo(...P(2.0, 0.02)) // 어뢰형 몸통(부드러운 곡선)
+        .quadraticCurveTo(...P(1.3, -0.74), ...P(0.2, -0.66))
+        .quadraticCurveTo(...P(-0.85, -0.6), ...P(-1.2, -0.14))
+        .quadraticCurveTo(...P(-1.42, 0), ...P(-1.2, 0.14))
+        .quadraticCurveTo(...P(-0.85, 0.6), ...P(0.2, 0.66))
+        .quadraticCurveTo(...P(1.3, 0.74), ...P(2.0, 0.02))
+        .closePath().fill({ color }).stroke({ color: line, width: OW });
+      g.moveTo(...P(1.5, -0.14)) // 등 하이라이트(위쪽 밝은 띠)
+        .quadraticCurveTo(...P(0.5, -0.6), ...P(-0.7, -0.44))
+        .quadraticCurveTo(...P(0.3, -0.3), ...P(1.5, -0.14))
+        .closePath().fill({ color: back });
+      pol([[2.02, 0.06], [0.95, 0.66], [0.5, 0.16]]).fill({ color: maw }).stroke({ color: line, width: 1 }); // 벌린 아래턱
+      fangs(1.6, 0.9, 4, 1, 0.32); // 위턱 송곳니
+      eye(0.66, -0.3, s * 0.3);
     } else if (type === "raider") {
       // 약탈자 — 두 뿔과 엄니를 앞세운 육중한 짐승 머리(떼로 들이받는다).
-      g.poly([...L(1.5 * s, -0.5 * s), ...L(2.3 * s, -1.15 * s), ...L(1.25 * s, -0.95 * s)])
-        .fill({ color: dark }).stroke({ color: line, width: 1.5 }); // 왼 뿔
-      g.poly([...L(1.5 * s, 0.5 * s), ...L(2.3 * s, 1.15 * s), ...L(1.25 * s, 0.95 * s)])
-        .fill({ color: dark }).stroke({ color: line, width: 1.5 }); // 오른 뿔
-      g.poly([
-        ...L(1.7 * s, 0), ...L(0.8 * s, -0.9 * s), ...L(-0.8 * s, -0.75 * s), ...L(-1.1 * s, 0),
-        ...L(-0.8 * s, 0.75 * s), ...L(0.8 * s, 0.9 * s),
-      ]).fill({ color }).stroke({ color: line, width: 2.4 }); // 머리·몸
-      fangs(1.5 * s, 0.5 * s, 2, 1, 0.4 * s); // 아래 엄니
-      fangs(1.5 * s, 0.5 * s, 2, -1, 0.34 * s); // 위 엄니
-      eye(0.55 * s, -0.4 * s, s * 0.22, 0xffd23a);
-      eye(0.55 * s, 0.4 * s, s * 0.22, 0xffd23a);
+      pol([[1.4, -0.48], [2.35, -1.2], [1.15, -0.9]]).fill({ color: limb }).stroke({ color: line, width: 1.6 }); // 위 뿔
+      pol([[1.4, 0.48], [2.35, 1.2], [1.15, 0.9]]).fill({ color: limb }).stroke({ color: line, width: 1.6 }); // 아래 뿔
+      g.moveTo(...P(1.75, 0)) // 육중한 머리·몸
+        .quadraticCurveTo(...P(1.4, -0.85), ...P(0.4, -0.9))
+        .quadraticCurveTo(...P(-0.9, -0.86), ...P(-1.15, -0.2))
+        .quadraticCurveTo(...P(-1.32, 0), ...P(-1.15, 0.2))
+        .quadraticCurveTo(...P(-0.9, 0.86), ...P(0.4, 0.9))
+        .quadraticCurveTo(...P(1.4, 0.85), ...P(1.75, 0))
+        .closePath().fill({ color }).stroke({ color: line, width: OW });
+      g.moveTo(...P(1.1, -0.24)) // 등 하이라이트
+        .quadraticCurveTo(...P(0.2, -0.8), ...P(-0.85, -0.6))
+        .quadraticCurveTo(...P(0.1, -0.42), ...P(1.1, -0.24))
+        .closePath().fill({ color: back });
+      fangs(1.6, 0.5, 2, 1, 0.42); // 아래 엄니
+      fangs(1.6, 0.5, 2, -1, 0.34); // 위 엄니
+      eye(0.5, -0.42, s * 0.24);
+      eye(0.5, 0.42, s * 0.24);
     } else if (type === "isolation") {
       // 외톨이 사냥꾼 — 날렵한 늑대 머리(뾰족 귀 + 좁은 주둥이 + 매서운 눈).
-      g.poly([...L(0.3 * s, -0.7 * s), ...L(-0.1 * s, -1.5 * s), ...L(-0.55 * s, -0.6 * s)])
-        .fill({ color: dark }).stroke({ color: line, width: 1.4 }); // 귀
-      g.poly([...L(0.3 * s, 0.7 * s), ...L(-0.1 * s, 1.5 * s), ...L(-0.55 * s, 0.6 * s)])
-        .fill({ color: dark }).stroke({ color: line, width: 1.4 }); // 귀
-      g.poly([
-        ...L(1.8 * s, 0), ...L(0.7 * s, -0.6 * s), ...L(-0.9 * s, -0.7 * s), ...L(-1.15 * s, 0),
-        ...L(-0.9 * s, 0.7 * s), ...L(0.7 * s, 0.6 * s),
-      ]).fill({ color }).stroke({ color: line, width: 2.4 }); // 날렵한 머리·몸
-      fangs(1.7 * s, 0.35 * s, 2, 1, 0.3 * s); // 송곳니
-      eye(0.7 * s, -0.28 * s, s * 0.2, 0x9be8ff);
-      eye(0.7 * s, 0.28 * s, s * 0.2, 0x9be8ff);
+      pol([[0.35, -0.66], [-0.05, -1.5], [-0.55, -0.6]]).fill({ color: limb }).stroke({ color: line, width: 1.4 }); // 귀
+      pol([[0.35, 0.66], [-0.05, 1.5], [-0.55, 0.6]]).fill({ color: limb }).stroke({ color: line, width: 1.4 }); // 귀
+      g.moveTo(...P(1.85, 0)) // 날렵한 머리·몸(좁은 주둥이)
+        .quadraticCurveTo(...P(1.1, -0.5), ...P(0.2, -0.66))
+        .quadraticCurveTo(...P(-0.85, -0.72), ...P(-1.1, -0.14))
+        .quadraticCurveTo(...P(-1.28, 0), ...P(-1.1, 0.14))
+        .quadraticCurveTo(...P(-0.85, 0.72), ...P(0.2, 0.66))
+        .quadraticCurveTo(...P(1.1, 0.5), ...P(1.85, 0))
+        .closePath().fill({ color }).stroke({ color: line, width: OW });
+      g.moveTo(...P(1.3, -0.14)) // 등 하이라이트
+        .quadraticCurveTo(...P(0.3, -0.6), ...P(-0.75, -0.5))
+        .quadraticCurveTo(...P(0.2, -0.36), ...P(1.3, -0.14))
+        .closePath().fill({ color: back });
+      pol([[1.85, 0.02], [1.05, 0.5], [0.7, 0.16]]).fill({ color: maw }).stroke({ color: line, width: 0.9 }); // 벌린 주둥이
+      fangs(1.66, 0.35, 2, 1, 0.3); // 송곳니
+      eye(0.72, -0.26, s * 0.22);
     } else if (type === "stalker") {
-      // 그림자 매복자 — 어둠 덩어리 + 삐죽한 가시 + 여러 개의 번뜩이는 눈(공포).
-      for (let k = 0; k < 8; k++) {
-        const a = (k / 8) * Math.PI * 2;
-        const [sx, sy] = [x + Math.cos(a) * s * 1.05, y + Math.sin(a) * s * 1.05];
-        const [tx2, ty2] = [x + Math.cos(a) * s * 1.5, y + Math.sin(a) * s * 1.5];
-        const [px, py] = [x + Math.cos(a + 0.4) * s * 1.05, y + Math.sin(a + 0.4) * s * 1.05];
-        g.poly([sx, sy, tx2, ty2, px, py]).fill({ color: darken(color, 0.5) }); // 가시 왕관
+      // 그림자 매복자 — 어둠 덩어리 + 삐죽한 가시 왕관 + 번뜩이는 눈(공포). 방향성 없음(제자리 매복).
+      const spikeCol = darken(color, 0.5);
+      for (let k = 0; k < 9; k++) {
+        const a = (k / 9) * Math.PI * 2;
+        const a2 = a + 0.42;
+        const am = (a + a2) / 2;
+        g.poly([
+          x + Math.cos(a) * s * 1.02, y + Math.sin(a) * s * 1.02,
+          x + Math.cos(am) * s * 1.62, y + Math.sin(am) * s * 1.62,
+          x + Math.cos(a2) * s * 1.02, y + Math.sin(a2) * s * 1.02,
+        ]).fill({ color: spikeCol }); // 가시 왕관
       }
-      g.circle(x, y, s * 1.02).fill({ color: darken(color, 0.8) }).stroke({ color: line, width: 2 });
-      // 세 개의 눈(가운데 크게) — 숨어 노려본다.
-      eye(0.45 * s, 0, s * 0.3, 0xff4af0);
-      eye(-0.2 * s, -0.5 * s, s * 0.19, 0xff8af6);
-      eye(-0.2 * s, 0.5 * s, s * 0.19, 0xff8af6);
+      g.circle(x, y, s * 1.05).fill({ color: darken(color, 0.7) }).stroke({ color: line, width: OW });
+      g.circle(x, y - s * 0.32, s * 0.62).fill({ color: darken(color, 0.9) }); // 위쪽 옅은 음영(입체감)
+      // 번뜩이는 눈 셋(가운데 크게) — 어둠 속에서 노려본다(번짐 + 밝은 홍채 + 흰 점).
+      const glowEye = (dx: number, dy: number, r: number): void => {
+        g.circle(x + dx, y + dy, r * 1.8).fill({ color: 0xff4af0, alpha: 0.22 }); // 번짐
+        g.circle(x + dx, y + dy, r + 0.8).fill({ color: line });
+        g.circle(x + dx, y + dy, r).fill({ color: 0xff6cf2 });
+        g.circle(x + dx - r * 0.2, y + dy - r * 0.2, r * 0.34).fill({ color: 0xffffff });
+      };
+      glowEye(s * 0.42, 0, s * 0.3);
+      glowEye(-s * 0.22, -s * 0.5, s * 0.19);
+      glowEye(-s * 0.22, s * 0.5, s * 0.19);
     } else if (type === "swarm") {
       // 사나운 무리 — 성난 피라니아(작지만 큰 아가리·이빨·부라린 눈).
-      g.poly([...L(-0.9 * s, 0), ...L(-1.7 * s, -0.6 * s), ...L(-1.4 * s, 0), ...L(-1.7 * s, 0.6 * s)])
-        .fill({ color: dark }).stroke({ color: line, width: 1.3 }); // 꼬리
-      g.poly([
-        ...L(1.5 * s, 0.1 * s), ...L(0.3 * s, -0.85 * s), ...L(-0.9 * s, -0.5 * s),
-        ...L(-0.9 * s, 0.5 * s), ...L(0.3 * s, 0.85 * s),
-      ]).fill({ color }).stroke({ color: line, width: 2.2 }); // 통통한 몸
-      g.poly([...L(1.5 * s, 0.1 * s), ...L(0.75 * s, 0.6 * s), ...L(0.35 * s, 0.05 * s)])
-        .fill({ color: 0x2a0808 }).stroke({ color: line, width: 1 }); // 벌린 아가리
-      fangs(1.3 * s, 0.55 * s, 3, 1, 0.3 * s);
-      eye(0.5 * s, -0.38 * s, s * 0.26, 0xffdc3a);
+      pol([[-0.85, 0], [-1.6, -0.6], [-1.25, 0], [-1.6, 0.6]]) // 꼬리
+        .fill({ color: limb }).stroke({ color: line, width: 1.4 });
+      g.moveTo(...P(1.45, 0.06)) // 통통한 몸
+        .quadraticCurveTo(...P(0.7, -0.86), ...P(-0.35, -0.78))
+        .quadraticCurveTo(...P(-0.95, -0.6), ...P(-0.95, 0))
+        .quadraticCurveTo(...P(-0.95, 0.6), ...P(-0.35, 0.78))
+        .quadraticCurveTo(...P(0.7, 0.86), ...P(1.45, 0.06))
+        .closePath().fill({ color }).stroke({ color: line, width: OW });
+      g.moveTo(...P(1.0, -0.2)) // 등 하이라이트
+        .quadraticCurveTo(...P(0.2, -0.66), ...P(-0.55, -0.5))
+        .quadraticCurveTo(...P(0.1, -0.34), ...P(1.0, -0.2))
+        .closePath().fill({ color: back });
+      pol([[1.46, 0.06], [0.7, 0.66], [0.3, 0.1]]).fill({ color: maw }).stroke({ color: line, width: 0.9 }); // 벌린 아가리
+      fangs(1.28, 0.55, 3, 1, 0.3);
+      eye(0.5, -0.36, s * 0.28);
     } else {
-      g.circle(x, y, s).fill({ color }).stroke({ color: line, width: 2.5 });
+      g.circle(x, y, s).fill({ color }).stroke({ color: line, width: OW });
+      eye(0.3, -0.2, s * 0.3);
     }
-  }
 }
 
 // 전역 시련 화면 틴트 — 지금은 독 안개만(진짜 전역 재난). 나머지 시련은 실제 떼 개체로 실재화돼
@@ -592,8 +661,6 @@ const HORDE_COLORS: Partial<Record<BossType, HordeColor>> = {
   isolation: { dot: 0x33c0d8, aura: 0x0a3a4a, ring: 0x1f92b0 }, // 청록(외톨이 사냥꾼)
   stalker: { dot: 0xc060d0, aura: 0x3a0a3a, ring: 0x8a2a9a }, // 자주(그림자 매복)
 };
-// 보스 실루엣 공통 윤곽선 — 어두운 적갈색(생물 스티커 윤곽과 톤 맞춤, 어느 보스 색에도 어울림).
-const BOSS_OUTLINE = 0x2a0806;
 
 // 먹이 종류별 색 — 모두 식물처럼 자연스럽되 구분되게(연두 / 청록 / 노랑풀 / 바이옴 전용=주황 열매).
 // 종류 3 = 바이옴 전용 먹이(사막·침엽수림·우림에, 특화종만 먹음) — 주황빛 열매로 일반 먹이와 구분.

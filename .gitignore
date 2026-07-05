@@ -5,6 +5,9 @@ node_modules/
 dist/
 *.local
 
+# 시각 검증 스크린샷(boss-preview 기본 출력)
+boss-preview.png
+
 # 동시 세션 작업 조율판 (로컬 실시간 공유, 절대 커밋하지 않음)
 ACTIVE_WORK.md
 
