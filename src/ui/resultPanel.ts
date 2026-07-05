@@ -3,6 +3,7 @@
 
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { parseDeathLine, type DeathRow } from "@/game/runReport";
+import type { UnlockTier } from "@/game/meta";
 
 // 사망 원인별 색 — 게임 화면의 시각 언어와 맞춘다(추위=파랑/폭염·잡아먹힘=빨강 계열/보스=보라 등).
 const DEATH_COLOR: Record<string, string> = {
@@ -15,7 +16,7 @@ const DEATH_COLOR: Record<string, string> = {
 };
 
 export interface ResultPanel {
-  show: (win: boolean, summary: string, canContinue: boolean) => void;
+  show: (win: boolean, summary: string, canContinue: boolean, newUnlocks: UnlockTier[]) => void;
   hide: () => void;
 }
 
@@ -33,6 +34,10 @@ export function createResultPanel(onNewRun: () => void, onContinue: () => void):
   const summary = document.createElement("div");
   summary.className = "ui-result-summary";
 
+  // 해금 배너 — 이번 런 완료로 새로 열린 프리셋·카드(메타 언락). 없으면 숨김.
+  const unlockEl = document.createElement("div");
+  unlockEl.style.display = "none";
+
   // 승리 후에만 뜨는 주 버튼 — 성장을 이어 더 험한 다음 시대로. 크고 밝게 강조(한눈에 "이걸 눌러라").
   const continueBtn = document.createElement("button");
   continueBtn.textContent = "다음 시대로 →";
@@ -49,13 +54,33 @@ export function createResultPanel(onNewRun: () => void, onContinue: () => void):
 
   root.appendChild(heading);
   root.appendChild(summary);
+  root.appendChild(unlockEl);
   root.appendChild(continueBtn);
   root.appendChild(newRunBtn);
   document.body.appendChild(root);
 
-  const show = (win: boolean, text: string, canContinue: boolean): void => {
+  const show = (win: boolean, text: string, canContinue: boolean, newUnlocks: UnlockTier[]): void => {
     heading.textContent = win ? "승리" : "멸종";
     heading.style.color = win ? "#6cc24a" : "#e0604a";
+    // 해금 배너 — 런을 거듭할수록 새 갈래·카드가 열린다(수평 언락).
+    if (newUnlocks.length > 0) {
+      unlockEl.replaceChildren();
+      const title = document.createElement("div");
+      title.textContent = "새로 해금!";
+      title.style.cssText = "color:#ffe08a; font-weight:800; font-size:14px; margin-bottom:4px;";
+      unlockEl.appendChild(title);
+      for (const u of newUnlocks) {
+        const row = document.createElement("div");
+        row.textContent = "· " + u.label;
+        row.style.cssText = "color:#cfe6b0; font-size:13px; line-height:1.5;";
+        unlockEl.appendChild(row);
+      }
+      unlockEl.style.cssText =
+        "display:block; margin-top:14px; padding:10px 12px; border:1px solid #3f4a2a;" +
+        "border-radius:12px; background:#1a2012; text-align:left;";
+    } else {
+      unlockEl.style.display = "none";
+    }
     // 본문은 빈 줄(\n\n)로 나뉜 문단들. 사망 원인 문단은 막대로, 나머지는 텍스트로 그린다.
     summary.replaceChildren();
     const blocks = text.split("\n\n");

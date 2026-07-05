@@ -10,6 +10,7 @@ import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, type Genome } from "@/sim/genome";
 import { drawCards, applyCard, PRESET_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
+import { loadMeta, isPresetUnlocked, isCardUnlocked, recordRunComplete, type UnlockTier } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { buildRunReport } from "@/game/runReport";
@@ -64,6 +65,10 @@ export class Game {
   /** 내 종 시작 색(프리셋에서 정함) — 다음 시대에 새 월드를 만들어도 같은 색을 유지한다. */
   private playerColor: number | undefined;
 
+  /** 메타 언락 기준(완료한 런 수) — 런 시작 시 저장본에서 읽어 프리셋·카드 풀을 거른다. 이전 런의 해금이
+   * 이번 런부터 반영된다(로그라이크 표준). 런 도중엔 안 바뀐다. */
+  private metaRuns = 0;
+
   // 레벨업(형질 성장) — 시간/단계 전환이 아니라 "먹이 경험치"로 레벨을 올려 형질을 얻는다.
   // 레벨 = 세대: 레벨업해서 고른 형질은 그 뒤로 태어난 개체에게만 물려진다(세대별 적용 — 후속 슬라이스).
   level = 1; // 시작 프리셋 = 1레벨
@@ -86,8 +91,11 @@ export class Game {
 
   // main 이 설정하는 훅
   onDraft: ((cards: Card[], preview: string) => void) | null = null;
-  // canContinue = 승리라서 "다음 시대로" 이어갈 수 있는가(패배는 false). main 이 결과 화면 버튼을 가른다.
-  onResult: ((result: RunResult, summary: string, canContinue: boolean) => void) | null = null;
+  // canContinue = 승리라서 "다음 시대로" 이어갈 수 있는가(패배는 false). newUnlocks = 이번 런 완료로 새로 열린
+  // 프리셋·카드(해금 알림용, 없으면 빈 배열). main 이 결과 화면 버튼·해금 배너를 가른다.
+  onResult:
+    | ((result: RunResult, summary: string, canContinue: boolean, newUnlocks: UnlockTier[]) => void)
+    | null = null;
   onWorldChanged: ((world: World) => void) | null = null;
 
   constructor(width: number, height: number, areaScale = 1) {
@@ -99,6 +107,7 @@ export class Game {
     this.stageRng = new Rng("stage-0");
     this.extRng = new Rng("ext-0");
     this.currentSeed = randomSeed(); // 로비 배경 맵도 매번 다르게
+    this.metaRuns = loadMeta().runsCompleted;
     this.world = this.makeWorld();
   }
 
@@ -217,7 +226,8 @@ export class Game {
     if (this.xp < 0) this.xp = 0;
     this.xpToNext = GAME.xpBase + (this.level - 1) * GAME.xpPerLevel;
     this.phase = "draft";
-    this.draftCards = drawCards(this.draftRng, 3);
+    // 메타 언락: 열린 카드만 드래프트 풀에(잠긴 특화 카드는 런을 거듭해 해금).
+    this.draftCards = drawCards(this.draftRng, 3, (id) => isCardUnlocked(id, this.metaRuns));
     this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (지금부터 태어나는 새끼에게 물려집니다)`;
     this.onDraft?.(this.draftCards, this.preview);
   }
@@ -340,6 +350,7 @@ export class Game {
     // 시드 하나에서 맵·드래프트·보스를 모두 파생. 기본은 랜덤(매 런 다름), 고정 시드면 완전 재현.
     this.baseSeed = this.fixedSeed ?? randomSeed();
     this.currentSeed = this.baseSeed;
+    this.metaRuns = loadMeta().runsCompleted; // 이전 런의 해금을 이번 런부터 반영
     this.era = 0; // 새 런은 첫 시대부터
     this.playerColor = undefined;
     this.genome = defaultGenome();
@@ -371,7 +382,8 @@ export class Game {
   /** 런 첫 드래프트 — 시작 프리셋 선택(어떤 종으로 시작할지). 이후 형질은 레벨업으로 얻는다. */
   private beginFirstDraft(): void {
     this.phase = "draft";
-    this.draftCards = PRESET_CARDS.slice();
+    // 메타 언락: 열린 프리셋만 보여준다(잠긴 특수 갈래는 런을 거듭해 해금). 항상 최소한 기본 갈래는 열려 있다.
+    this.draftCards = PRESET_CARDS.filter((c) => isPresetUnlocked(c.id, this.metaRuns));
     this.preview = "어떤 종으로 시작할까요? 시작 프리셋을 고르세요. (먹이를 먹어 레벨업하며 형질을 더합니다)";
   }
 
@@ -443,8 +455,13 @@ export class Game {
   private endRun(result: RunResult): void {
     this.phase = "result";
     this.result = result;
+    // 런이 진짜 끝났을 때만(멸종 또는 정복) 메타에 완료 기록 + 해금. 중간 시대 승리는 "다음 시대로"
+    // 이어지므로 세지 않는다(그때는 endRun 이 canContinue=true 로 뜨지만 런은 계속된다).
+    const conquered = result === "win" && this.isFinalEra;
+    const runOver = result === "lose" || conquered;
+    const newUnlocks: UnlockTier[] = runOver ? recordRunComplete(conquered) : [];
     // 승리면 "다음 시대로" 이어갈 수 있다(brotato식 난이도 루프) — 단 마지막 시대(정복)면 더는 없다.
-    this.onResult?.(result, this.buildSummary(result), result === "win" && !this.isFinalEra);
+    this.onResult?.(result, this.buildSummary(result), result === "win" && !this.isFinalEra, newUnlocks);
   }
 
   /**

@@ -393,9 +393,9 @@ const clampTrait = (v: number): number => {
   return n < 0 ? 0 : n > TRAIT_MAX ? TRAIT_MAX : n;
 };
 
-/** 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). */
-export function drawCards(rng: Rng, n: number): Card[] {
-  const pool = CARD_POOL.slice();
+/** 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). allow 로 잠긴 카드(메타 언락)를 걸러낸다. */
+export function drawCards(rng: Rng, n: number, allow?: (id: string) => boolean): Card[] {
+  const pool = (allow ? CARD_POOL.filter((c) => allow(c.id)) : CARD_POOL).slice();
   // Fisher-Yates 부분 셔플
   const count = Math.min(n, pool.length);
   for (let i = 0; i < count; i++) {

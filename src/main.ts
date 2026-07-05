@@ -176,9 +176,9 @@ async function boot(): Promise<void> {
     if (game.isChoosingPreset) presetPanel.show(cards, preview);
     else draft.show(cards, preview);
   };
-  game.onResult = (res, summary, canContinue) => {
+  game.onResult = (res, summary, canContinue, newUnlocks) => {
     controls.setVisible(false);
-    result.show(res === "win", summary, canContinue);
+    result.show(res === "win", summary, canContinue, newUnlocks);
   };
   game.onWorldChanged = (world) => {
     view.drawEnvironment(world);
