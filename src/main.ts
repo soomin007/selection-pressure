@@ -196,10 +196,6 @@ async function boot(): Promise<void> {
     selectedId = null; // 새 월드 → 옛 선택(개체 id)은 무효
     currentSelected = null;
     manualCam = null; // 수동 조망도 초기화
-    // 새 월드의 내 무리로 카메라를 즉시 스냅(hint 가 엉뚱한 데서 시작해 첫 프레임에 휙 도는 걸 방지).
-    const c0 = world.playerCentroid();
-    camX = c0.x;
-    camY = c0.y;
     // 재현용: 이 맵의 시드를 콘솔에 남긴다(?seed=… 로 다시 불러올 수 있음).
     console.info(`[seed] ${game.seed}  (재현: ?seed=${game.seed})`);
   };
@@ -265,9 +261,6 @@ async function boot(): Promise<void> {
   let camX = game.width / 2;
   let camY = game.height / 2;
   let camZoom = 1;
-  // 사용자 줌 배율 — 자동/수동 시점 무관하게 모든 모드의 목표 줌에 곱한다(버튼·휠·핀치로 조절).
-  let userZoom = 1;
-  const clampUserZoom = (z: number): number => Math.max(0.5, Math.min(3.5, z));
   let prevBoss = false;
   let prevExt = "";
   let prevLowWarn = false;
@@ -289,103 +282,18 @@ async function boot(): Promise<void> {
   view.container.eventMode = "none";
   app.stage.eventMode = "static";
   app.stage.hitArea = app.screen;
-  // 브라우저 기본 제스처(스크롤·핀치 확대)를 막아 캔버스가 드래그·핀치를 직접 받게 한다.
-  app.canvas.style.touchAction = "none";
-
-  // 카메라 수동 조작 — 드래그(1손가락)=자유 이동, 핀치(2손가락)/휠=줌. 탭(안 끌었을 때)=개체 선택.
-  const activePointers = new Map<number, { x: number; y: number }>();
-  let dragStart: { sx: number; sy: number; camX: number; camY: number } | null = null;
-  let dragging = false;
-  let pinchDist = 0;
-  let pinchedThisGesture = false; // 이번 제스처에 핀치(2손가락)가 있었나 — 끝날 때 탭 선택을 막는다
-  const onCanvasUI = (x: number, y: number): boolean =>
-    minimap.container.visible && minimap.containsScreenPoint(x, y);
-
-  app.stage.on("pointerdown", (e) => {
+  app.stage.on("pointertap", (e) => {
     if (game.phase !== "watch" && game.phase !== "draft") return;
-    if (e.target !== app.stage || onCanvasUI(e.global.x, e.global.y)) return;
-    activePointers.set(e.pointerId, { x: e.global.x, y: e.global.y });
-    if (activePointers.size === 1) {
-      dragStart = { sx: e.global.x, sy: e.global.y, camX, camY };
-      dragging = false;
-    } else if (activePointers.size === 2) {
-      const pts = [...activePointers.values()];
-      pinchDist = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y);
-      dragStart = null; // 핀치 중엔 팬 중단
-      pinchedThisGesture = true;
-    }
-  });
-
-  app.stage.on("pointermove", (e) => {
-    if (!activePointers.has(e.pointerId)) return;
-    activePointers.set(e.pointerId, { x: e.global.x, y: e.global.y });
-    if (activePointers.size >= 2) {
-      const pts = [...activePointers.values()];
-      const d = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y);
-      if (pinchDist > 0) userZoom = clampUserZoom(userZoom * (d / pinchDist));
-      pinchDist = d;
-      return;
-    }
-    if (dragStart) {
-      const dx = e.global.x - dragStart.sx;
-      const dy = e.global.y - dragStart.sy;
-      if (!dragging && Math.hypot(dx, dy) > 8) dragging = true; // 탭/드래그 구분 임계
-      if (dragging) {
-        // 드래그 = 자유 이동(수동 시점). 손가락 아래 월드가 따라오게 카메라를 반대로 민다.
-        selectedId = null;
-        manualCam = { x: dragStart.camX - dx / camZoom, y: dragStart.camY - dy / camZoom };
-      }
-    }
-  });
-
-  const endPointer = (e: { pointerId: number; global: { x: number; y: number }; target: unknown }): void => {
-    const wasDragging = dragging;
-    const hadPointer = activePointers.delete(e.pointerId);
-    if (activePointers.size < 2) pinchDist = 0;
-    if (activePointers.size > 0) return;
-    dragStart = null;
-    dragging = false;
-    const hadPinch = pinchedThisGesture;
-    pinchedThisGesture = false;
-    // 끌지 않은 단순 탭만 개체 선택으로 처리(드래그·핀치 끝은 선택 안 함).
-    if (!hadPointer || wasDragging || hadPinch) return;
-    if (game.phase !== "watch" && game.phase !== "draft") return;
-    if (e.target !== app.stage || onCanvasUI(e.global.x, e.global.y)) return;
-    const p = view.container.toLocal(e.global as { x: number; y: number });
+    // 빈 월드 탭만 처리 — 범례 등 누를 수 있는 UI 가 잡은 탭(target≠stage)은 그 UI 몫이라 건너뛴다.
+    if (e.target !== app.stage) return;
+    // 미니맵 위 탭은 조망 조작이라 개체 선택에서 제외(뒤의 개체가 잡히지 않게).
+    if (minimap.container.visible && minimap.containsScreenPoint(e.global.x, e.global.y)) return;
+    // 화면 좌표 → 월드 좌표(카메라/뷰포트 변환을 toLocal 이 한 번에 풀어 준다).
+    const p = view.container.toLocal(e.global);
     const picked = pickEntity(p.x, p.y);
-    manualCam = null; // 탭 = 수동 조망 종료(개체 추적 또는 빈 곳이면 무리 복귀)
+    manualCam = null; // 화면 탭 = 수동 조망 종료(개체 추적 또는 빈 곳이면 무리 복귀)
     selectedId = !picked || picked.id === selectedId ? null : picked.id;
-  };
-  app.stage.on("pointerup", endPointer);
-  app.stage.on("pointerupoutside", endPointer);
-
-  // 휠 줌(데스크톱).
-  app.canvas.addEventListener(
-    "wheel",
-    (ev: WheelEvent) => {
-      ev.preventDefault();
-      userZoom = clampUserZoom(userZoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12));
-    },
-    { passive: false },
-  );
-
-  // 줌 +/− 버튼(좌하단) — 폰에서 핀치 없이도 줌. 자동/수동 시점 어느 쪽이든 적용된다.
-  const zoomBar = document.createElement("div");
-  zoomBar.style.cssText =
-    "position:fixed; left:6px; bottom:52px; z-index:31; display:flex; flex-direction:column; gap:6px;";
-  const mkZoom = (label: string, dz: number): HTMLButtonElement => {
-    const b = document.createElement("button");
-    b.textContent = label;
-    b.style.cssText =
-      "width:40px; height:40px; border:1px solid #3b465c; border-radius:10px; background:rgba(11,14,20,0.92);" +
-      "color:#dfe6ee; font-size:22px; font-weight:800; line-height:1; cursor:pointer;";
-    b.addEventListener("click", () => {
-      userZoom = clampUserZoom(userZoom * dz);
-    });
-    return b;
-  };
-  zoomBar.append(mkZoom("+", 1.25), mkZoom("−", 1 / 1.25));
-  document.body.appendChild(zoomBar);
+  });
 
   app.ticker.add((ticker) => {
     game.update(ticker.deltaMS);
@@ -440,15 +348,12 @@ async function boot(): Promise<void> {
       ty = boss.y;
       tz = 1.35;
     } else {
-      // 흩어진 낙오자 대신 "지금 시점 근처의 주 무리"를 부드럽게 따라간다(hint=현재 카메라). 번식으로 초점이
-      // 홱 튀지 않게 가중 평균을 쓴다.
-      const focus = game.world.playerFocus(camX, camY);
+      // 흩어진 낙오자 대신 "주 무리(가장 붐비는 곳)"를 잡는다 — 평균 무게중심은 빈 공간을 가리키기 쉽다.
+      const focus = game.world.playerFocus();
       tx = focus.x;
       ty = focus.y;
       tz = 1;
     }
-    // 사용자 줌을 모든 모드의 목표 줌에 곱한다(자동/수동 무관). 최종 줌은 안전 범위로 클램프.
-    tz = Math.max(0.5, Math.min(5, tz * userZoom));
     const k = Math.min(1, (dtMS / 1000) * 3.5); // 시간 기반 이징
     camX += (tx - camX) * k;
     camY += (ty - camY) * k;

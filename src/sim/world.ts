@@ -291,29 +291,43 @@ export class World {
   }
 
   /**
-   * 카메라가 따라갈 내 종 초점 — 현재 시점(hint) 근처의 무리를 부드럽게 따라간다. 개체마다 hint 에서 가까울수록
-   * 큰 가중치(1/(1+d²/s²))를 줘 가중 평균을 낸다. 그래서 ① 흩어진 낙오자는 거의 무시(멀면 가중치 0에 수렴)하고
-   * ② 번식으로 새 개체가 무리에 더해져도 초점이 미세하게만 움직인다(칸을 고르던 옛 방식은 번식 때 최다 칸이
-   * 홱 바뀌어 화면이 휙휙 돌았다 — 폰 피드백). hint 는 보통 지금 카메라 위치라, 무리를 자연스럽게 따라간다.
+   * 카메라가 따라갈 내 종 초점 — 흩어진 낙오자에 휘둘리지 않게 "개체가 가장 몰린 곳(주 무리)"의 중심을 준다.
+   * 평균 무게중심(playerCentroid)은 낙오자가 멀리 있으면 빈 공간을 가리켜 무리가 화면 밖으로 나간다(폰 피드백:
+   * "내 애들을 잘 안 잡아준다"). 성긴 격자 버킷에서 가장 붐비는 칸을 골라 그 칸(+이웃) 개체의 중심을 반환한다.
    */
-  playerFocus(hintX: number, hintY: number): { x: number; y: number } {
-    const s2 = 200 * 200; // 이 거리(px) 안의 개체를 주로 본다(반감 거리)
-    let sx = 0;
-    let sy = 0;
-    let wsum = 0;
-    let any = false;
+  playerFocus(): { x: number; y: number } {
+    const cell = 120;
+    const buckets = new Map<string, { n: number; sx: number; sy: number; cx: number; cy: number }>();
+    let best: { n: number; sx: number; sy: number; cx: number; cy: number } | null = null;
     for (const e of this.entities) {
       if (!e.species.isPlayer) continue;
-      any = true;
-      const dx = e.x - hintX;
-      const dy = e.y - hintY;
-      const w = 1 / (1 + (dx * dx + dy * dy) / s2);
-      sx += e.x * w;
-      sy += e.y * w;
-      wsum += w;
+      const cx = Math.floor(e.x / cell);
+      const cy = Math.floor(e.y / cell);
+      const key = cx + "," + cy;
+      let b = buckets.get(key);
+      if (!b) {
+        b = { n: 0, sx: 0, sy: 0, cx, cy };
+        buckets.set(key, b);
+      }
+      b.n += 1;
+      b.sx += e.x;
+      b.sy += e.y;
+      if (!best || b.n > best.n) best = b;
     }
-    if (!any || wsum <= 0) return { x: this.width / 2, y: this.height / 2 };
-    return { x: sx / wsum, y: sy / wsum };
+    if (!best) return { x: this.width / 2, y: this.height / 2 };
+    // 가장 붐비는 칸 + 인접 칸의 개체까지 모아 중심을 낸다(주 무리가 두 칸에 걸쳐도 자연스럽게).
+    let sx = 0;
+    let sy = 0;
+    let n = 0;
+    for (const e of this.entities) {
+      if (!e.species.isPlayer) continue;
+      if (Math.abs(Math.floor(e.x / cell) - best.cx) <= 1 && Math.abs(Math.floor(e.y / cell) - best.cy) <= 1) {
+        sx += e.x;
+        sy += e.y;
+        n += 1;
+      }
+    }
+    return n > 0 ? { x: sx / n, y: sy / n } : { x: best.sx / best.n, y: best.sy / best.n };
   }
 
   /** 드래프트 스킵 보상 — 내 종 새끼 n 마리를 무리 중심 근처에 낳는다(형질 대신 개체 수). createEntity 가

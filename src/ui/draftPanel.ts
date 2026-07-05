@@ -3,7 +3,6 @@
 
 import type { Card } from "@/game/cards";
 import { TRAIT_LABELS, type Traits } from "@/sim/genome";
-import { ABILITY_KEYS } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 
 export interface DraftPanel {
@@ -81,13 +80,8 @@ function formatEffects(card: Card): string {
   const parts: string[] = [];
   for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
     const v = card.effects[key] ?? 0;
-    if (ABILITY_KEYS.has(key)) {
-      // 능력형(수영·날개·초음파·독·원거리)은 수치가 무의미(3단계) → 방향만 표시(강화/약화).
-      parts.push(`${TRAIT_LABELS[key]} ${v >= 0 ? "강화 ↑" : "약화 ↓"}`);
-    } else {
-      const sign = v >= 0 ? "+" : "";
-      parts.push(`${TRAIT_LABELS[key]} ${sign}${Math.round(v)}`);
-    }
+    const sign = v >= 0 ? "+" : "";
+    parts.push(`${TRAIT_LABELS[key]} ${sign}${Math.round(v)}`); // 형질 0~100 자연수
   }
   return parts.join("  ·  ");
 }

@@ -652,26 +652,15 @@ describe("드래프트 스킵 보상 — 새끼 낳기", () => {
 });
 
 describe("카메라 초점 — 주 무리를 잡는다(낙오자 무시)", () => {
-  it("playerFocus 는 hint 근처 가중이라 낙오자보다 주 무리(다수)를 잡는다", () => {
+  it("playerFocus 는 평균이 아니라 가장 붐비는 무리 쪽을 가리킨다", () => {
     const w = new World("focus-seed", W, H, defaultGenome());
     // 기존 내 종 개체를 치우고, 낙오자 소수(좌상단) + 주 무리 다수(우하단)로 재배치한다.
     w.entities = w.entities.filter((e) => !e.species.isPlayer);
     for (let i = 0; i < 2; i++) w.entities.push(createEntity(w.nextId(), 60 + i, 60, w.playerSpecies, 50));
     for (let i = 0; i < 6; i++) w.entities.push(createEntity(w.nextId(), 400 + i * 5, 780, w.playerSpecies, 50));
-    // 화면 중앙을 hint 로 줘도(첫 프레임 가정) 다수(우하단)가 가중을 지배해 그쪽을 잡는다.
-    const f = w.playerFocus(W / 2, H / 2);
+    const f = w.playerFocus();
+    // 평균이면 (좌상단+우하단)/8 로 중간을 가리키지만, 주 무리(우하단)를 잡아야 한다.
     expect(f.y).toBeGreaterThan(600);
     expect(f.x).toBeGreaterThan(300);
-  });
-
-  it("무리 근처에서 새 개체(번식) 하나가 더해져도 초점이 거의 안 튄다(어지럼 방지)", () => {
-    const w = new World("focus-birth", W, H, defaultGenome());
-    w.entities = w.entities.filter((e) => !e.species.isPlayer);
-    for (let i = 0; i < 6; i++) w.entities.push(createEntity(w.nextId(), 300 + (i % 3) * 10, 500 + i * 8, w.playerSpecies, 50));
-    const before = w.playerFocus(300, 520);
-    // 무리 안에서 번식 — 초점이 크게 안 움직여야 한다.
-    w.entities.push(createEntity(w.nextId(), 315, 540, w.playerSpecies, 50));
-    const after = w.playerFocus(300, 520);
-    expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeLessThan(10);
   });
 });
