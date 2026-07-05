@@ -443,8 +443,8 @@ export class Game {
   private endRun(result: RunResult): void {
     this.phase = "result";
     this.result = result;
-    // 승리면 "다음 시대로" 이어갈 수 있다(brotato식 난이도 루프). 패배는 여기서 끝.
-    this.onResult?.(result, this.buildSummary(result), result === "win");
+    // 승리면 "다음 시대로" 이어갈 수 있다(brotato식 난이도 루프) — 단 마지막 시대(정복)면 더는 없다.
+    this.onResult?.(result, this.buildSummary(result), result === "win" && !this.isFinalEra);
   }
 
   /**
@@ -478,9 +478,14 @@ export class Game {
     this.beginStage(); // 첫 채집 단계부터 다시(phase = watch)
   }
 
-  /** HUD 표시용 시대 라벨 — 첫 시대(era 0)면 빈 문자열, 이후 "시대 2" 식으로. */
+  /** HUD 표시용 시대 라벨 — "시대 N / 5"로 지금 몇 번째인지·목표(정복)까지 얼마나 남았는지 항상 보인다. */
   get eraLabel(): string {
-    return this.era > 0 ? `시대 ${this.era + 1}` : "";
+    return `시대 ${this.era + 1} / ${GAME.eraCap}`;
+  }
+
+  /** 마지막 시대인가(이 시대의 대멸종을 넘으면 정복=최종 승리, 더는 "다음 시대로"가 없다). */
+  get isFinalEra(): boolean {
+    return this.era >= GAME.eraCap - 1;
   }
 
   private buildSummary(result: RunResult): string {
@@ -490,6 +495,8 @@ export class Game {
 
   private baseSummary(result: RunResult): string {
     if (result === "win") {
+      if (this.isFinalEra)
+        return `모든 시대(${GAME.eraCap})를 정복했습니다! 당신의 종이 이 세계의 정점입니다.`;
       if (this.era > 0) return `${this.era + 1}번째 시대의 대멸종까지 견뎌내고 정점을 지켰습니다.`;
       return "대멸종을 견뎌내고 정점에 올랐습니다. 더 험한 다음 시대로 나아갈 수 있습니다.";
     }

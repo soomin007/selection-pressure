@@ -106,7 +106,7 @@ describe("난이도 루프(승리 후 진행)", () => {
     expect(g.level).toBe(beforeLevel);
     // 새 월드의 내 종이 살아있다(초기 무리 재생성).
     expect(g.world.playerPopulation).toBeGreaterThan(0);
-    // 시대 라벨이 뜬다.
-    expect(g.eraLabel).toBe("시대 2");
+    // 시대 라벨이 뜬다(N / 상한).
+    expect(g.eraLabel).toBe("시대 2 / 5");
   });
 });
