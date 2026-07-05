@@ -181,8 +181,14 @@ export function createPresetPanel(
         ic.width = icon.width;
         ic.height = icon.height;
         ic.getContext("2d")?.drawImage(icon, 0, 0);
-        ic.style.cssText = "width:44px; height:44px; flex:none;";
-        btn.appendChild(ic);
+        // 비율 유지 — width/height 를 둘 다 강제하면 가로로 길쭉한 생물이 좌우로 찌그러진다(폰 피드백).
+        // 고정 크기 박스에 담고 max 로 담아 종횡비를 지킨다(상세 뷰 외형과 동일 방식).
+        ic.style.cssText = "max-width:100%; max-height:100%; display:block;";
+        const iconBox = document.createElement("div");
+        iconBox.style.cssText =
+          "flex:none; width:48px; height:48px; display:flex; align-items:center; justify-content:center;";
+        iconBox.appendChild(ic);
+        btn.appendChild(iconBox);
       }
       const txt = document.createElement("div");
       txt.style.cssText = "flex:1; min-width:0;";
