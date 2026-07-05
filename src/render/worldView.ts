@@ -358,6 +358,8 @@ export class WorldView {
       const pts = boss.members.map((m) => ({
         x: m.prevX + (m.x - m.prevX) * interp,
         y: m.prevY + (m.y - m.prevY) * interp,
+        hx: m.x - m.prevX, // 진행 방향(실루엣이 이쪽을 향한다)
+        hy: m.y - m.prevY,
       }));
       let cx = 0;
       let cy = 0;
@@ -375,11 +377,15 @@ export class WorldView {
       // 무리를 감싸는 위협 오라(맥동) — 어디를 덮치는 무리인지 한눈에.
       this.bossG.circle(cx, cy, maxR + 22).fill({ color: hc.aura, alpha: 0.1 + pulse * 0.06 });
       this.bossG.circle(cx, cy, maxR + 22).stroke({ color: hc.ring, width: 2, alpha: 0.3 });
-      for (const p of pts) this.drawPredatorDot(p.x, p.y, boss.killRadius, pulse, 7, hc.dot);
+      // 각 떼 개체를 종류별 실루엣으로(사나운 무리=삼각·약탈자=화살촉·외톨이=칼날·매복자=눈).
+      for (const p of pts)
+        this.drawBossCreature(p.x, p.y, p.hx, p.hy, 8.5, boss.type, hc.dot, boss.killRadius, pulse);
     } else if (boss && boss.killRadius > 0) {
       const bx = boss.prevX + (boss.x - boss.prevX) * interp;
       const by = boss.prevY + (boss.y - boss.prevY) * interp;
-      this.drawPredatorDot(bx, by, boss.killRadius, pulse, 14, HORDE_DEFAULT.dot);
+      const hc = HORDE_COLORS[boss.type] ?? HORDE_DEFAULT;
+      // 단일 추격자(chaser) — 크게 그려 "빠르게 돌진하는 한 마리"를 강조.
+      this.drawBossCreature(bx, by, boss.x - boss.prevX, boss.y - boss.prevY, 15, boss.type, hc.dot, boss.killRadius, pulse);
     }
 
     // 낮/밤 + 대멸종 화면 틴트 (둘 다 overlayG — 밤을 먼저 깔고 대멸종 틴트를 그 위에)
@@ -416,21 +422,68 @@ export class WorldView {
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });
   }
 
-  /** 쫓아와 무는 개체 하나(추격자 또는 무리의 한 마리)를 물기 반경 + 맥동 고리 + 점으로 그린다. */
-  private drawPredatorDot(
+  /**
+   * 쫓아와 무는 보스 개체 하나(단일 추격자 또는 떼의 한 마리)를 그린다 — 물기 반경(즉사, 게임성) +
+   * 맥동 고리(주목) + **종류별 실루엣**(진행 방향으로 회전). 종류마다 모양이 달라 "무엇이 덮치는지"가
+   * 색뿐 아니라 형태로도 한눈에 읽힌다(사용자 피드백: 보스가 다 비슷한 점이라 개성이 없다).
+   */
+  private drawBossCreature(
     x: number,
     y: number,
+    hx: number,
+    hy: number,
+    size: number,
+    type: BossType,
+    color: number,
     killRadius: number,
     pulse: number,
-    dot: number,
-    color: number,
   ): void {
-    this.bossG.circle(x, y, killRadius).fill({ color, alpha: 0.3 });
-    this.bossG
-      .circle(x, y, dot + 2 + pulse * dot * 1.8)
-      .stroke({ color, width: 2.5, alpha: 0.55 * (1 - pulse) });
-    this.bossG.circle(x, y, dot).fill({ color, alpha: 1 });
-    this.bossG.circle(x, y, dot).stroke({ color: 0x3a0d06, width: 3 });
+    const g = this.bossG;
+    // 물기 반경(닿으면 즉사) + 맥동 고리 — 로직과 1:1(known_issues), 게임성 유지.
+    if (killRadius > 0) g.circle(x, y, killRadius).fill({ color, alpha: 0.26 });
+    g.circle(x, y, size + 2 + pulse * size * 1.5).stroke({ color, width: 2.4, alpha: 0.5 * (1 - pulse) });
+
+    // 진행 방향(헤딩)으로 실루엣을 회전. 거의 안 움직이면 아래(+y)를 향하게 둔다(몰려오는 방향).
+    const mag = Math.hypot(hx, hy);
+    const ca = mag > 0.02 ? hx / mag : 0;
+    const sa = mag > 0.02 ? hy / mag : 1;
+    // 로컬(앞=+x, 옆=±y) 좌표를 월드로 — 진행 방향 기준.
+    const L = (fx: number, fy: number): [number, number] => [
+      x + fx * ca - fy * sa,
+      y + fx * sa + fy * ca,
+    ];
+    const s = size;
+    const line = BOSS_OUTLINE;
+
+    if (type === "chaser") {
+      // 빠른 추격자 — 길고 날카로운 화살촉(돌진하는 창끝).
+      const p = [...L(1.8 * s, 0), ...L(-0.7 * s, -0.82 * s), ...L(-0.3 * s, 0), ...L(-0.7 * s, 0.82 * s)];
+      g.poly(p).fill({ color }).stroke({ color: line, width: 2.4 });
+    } else if (type === "raider") {
+      // 약탈자 무리 — 앞으로 벌린 화살촉/쐐기(떼로 달려드는 공격성).
+      const p = [
+        ...L(1.35 * s, 0), ...L(0.2 * s, -0.95 * s), ...L(-0.15 * s, -0.35 * s),
+        ...L(-0.75 * s, 0), ...L(-0.15 * s, 0.35 * s), ...L(0.2 * s, 0.95 * s),
+      ];
+      g.poly(p).fill({ color }).stroke({ color: line, width: 2 });
+    } else if (type === "isolation") {
+      // 외톨이 사냥꾼 — 날렵한 칼날 마름모(홀로 헤집는 날카로움).
+      const p = [...L(1.5 * s, 0), ...L(0, -0.52 * s), ...L(-1.05 * s, 0), ...L(0, 0.52 * s)];
+      g.poly(p).fill({ color }).stroke({ color: line, width: 2 });
+    } else if (type === "stalker") {
+      // 그림자 매복자 — 둥근 그림자 몸 + 번뜩이는 눈(숨어 노려보다 덮친다).
+      g.circle(x, y, s * 0.98).fill({ color }).stroke({ color: line, width: 2 });
+      const [ex, ey] = L(s * 0.42, 0);
+      g.circle(ex, ey, s * 0.34).fill({ color: 0xffe14a });
+      g.circle(ex, ey, s * 0.16).fill({ color: 0x160616 });
+    } else if (type === "swarm") {
+      // 사나운 무리 — 작고 뾰족한 삼각(떼로 몰려드는 성난 이빨).
+      const p = [...L(1.15 * s, 0), ...L(-0.78 * s, -0.9 * s), ...L(-0.78 * s, 0.9 * s)];
+      g.poly(p).fill({ color }).stroke({ color: line, width: 2 });
+    } else {
+      // 기타 — 기본 원(폴백).
+      g.circle(x, y, s).fill({ color }).stroke({ color: line, width: 2.5 });
+    }
   }
 }
 
@@ -456,11 +509,14 @@ interface HordeColor {
 }
 const HORDE_DEFAULT: HordeColor = { dot: 0xff5535, aura: 0x9a1a0e, ring: 0xd8321a };
 const HORDE_COLORS: Partial<Record<BossType, HordeColor>> = {
+  chaser: { dot: 0xff4028, aura: 0x8a1206, ring: 0xe03418 }, // 새빨강(빠른 추격자 — 단일 돌진)
   swarm: { dot: 0xff7a2a, aura: 0x7a2a08, ring: 0xd8641a }, // 성난 주황(사나운 무리)
   raider: { dot: 0xff2e5a, aura: 0x7a0a24, ring: 0xd81a44 }, // 핏빛 진홍(약탈)
   isolation: { dot: 0x33c0d8, aura: 0x0a3a4a, ring: 0x1f92b0 }, // 청록(외톨이 사냥꾼)
   stalker: { dot: 0xc060d0, aura: 0x3a0a3a, ring: 0x8a2a9a }, // 자주(그림자 매복)
 };
+// 보스 실루엣 공통 윤곽선 — 어두운 적갈색(생물 스티커 윤곽과 톤 맞춤, 어느 보스 색에도 어울림).
+const BOSS_OUTLINE = 0x2a0806;
 
 // 먹이 종류별 색 — 모두 식물처럼 자연스럽되 구분되게(연두 / 청록 / 노랑풀 / 바이옴 전용=주황 열매).
 // 종류 3 = 바이옴 전용 먹이(사막·침엽수림·우림에, 특화종만 먹음) — 주황빛 열매로 일반 먹이와 구분.

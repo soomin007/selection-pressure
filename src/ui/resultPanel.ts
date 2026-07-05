@@ -33,15 +33,17 @@ export function createResultPanel(onNewRun: () => void, onContinue: () => void):
   const summary = document.createElement("div");
   summary.className = "ui-result-summary";
 
-  // 승리 후에만 뜨는 주 버튼 — 성장을 이어 더 험한 다음 시대로.
+  // 승리 후에만 뜨는 주 버튼 — 성장을 이어 더 험한 다음 시대로. 크고 밝게 강조(한눈에 "이걸 눌러라").
   const continueBtn = document.createElement("button");
-  continueBtn.className = "ui-btn-primary";
   continueBtn.textContent = "다음 시대로 →";
+  continueBtn.style.cssText =
+    "display:block; width:100%; margin:18px 0 0; padding:16px; border:none; border-radius:14px;" +
+    "background:linear-gradient(180deg,#7de06a,#4fb43a); color:#08210a; font-size:18px; font-weight:800;" +
+    "cursor:pointer; box-shadow:0 4px 18px rgba(90,200,80,0.45); letter-spacing:0.3px;";
   continueBtn.addEventListener("click", onContinue);
 
-  // 새 종으로 다시 시작(패배 시 유일한 버튼, 승리 시 보조 버튼).
+  // 새 종으로 다시 시작 — 승리 시엔 보조(작고 은은한 테두리 버튼), 패배 시엔 유일한 주 버튼.
   const newRunBtn = document.createElement("button");
-  newRunBtn.className = "ui-btn-primary";
   newRunBtn.textContent = "새 런 시작";
   newRunBtn.addEventListener("click", onNewRun);
 
@@ -63,10 +65,22 @@ export function createResultPanel(onNewRun: () => void, onContinue: () => void):
       if (i > 0) el.style.marginTop = "12px";
       summary.appendChild(el);
     });
-    // 승리 && 이어갈 수 있으면 "다음 시대로"를 주 버튼으로, "새 런"은 보조(작고 은은하게).
-    continueBtn.style.display = win && canContinue ? "block" : "none";
-    newRunBtn.textContent = win && canContinue ? "여기서 마치고 새 종으로" : "새 런 시작";
-    newRunBtn.style.opacity = win && canContinue ? "0.7" : "1";
+    // 승리 && 이어갈 수 있으면 "다음 시대로"를 크고 밝은 주 버튼으로, "새 런"은 작고 은은한 보조로 분리한다.
+    const emphasize = win && canContinue;
+    continueBtn.style.display = emphasize ? "block" : "none";
+    if (emphasize) {
+      // 보조 버튼 — 테두리만 있는 은은한 스타일 + 위 여백으로 주 버튼과 확실히 떨어뜨린다.
+      newRunBtn.textContent = "여기서 마치고 새 종으로";
+      newRunBtn.style.cssText =
+        "display:block; width:100%; margin:12px 0 0; padding:11px; border:1px solid #3a4658;" +
+        "border-radius:12px; background:transparent; color:#8a93a6; font-size:13px; font-weight:600; cursor:pointer;";
+    } else {
+      // 패배 — 새 런이 유일한 주 버튼(밝게).
+      newRunBtn.textContent = "새 런 시작";
+      newRunBtn.style.cssText =
+        "display:block; width:100%; margin:18px 0 0; padding:14px; border:none; border-radius:14px;" +
+        "background:linear-gradient(180deg,#7db0e0,#4f84b4); color:#08161f; font-size:16px; font-weight:800; cursor:pointer;";
+    }
     root.style.display = "block";
   };
 
