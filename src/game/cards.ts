@@ -7,7 +7,12 @@
 
 import type { Rng } from "@/sim/rng";
 import type { Genome, Traits } from "@/sim/genome";
-import { TRAIT_MAX } from "@/sim/genome";
+import { clampTraitValue, TRAIT_CEILING } from "@/sim/genome";
+
+// 상한 200 연속 형질(속도·시야·공격·번식·무리)의 카드 증가폭을 이만큼으로 줄인다 — 극단(200)까지 여러 장을
+// 쌓아야 도달(폰 피드백: 100 에 너무 쉽게 붙어 잘림). 100 이하 구간이 예전보다 천천히 오르되, 100~200 이 열려
+// 잘림이 사라진다. set(프리셋 정체성 값)은 안 줄인다(증분만).
+const CARD_GROWTH_SCALE = 0.6;
 
 export interface Card {
   id: string;
@@ -389,12 +394,6 @@ export const CARD_POOL: readonly Card[] = [
   },
 ];
 
-/** 형질 값을 0~100 자연수로 강제(반올림 + 범위 클램프). */
-const clampTrait = (v: number): number => {
-  const n = Math.round(v);
-  return n < 0 ? 0 : n > TRAIT_MAX ? TRAIT_MAX : n;
-};
-
 /** 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). allow 로 잠긴 카드(메타 언락)를 걸러낸다. */
 export function drawCards(rng: Rng, n: number, allow?: (id: string) => boolean): Card[] {
   const pool = (allow ? CARD_POOL.filter((c) => allow(c.id)) : CARD_POOL).slice();
@@ -410,15 +409,17 @@ export function drawCards(rng: Rng, n: number, allow?: (id: string) => boolean):
   return pool.slice(0, count);
 }
 
-/** 카드 효과를 게놈에 그 자리에서 적용 + 0~100 클램프. (공유 게놈이라 즉시 반영) */
+/** 카드 효과를 게놈에 그 자리에서 적용 + 형질별 상한 클램프. (공유 게놈이라 즉시 반영)
+ * 증분(effects)은 상한 200 연속 형질이면 CARD_GROWTH_SCALE 로 줄인다(극단까지 천천히). set(프리셋 정체성)은 안 줄임. */
 export function applyCard(genome: Genome, card: Card): void {
   if (card.set) {
     for (const key of Object.keys(card.set) as (keyof Traits)[]) {
-      genome.traits[key] = clampTrait(card.set[key] ?? genome.traits[key]);
+      genome.traits[key] = clampTraitValue(key, card.set[key] ?? genome.traits[key]);
     }
   }
   for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
-    const delta = card.effects[key] ?? 0;
-    genome.traits[key] = clampTrait(genome.traits[key] + delta);
+    let delta = card.effects[key] ?? 0;
+    if (TRAIT_CEILING[key] > 100) delta *= CARD_GROWTH_SCALE; // 상한 200 형질만 증가폭 축소
+    genome.traits[key] = clampTraitValue(key, genome.traits[key] + delta);
   }
 }

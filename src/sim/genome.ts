@@ -132,11 +132,37 @@ export const TRAIT_LABELS: Record<keyof Traits, string> = {
   ranged: "원거리",
 };
 
-/** 형질 값을 0~100 자연수로 강제(반올림 + 범위 클램프). */
+/** 형질 값을 0~100 자연수로 강제(반올림 + 범위 클램프). 야생·기본 게놈용(0~100 유지). */
 const clampTrait = (v: number): number => {
   const n = Math.round(v);
   return n < 0 ? 0 : n > TRAIT_MAX ? TRAIT_MAX : n;
 };
+
+// 형질별 상한 — "많을수록 좋은" 연속 형질만 200(극단은 정규화 ÷100 이라 2배 효과, 카드를 여러 장 쌓아야 도달).
+// 100 이하 구간은 기존과 완전히 동일하고 100~200 만 새로 열린다 → "형질이 100에 너무 쉽게 붙어 잘리던" 문제
+// 해소 + 극단이 귀해진다. 대사(양방향 절충 — cold 공식이 1-대사라 100 초과 시 뒤집힘)·식성(스펙트럼)·능력형
+// (임계/3단계)은 0~100 유지. 야생종은 카드가 없어 항상 0~100 이라 밸런스(통과기준)에 무관.
+export const TRAIT_CEILING: Record<keyof Traits, number> = {
+  speed: 200,
+  vision: 200,
+  attack: 200,
+  fertility: 200,
+  herding: 200,
+  metabolism: 100,
+  diet: 100,
+  swimming: 100,
+  echo: 100,
+  wings: 100,
+  venom: 100,
+  ranged: 100,
+};
+
+/** 형질값을 그 형질의 상한(TRAIT_CEILING)까지 자연수로 강제. 카드 누적·프리셋 적용에 쓴다(연속 형질만 200). */
+export function clampTraitValue(key: keyof Traits, v: number): number {
+  const n = Math.round(v);
+  const hi = TRAIT_CEILING[key];
+  return n < 0 ? 0 : n > hi ? hi : n;
+}
 
 /** 모든 형질 50(=중간) 인 기본 게놈. */
 export function defaultGenome(): Genome {
@@ -177,7 +203,7 @@ export function cloneGenome(genome: Genome): Genome {
 /** 모든 형질을 0~100 자연수로 강제. (카드 효과 누적 후 호출) */
 export function clampGenome(genome: Genome): Genome {
   const traits = {} as Traits;
-  for (const key of TRAIT_KEYS) traits[key] = clampTrait(genome.traits[key]);
+  for (const key of TRAIT_KEYS) traits[key] = clampTraitValue(key, genome.traits[key]);
   return { genomeVersion: GENOME_VERSION, traits };
 }
 

@@ -2,11 +2,24 @@
 // 고른다. 프리셋이 많아 한 화면에 늘어놓으면 난잡하던 것을, 큰 방향부터 좁혀 깔끔하게(사용자 피드백).
 // 외형은 실제 게놈으로 만든 생물 텍스처(makeCreatureTexture)를 canvas 로 뽑아 쓴다.
 
-import { defaultGenome, clampGenome, TRAIT_KEYS, TRAIT_LABELS, type Genome } from "@/sim/genome";
+import { defaultGenome, clampGenome, TRAIT_KEYS, TRAIT_LABELS, type Genome, type Traits } from "@/sim/genome";
 import { applyCard, type Card } from "@/game/cards";
 import { describeSpecies } from "@/game/runReport";
 import { makeCreatureTexture } from "@/render/worldView";
+import { SIM } from "@/sim/params";
 import type { Renderer } from "pixi.js";
+
+// 능력형 형질(수영·날개·초음파·독·원거리)은 0~100 연속이 무의미(사실상 켜짐/꺼짐·임계) → 3단계로 보여준다:
+// 없음 / 보통 / 강함. 숫자 대신 단어라 "이 종이 그 능력을 얼마나 쓰는지"가 한눈에 읽힌다(폰 피드백).
+const ABILITY_KEYS = new Set<keyof Traits>(["swimming", "wings", "echo", "venom", "ranged"]);
+function abilityLevel(key: keyof Traits, v: number): 0 | 1 | 2 {
+  if (key === "swimming") return v >= 90 ? 2 : v >= SIM.swimThreshold ? 1 : 0; // 물전용/수륙양용/육지
+  if (key === "wings") return v >= SIM.flyThreshold ? 2 : 0; // 비행/없음(켜짐·꺼짐)
+  return v <= 0 ? 0 : v > 55 ? 2 : 1; // 초음파·독·원거리: 없음/보통/강함
+}
+function abilityWord(level: 0 | 1 | 2): string {
+  return level === 0 ? "없음" : level === 1 ? "보통" : "강함";
+}
 
 export interface PresetPanel {
   show: (cards: Card[], preview: string) => void;
@@ -249,7 +262,10 @@ export function createPresetPanel(
     traitsEl.replaceChildren();
     for (const key of TRAIT_KEYS) {
       const v = g.traits[key];
-      const strong = v > 56; // 기본(50)보다 뚜렷이 높은 강점 형질은 밝게 강조
+      const isAbility = ABILITY_KEYS.has(key);
+      const lvl = isAbility ? abilityLevel(key, v) : 0;
+      // 능력형은 "보통/강함"이면 강조, 연속형은 56 초과면 강조.
+      const strong = isAbility ? lvl >= 1 : v > 56;
       const cell = document.createElement("div");
       const top = document.createElement("div");
       top.style.cssText = "display:flex; justify-content:space-between; gap:4px;";
@@ -257,7 +273,8 @@ export function createPresetPanel(
       label.textContent = TRAIT_LABELS[key];
       label.style.cssText = `font-size:11px; color:${strong ? "#cfe6b0" : "#9aa6b6"};`;
       const val = document.createElement("span");
-      val.textContent = key === "diet" ? dietWord(v).slice(0, 2) : String(Math.round(v));
+      // 능력형=3단계 단어, 식성=초식/잡식/육식, 나머지=숫자.
+      val.textContent = isAbility ? abilityWord(lvl) : key === "diet" ? dietWord(v).slice(0, 2) : String(Math.round(v));
       val.style.cssText =
         `font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; color:${strong ? "#9bffa0" : "#dfe6ee"};`;
       top.append(label, val);
@@ -265,8 +282,9 @@ export function createPresetPanel(
       const track = document.createElement("div");
       track.style.cssText = "margin-top:2px; height:4px; border-radius:3px; background:#1a2230; overflow:hidden;";
       const fill = document.createElement("div");
-      fill.style.cssText =
-        `height:100%; width:${Math.round(Math.max(0, Math.min(100, v)))}%; background:${strong ? "#6cc24a" : "#5a86c8"};`;
+      // 능력형은 3단계 눈금(0/50/100%), 연속형은 값(0~100 기준 — 프리셋은 100 이하).
+      const pct = isAbility ? lvl * 50 : Math.round(Math.max(0, Math.min(100, v)));
+      fill.style.cssText = `height:100%; width:${pct}%; background:${strong ? "#6cc24a" : "#5a86c8"};`;
       track.appendChild(fill);
       cell.appendChild(track);
       traitsEl.appendChild(cell);

@@ -89,16 +89,27 @@ describe("시작 프리셋", () => {
 });
 
 describe("카드 적용", () => {
-  it("효과가 누적되고 [0,1] 로 클램프된다", () => {
-    const g = defaultGenome(); // 모두 0.5
+  it("효과가 누적되되 연속 형질은 증가폭이 줄고 상한 200 에서 멈춘다", () => {
+    const g = defaultGenome(); // 모두 50
     const swift = CARD_POOL.find((c) => c.id === "swift");
     expect(swift).toBeDefined();
     if (!swift) return;
-    applyCard(g, swift); // 속도 +0.15
-    expect(g.traits.speed).toBe(65);
+    applyCard(g, swift); // 속도 +15 → 상한 200 형질이라 ×0.6 = +9
+    expect(g.traits.speed).toBe(59);
 
-    // 같은 카드 여러 번 → 1.0 에서 멈춤
-    for (let i = 0; i < 10; i++) applyCard(g, swift);
-    expect(g.traits.speed).toBe(100);
+    // 같은 카드 여러 번 → 200(연속 형질 상한)에서 멈춤(전엔 100에서 잘렸다)
+    for (let i = 0; i < 30; i++) applyCard(g, swift);
+    expect(g.traits.speed).toBe(200);
+  });
+
+  it("능력형 형질(독)은 상한 100 유지 — 증가폭도 안 줄인다", () => {
+    const g = defaultGenome(); // venom 0
+    const venomCard = CARD_POOL.find((c) => c.id === "venom_fang"); // venom +42
+    expect(venomCard).toBeDefined();
+    if (!venomCard) return;
+    applyCard(g, venomCard);
+    expect(g.traits.venom).toBe(42); // 안 줄임(상한 100 형질)
+    for (let i = 0; i < 5; i++) applyCard(g, venomCard);
+    expect(g.traits.venom).toBe(100); // 100 에서 멈춤
   });
 });
