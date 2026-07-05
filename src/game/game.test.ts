@@ -2,6 +2,8 @@
 // Game 은 순수 TS(Pixi 무관)라 headless 로 런을 끝까지 돌려 관찰할 수 있다.
 import { describe, it, expect } from "vitest";
 import { Game } from "@/game/game";
+import { eraDifficulty } from "@/game/config";
+import { createBoss } from "@/sim/boss";
 
 // 대멸종 이름 4종(game.ts extinctionName 과 일치) — 예고 title 이 보스 예고와 섞이지 않게 거른다.
 const EXTINCTION_NAMES = ["혹독한 추위", "대가뭄", "폭염", "대역병"] as const;
@@ -50,5 +52,61 @@ describe("대멸종 종류 예고", () => {
     }
     // 적어도 몇 런은 대멸종까지 도달해 예고-실제 일치를 확인했어야 한다.
     expect(verified).toBeGreaterThan(0);
+  });
+});
+
+describe("난이도 루프(승리 후 진행)", () => {
+  it("era 0 은 배율 1.0(기존과 동일), 이후 계단으로 오른다", () => {
+    expect(eraDifficulty(0)).toBe(1);
+    expect(eraDifficulty(1)).toBeCloseTo(1.22);
+    expect(eraDifficulty(2)).toBeCloseTo(1.44);
+    // 음수 방어(0으로 clamp).
+    expect(eraDifficulty(-3)).toBe(1);
+  });
+
+  it("보스 강도(즉사 반경)가 난이도 배율로 커진다 — 첫 시대는 불변", () => {
+    const base = createBoss("chaser", 240, 400); // diffMul 기본 1.0
+    const scaled = createBoss("chaser", 240, 400, undefined, 2);
+    expect(scaled.killRadius).toBeCloseTo(base.killRadius * 2);
+    // 떼 시련은 개체 수도 배율로 늘어난다(사나운 무리 6 → 12).
+    const swarm1 = createBoss("swarm", 240, 400);
+    const swarm2 = createBoss("swarm", 240, 400, undefined, 2);
+    expect(swarm2.members.length).toBeGreaterThan(swarm1.members.length);
+  });
+
+  it("승리 후 continueToNextEra 는 게놈·레벨을 유지하고 다음 시대(더 센 위협)로 이어간다", () => {
+    // 승리하는 시드를 찾는다(통과기준 3, 대부분 완주하나 시드마다 다름).
+    let won: Game | null = null;
+    for (let s = 0; s < 60 && !won; s++) {
+      const g = startRun(`era-run-${s}`);
+      for (let i = 0; i < 12000 && g.phase !== "result"; i++) {
+        if (g.phase === "draft") {
+          g.pickCard(0);
+          continue;
+        }
+        g.update(1000);
+      }
+      if (g.phase === "result" && g.result === "win") won = g;
+    }
+    expect(won).not.toBeNull();
+    const g = won as Game;
+    expect(g.era).toBe(0);
+    // 승리 시점의 게놈(성장 결과)을 기억.
+    const beforeTraits = { ...g.genome.traits };
+    const beforeLevel = g.level;
+
+    g.continueToNextEra();
+
+    // 다음 시대로 이어졌다 — 관전 재개, era +1, 결과 해제.
+    expect(g.era).toBe(1);
+    expect(g.phase).toBe("watch");
+    expect(g.result).toBeNull();
+    // 게놈·레벨은 유지(성장 이어짐).
+    expect(g.genome.traits).toEqual(beforeTraits);
+    expect(g.level).toBe(beforeLevel);
+    // 새 월드의 내 종이 살아있다(초기 무리 재생성).
+    expect(g.world.playerPopulation).toBeGreaterThan(0);
+    // 시대 라벨이 뜬다.
+    expect(g.eraLabel).toBe("시대 2");
   });
 });

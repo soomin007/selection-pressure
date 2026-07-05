@@ -15,11 +15,12 @@ const DEATH_COLOR: Record<string, string> = {
 };
 
 export interface ResultPanel {
-  show: (win: boolean, summary: string) => void;
+  show: (win: boolean, summary: string, canContinue: boolean) => void;
   hide: () => void;
 }
 
-export function createResultPanel(onNewRun: () => void): ResultPanel {
+// onNewRun = 완전히 새 종으로 다시 시작. onContinue = 승리 후 "다음 시대로"(성장 유지, 위협 강화).
+export function createResultPanel(onNewRun: () => void, onContinue: () => void): ResultPanel {
   ensurePanelStyles();
 
   const root = document.createElement("div");
@@ -32,17 +33,25 @@ export function createResultPanel(onNewRun: () => void): ResultPanel {
   const summary = document.createElement("div");
   summary.className = "ui-result-summary";
 
-  const button = document.createElement("button");
-  button.className = "ui-btn-primary";
-  button.textContent = "새 런 시작";
-  button.addEventListener("click", onNewRun);
+  // 승리 후에만 뜨는 주 버튼 — 성장을 이어 더 험한 다음 시대로.
+  const continueBtn = document.createElement("button");
+  continueBtn.className = "ui-btn-primary";
+  continueBtn.textContent = "다음 시대로 →";
+  continueBtn.addEventListener("click", onContinue);
+
+  // 새 종으로 다시 시작(패배 시 유일한 버튼, 승리 시 보조 버튼).
+  const newRunBtn = document.createElement("button");
+  newRunBtn.className = "ui-btn-primary";
+  newRunBtn.textContent = "새 런 시작";
+  newRunBtn.addEventListener("click", onNewRun);
 
   root.appendChild(heading);
   root.appendChild(summary);
-  root.appendChild(button);
+  root.appendChild(continueBtn);
+  root.appendChild(newRunBtn);
   document.body.appendChild(root);
 
-  const show = (win: boolean, text: string): void => {
+  const show = (win: boolean, text: string, canContinue: boolean): void => {
     heading.textContent = win ? "승리" : "멸종";
     heading.style.color = win ? "#6cc24a" : "#e0604a";
     // 본문은 빈 줄(\n\n)로 나뉜 문단들. 사망 원인 문단은 막대로, 나머지는 텍스트로 그린다.
@@ -54,6 +63,10 @@ export function createResultPanel(onNewRun: () => void): ResultPanel {
       if (i > 0) el.style.marginTop = "12px";
       summary.appendChild(el);
     });
+    // 승리 && 이어갈 수 있으면 "다음 시대로"를 주 버튼으로, "새 런"은 보조(작고 은은하게).
+    continueBtn.style.display = win && canContinue ? "block" : "none";
+    newRunBtn.textContent = win && canContinue ? "여기서 마치고 새 종으로" : "새 런 시작";
+    newRunBtn.style.opacity = win && canContinue ? "0.7" : "1";
     root.style.display = "block";
   };
 

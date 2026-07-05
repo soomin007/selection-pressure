@@ -168,12 +168,21 @@ export const BOSS_TYPES: readonly BossType[] = [
   "stalker",
 ];
 
-export function createBoss(type: BossType, width: number, height: number, terrain?: Terrain): Boss {
+export function createBoss(
+  type: BossType,
+  width: number,
+  height: number,
+  terrain?: Terrain,
+  diffMul = 1,
+): Boss {
   const p = PRESETS[type];
   const x = width * 0.5;
   const y = height * 0.22;
   const members: BossMember[] = [];
-  const count = p.memberCount ?? 0;
+  // 난이도 배율(diffMul, era 기반) — 위협 강도만 키운다. 즉사 반경·에너지 흡수·떼 수를 스케일하되
+  // 도망 속도·형질 저항(cull*)은 안 건드려(즉사 도미노·형질 게이트가 민감) 카운터 형질이 여전히 통한다.
+  // diffMul=1(첫 시대)이면 기존과 완전 동일 → 통과기준 테스트 보존.
+  const count = Math.round((p.memberCount ?? 0) * diffMul);
   if (count > 0) {
     // 그림자 매복자는 수풀에 숨어 스폰한다(수풀이 매복자의 사냥터). 수풀이 충분치 않으면 아래 기본으로.
     const grassSpots = type === "stalker" && terrain ? terrain.grassSpots(count) : [];
@@ -200,11 +209,11 @@ export function createBoss(type: BossType, width: number, height: number, terrai
     prevX: x,
     prevY: y,
     speed: p.speed,
-    killRadius: p.killRadius,
+    killRadius: p.killRadius * diffMul, // 즉사 반경 — 시대가 오를수록 넓어진다
     visionFlee: p.visionFlee,
     auraRadius: p.auraRadius,
     globalKillRate: p.globalKillRate,
-    globalDrain: p.globalDrain,
+    globalDrain: p.globalDrain * diffMul, // 에너지 흡수(독 안개) — 시대가 오를수록 세진다
     cullAttackResist: p.cullAttackResist,
     cullGroupResist: p.cullGroupResist,
     cullVisionResist: p.cullVisionResist,

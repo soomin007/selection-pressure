@@ -9,7 +9,7 @@ import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, type Genome } from "@/sim/genome";
 import { drawCards, applyCard, PRESET_CARDS, type Card } from "@/game/cards";
-import { GAME, SCHEDULE, type StageKind } from "@/game/config";
+import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
 import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { buildRunReport } from "@/game/runReport";
@@ -57,6 +57,13 @@ export class Game {
   private bossQueue: BossType[] = []; // 한 런의 보스들(서로 다른 종류)
   private extinctionQueue: ExtinctionType[] = []; // 한 런의 대멸종 종류들 — 미리 정해 예고 가능(보스와 대칭)
 
+  /** 시대(era) — 승리 후 "다음 시대로" 이어갈 때마다 +1. 0=첫 시대(난이도 배율 1.0=기존과 동일). */
+  era = 0;
+  /** 시드 원본(era 접미사 붙이기 전) — 다음 시대는 이 시드에서 새 맵·새 위협 순서를 파생(결정론). */
+  private baseSeed = "lobby";
+  /** 내 종 시작 색(프리셋에서 정함) — 다음 시대에 새 월드를 만들어도 같은 색을 유지한다. */
+  private playerColor: number | undefined;
+
   // 레벨업(형질 성장) — 시간/단계 전환이 아니라 "먹이 경험치"로 레벨을 올려 형질을 얻는다.
   // 레벨 = 세대: 레벨업해서 고른 형질은 그 뒤로 태어난 개체에게만 물려진다(세대별 적용 — 후속 슬라이스).
   level = 1; // 시작 프리셋 = 1레벨
@@ -79,7 +86,8 @@ export class Game {
 
   // main 이 설정하는 훅
   onDraft: ((cards: Card[], preview: string) => void) | null = null;
-  onResult: ((result: RunResult, summary: string) => void) | null = null;
+  // canContinue = 승리라서 "다음 시대로" 이어갈 수 있는가(패배는 false). main 이 결과 화면 버튼을 가른다.
+  onResult: ((result: RunResult, summary: string, canContinue: boolean) => void) | null = null;
   onWorldChanged: ((world: World) => void) | null = null;
 
   constructor(width: number, height: number, areaScale = 1) {
@@ -135,7 +143,11 @@ export class Game {
       // 시작 프리셋을 골랐으니 곧장 첫 채집 단계로.
       this.firstChoice = false;
       // 프리셋이 정한 시작 색으로 내 종을 물들인다(종마다 뚜렷이 달라 외형만으로 구분).
-      if (card && card.color !== undefined) this.world.playerSpecies.color = card.color;
+      // 다음 시대에 새 월드를 만들어도 같은 색을 유지하도록 저장해 둔다.
+      if (card && card.color !== undefined) {
+        this.world.playerSpecies.color = card.color;
+        this.playerColor = card.color;
+      }
       // 프리셋은 "시작 형질"이라 이미 태어난 초기 무리에도 반영한다(세대별 스냅샷은 레벨업부터).
       for (const e of this.world.entities) {
         if (e.species.isPlayer) e.genome = cloneGenome(this.world.genome);
@@ -221,14 +233,15 @@ export class Game {
   debugSummon(kind: BossType | ExtinctionType): void {
     if (this.phase !== "watch") return;
     this.clearStageState();
+    const diff = eraDifficulty(this.era);
     if ((BOSS_TYPES as readonly string[]).includes(kind)) {
       const bt = kind as BossType;
-      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain);
+      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff);
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
     } else {
       const et = kind as ExtinctionType;
-      applyExtinction(this.world, et);
+      applyExtinction(this.world, et, diff);
       this.stageLabel = `대멸종 · ${extinctionName(et)}`;
       this.preview = `대멸종 — ${extinctionPreview(et)}`;
     }
@@ -325,7 +338,10 @@ export class Game {
 
   private setupRun(): void {
     // 시드 하나에서 맵·드래프트·보스를 모두 파생. 기본은 랜덤(매 런 다름), 고정 시드면 완전 재현.
-    this.currentSeed = this.fixedSeed ?? randomSeed();
+    this.baseSeed = this.fixedSeed ?? randomSeed();
+    this.currentSeed = this.baseSeed;
+    this.era = 0; // 새 런은 첫 시대부터
+    this.playerColor = undefined;
     this.genome = defaultGenome();
     this.pickedCardNames = [];
     this.stageIndex = 0;
@@ -367,9 +383,10 @@ export class Game {
     this.phase = "watch";
     this.acc = 0;
     const kind = this.currentKind();
+    const diff = eraDifficulty(this.era); // 시대별 위협 강도 배율(era 0 = 1.0)
     if (kind === "boss") {
       const bt = this.bossQueue.shift() ?? this.stageRng.pick(BOSS_TYPES);
-      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain);
+      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff);
       // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
@@ -377,7 +394,7 @@ export class Game {
     } else if (kind === "extinction") {
       // 예고와 실제가 일치하도록 미리 정해 둔 큐에서 꺼낸다(peek 로 예고한 종류 == 여기서 shift 되는 종류).
       const et = this.extinctionQueue.shift() ?? this.extRng.pick(EXTINCTION_TYPES);
-      applyExtinction(this.world, et);
+      applyExtinction(this.world, et, diff);
       this.stageLabel = `대멸종 · ${extinctionName(et)}`;
       this.preview = `대멸종 — ${extinctionPreview(et)}`;
       this.stageTicksLeft = GAME.extinctionSeconds * SIM.stepsPerSecond;
@@ -426,7 +443,44 @@ export class Game {
   private endRun(result: RunResult): void {
     this.phase = "result";
     this.result = result;
-    this.onResult?.(result, this.buildSummary(result));
+    // 승리면 "다음 시대로" 이어갈 수 있다(brotato식 난이도 루프). 패배는 여기서 끝.
+    this.onResult?.(result, this.buildSummary(result), result === "win");
+  }
+
+  /**
+   * 승리 후 "다음 시대로" — 게놈·레벨(성장)을 유지한 채 새 맵·더 센 위협으로 다시 시작한다.
+   * era 를 올려 위협 강도(보스·대멸종)가 세지고, 통과기준은 그대로라 "성장이 난이도 상승을 앞서는가"의
+   * 경주가 된다. 새 월드라 시작 무리는 초기화되지만, 종의 형질(게놈)과 레벨은 이어진다.
+   */
+  continueToNextEra(): void {
+    if (this.result !== "win") return; // 승리 직후에만 유효
+    this.era += 1;
+    this.paused = false;
+    this.result = null;
+    this.stageIndex = 0;
+    this.firstChoice = false; // 프리셋 재선택 없이 이어간다(이미 성장한 종)
+    this.acc = 0;
+    // 새 시대는 같은 원본 시드에서 새 맵·새 위협 순서를 파생(결정론 유지, 시대마다 다른 판).
+    this.currentSeed = `${this.baseSeed}-era${this.era}`;
+    this.stageRng = new Rng(`${this.currentSeed}-stage`);
+    this.extRng = new Rng(`${this.currentSeed}-ext`);
+    this.bossQueue = shuffle(BOSS_TYPES, this.stageRng);
+    this.extinctionQueue = shuffle(EXTINCTION_TYPES, this.extRng);
+    // 게놈은 유지(성장 이어짐). xp/레벨도 유지하되, 새 월드라 먹이 누적 기준값만 리셋.
+    this.world = this.makeWorld();
+    this.lastFoodEaten = 0;
+    // 성장한 종의 색·형질을 새 초기 무리에 반영(프리셋 선택 때와 같은 처리).
+    if (this.playerColor !== undefined) this.world.playerSpecies.color = this.playerColor;
+    for (const e of this.world.entities) {
+      if (e.species.isPlayer) e.genome = cloneGenome(this.world.genome);
+    }
+    this.onWorldChanged?.(this.world);
+    this.beginStage(); // 첫 채집 단계부터 다시(phase = watch)
+  }
+
+  /** HUD 표시용 시대 라벨 — 첫 시대(era 0)면 빈 문자열, 이후 "시대 2" 식으로. */
+  get eraLabel(): string {
+    return this.era > 0 ? `시대 ${this.era + 1}` : "";
   }
 
   private buildSummary(result: RunResult): string {
@@ -435,7 +489,10 @@ export class Game {
   }
 
   private baseSummary(result: RunResult): string {
-    if (result === "win") return "대멸종을 견뎌내고 정점에 올랐습니다.";
+    if (result === "win") {
+      if (this.era > 0) return `${this.era + 1}번째 시대의 대멸종까지 견뎌내고 정점을 지켰습니다.`;
+      return "대멸종을 견뎌내고 정점에 올랐습니다. 더 험한 다음 시대로 나아갈 수 있습니다.";
+    }
     const kind = this.currentKind();
     if (kind === "boss") return `${this.stageLabel} 관문을 넘지 못했습니다.`;
     if (kind === "extinction") return "대멸종을 견디지 못했습니다.";
@@ -491,9 +548,10 @@ function extinctionPreview(type: ExtinctionType): string {
   return "폭염이 옵니다. 대사가 높으면 타 죽습니다(느린 대사가 유리).";
 }
 
-function applyExtinction(world: World, type: ExtinctionType): void {
-  if (type === "cold") world.globalCold = 1.3;
-  else if (type === "famine") world.foodRegrowMultiplier = 3.6;
-  else if (type === "plague") world.plagueRate = 0.006; // 0.005→0.006: 바이옴 생태 추가로 저산 필터가 경계(3)로 → 복원.
-  else world.heat = 1.1; // 폭염 — 0.9→1.1: 바이옴 동물이 env 생태를 바꿔 고대사 필터가 경계(3)로 약해져 복원.
+// 대멸종 강도를 세팅한다. mul(era 난이도 배율)로 시대가 오를수록 더 혹독하게. mul=1(첫 시대)이면 기존과 동일.
+function applyExtinction(world: World, type: ExtinctionType, mul = 1): void {
+  if (type === "cold") world.globalCold = 1.3 * mul;
+  else if (type === "famine") world.foodRegrowMultiplier = 3.6 * mul;
+  else if (type === "plague") world.plagueRate = 0.006 * mul; // 0.005→0.006: 바이옴 생태 추가로 저산 필터가 경계(3)로 → 복원.
+  else world.heat = 1.1 * mul; // 폭염 — 0.9→1.1: 바이옴 동물이 env 생태를 바꿔 고대사 필터가 경계(3)로 약해져 복원.
 }

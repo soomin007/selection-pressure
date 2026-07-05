@@ -14,7 +14,17 @@ export const GAME = {
 
   // --- 위협 예고 — 보스/대멸종 단계 시작 이 초 전에 전광판으로 미리 알린다(마음의 준비). ---
   threatPreviewLead: 4,
+
+  // --- 난이도 루프(승리 후 진행) — 승리하면 "다음 시대"로 이어가며 위협이 점점 세진다(brotato식). ---
+  // era 0 = 첫 시대(배율 1.0 = 기존과 완전 동일 → 통과기준 테스트 보존). 승리마다 era +1.
+  // 통과기준(생존 수)은 그대로 두고, 위협 강도(보스·대멸종)만 이 계단으로 키운다(소수 개체라 안전).
+  eraDifficultyStep: 0.22, // 시대마다 위협 강도 배율 +22% (era 1 → ×1.22, era 2 → ×1.44 …)
 } as const;
+
+/** 시대(era)별 위협 강도 배율. era 0 = 1.0(기존과 동일). 보스·대멸종 강도에 곱한다. */
+export function eraDifficulty(era: number): number {
+  return 1 + Math.max(0, era) * GAME.eraDifficultyStep;
+}
 
 // 한 런의 라운드 계획. 각 단계 앞에는 드래프트가 붙는다.
 //   forage = 채집 라운드, boss = 보스 게이트, extinction = 대멸종 피날레

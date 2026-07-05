@@ -118,13 +118,23 @@ async function boot(): Promise<void> {
     refreshBuild();
     presetPanel.hide();
   });
-  const result = createResultPanel(() => {
-    result.hide();
-    game.beginRun();
-    refreshBuild();
-    view.refreshSpecies(game.world);
-    controls.setVisible(true);
-  });
+  const result = createResultPanel(
+    () => {
+      // 새 종으로 다시 시작(완전 리셋).
+      result.hide();
+      game.beginRun();
+      refreshBuild();
+      view.refreshSpecies(game.world);
+      controls.setVisible(true);
+    },
+    () => {
+      // 승리 후 "다음 시대로" — 성장 유지, 위협 강화. 새 월드는 continueToNextEra 가 만든다.
+      result.hide();
+      game.continueToNextEra();
+      refreshBuild();
+      controls.setVisible(true);
+    },
+  );
   const lobby = createLobby(() => {
     lobby.hide();
     game.beginRun();
@@ -166,9 +176,9 @@ async function boot(): Promise<void> {
     if (game.isChoosingPreset) presetPanel.show(cards, preview);
     else draft.show(cards, preview);
   };
-  game.onResult = (res, summary) => {
+  game.onResult = (res, summary, canContinue) => {
     controls.setVisible(false);
-    result.show(res === "win", summary);
+    result.show(res === "win", summary, canContinue);
   };
   game.onWorldChanged = (world) => {
     view.drawEnvironment(world);
@@ -459,8 +469,11 @@ async function boot(): Promise<void> {
     if (game.phase === "draft") return `단계 ${s} · 카드 선택\n${env}`;
     // 관전 첫 줄은 무슨 단계인지(시련/보스 이름)만 둔다 — 단계 번호(N/M)는 타임라인 막대가 대신
     // 보여줘 중복이고, 긴 시련 이름(그림자 매복자 등)이 우상단 낮밤 타이머와 겹치지 않게 짧게 유지한다.
-    if (game.phase === "watch")
-      return `${game.stageLabel}\n${game.secondsLeft}초${game.paused ? " (멈춤)" : ""} · ${env}`;
+    if (game.phase === "watch") {
+      // 시대(era>0)면 "시대 N ·" 접두어로 지금 몇 번째 시대인지 보인다(첫 시대는 빈 문자열이라 변화 없음).
+      const eraPre = game.eraLabel ? `${game.eraLabel} · ` : "";
+      return `${eraPre}${game.stageLabel}\n${game.secondsLeft}초${game.paused ? " (멈춤)" : ""} · ${env}`;
+    }
     return env;
   }
 }
