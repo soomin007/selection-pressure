@@ -616,3 +616,27 @@ function tune(partial: Partial<Genome["traits"]>): Genome {
   }
   return g;
 }
+
+describe("비동기 생물(S2) — 챔피언 등장", () => {
+  it("챔피언을 넘기면 champion 개체가 스폰되고 내 편(faction 1)이다", () => {
+    const champ = { genome: defaultGenome(), name: "테스트 정복자", color: 0xff0000 };
+    const w = new World("champ-seed", W, H, defaultGenome(), 1, [champ]);
+    const champs = w.entities.filter((e) => e.species.champion === true);
+    expect(champs.length).toBeGreaterThan(0);
+    expect(champs.length).toBe(SIM.championInitialCount);
+    expect((champs[0] as Entity).species.faction).toBe(1); // 내 편이라 서로 사냥·도망 안 함
+  });
+
+  it("챔피언 등장이 메인 스폰(다른 종)을 1비트도 안 바꾼다 — 독립 rng 격리(밸런스 보존)", () => {
+    const champ = { genome: defaultGenome(), name: "정복자", color: 0xff0000 };
+    const withChamp = new World("iso-seed", W, H, defaultGenome(), 1, [champ]);
+    const noChamp = new World("iso-seed", W, H, defaultGenome(), 1, []);
+    const nonChampFingerprint = (w: World): string =>
+      w.entities
+        .filter((e) => !e.species.champion)
+        .map((e) => `${e.species.id}:${e.x.toFixed(3)},${e.y.toFixed(3)}`)
+        .join("|");
+    // 챔피언을 뺀 나머지(내 종·야생·친척·바이옴)가 완전히 동일해야 한다(챔피언은 독립 rng 라 스트림 무소비).
+    expect(nonChampFingerprint(withChamp)).toBe(nonChampFingerprint(noChamp));
+  });
+});

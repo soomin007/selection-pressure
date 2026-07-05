@@ -12,7 +12,7 @@ import { Environment } from "@/sim/environment";
 import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
-import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, BIOME_FOOD_KIND, areFriends, type Species } from "@/sim/species";
+import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
 import type { Biome } from "@/sim/environment";
 import { stepEntity } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
@@ -121,6 +121,7 @@ export class World {
     height: number,
     genome: Genome,
     areaScale = 1,
+    champions: ChampionSeed[] = [],
   ) {
     this.width = width;
     this.height = height;
@@ -150,7 +151,12 @@ export class World {
     const kin = makeKinSpecies(wild.length + 1, new Rng(String(seed) + "-kin"), genome);
     // 바이옴 특화종(사막·빙하·우림) — "독립 rng"로 생성(메인 스트림 보존). 각자 고향 바이옴에만 스폰된다.
     const biomeSpecies = makeBiomeSpecies(wild.length + 2, new Rng(String(seed) + "-biome"));
-    this.species = [this.playerSpecies, kin, ...wild, ...biomeSpecies];
+    // 비동기 생물(S2) — 지난 챔피언(최신부터 상한까지)을 이 세계에 등장시킨다. 게놈은 저장본이라 rng 무소비
+    // (메인 스트림 보존). 친척과 같은 친구 편이라 밸런스 격리. id 는 높은 대역(900+)으로 충돌 회피.
+    const championSpecies = champions
+      .slice(0, SIM.championMaxPerRun)
+      .map((c, i) => makeChampionSpecies(900 + i, c.genome, c.name, c.color));
+    this.species = [this.playerSpecies, kin, ...wild, ...biomeSpecies, ...championSpecies];
     this.spawnFood();
     this.spawnEntities();
     // 친척은 spawnEntities(메인 rng) 대신 "독립 rng"로 내 종 근처에 스폰 → 메인 소비 순서 보존(밸런스 불변).
@@ -165,6 +171,8 @@ export class World {
     this.spawnWildHerdPadding(new Rng(String(seed) + "-herdpad"));
     // 바이옴 특화종을 각자 고향 바이옴에 스폰(독립 rng). 그 바이옴이 이 맵에 없으면 그 종은 안 나온다.
     this.spawnBiomeAnimals(new Rng(String(seed) + "-biomepos"));
+    // 챔피언(비동기 생물)도 독립 rng 로 소수만, 친척처럼 맵의 독립 영역에 — 메인 스트림·밸런스 불변.
+    this.spawnChampions(new Rng(String(seed) + "-champpos"));
     this.grid.rebuild(this.entities);
     // 먹이 위치는 불변이라 격자를 한 번만 빌드한다(available 토글은 탐색 시 거른다).
     this.foodGrid = new FoodGrid(width, height, SIM.gridCellSize);
@@ -531,7 +539,7 @@ export class World {
    * 떨어져 살되 이동하다 만나면 서로 사냥·도망하지 않아(friendly) 자연스레 섞인다(스포어식 우호 종).
    */
   private spawnKin(rng: Rng): void {
-    const kin = this.species.find((s) => s.friendly);
+    const kin = this.species.find((s) => s.friendly && !s.champion);
     if (!kin) return;
     const canSwim = kin.genome.traits.swimming >= SIM.swimThreshold;
     const canLand = kin.genome.traits.swimming < SIM.aquaticOnlyThreshold;
@@ -544,6 +552,34 @@ export class World {
       const y = Math.max(0, Math.min(this.height, homeY + rng.range(-spread, spread)));
       const spot = this.terrain.nearestPassable(x, y, canSwim, canLand, canFly);
       this.entities.push(createEntity(this.nextId(), spot.x, spot.y, kin, SIM.startEnergy));
+    }
+  }
+
+  /**
+   * 비동기 생물(S2) — 챔피언(지난 런의 내 종) 각각을 독립 rng 로 맵의 독립 영역에 소수 스폰한다. 친척과
+   * 같은 격리 패턴이라 메인 스트림·밸런스에 안 걸린다. 챔피언이 없으면(첫 플레이·headless) 아무 일도 안 한다.
+   */
+  private spawnChampions(rng: Rng): void {
+    const spread = 72 * Math.sqrt(this.areaScale);
+    for (const sp of this.species) {
+      if (!sp.champion) continue;
+      const tr = sp.genome.traits;
+      const canSwim = tr.swimming >= SIM.swimThreshold;
+      const canLand = tr.swimming < SIM.aquaticOnlyThreshold;
+      const canFly = tr.wings >= SIM.flyThreshold;
+      const home = this.snapSpawn(
+        rng.range(0.14, 0.86) * this.width,
+        rng.range(0.14, 0.86) * this.height,
+        canSwim,
+        canLand,
+        canFly,
+      );
+      for (let i = 0; i < sp.initialCount; i++) {
+        const x = Math.max(0, Math.min(this.width, home.x + rng.range(-spread, spread)));
+        const y = Math.max(0, Math.min(this.height, home.y + rng.range(-spread, spread)));
+        const spot = this.snapSpawn(x, y, canSwim, canLand, canFly);
+        this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
+      }
     }
   }
 

@@ -239,6 +239,18 @@ export class WorldView {
         this.playerG
           .circle(rx, ry, 12.5)
           .stroke({ color: 0xaaffb0, width: 1.6, alpha: 0.35 + 0.25 * ringPulse });
+      } else if (e.species.champion) {
+        // 비동기 생물(S2) — 지난 런의 "예전의 나". 금빛 고리 + 머리 위 왕관으로 "정복자가 돌아왔다"를 표시.
+        this.playerG.circle(rx, ry, 13).fill({ color: 0xffd24a, alpha: 0.1 });
+        this.playerG
+          .circle(rx, ry, 12.5)
+          .stroke({ color: 0xffe08a, width: 1.6, alpha: 0.4 + 0.3 * ringPulse });
+        // 작은 왕관 — 세 개의 뾰족한 삼각(황금). 개체 위에 떠 있다.
+        const cyu = ry - 15;
+        this.playerG
+          .poly([rx - 5, cyu + 3, rx - 5, cyu - 2, rx - 2.5, cyu + 0.5, rx, cyu - 3, rx + 2.5, cyu + 0.5, rx + 5, cyu - 2, rx + 5, cyu + 3])
+          .fill({ color: 0xffd24a })
+          .stroke({ color: 0x8a5a0a, width: 1 });
       } else if (e.species.friendly) {
         // 우호적 친척 무리 — 내 종(초록)과 다른 청록 고리로 "내 편이지만 다른 무리"를 한눈에 구분.
         this.playerG.circle(rx, ry, 12).fill({ color: 0x35d6c0, alpha: 0.08 });

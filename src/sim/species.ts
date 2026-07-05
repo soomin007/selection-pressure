@@ -26,10 +26,19 @@ export interface Species {
   faction: number;
   /** 바이옴 특화종의 고향 바이옴(있으면). 이 바이옴 구역에만 스폰된다(사막 도마뱀=사막 등). 없으면 어디든. */
   homeBiome?: Biome;
+  /** 비동기 생물(S2) — 지난 런의 내 종("예전의 나")이 이 세계에 다시 나타난 것. 렌더에서 왕관으로 표시. */
+  champion?: boolean;
 }
 
 export function isCarnivore(genome: Genome): boolean {
   return genome.traits.diet > 50;
+}
+
+/** 챔피언(비동기 생물) 스폰에 필요한 최소 데이터 — sim 이 game/meta 에 의존하지 않도록 sim 계층에 둔다. */
+export interface ChampionSeed {
+  genome: Genome;
+  name: string;
+  color: number;
 }
 
 /** 두 종이 같은 편(서로 사냥/도망 대상에서 제외)인지 — 내 종↔친척, 야생 동맹끼리 모두 이 하나로 판정. */
@@ -40,6 +49,27 @@ export function areFriends(a: Species, b: Species): boolean {
 export function makePlayerSpecies(genome: Genome, initialCount: number): Species {
   // 내 종(잡식)은 일반종 — 모든 먹이 종류를 먹는다(전문 야생종 사이의 틈새). 친척과 같은 1편.
   return { id: 0, name: "내 종", genome, isPlayer: true, color: 0x6cc24a, initialCount, foodKinds: [0, 1, 2], friendly: false, faction: 1 };
+}
+
+/**
+ * 비동기 생물(S2) — 지난 런의 내 종("예전의 나")이 다시 등장. 밸런스 안전을 위해 친척(kin)과 똑같은
+ * 취급을 받는다: friendly + faction 1(내 편이라 서로 사냥·도망 안 함) + champion 표식. 독립 rng 로 소수만
+ * 스폰(spawnChampions)하고, friendly 라 야생 보강·이주·진화 루프가 건드리지 않아(기존 친척과 동일) 메인
+ * 밸런스에 안 걸린다. 게놈은 저장본(마이그레이션된) 그대로 — 예전 그 모습으로 살아난다.
+ */
+export function makeChampionSpecies(id: number, genome: Genome, name: string, color: number): Species {
+  return {
+    id,
+    name,
+    genome: clampGenome(genome),
+    isPlayer: false,
+    color,
+    initialCount: SIM.championInitialCount,
+    foodKinds: [0, 1, 2],
+    friendly: true,
+    faction: 1,
+    champion: true,
+  };
 }
 
 /**

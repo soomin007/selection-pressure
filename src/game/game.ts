@@ -10,7 +10,7 @@ import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, type Genome } from "@/sim/genome";
 import { drawCards, applyCard, PRESET_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
-import { loadMeta, isPresetUnlocked, isCardUnlocked, recordRunComplete, type UnlockTier } from "@/game/meta";
+import { loadMeta, isPresetUnlocked, isCardUnlocked, recordRunComplete, loadChampions, saveChampion, type UnlockTier, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { buildRunReport } from "@/game/runReport";
@@ -69,6 +69,9 @@ export class Game {
    * 이번 런부터 반영된다(로그라이크 표준). 런 도중엔 안 바뀐다. */
   private metaRuns = 0;
 
+  /** 비동기 생물(S2) — 이 런의 세계에 등장시킬 지난 챔피언들. 런 시작 시 저장본에서 읽어 makeWorld 로 넘긴다. */
+  private champions: Champion[] = [];
+
   // 레벨업(형질 성장) — 시간/단계 전환이 아니라 "먹이 경험치"로 레벨을 올려 형질을 얻는다.
   // 레벨 = 세대: 레벨업해서 고른 형질은 그 뒤로 태어난 개체에게만 물려진다(세대별 적용 — 후속 슬라이스).
   level = 1; // 시작 프리셋 = 1레벨
@@ -108,6 +111,7 @@ export class Game {
     this.extRng = new Rng("ext-0");
     this.currentSeed = randomSeed(); // 로비 배경 맵도 매번 다르게
     this.metaRuns = loadMeta().runsCompleted;
+    this.champions = loadChampions();
     this.world = this.makeWorld();
   }
 
@@ -351,6 +355,7 @@ export class Game {
     this.baseSeed = this.fixedSeed ?? randomSeed();
     this.currentSeed = this.baseSeed;
     this.metaRuns = loadMeta().runsCompleted; // 이전 런의 해금을 이번 런부터 반영
+    this.champions = loadChampions(); // 지난 챔피언들을 이 런 세계에 등장(비동기 생물)
     this.era = 0; // 새 런은 첫 시대부터
     this.playerColor = undefined;
     this.genome = defaultGenome();
@@ -372,7 +377,7 @@ export class Game {
   }
 
   private makeWorld(): World {
-    return new World(`${this.currentSeed}-env`, this.width, this.height, this.genome, this.areaScale);
+    return new World(`${this.currentSeed}-env`, this.width, this.height, this.genome, this.areaScale, this.champions);
   }
 
   private currentKind(): StageKind {
@@ -460,6 +465,17 @@ export class Game {
     const conquered = result === "win" && this.isFinalEra;
     const runOver = result === "lose" || conquered;
     const newUnlocks: UnlockTier[] = runOver ? recordRunComplete(conquered) : [];
+    // 비동기 생물(S2) — 시대 2 이상까지 간(또는 정복한) 종은 "기억할 만한 챔피언"으로 저장해 다음 런의
+    // 세계에 다시 등장시킨다. 게놈은 성장한 현재 형태 그대로(versioned 직렬화).
+    if (runOver && (conquered || this.era >= 1)) {
+      const champ: Champion = {
+        name: championName(this.genome, conquered),
+        genome: cloneGenome(this.genome),
+        era: this.era,
+        color: this.playerColor ?? 0x6cc24a,
+      };
+      saveChampion(champ);
+    }
     // 승리면 "다음 시대로" 이어갈 수 있다(brotato식 난이도 루프) — 단 마지막 시대(정복)면 더는 없다.
     this.onResult?.(result, this.buildSummary(result), result === "win" && !this.isFinalEra, newUnlocks);
   }
@@ -522,6 +538,27 @@ export class Game {
     if (kind === "extinction") return "대멸종을 견디지 못했습니다.";
     return `${this.stageNumber}단계에서 멸종했습니다.`;
   }
+}
+
+/** 챔피언 이름 — 가장 두드러진 형질로 별명 + 정복/생존 칭호(비동기 생물이 등장할 때 왕관과 함께 표시). */
+function championName(g: Genome, conquered: boolean): string {
+  const t = g.traits;
+  const pairs: [number, string][] = [
+    [t.speed, "질풍"],
+    [t.attack, "맹아"],
+    [t.vision, "천리안"],
+    [t.fertility, "번성"],
+    [t.herding, "결속"],
+    [t.metabolism, "불꽃"],
+    [t.swimming, "심해"],
+    [t.wings, "창공"],
+    [t.venom, "독아"],
+    [t.ranged, "원사"],
+    [t.echo, "음파"],
+  ];
+  pairs.sort((a, b) => b[0] - a[0]);
+  const epithet = pairs[0]?.[1] ?? "무명";
+  return `${epithet}의 ${conquered ? "정복자" : "생존자"}`;
 }
 
 /** 단계 종류별 길이(초) — 타임라인 진행·마커 계산용. */
