@@ -65,9 +65,9 @@ export class Game {
   /** 내 종 시작 색(프리셋에서 정함) — 다음 시대에 새 월드를 만들어도 같은 색을 유지한다. */
   private playerColor: number | undefined;
 
-  /** 메타 언락 기준(완료한 런 수) — 런 시작 시 저장본에서 읽어 프리셋·카드 풀을 거른다. 이전 런의 해금이
-   * 이번 런부터 반영된다(로그라이크 표준). 런 도중엔 안 바뀐다. */
-  private metaRuns = 0;
+  /** 메타 언락 기준(여러 런에서 도달한 최고 레벨) — 런 시작 시 저장본에서 읽어 프리셋·카드 풀을 거른다.
+   * 오래 살아 레벨을 높인 런일수록 다음 런에 더 많이 열린다(빨리 죽으면 안 열림). 런 도중엔 안 바뀐다. */
+  private metaBestLevel = 0;
 
   /** 비동기 생물(S2) — 이 런의 세계에 등장시킬 지난 챔피언들. 런 시작 시 저장본에서 읽어 makeWorld 로 넘긴다. */
   private champions: Champion[] = [];
@@ -110,7 +110,7 @@ export class Game {
     this.stageRng = new Rng("stage-0");
     this.extRng = new Rng("ext-0");
     this.currentSeed = randomSeed(); // 로비 배경 맵도 매번 다르게
-    this.metaRuns = loadMeta().runsCompleted;
+    this.metaBestLevel = loadMeta().bestLevel;
     this.champions = loadChampions();
     this.world = this.makeWorld();
   }
@@ -231,7 +231,7 @@ export class Game {
     this.xpToNext = GAME.xpBase + (this.level - 1) * GAME.xpPerLevel;
     this.phase = "draft";
     // 메타 언락: 열린 카드만 드래프트 풀에(잠긴 특화 카드는 런을 거듭해 해금).
-    this.draftCards = drawCards(this.draftRng, 3, (id) => isCardUnlocked(id, this.metaRuns));
+    this.draftCards = drawCards(this.draftRng, 3, (id) => isCardUnlocked(id, this.metaBestLevel));
     this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (지금부터 태어나는 새끼에게 물려집니다)`;
     this.onDraft?.(this.draftCards, this.preview);
   }
@@ -354,7 +354,7 @@ export class Game {
     // 시드 하나에서 맵·드래프트·보스를 모두 파생. 기본은 랜덤(매 런 다름), 고정 시드면 완전 재현.
     this.baseSeed = this.fixedSeed ?? randomSeed();
     this.currentSeed = this.baseSeed;
-    this.metaRuns = loadMeta().runsCompleted; // 이전 런의 해금을 이번 런부터 반영
+    this.metaBestLevel = loadMeta().bestLevel; // 이전 런의 해금을 이번 런부터 반영
     this.champions = loadChampions(); // 지난 챔피언들을 이 런 세계에 등장(비동기 생물)
     this.era = 0; // 새 런은 첫 시대부터
     this.playerColor = undefined;
@@ -388,7 +388,7 @@ export class Game {
   private beginFirstDraft(): void {
     this.phase = "draft";
     // 메타 언락: 열린 프리셋만 보여준다(잠긴 특수 갈래는 런을 거듭해 해금). 항상 최소한 기본 갈래는 열려 있다.
-    this.draftCards = PRESET_CARDS.filter((c) => isPresetUnlocked(c.id, this.metaRuns));
+    this.draftCards = PRESET_CARDS.filter((c) => isPresetUnlocked(c.id, this.metaBestLevel));
     this.preview = "어떤 종으로 시작할까요? 시작 프리셋을 고르세요. (먹이를 먹어 레벨업하며 형질을 더합니다)";
   }
 
@@ -464,7 +464,8 @@ export class Game {
     // 이어지므로 세지 않는다(그때는 endRun 이 canContinue=true 로 뜨지만 런은 계속된다).
     const conquered = result === "win" && this.isFinalEra;
     const runOver = result === "lose" || conquered;
-    const newUnlocks: UnlockTier[] = runOver ? recordRunComplete(conquered) : [];
+    // 언락은 "이번 런에서 도달한 레벨"로 — 오래 살아 성장할수록 열린다(빨리 죽으면 안 열림 = 생존의 보람).
+    const newUnlocks: UnlockTier[] = runOver ? recordRunComplete(this.level, conquered) : [];
     // 비동기 생물(S2) — 시대 2 이상까지 간(또는 정복한) 종은 "기억할 만한 챔피언"으로 저장해 다음 런의
     // 세계에 다시 등장시킨다. 게놈은 성장한 현재 형태 그대로(versioned 직렬화).
     if (runOver && (conquered || this.era >= 1)) {
