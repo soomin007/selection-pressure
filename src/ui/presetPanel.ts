@@ -2,24 +2,12 @@
 // 고른다. 프리셋이 많아 한 화면에 늘어놓으면 난잡하던 것을, 큰 방향부터 좁혀 깔끔하게(사용자 피드백).
 // 외형은 실제 게놈으로 만든 생물 텍스처(makeCreatureTexture)를 canvas 로 뽑아 쓴다.
 
-import { defaultGenome, clampGenome, TRAIT_KEYS, TRAIT_LABELS, type Genome, type Traits } from "@/sim/genome";
+import { defaultGenome, clampGenome, TRAIT_KEYS, TRAIT_LABELS, type Genome } from "@/sim/genome";
 import { applyCard, type Card } from "@/game/cards";
 import { describeSpecies } from "@/game/runReport";
 import { makeCreatureTexture } from "@/render/worldView";
-import { SIM } from "@/sim/params";
+import { ABILITY_KEYS, abilityLevel, abilityWord } from "@/ui/traitDisplay";
 import type { Renderer } from "pixi.js";
-
-// 능력형 형질(수영·날개·초음파·독·원거리)은 0~100 연속이 무의미(사실상 켜짐/꺼짐·임계) → 3단계로 보여준다:
-// 없음 / 보통 / 강함. 숫자 대신 단어라 "이 종이 그 능력을 얼마나 쓰는지"가 한눈에 읽힌다(폰 피드백).
-const ABILITY_KEYS = new Set<keyof Traits>(["swimming", "wings", "echo", "venom", "ranged"]);
-function abilityLevel(key: keyof Traits, v: number): 0 | 1 | 2 {
-  if (key === "swimming") return v >= 90 ? 2 : v >= SIM.swimThreshold ? 1 : 0; // 물전용/수륙양용/육지
-  if (key === "wings") return v >= SIM.flyThreshold ? 2 : 0; // 비행/없음(켜짐·꺼짐)
-  return v <= 0 ? 0 : v > 55 ? 2 : 1; // 초음파·독·원거리: 없음/보통/강함
-}
-function abilityWord(level: 0 | 1 | 2): string {
-  return level === 0 ? "없음" : level === 1 ? "보통" : "강함";
-}
 
 export interface PresetPanel {
   show: (cards: Card[], preview: string) => void;

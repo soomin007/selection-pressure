@@ -290,6 +290,46 @@ export class World {
     return { x: sx / n, y: sy / n };
   }
 
+  /**
+   * 카메라가 따라갈 내 종 초점 — 흩어진 낙오자에 휘둘리지 않게 "개체가 가장 몰린 곳(주 무리)"의 중심을 준다.
+   * 평균 무게중심(playerCentroid)은 낙오자가 멀리 있으면 빈 공간을 가리켜 무리가 화면 밖으로 나간다(폰 피드백:
+   * "내 애들을 잘 안 잡아준다"). 성긴 격자 버킷에서 가장 붐비는 칸을 골라 그 칸(+이웃) 개체의 중심을 반환한다.
+   */
+  playerFocus(): { x: number; y: number } {
+    const cell = 120;
+    const buckets = new Map<string, { n: number; sx: number; sy: number; cx: number; cy: number }>();
+    let best: { n: number; sx: number; sy: number; cx: number; cy: number } | null = null;
+    for (const e of this.entities) {
+      if (!e.species.isPlayer) continue;
+      const cx = Math.floor(e.x / cell);
+      const cy = Math.floor(e.y / cell);
+      const key = cx + "," + cy;
+      let b = buckets.get(key);
+      if (!b) {
+        b = { n: 0, sx: 0, sy: 0, cx, cy };
+        buckets.set(key, b);
+      }
+      b.n += 1;
+      b.sx += e.x;
+      b.sy += e.y;
+      if (!best || b.n > best.n) best = b;
+    }
+    if (!best) return { x: this.width / 2, y: this.height / 2 };
+    // 가장 붐비는 칸 + 인접 칸의 개체까지 모아 중심을 낸다(주 무리가 두 칸에 걸쳐도 자연스럽게).
+    let sx = 0;
+    let sy = 0;
+    let n = 0;
+    for (const e of this.entities) {
+      if (!e.species.isPlayer) continue;
+      if (Math.abs(Math.floor(e.x / cell) - best.cx) <= 1 && Math.abs(Math.floor(e.y / cell) - best.cy) <= 1) {
+        sx += e.x;
+        sy += e.y;
+        n += 1;
+      }
+    }
+    return n > 0 ? { x: sx / n, y: sy / n } : { x: best.sx / best.n, y: best.sy / best.n };
+  }
+
   /** 드래프트 스킵 보상 — 내 종 새끼 n 마리를 무리 중심 근처에 낳는다(형질 대신 개체 수). createEntity 가
    * 내 종 게놈을 현재 세대로 복사하므로 갓 태어난 무리는 지금 형질을 물려받는다. rng 미사용(결정론 무관). */
   spawnPlayerBrood(n: number): void {

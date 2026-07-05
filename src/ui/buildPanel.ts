@@ -1,7 +1,8 @@
 // 빌드 패널 — 화면 우상단에 "내가 고른 형질(카드)"을 상시 보여준다.
 // 종 한 줄 요약 + 현재 형질값(7개) + 고른 카드 목록. 캔버스 위 HTML 오버레이(인라인 스타일, 터치 통과).
 
-import { TRAIT_KEYS, TRAIT_LABELS, type Traits } from "@/sim/genome";
+import { TRAIT_KEYS, TRAIT_LABELS, TRAIT_CEILING, type Traits } from "@/sim/genome";
+import { ABILITY_KEYS, abilityLevel, abilityWord } from "@/ui/traitDisplay";
 
 export interface BuildData {
   headline: string; // "빠른 잡식성" 같은 종 한 줄 요약
@@ -84,6 +85,8 @@ export function createBuildPanel(): BuildPanel {
     traitsBox.replaceChildren();
     for (const key of TRAIT_KEYS) {
       const v = data.traits[key];
+      const isAbility = ABILITY_KEYS.has(key);
+      const lvl = isAbility ? abilityLevel(key, v) : 0;
       const row = document.createElement("div");
       row.style.cssText = "margin-top:3px;";
       const top = document.createElement("div");
@@ -92,7 +95,8 @@ export function createBuildPanel(): BuildPanel {
       name.textContent = TRAIT_LABELS[key];
       name.style.cssText = "color:#aeb7c4;";
       const val = document.createElement("span");
-      val.textContent = key === "diet" ? dietWord(v) : String(Math.round(v));
+      // 능력형=3단계 단어, 식성=초식/잡식/육식, 나머지=숫자(상한 200 형질은 100 초과도 그대로).
+      val.textContent = isAbility ? abilityWord(lvl) : key === "diet" ? dietWord(v) : String(Math.round(v));
       val.style.cssText = "color:#dfe6ee; font-weight:700; font-variant-numeric:tabular-nums;";
       top.append(name, val);
       row.appendChild(top);
@@ -100,7 +104,8 @@ export function createBuildPanel(): BuildPanel {
         const track = document.createElement("div");
         track.style.cssText = "margin-top:2px; height:4px; border-radius:3px; background:#1a2230; overflow:hidden;";
         const fill = document.createElement("div");
-        const pct = Math.round(Math.max(0, Math.min(100, v))); // 형질 0~100
+        // 능력형은 3단계 눈금(0/50/100%), 연속형은 형질별 상한(200 등) 기준 비율.
+        const pct = isAbility ? lvl * 50 : Math.round(Math.max(0, Math.min(100, (v / TRAIT_CEILING[key]) * 100)));
         fill.style.cssText = "height:100%; width:" + pct + "%; border-radius:3px; background:#6cc24a;";
         track.appendChild(fill);
         row.appendChild(track);

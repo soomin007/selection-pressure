@@ -348,9 +348,10 @@ async function boot(): Promise<void> {
       ty = boss.y;
       tz = 1.35;
     } else {
-      const centroid = game.world.playerCentroid();
-      tx = centroid.x;
-      ty = centroid.y;
+      // 흩어진 낙오자 대신 "주 무리(가장 붐비는 곳)"를 잡는다 — 평균 무게중심은 빈 공간을 가리키기 쉽다.
+      const focus = game.world.playerFocus();
+      tx = focus.x;
+      ty = focus.y;
       tz = 1;
     }
     const k = Math.min(1, (dtMS / 1000) * 3.5); // 시간 기반 이징

@@ -650,3 +650,17 @@ describe("드래프트 스킵 보상 — 새끼 낳기", () => {
     expect(after).toBe(before + 3);
   });
 });
+
+describe("카메라 초점 — 주 무리를 잡는다(낙오자 무시)", () => {
+  it("playerFocus 는 평균이 아니라 가장 붐비는 무리 쪽을 가리킨다", () => {
+    const w = new World("focus-seed", W, H, defaultGenome());
+    // 기존 내 종 개체를 치우고, 낙오자 소수(좌상단) + 주 무리 다수(우하단)로 재배치한다.
+    w.entities = w.entities.filter((e) => !e.species.isPlayer);
+    for (let i = 0; i < 2; i++) w.entities.push(createEntity(w.nextId(), 60 + i, 60, w.playerSpecies, 50));
+    for (let i = 0; i < 6; i++) w.entities.push(createEntity(w.nextId(), 400 + i * 5, 780, w.playerSpecies, 50));
+    const f = w.playerFocus();
+    // 평균이면 (좌상단+우하단)/8 로 중간을 가리키지만, 주 무리(우하단)를 잡아야 한다.
+    expect(f.y).toBeGreaterThan(600);
+    expect(f.x).toBeGreaterThan(300);
+  });
+});
