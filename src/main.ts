@@ -188,6 +188,15 @@ async function boot(): Promise<void> {
     controls.setVisible(false);
     result.show(res === "win", summary, canContinue, newUnlocks);
   };
+  // 카메라 상태 — onWorldChanged 가 game.start()에서 곧장 호출돼 camX/camY 를 스냅하므로, 그 콜백보다
+  // 반드시 먼저 선언한다. (전엔 아래쪽에 뒀다가 TDZ ReferenceError 로 부팅이 통째로 죽었다 — known_issues.)
+  let camX = game.width / 2;
+  let camY = game.height / 2;
+  let camZoom = 1;
+  // 사용자 줌 배율 — 자동/수동 시점 무관하게 모든 모드의 목표 줌에 곱한다(버튼·휠·핀치로 조절).
+  let userZoom = 1;
+  const clampUserZoom = (z: number): number => Math.max(0.5, Math.min(3.5, z));
+
   game.onWorldChanged = (world) => {
     view.drawEnvironment(world);
     view.refreshSpecies(world);
@@ -261,13 +270,7 @@ async function boot(): Promise<void> {
     document.body.appendChild(panel);
   }
 
-  // 카메라(평상시 내 무리 추적, 보스 땐 보스 추적 줌) + 하이라이트 이벤트 감지 상태
-  let camX = game.width / 2;
-  let camY = game.height / 2;
-  let camZoom = 1;
-  // 사용자 줌 배율 — 자동/수동 시점 무관하게 모든 모드의 목표 줌에 곱한다(버튼·휠·핀치로 조절).
-  let userZoom = 1;
-  const clampUserZoom = (z: number): number => Math.max(0.5, Math.min(3.5, z));
+  // 하이라이트 이벤트 감지 상태(카메라 변수는 위에서 onWorldChanged 보다 먼저 선언했다).
   let prevBoss = false;
   let prevExt = "";
   let prevLowWarn = false;
