@@ -21,6 +21,9 @@ export interface Card {
 
 // 런 첫 드래프트 — 시작 프리셋(빌드 방향)을 정한다. 식성(set diet) + 특화 형질 두엇.
 // 식성만 고르던 것을 "어떤 종으로 시작할지"로 넓혀 첫 판의 방향을 또렷하게 한다(드래프트로 계속 발전).
+// 시작 프리셋 — 정체성 형질을 크게 벌려 "이 종이 뭘 잘하는지"가 수치·외형에서 뚜렷이 드러난다.
+// (전엔 대부분 형질이 기본 50이라 프리셋 차이가 밋밋했다 → 강점은 크게·약점은 낮게 벌린다.)
+// 단 preset_omni(index 0)는 통과기준 테스트가 쓰는 기준선이라 무난한 균형으로 보존한다.
 export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_omni",
@@ -33,57 +36,57 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_herd",
     name: "다산 초식 무리",
-    desc: "식물을 먹습니다. 함께 모여 다니며 빠르게 새끼를 쳐 수로 버팁니다.",
-    set: { diet: 20 },
-    effects: { fertility: 10, herding: 12 },
+    desc: "식물을 먹습니다. 함께 뭉쳐 다니며 아주 빠르게 새끼를 쳐 수로 버팁니다. 대신 한 마리는 느립니다.",
+    set: { diet: 16, fertility: 78, herding: 76, speed: 40 },
+    effects: {},
     color: 0xb4e04a, // 라임(밝은 연두)
   },
   {
     id: "preset_hunter",
     name: "날쌘 육식 사냥꾼",
-    desc: "주로 사냥합니다. 빠르고 공격적이라 먹잇감을 잘 잡습니다.",
-    set: { diet: 65 },
-    effects: { speed: 10, attack: 12 },
+    desc: "주로 사냥합니다. 아주 빠르고 사나워 먹잇감을 잘 잡습니다. 대신 번식이 더딥니다.",
+    set: { diet: 68, speed: 80, attack: 74, fertility: 34 },
+    effects: {},
     color: 0xff7a3a, // 주황
   },
   {
     id: "preset_scout",
     name: "느긋한 정찰자",
-    desc: "식물과 사냥을 겸합니다. 멀리 보고 에너지를 아껴 오래 버팁니다.",
-    set: { diet: 40 },
-    effects: { vision: 12, metabolism: -10 },
+    desc: "식물과 사냥을 겸합니다. 아주 멀리 보고 에너지를 크게 아껴 오래 버팁니다. 대신 느립니다.",
+    set: { diet: 40, vision: 82, metabolism: 28, speed: 42 },
+    effects: {},
     color: 0x3fc9c0, // 청록
   },
   {
     id: "preset_sea",
     name: "바다 개척자",
-    desc: "헤엄쳐 바다 먹이를 먹으면서 뭍도 오갑니다. 바다는 다투는 경쟁자가 적습니다.",
-    set: { diet: 40, swimming: 85 },
-    effects: { speed: 6 },
+    desc: "능숙하게 헤엄쳐 바다 먹이를 먹으면서 뭍도 오갑니다. 바다는 다투는 경쟁자가 적습니다.",
+    set: { diet: 40, swimming: 92, speed: 62 },
+    effects: {},
     color: 0x5aa0f0, // 하늘 파랑
   },
   {
     id: "preset_sky",
     name: "하늘 개척자",
-    desc: "날아서 산과 바다를 넘나들고 산 위의 먹이를 먹습니다. 높이 날아 멀리 봅니다. 대신 배가 빨리 고픕니다.",
-    set: { diet: 40, wings: 70 },
-    effects: { vision: 6 },
+    desc: "날아서 산과 바다를 넘나들고 산 위의 먹이를 먹습니다. 높이 날아 아주 멀리 봅니다. 대신 배가 빨리 고픕니다.",
+    set: { diet: 40, wings: 80, vision: 70, metabolism: 66 },
+    effects: {},
     color: 0xf0c840, // 황금빛(하늘·맹금) — 기존 프리셋 색과 구분
   },
   {
     id: "preset_venom",
     name: "독 살갗",
-    desc: "몸에 독이 있어 잡아먹으려는 포식자가 중독됩니다. 잘 안 잡아먹히는 초식 종으로 버팁니다.",
-    set: { diet: 30, venom: 70 },
-    effects: { herding: 8 },
+    desc: "몸에 강한 독이 있어 잡아먹으려는 포식자가 중독됩니다. 함께 뭉쳐 다니는 잘 안 잡아먹히는 초식 종입니다.",
+    set: { diet: 26, venom: 84, herding: 66, fertility: 62 },
+    effects: {},
     color: 0x9c27b0, // 독 보라 — 기존 프리셋 색과 구분
   },
   {
     id: "preset_ranged",
     name: "원거리 사냥꾼",
-    desc: "먹잇감에 다가가지 않고 멀리서 가시를 쏩니다. 반격·도망 전에 안전하게 사냥합니다.",
-    set: { diet: 60, ranged: 70 },
-    effects: { vision: 8 },
+    desc: "먹잇감에 다가가지 않고 멀리서 가시를 쏩니다. 넓은 시야로 반격·도망 전에 안전하게 사냥합니다.",
+    set: { diet: 60, ranged: 82, vision: 72, speed: 46 },
+    effects: {},
     color: 0x4aa0a0, // 청록빛 — 기존 프리셋 색과 구분
   },
 ];
