@@ -75,7 +75,7 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_sky",
     name: "하늘 개척자",
-    desc: "날개로 산과 바다를 넘어 산 위의 먹이에 닿는다. 높이 날아 멀리 보지만, 쉼 없는 날갯짓에 배가 빨리 곯는다.",
+    desc: "산과 바다 위를 날아 넘어 산 위의 먹이에 닿는다. 바다의 먹이는 헤엄치는 종만 먹는다. 높이 날아 멀리 보지만, 쉼 없는 날갯짓에 배가 빨리 곯는다.",
     set: { diet: 40, wings: 80, vision: 70, metabolism: 66 },
     effects: {},
     color: 0xf0c840, // 황금빛(하늘·맹금) — 기존 프리셋 색과 구분
@@ -343,7 +343,7 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "wings",
     name: "날개",
-    desc: "날아서 산과 바다를 넘어 산 위의 먹이에 닿는다. 대신 쉼 없는 날갯짓에 배가 빨리 곯는다.",
+    desc: "산과 바다 위를 날아 넘고, 산 위의 먹이를 먹는다. 바다의 먹이는 헤엄치는 종의 몫이다. 대신 쉼 없는 날갯짓에 배가 빨리 곯는다.",
     effects: { wings: 42 },
   },
   {
@@ -394,9 +394,15 @@ export const CARD_POOL: readonly Card[] = [
   },
 ];
 
-/** 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). allow 로 잠긴 카드(메타 언락)를 걸러낸다. */
-export function drawCards(rng: Rng, n: number, allow?: (id: string) => boolean): Card[] {
-  const pool = (allow ? CARD_POOL.filter((c) => allow(c.id)) : CARD_POOL).slice();
+/** 카드가 게놈에 실제로 더하는 값(표시용) — 상한 200 연속 형질은 CARD_GROWTH_SCALE 로 줄어드므로, 카드에
+ * 뜨는 수치를 실제 적용값과 맞추려면 이걸 쓴다(전엔 원값 +15 를 보여줬으나 실제론 +9 만 붙었다 — 폰 피드백). */
+export function effectiveDelta(key: keyof Traits, raw: number): number {
+  return Math.round(TRAIT_CEILING[key] > 100 ? raw * CARD_GROWTH_SCALE : raw);
+}
+
+/** 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). allow 로 카드(메타 언락·프리셋 적합)를 걸러낸다. */
+export function drawCards(rng: Rng, n: number, allow?: (c: Card) => boolean): Card[] {
+  const pool = (allow ? CARD_POOL.filter(allow) : CARD_POOL).slice();
   // Fisher-Yates 부분 셔플
   const count = Math.min(n, pool.length);
   for (let i = 0; i < count; i++) {

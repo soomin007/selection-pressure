@@ -19,11 +19,12 @@ function ensureStyles(): void {
   stylesInjected = true;
   const s = document.createElement("style");
   s.textContent = `
-@keyframes moment-flash { 0%{opacity:0} 10%{opacity:0.92} 100%{opacity:0} }
-@keyframes moment-bloom { 0%{transform:scale(0.25);opacity:0} 22%{opacity:1} 100%{transform:scale(2.6);opacity:0} }
-@keyframes moment-word { 0%{transform:scale(0.7);opacity:0} 24%{transform:scale(1.06);opacity:1} 72%{opacity:1} 100%{transform:scale(1);opacity:0} }
+@keyframes moment-flash { 0%{opacity:0} 8%{opacity:0.95} 100%{opacity:0} }
+@keyframes moment-bloom { 0%{transform:scale(0.2);opacity:0} 18%{opacity:1} 100%{transform:scale(2.9);opacity:0} }
+@keyframes moment-rays { 0%{transform:rotate(-8deg);opacity:0} 20%{opacity:0.8} 100%{transform:rotate(46deg);opacity:0} }
+@keyframes moment-word { 0%{transform:scale(0.6);opacity:0} 20%{transform:scale(1.12)} 30%{transform:scale(1);opacity:1} 78%{opacity:1} 100%{transform:scale(1.04);opacity:0} }
 @keyframes moment-close { 0%{opacity:0} 45%{opacity:1} 100%{opacity:1} }
-@keyframes moment-word-dim { 0%{opacity:0} 35%{opacity:0.92} 80%{opacity:0.92} 100%{opacity:0.55} }
+@keyframes moment-word-dim { 0%{transform:scale(0.8);opacity:0} 30%{opacity:0.95} 82%{opacity:0.95} 100%{transform:scale(1);opacity:0.6} }
 `;
   document.head.appendChild(s);
 }
@@ -47,46 +48,55 @@ export function createMomentOverlay(): MomentOverlay {
     root.style.display = "block";
 
     if (kind === "conquest") {
-      // 황금빛 개화 + 흰 섬광 + "정복".
+      // 정복 — 황금빛 개화 + 사방으로 뻗는 햇살(rays) + 흰 섬광 + "정복" 큰 글자. 가장 화려하게.
       root.appendChild(
         layer(
-          "position:absolute; inset:-20%; background:radial-gradient(circle at 50% 46%, rgba(255,224,120,0.95), rgba(255,180,60,0.5) 40%, transparent 66%)",
-          "moment-bloom 1.9s ease-out forwards",
+          "position:absolute; inset:-30%; background:repeating-conic-gradient(from 0deg at 50% 45%, rgba(255,226,150,0.42) 0deg 4deg, transparent 4deg 15deg)",
+          "moment-rays 2.2s ease-out forwards",
         ),
       );
       root.appendChild(
-        layer("position:absolute; inset:0; background:#fff", "moment-flash 1.5s ease-out forwards"),
+        layer(
+          "position:absolute; inset:-20%; background:radial-gradient(circle at 50% 45%, rgba(255,230,140,0.98), rgba(255,180,60,0.55) 38%, transparent 66%)",
+          "moment-bloom 2.2s ease-out forwards",
+        ),
       );
       root.appendChild(
-        wordLayer("정복", "#ffe08a", "0 2px 18px rgba(180,120,20,0.8)", "moment-word 1.9s ease-out forwards"),
+        layer("position:absolute; inset:0; background:#fff", "moment-flash 1.6s ease-out forwards"),
       );
-      window.setTimeout(onDone, 1500);
-      window.setTimeout(() => (root.style.display = "none"), 1950);
+      root.appendChild(
+        wordLayer("정복", "#ffe27a", "0 3px 26px rgba(180,110,20,0.9)", "moment-word 2.2s ease-out forwards"),
+      );
+      window.setTimeout(onDone, 1750);
+      window.setTimeout(() => (root.style.display = "none"), 2300);
     } else if (kind === "win") {
-      // 한 시대를 넘김 — 은은한 황록빛 광채.
+      // 한 시대를 넘김 — 뚜렷한 황록빛 개화 + 섬광 + "생존" 글자(무엇이 일어났는지 읽히게).
       root.appendChild(
         layer(
-          "position:absolute; inset:-20%; background:radial-gradient(circle at 50% 48%, rgba(155,255,150,0.8), rgba(120,200,90,0.35) 42%, transparent 64%)",
-          "moment-bloom 1.15s ease-out forwards",
+          "position:absolute; inset:-20%; background:radial-gradient(circle at 50% 47%, rgba(170,255,150,0.95), rgba(130,220,90,0.5) 40%, transparent 66%)",
+          "moment-bloom 1.5s ease-out forwards",
         ),
       );
       root.appendChild(
-        layer("position:absolute; inset:0; background:#efffe0", "moment-flash 1.0s ease-out forwards"),
+        layer("position:absolute; inset:0; background:#eaffd6", "moment-flash 1.3s ease-out forwards"),
       );
-      window.setTimeout(onDone, 800);
-      window.setTimeout(() => (root.style.display = "none"), 1200);
+      root.appendChild(
+        wordLayer("생존", "#c9ffb0", "0 2px 20px rgba(60,140,40,0.85)", "moment-word 1.5s ease-out forwards"),
+      );
+      window.setTimeout(onDone, 1150);
+      window.setTimeout(() => (root.style.display = "none"), 1550);
     } else {
-      // 멸종 — 화면이 어둑히 닫힌다 + "멸종". 어둠은 결과 패널 뒤로 남는다(clear 로 지운다).
+      // 멸종 — 화면이 어둑히 닫히며 "멸종" 큰 글자. 어둠은 결과 패널 뒤로 남는다(clear 로 지운다).
       root.appendChild(
         layer(
-          "position:absolute; inset:0; background:radial-gradient(circle at 50% 50%, rgba(30,6,6,0.35) 20%, rgba(6,7,10,0.9) 90%)",
-          "moment-close 1.3s ease-out forwards",
+          "position:absolute; inset:0; background:radial-gradient(circle at 50% 50%, rgba(40,8,8,0.4) 15%, rgba(4,5,8,0.94) 92%)",
+          "moment-close 1.4s ease-out forwards",
         ),
       );
       root.appendChild(
-        wordLayer("멸종", "#e0604a", "0 2px 16px rgba(0,0,0,0.7)", "moment-word-dim 1.4s ease-out forwards"),
+        wordLayer("멸종", "#e0604a", "0 3px 20px rgba(0,0,0,0.8)", "moment-word-dim 1.6s ease-out forwards"),
       );
-      window.setTimeout(onDone, 1000);
+      window.setTimeout(onDone, 1250);
       // lose 는 오버레이를 안 숨긴다 — 결과 패널 뒤로 어둠 유지. clear() 에서 지운다.
     }
   };

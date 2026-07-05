@@ -7,7 +7,7 @@
 
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
-import { defaultGenome, cloneGenome, type Genome } from "@/sim/genome";
+import { defaultGenome, cloneGenome, TRAIT_CEILING, type Genome, type Traits } from "@/sim/genome";
 import { drawCards, applyCard, PRESET_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
 import { loadMeta, isPresetUnlocked, isCardUnlocked, recordRunComplete, loadChampions, saveChampion, type UnlockTier, type Champion } from "@/game/meta";
@@ -241,7 +241,12 @@ export class Game {
     this.xpToNext = GAME.xpBase + (this.level - 1) * GAME.xpPerLevel;
     this.phase = "draft";
     // 메타 언락: 열린 카드만 드래프트 풀에(잠긴 특화 카드는 런을 거듭해 해금).
-    this.draftCards = drawCards(this.draftRng, 3, (id) => isCardUnlocked(id, this.metaBestLevel));
+    // 언락된 카드 중, 이 종에 이미 무의미한 카드(예: 이미 나는데 날개 카드)는 뺀다 — "손해 카드" 방지(폰 피드백).
+    this.draftCards = drawCards(
+      this.draftRng,
+      3,
+      (c) => isCardUnlocked(c.id, this.metaBestLevel) && !cardRedundant(c, this.genome.traits),
+    );
     this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (지금부터 태어나는 새끼에게 물려집니다)`;
     this.onDraft?.(this.draftCards, this.preview);
   }
@@ -570,6 +575,31 @@ function championName(g: Genome, conquered: boolean): string {
   pairs.sort((a, b) => b[0] - a[0]);
   const epithet = pairs[0]?.[1] ?? "무명";
   return `${epithet}의 ${conquered ? "정복자" : "생존자"}`;
+}
+
+/**
+ * 이 카드가 지금 종에게 무의미한가(드래프트에서 뺄지) — 가장 크게 올리는 형질(주 효과)이 이미 최대치라
+ * 더 올려도 이득이 없으면 true. 예: 날개가 이미 비행 임계 이상이면 날개 카드는 순손해라 안 띄운다.
+ * 날개(비행 임계)·수영(물전용 임계)은 임계 넘으면 무의미, 능력형(초음파·독·원거리)은 상한 100, 연속형은 200.
+ * diet·대사는 방향/절충이라 늘 유효(제외 안 함).
+ */
+function cardRedundant(card: Card, t: Traits): boolean {
+  let primary: keyof Traits | null = null;
+  let best = 0;
+  for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
+    const v = card.effects[key] ?? 0;
+    if (v > best) {
+      best = v;
+      primary = key;
+    }
+  }
+  if (!primary) return false;
+  const cur = t[primary];
+  if (primary === "wings") return cur >= SIM.flyThreshold; // 이미 날면 더 올려도 무의미
+  if (primary === "swimming") return cur >= SIM.aquaticOnlyThreshold; // 물 전용이 최대
+  if (primary === "echo" || primary === "venom" || primary === "ranged") return cur >= 100;
+  if (TRAIT_CEILING[primary] > 100) return cur >= TRAIT_CEILING[primary]; // 연속형 200 상한
+  return false;
 }
 
 /** 단계 종류별 길이(초) — 타임라인 진행·마커 계산용. */

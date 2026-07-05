@@ -1,7 +1,7 @@
 // 드래프트 UI — 카드 3장 중 1장 탭. 캔버스 위 HTML 오버레이(터치 친화).
 // 관전 중엔 숨고, 드래프트 단계에만 보인다.
 
-import type { Card } from "@/game/cards";
+import { effectiveDelta, type Card } from "@/game/cards";
 import { TRAIT_LABELS, type Traits } from "@/sim/genome";
 import { ABILITY_KEYS } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
@@ -85,8 +85,9 @@ function formatEffects(card: Card): string {
       // 능력형(수영·날개·초음파·독·원거리)은 수치가 무의미(3단계) → 방향만 표시(강화/약화).
       parts.push(`${TRAIT_LABELS[key]} ${v >= 0 ? "강화 ↑" : "약화 ↓"}`);
     } else {
-      const sign = v >= 0 ? "+" : "";
-      parts.push(`${TRAIT_LABELS[key]} ${sign}${Math.round(v)}`);
+      // 실제 적용값(연속 형질은 ×0.6 축소분)을 보여준다 — 카드 수치 = 실제 붙는 값(폰 피드백).
+      const d = effectiveDelta(key, v);
+      parts.push(`${TRAIT_LABELS[key]} ${d >= 0 ? "+" : ""}${d}`);
     }
   }
   return parts.join("  ·  ");
