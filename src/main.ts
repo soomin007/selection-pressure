@@ -372,10 +372,18 @@ async function boot(): Promise<void> {
     { passive: false },
   );
 
-  // 줌 +/− 버튼(좌하단) — 폰에서 핀치 없이도 줌. 자동/수동 시점 어느 쪽이든 적용된다.
+  // 좌하단 컨트롤 열 — "내 애 보기"(내 종 한 마리 바로 클로즈업) + 줌 +/−. 폰에서 핀치 없이도 조작.
   const zoomBar = document.createElement("div");
   zoomBar.style.cssText =
-    "position:fixed; left:6px; bottom:52px; z-index:31; display:flex; flex-direction:column; gap:6px;";
+    "position:fixed; left:6px; bottom:52px; z-index:31; display:flex; flex-direction:column; align-items:flex-start; gap:6px;";
+  // 내 애 보기 — 내 종 한 마리를 바로 따라간다(반복 탭 = 다음 개체). 눈에 띄는 초록으로.
+  const focusBtn = document.createElement("button");
+  focusBtn.textContent = "◎ 내 애 보기";
+  focusBtn.title = "내 종 한 마리를 따라갑니다 (다시 누르면 다음 개체)";
+  focusBtn.style.cssText =
+    "height:40px; padding:0 12px; border:1px solid #3f6a34; border-radius:10px; background:rgba(20,40,20,0.92);" +
+    "color:#9bffa0; font-size:14px; font-weight:800; line-height:1; cursor:pointer; white-space:nowrap;";
+  focusBtn.addEventListener("click", () => focusMyCreature());
   const mkZoom = (label: string, dz: number): HTMLButtonElement => {
     const b = document.createElement("button");
     b.textContent = label;
@@ -387,7 +395,10 @@ async function boot(): Promise<void> {
     });
     return b;
   };
-  zoomBar.append(mkZoom("+", 1.25), mkZoom("−", 1 / 1.25));
+  const zoomRow = document.createElement("div");
+  zoomRow.style.cssText = "display:flex; gap:6px;";
+  zoomRow.append(mkZoom("+", 1.25), mkZoom("−", 1 / 1.25));
+  zoomBar.append(focusBtn, zoomRow);
   document.body.appendChild(zoomBar);
 
   app.ticker.add((ticker) => {
@@ -493,6 +504,30 @@ async function boot(): Promise<void> {
       selectedId = next.id;
       manualCam = null; // 개체 추적으로 전환(수동 조망 해제)
     }
+  }
+
+  // "내 애 보기" 버튼 — 내 종 한 마리를 바로 따라가며 클로즈업한다. 이미 내 개체를 따라가는 중이면 다음
+  // 개체로 넘겨(반복 탭 = 무리 둘러보기), 아니면 지금 카메라가 보는 곳에서 가장 가까운 내 개체를 고른다.
+  function focusMyCreature(): void {
+    if (game.phase !== "watch" && game.phase !== "draft") return;
+    const players = game.world.entities.filter((en) => en.species.isPlayer);
+    if (players.length === 0) return;
+    const cur = selectedId !== null ? game.world.entities.find((en) => en.id === selectedId) : null;
+    if (cur && cur.species.isPlayer) {
+      cycleSelection(1); // 이미 내 개체 추적 중 → 다음 개체
+      return;
+    }
+    let best = players[0]!;
+    let bestD = Infinity;
+    for (const e of players) {
+      const d = (e.x - camX) ** 2 + (e.y - camY) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    selectedId = best.id;
+    manualCam = null; // 개체 추적으로 전환(수동 조망 해제)
   }
 
   // 선택 개체를 매 프레임 해석한다 — 죽었으면 작별 인사 후 해제, 관전 단계가 아니면 해제.
