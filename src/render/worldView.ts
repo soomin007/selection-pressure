@@ -508,15 +508,13 @@ export function drawBossShape(
     const maw = darken(color, 0.14); // 벌린 아가리 안(거의 검게)
     const OW = 2.6; // 윤곽선 두께(생물보다 살짝 굵게 = 위압)
 
-    // 큰 눈 — 생물과 통일(어두운 테 + 흰자 + 동공 + 반짝). 성난 눈썹으로 위압을 더한다.
-    const eye = (fx: number, fy: number, r: number, brow = true): void => {
+    // 큰 눈 — 생물과 통일(어두운 테 + 흰자 + 동공 + 반짝). 눈썹 없음(사용자 요청).
+    const eye = (fx: number, fy: number, r: number): void => {
       const [ex, ey] = P(fx, fy);
       g.circle(ex, ey, r + 0.9).fill({ color: line });
       g.circle(ex, ey, r).fill({ color: 0xffffff });
       g.circle(...P(fx + 0.05, fy + 0.02), r * 0.56).fill({ color: 0x140404 }); // 동공(앞을 노린다)
       g.circle(...P(fx + 0.01, fy - 0.06), r * 0.24).fill({ color: 0xffffff }); // 반짝
-      // 눈 앞쪽이 낮게 처진 어두운 슬래브 = 노려보는 인상.
-      if (brow) pol([[fx + 0.2, fy - 0.24], [fx - 0.3, fy - 0.52], [fx - 0.18, fy - 0.24]]).fill({ color: line });
     };
     // 다리/촉수 하나 — 어두운 부속을 굵은 라운드 선으로. 끝점은 P(회전 안전), 두께는 px. 발끝에 작은 발.
     const leg = (ax: number, ay: number, bx: number, by: number, w: number): void => {
@@ -531,30 +529,28 @@ export function drawBossShape(
     };
 
     if (type === "chaser") {
-      // 빠른 추격자 — 질주하는 붉은 육상 맹수(다리·긴 꼬리·쩍 벌린 아가리). 속도를 형상화: 길고 날렵,
-      // 다리를 앞뒤로 뻗어 한창 달리는 자세. 물고기 아님(지느러미 없음). 카운터=속도(도망).
-      leg(-0.45, 0.32, -1.05, 0.95, s * 0.15); // 뒷다리(뒤로 차낸다)
-      leg(-0.45, -0.32, -1.05, -0.95, s * 0.15);
-      leg(0.8, 0.28, 1.35, 0.82, s * 0.15); // 앞다리(앞으로 뻗어 착지)
-      leg(0.8, -0.28, 1.35, -0.82, s * 0.15);
-      g.moveTo(...P(-1.0, 0)) // 긴 꼬리(뒤로 나부낀다)
-        .quadraticCurveTo(...P(-1.7, -0.3), ...P(-2.35, -0.55))
-        .stroke({ color: limb, width: s * 0.15, cap: "round" });
-      g.moveTo(...P(1.9, 0)) // 길고 날렵한 몸통(목이 있어 물방울과 다르다)
-        .quadraticCurveTo(...P(1.55, -0.4), ...P(0.95, -0.42))
-        .quadraticCurveTo(...P(0.1, -0.5), ...P(-0.7, -0.4))
-        .quadraticCurveTo(...P(-1.12, -0.2), ...P(-1.05, 0))
-        .quadraticCurveTo(...P(-1.12, 0.2), ...P(-0.7, 0.4))
-        .quadraticCurveTo(...P(0.1, 0.5), ...P(0.95, 0.42))
-        .quadraticCurveTo(...P(1.55, 0.4), ...P(1.9, 0))
+      // 빠른 추격자 — 오직 속도. 극도로 길고 가는 유선형 몸에 다리를 앞뒤로 쭉 뻗은 전력질주 자세.
+      // 귀 없고 매끈한 뾰족 코(벌린 아가리 없음)로 "공기를 가르는" 인상 → isolation(다부진 늑대)과 확실히 대비.
+      leg(-0.55, 0.24, -1.35, 0.66, s * 0.13); // 뒷다리(뒤로 쭉 뻗음)
+      leg(-0.55, -0.24, -1.35, -0.66, s * 0.13);
+      leg(0.7, 0.22, 1.45, 0.62, s * 0.13); // 앞다리(앞으로 쭉 뻗음)
+      leg(0.7, -0.22, 1.45, -0.62, s * 0.13);
+      g.moveTo(...P(-1.15, 0)) // 길게 나부끼는 가는 꼬리
+        .quadraticCurveTo(...P(-1.95, -0.22), ...P(-2.7, -0.4))
+        .stroke({ color: limb, width: s * 0.11, cap: "round" });
+      g.moveTo(...P(2.25, 0)) // 극도로 길고 가는 유선형 몸(뾰족한 코, 목 없이 매끈)
+        .quadraticCurveTo(...P(1.5, -0.28), ...P(0.5, -0.33))
+        .quadraticCurveTo(...P(-0.55, -0.35), ...P(-1.15, -0.13))
+        .quadraticCurveTo(...P(-1.4, 0), ...P(-1.15, 0.13))
+        .quadraticCurveTo(...P(-0.55, 0.35), ...P(0.5, 0.33))
+        .quadraticCurveTo(...P(1.5, 0.28), ...P(2.25, 0))
         .closePath().fill({ color }).stroke({ color: line, width: OW });
-      g.moveTo(...P(1.4, 0)) // 척추 하이라이트
-        .quadraticCurveTo(...P(0.2, -0.18), ...P(-0.85, -0.02))
-        .quadraticCurveTo(...P(0.2, 0.14), ...P(1.4, 0)).closePath().fill({ color: back });
-      pol([[2.1, 0], [1.35, -0.26], [1.35, 0.26]]).fill({ color: maw }).stroke({ color: line, width: 1 }); // 벌린 아가리(앞)
-      frontFangs(1.5, 0.2, 2.05);
-      eye(1.1, -0.24, s * 0.2);
-      eye(1.1, 0.24, s * 0.2);
+      g.moveTo(...P(1.8, 0)) // 가는 척추 능선 하이라이트
+        .quadraticCurveTo(...P(0.3, -0.11), ...P(-0.9, -0.02))
+        .quadraticCurveTo(...P(0.3, 0.09), ...P(1.8, 0)).closePath().fill({ color: back });
+      g.circle(...P(2.18, 0), s * 0.07).fill({ color: line }); // 코끝
+      eye(1.15, -0.17, s * 0.17);
+      eye(1.15, 0.17, s * 0.17);
     } else if (type === "raider") {
       // 약탈자 — 앞으로 큰 뿔 하나를 앞세워 들이받는 육중한 짐승(코뿔소/투구벌레). 다리 짧고 단단, 입 하나.
       // 카운터=공격력(맞서 싸움). 뿔이 하나라 "촉수 오징어"로 안 읽힌다.
@@ -578,31 +574,32 @@ export function drawBossShape(
       eye(0.72, -0.42, s * 0.2); // 작은 눈 둘(뿔 뿌리 양옆)
       eye(0.72, 0.42, s * 0.2);
     } else if (type === "isolation") {
-      // 외톨이 사냥꾼 — 홀로 배회하는 날렵한 청록 늑대(뾰족 귀·네 다리·긴 꼬리). 카운터=무리 성향(함께 뭉침).
-      leg(0.5, 0.3, 0.98, 0.82, s * 0.13);
-      leg(0.5, -0.3, 0.98, -0.82, s * 0.13);
-      leg(-0.55, 0.32, -0.98, 0.84, s * 0.13);
-      leg(-0.55, -0.32, -0.98, -0.84, s * 0.13);
-      g.moveTo(...P(-0.95, 0)) // 긴 꼬리(한쪽으로 늘어진다)
-        .quadraticCurveTo(...P(-1.6, 0.24), ...P(-2.1, 0.02))
-        .stroke({ color: limb, width: s * 0.14, cap: "round" });
-      pol([[1.15, -0.28], [1.5, -0.9], [0.8, -0.52]]).fill({ color: limb }).stroke({ color: line, width: 1.2 }); // 뾰족 귀
-      pol([[1.15, 0.28], [1.5, 0.9], [0.8, 0.52]]).fill({ color: limb }).stroke({ color: line, width: 1.2 });
-      g.moveTo(...P(1.75, 0)) // 날렵한 몸통·좁은 머리
-        .quadraticCurveTo(...P(1.42, -0.36), ...P(0.95, -0.4))
-        .quadraticCurveTo(...P(0.1, -0.46), ...P(-0.7, -0.38))
-        .quadraticCurveTo(...P(-1.08, -0.18), ...P(-1.02, 0))
-        .quadraticCurveTo(...P(-1.08, 0.18), ...P(-0.7, 0.38))
-        .quadraticCurveTo(...P(0.1, 0.46), ...P(0.95, 0.4))
-        .quadraticCurveTo(...P(1.42, 0.36), ...P(1.75, 0))
+      // 외톨이 사냥꾼 — 홀로 무리를 노리는 늑대. chaser(가는 질주체)와 달리 몸이 짧고 다부지며 머리가 크고
+      // 뾰족 귀가 도드라진다. 쩍 벌린 이빨 주둥이로 "무는 사냥꾼". 카운터=무리 성향(함께 뭉침).
+      leg(0.45, 0.44, 0.82, 1.0, s * 0.15); // 다부진 네 다리(버티는 자세)
+      leg(0.45, -0.44, 0.82, -1.0, s * 0.15);
+      leg(-0.55, 0.46, -0.92, 1.02, s * 0.15);
+      leg(-0.55, -0.46, -0.92, -1.02, s * 0.15);
+      g.moveTo(...P(-1.0, 0)) // 꼬리(한쪽으로 늘어진다)
+        .quadraticCurveTo(...P(-1.55, 0.32), ...P(-1.95, 0.08))
+        .stroke({ color: limb, width: s * 0.16, cap: "round" });
+      pol([[1.05, -0.36], [1.72, -1.08], [0.6, -0.64]]).fill({ color: limb }).stroke({ color: line, width: 1.3 }); // 크고 뾰족한 귀
+      pol([[1.05, 0.36], [1.72, 1.08], [0.6, 0.64]]).fill({ color: limb }).stroke({ color: line, width: 1.3 });
+      g.moveTo(...P(1.6, 0)) // 짧고 다부진 몸 + 큰 머리
+        .quadraticCurveTo(...P(1.45, -0.54), ...P(0.85, -0.62))
+        .quadraticCurveTo(...P(-0.2, -0.68), ...P(-0.95, -0.42))
+        .quadraticCurveTo(...P(-1.22, -0.18), ...P(-1.12, 0))
+        .quadraticCurveTo(...P(-1.22, 0.18), ...P(-0.95, 0.42))
+        .quadraticCurveTo(...P(-0.2, 0.68), ...P(0.85, 0.62))
+        .quadraticCurveTo(...P(1.45, 0.54), ...P(1.6, 0))
         .closePath().fill({ color }).stroke({ color: line, width: OW });
-      g.moveTo(...P(1.3, 0)) // 척추 하이라이트
-        .quadraticCurveTo(...P(0.2, -0.16), ...P(-0.8, -0.02))
-        .quadraticCurveTo(...P(0.2, 0.12), ...P(1.3, 0)).closePath().fill({ color: back });
-      pol([[1.95, 0], [1.35, -0.2], [1.35, 0.2]]).fill({ color: maw }).stroke({ color: line, width: 0.9 }); // 좁은 주둥이
-      frontFangs(1.4, 0.15, 1.92);
-      eye(1.05, -0.22, s * 0.18);
-      eye(1.05, 0.22, s * 0.18);
+      g.moveTo(...P(1.1, 0)) // 등 하이라이트
+        .quadraticCurveTo(...P(0.1, -0.24), ...P(-0.9, -0.02))
+        .quadraticCurveTo(...P(0.1, 0.2), ...P(1.1, 0)).closePath().fill({ color: back });
+      pol([[1.78, 0], [1.12, -0.32], [1.12, 0.32]]).fill({ color: maw }).stroke({ color: line, width: 0.9 }); // 쩍 벌린 주둥이
+      frontFangs(1.28, 0.26, 1.74);
+      eye(0.92, -0.3, s * 0.2);
+      eye(0.92, 0.3, s * 0.2);
     } else if (type === "stalker") {
       // 그림자 매복자 — 숨어 덮치는 비대칭 어둠 덩어리 + 번뜩이는 눈(시야가 카운터라 눈을 강조) + 뻗는 촉수.
       // 대칭 가시공(바이러스 느낌)을 피해 불규칙한 그림자 실루엣으로.
