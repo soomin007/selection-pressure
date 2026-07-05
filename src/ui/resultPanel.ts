@@ -49,7 +49,7 @@ export function createResultPanel(onNewRun: () => void, onContinue: () => void):
 
   // 새 종으로 다시 시작 — 승리 시엔 보조(작고 은은한 테두리 버튼), 패배 시엔 유일한 주 버튼.
   const newRunBtn = document.createElement("button");
-  newRunBtn.textContent = "새 런 시작";
+  newRunBtn.textContent = "새 혈통으로 시작";
   newRunBtn.addEventListener("click", onNewRun);
 
   root.appendChild(heading);
@@ -66,7 +66,7 @@ export function createResultPanel(onNewRun: () => void, onContinue: () => void):
     if (newUnlocks.length > 0) {
       unlockEl.replaceChildren();
       const title = document.createElement("div");
-      title.textContent = "새로 해금!";
+      title.textContent = "새로 열림";
       title.style.cssText = "color:#ffe08a; font-weight:800; font-size:14px; margin-bottom:4px;";
       unlockEl.appendChild(title);
       for (const u of newUnlocks) {
@@ -95,13 +95,13 @@ export function createResultPanel(onNewRun: () => void, onContinue: () => void):
     continueBtn.style.display = emphasize ? "block" : "none";
     if (emphasize) {
       // 보조 버튼 — 테두리만 있는 은은한 스타일 + 위 여백으로 주 버튼과 확실히 떨어뜨린다.
-      newRunBtn.textContent = "여기서 마치고 새 종으로";
+      newRunBtn.textContent = "여기서 마치고 새 혈통으로";
       newRunBtn.style.cssText =
         "display:block; width:100%; margin:12px 0 0; padding:11px; border:1px solid #3a4658;" +
         "border-radius:12px; background:transparent; color:#8a93a6; font-size:13px; font-weight:600; cursor:pointer;";
     } else {
       // 패배 — 새 런이 유일한 주 버튼(밝게).
-      newRunBtn.textContent = "새 런 시작";
+      newRunBtn.textContent = "새 혈통으로 시작";
       newRunBtn.style.cssText =
         "display:block; width:100%; margin:18px 0 0; padding:14px; border:none; border-radius:14px;" +
         "background:linear-gradient(180deg,#7db0e0,#4f84b4); color:#08161f; font-size:16px; font-weight:800; cursor:pointer;";

@@ -376,10 +376,10 @@ async function boot(): Promise<void> {
   const zoomBar = document.createElement("div");
   zoomBar.style.cssText =
     "position:fixed; left:6px; bottom:52px; z-index:31; display:flex; flex-direction:column; align-items:flex-start; gap:6px;";
-  // 내 애 보기 — 내 종 한 마리를 바로 따라간다(반복 탭 = 다음 개체). 눈에 띄는 초록으로.
+  // 한 마리 관찰 — 내 종 한 개체를 바로 따라간다(반복 탭 = 다음 개체). 눈에 띄는 초록으로.
   const focusBtn = document.createElement("button");
-  focusBtn.textContent = "◎ 내 애 보기";
-  focusBtn.title = "내 종 한 마리를 따라갑니다 (다시 누르면 다음 개체)";
+  focusBtn.textContent = "◎ 한 마리 관찰";
+  focusBtn.title = "내 종 한 마리를 가까이 따라갑니다 (다시 누르면 다음 개체)";
   focusBtn.style.cssText =
     "height:40px; padding:0 12px; border:1px solid #3f6a34; border-radius:10px; background:rgba(20,40,20,0.92);" +
     "color:#9bffa0; font-size:14px; font-weight:800; line-height:1; cursor:pointer; white-space:nowrap;";

@@ -65,9 +65,9 @@ try {
   await page.waitForTimeout(500);
   await clickText(/이 종으로|시작/);
   await page.waitForTimeout(3000);
-  await clickText(/내 애|보기/); // "내 애 보기" — 개체 포커스 버튼 경로 구동
+  await clickText(/한 마리 관찰|관찰/); // "한 마리 관찰" — 개체 포커스 버튼 경로 구동
   await page.waitForTimeout(600);
-  await clickText(/내 애|보기/); // 다시 = 다음 개체(cycle)
+  await clickText(/한 마리 관찰|관찰/); // 다시 = 다음 개체(cycle)
   await page.waitForTimeout(600);
   await page.mouse.move(200, 400);
   await page.mouse.down();

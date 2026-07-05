@@ -33,7 +33,7 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_omni",
     name: "균형 잡식",
-    desc: "식물도 먹고 사냥도 합니다. 시야가 조금 넓은 무난한 시작.",
+    desc: "풀도 뜯고 사냥도 한다. 시야가 조금 넓어 어느 환경에서든 무난하게 자리 잡는다.",
     set: { diet: 50 },
     effects: { vision: 8 },
     color: 0x6cc24a, // 초록
@@ -41,7 +41,7 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_herd",
     name: "다산 초식 무리",
-    desc: "식물을 먹습니다. 함께 뭉쳐 다니며 아주 빠르게 새끼를 쳐 수로 버팁니다. 대신 한 마리는 느립니다.",
+    desc: "풀을 뜯는다. 무리로 뭉쳐 다니며 빠르게 새끼를 쳐, 하나가 스러져도 수로 메운다. 대신 걸음은 느리다.",
     set: { diet: 16, fertility: 78, herding: 76, speed: 40 },
     effects: {},
     color: 0xb4e04a, // 라임(밝은 연두)
@@ -49,7 +49,7 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_hunter",
     name: "날쌘 육식 사냥꾼",
-    desc: "주로 사냥합니다. 아주 빠르고 사나워 먹잇감을 잘 잡습니다. 대신 번식이 더딥니다.",
+    desc: "사냥으로 산다. 빠르고 사나워 먹잇감을 좀처럼 놓치지 않는다. 대신 새끼는 더디게 친다.",
     set: { diet: 68, speed: 80, attack: 74, fertility: 34 },
     effects: {},
     color: 0xff7a3a, // 주황
@@ -57,7 +57,7 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_scout",
     name: "느긋한 정찰자",
-    desc: "식물과 사냥을 겸합니다. 아주 멀리 보고 에너지를 크게 아껴 오래 버팁니다. 대신 느립니다.",
+    desc: "풀과 사냥을 겸한다. 멀리 내다보고 기운을 아껴 척박한 땅에서도 오래 버틴다. 대신 걸음은 느리다.",
     set: { diet: 40, vision: 82, metabolism: 28, speed: 42 },
     effects: {},
     color: 0x3fc9c0, // 청록
@@ -65,7 +65,7 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_sea",
     name: "바다 개척자",
-    desc: "능숙하게 헤엄쳐 바다 먹이를 먹으면서 뭍도 오갑니다. 바다는 다투는 경쟁자가 적습니다.",
+    desc: "능숙하게 헤엄쳐 바다의 먹이를 취하고 뭍도 오간다. 바다에는 다투는 경쟁자가 드물다.",
     // 수영 88 = 수륙양용(뭍 O). 90(aquaticOnlyThreshold) 이상이면 물 전용이 돼 땅에 소환되면 못 움직이고
     // 죽는다(버그). 설명대로 "뭍도 오가는" 종이라 90 미만으로 둔다.
     set: { diet: 40, swimming: 88, speed: 62 },
@@ -75,7 +75,7 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_sky",
     name: "하늘 개척자",
-    desc: "날아서 산과 바다를 넘나들고 산 위의 먹이를 먹습니다. 높이 날아 아주 멀리 봅니다. 대신 배가 빨리 고픕니다.",
+    desc: "날개로 산과 바다를 넘어 산 위의 먹이에 닿는다. 높이 날아 멀리 보지만, 쉼 없는 날갯짓에 배가 빨리 곯는다.",
     set: { diet: 40, wings: 80, vision: 70, metabolism: 66 },
     effects: {},
     color: 0xf0c840, // 황금빛(하늘·맹금) — 기존 프리셋 색과 구분
@@ -83,7 +83,7 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_venom",
     name: "독 살갗",
-    desc: "몸에 강한 독이 있어 잡아먹으려는 포식자가 중독됩니다. 함께 뭉쳐 다니는 잘 안 잡아먹히는 초식 종입니다.",
+    desc: "살갗에 독을 품어, 삼킨 포식자를 중독시킨다. 무리로 뭉쳐 다니는, 좀처럼 잡아먹히지 않는 초식 종.",
     set: { diet: 26, venom: 84, herding: 66, fertility: 62 },
     effects: {},
     color: 0x9c27b0, // 독 보라 — 기존 프리셋 색과 구분
@@ -91,7 +91,7 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_ranged",
     name: "원거리 사냥꾼",
-    desc: "먹잇감에 다가가지 않고 멀리서 가시를 쏩니다. 넓은 시야로 반격·도망 전에 안전하게 사냥합니다.",
+    desc: "다가서지 않고 멀리서 가시를 쏜다. 넓은 시야로, 상대가 반격하거나 달아나기 전에 먼저 맞힌다.",
     set: { diet: 60, ranged: 82, vision: 72, speed: 46 },
     effects: {},
     color: 0x4aa0a0, // 청록빛 — 기존 프리셋 색과 구분
@@ -100,25 +100,25 @@ export const PRESET_CARDS: readonly Card[] = [
 
 export const CARD_POOL: readonly Card[] = [
   // 단일 형질
-  { id: "swift", name: "날쌘 다리", desc: "더 빨리 움직입니다.", effects: { speed: 15 } },
-  { id: "keen", name: "넓은 시야", desc: "먹이를 더 멀리서 봅니다.", effects: { vision: 15 } },
+  { id: "swift", name: "날쌘 다리", desc: "더 빠르게 내닫는다.", effects: { speed: 15 } },
+  { id: "keen", name: "넓은 시야", desc: "먹이를 더 멀리서 알아본다.", effects: { vision: 15 } },
   {
     id: "thrifty",
     name: "느린 대사",
-    desc: "에너지를 적게 씁니다. 따뜻한 땅·폭염·대가뭄에 유리합니다.",
+    desc: "기운을 적게 쓴다. 따뜻한 땅과 폭염, 대가뭄에서 오래 버틴다.",
     effects: { metabolism: -14 },
   },
   {
     id: "hotblood",
     name: "뜨거운 피",
-    desc: "추위를 잘 견딥니다. 대신 에너지를 더 씁니다. 추운 땅·한파에 유리합니다.",
+    desc: "추위를 잘 견딘다. 대신 기운을 더 쓴다. 추운 땅과 한파에서 강하다.",
     effects: { metabolism: 14 },
   },
-  { id: "fertile", name: "다산", desc: "더 자주 새끼를 칩니다.", effects: { fertility: 16 } },
+  { id: "fertile", name: "다산", desc: "더 자주 새끼를 친다.", effects: { fertility: 16 } },
   {
     id: "herd",
     name: "무리 본능",
-    desc: "함께 모여 다니고, 모이면 서로 보온합니다(추위에 유리).",
+    desc: "함께 모여 다니고, 모이면 서로 온기를 나눈다(추위에 강하다).",
     effects: { herding: 18 },
   },
 
@@ -126,19 +126,19 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "eagle_eye",
     name: "매의 눈",
-    desc: "멀리 보며 조금 빨라지지만, 시야에만 골몰해 홀로 다니게 됩니다.",
+    desc: "멀리 보며 조금 빨라지지만, 멀리 살피느라 무리에서 떨어진다.",
     effects: { vision: 20, speed: 5, herding: -6 },
   },
   {
     id: "pack_hunt",
     name: "무리 사냥",
-    desc: "무리 성향과 속도가 함께 늡니다.",
+    desc: "무리 성향과 걸음이 함께 는다.",
     effects: { herding: 12, speed: 8 },
   },
   {
     id: "warm_pack",
     name: "옹기종기",
-    desc: "무리 보온이 강해지고 추위에 강해집니다.",
+    desc: "무리의 온기가 짙어지고 추위에 강해진다.",
     effects: { herding: 14, metabolism: 6 },
   },
 
@@ -146,37 +146,37 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "sprint",
     name: "질주 본능",
-    desc: "훨씬 빨라지지만 에너지를 더 씁니다.",
+    desc: "훨씬 빠르게 내닫지만 기운을 더 쓴다.",
     effects: { speed: 22, metabolism: 7 },
   },
   {
     id: "hunter_eye",
     name: "사냥꾼의 눈",
-    desc: "시야가 크게 넓어지지만 번식이 줍니다.",
+    desc: "시야가 크게 트이지만 새끼는 덜 친다.",
     effects: { vision: 24, fertility: -6 },
   },
   {
     id: "brood",
     name: "둥지 본능",
-    desc: "번식이 크게 늘지만 느려집니다.",
+    desc: "새끼를 많이 치지만 걸음이 느려진다.",
     effects: { fertility: 22, speed: -7 },
   },
   {
     id: "loner",
     name: "외톨이",
-    desc: "무리를 떠나 홀로 아주 빠르게 움직입니다. 무리 성향을 크게 잃는 대신 발이 매우 빨라집니다.",
+    desc: "무리를 떠나 홀로 내닫는다. 무리 성향을 크게 잃는 대신 발이 몹시 빨라진다.",
     effects: { speed: 20, herding: -18 },
   },
   {
     id: "giant",
     name: "느긋한 거인",
-    desc: "에너지를 아주 적게 쓰지만 느려집니다.",
+    desc: "기운을 거의 쓰지 않지만 걸음이 굼뜨다.",
     effects: { metabolism: -18, speed: -6 },
   },
   {
     id: "furnace",
     name: "왕성한 대사",
-    desc: "추위에 아주 강하고 번식도 늘지만 에너지를 많이 씁니다.",
+    desc: "추위에 몹시 강하고 새끼도 늘지만 기운을 많이 쓴다.",
     effects: { metabolism: 20, fertility: 5 },
   },
 
@@ -184,25 +184,25 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "fangs",
     name: "송곳니",
-    desc: "공격력이 늡니다. 사냥에 강하고 포식자에 덜 쫓깁니다.",
+    desc: "공격력이 는다. 사냥에 능하고, 더 센 포식자에게 덜 쫓긴다.",
     effects: { attack: 18 },
   },
   {
     id: "savage",
     name: "사나운 이빨",
-    desc: "공격력이 크게 늘고 조금 빨라지지만, 사냥에 몰두해 번식이 줍니다.",
+    desc: "공격력이 크게 늘고 조금 빨라지지만, 사냥에 몰두해 새끼는 덜 친다.",
     effects: { attack: 24, speed: 5, fertility: -6 },
   },
   {
     id: "predator",
     name: "포식 본능",
-    desc: "육식으로 기웁니다. 다른 종을 사냥해 먹습니다.",
+    desc: "육식으로 기운다. 다른 종을 사냥해 먹는다.",
     effects: { diet: 22, attack: 6 },
   },
   {
     id: "grazer",
     name: "초식 본능",
-    desc: "초식으로 기웁니다. 식물을 먹고 다툼을 피합니다.",
+    desc: "초식으로 기운다. 풀을 뜯으며 다툼을 피한다.",
     effects: { diet: -22, fertility: 5 },
   },
 
@@ -210,55 +210,55 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "cheetah",
     name: "치타의 다리",
-    desc: "엄청나게 빨라지지만 번식이 줍니다.",
+    desc: "쏜살같이 내닫지만 새끼는 덜 친다.",
     effects: { speed: 28, fertility: -10 },
   },
   {
     id: "great_fangs",
     name: "거대 송곳니",
-    desc: "공격력이 크게 늘지만 굼떠집니다.",
+    desc: "공격력이 크게 늘지만 걸음이 굼떠진다.",
     effects: { attack: 26, speed: -8 },
   },
   {
     id: "ambush",
     name: "매복 사냥꾼",
-    desc: "멀리서 보고 덮칩니다. 시야와 공격력이 함께 늡니다.",
+    desc: "멀찍이서 노리다 덮친다. 시야와 공격력이 함께 는다.",
     effects: { vision: 14, attack: 14 },
   },
   {
     id: "locust",
     name: "메뚜기 떼",
-    desc: "폭발적으로 불어납니다. 대신 한 마리는 약해집니다.",
+    desc: "떼로 불어난다. 대신 한 마리는 약하다.",
     effects: { fertility: 28, attack: -6 },
   },
   {
     id: "thick_fur",
     name: "두꺼운 털가죽",
-    desc: "추위에 아주 강하고 함께 모입니다.",
+    desc: "추위에 몹시 강하고 함께 모인다.",
     effects: { metabolism: 16, herding: 12 },
   },
   {
     id: "all_rounder",
     name: "균형 진화",
-    desc: "속도·시야·번식이 고루 조금씩 늡니다.",
+    desc: "걸음과 시야, 번식이 고루 조금씩 는다.",
     effects: { speed: 8, vision: 8, fertility: 8 },
   },
   {
     id: "ascetic",
     name: "고행자",
-    desc: "에너지를 거의 안 쓰고 멀리 봅니다. 대신 느립니다.",
+    desc: "기운을 거의 쓰지 않고 멀리 본다. 대신 걸음이 느리다.",
     effects: { metabolism: -20, vision: 10, speed: -6 },
   },
   {
     id: "phalanx",
     name: "철벽 대형",
-    desc: "함께 뭉쳐 맞서 싸웁니다. 무리 성향과 공격력이 크게 늘지만, 싸움에 힘써 번식이 줍니다.",
+    desc: "함께 뭉쳐 맞선다. 무리 성향과 공격력이 크게 늘지만, 싸움에 힘써 새끼는 덜 친다.",
     effects: { herding: 22, attack: 12, fertility: -6 },
   },
   {
     id: "lone_warrior",
     name: "독불장군",
-    desc: "홀로 강하게 싸웁니다. 공격력이 크게 늘지만 무리에서 떨어집니다.",
+    desc: "홀로 사납게 싸운다. 공격력이 크게 늘지만 무리에서 떨어져 나온다.",
     effects: { attack: 22, speed: 6, herding: -16 },
   },
 
@@ -266,61 +266,61 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "scout_pack",
     name: "파수 무리",
-    desc: "함께 다니며 멀리까지 살핍니다. 시야와 무리 성향이 늡니다.",
+    desc: "함께 다니며 멀리까지 살핀다. 시야와 무리 성향이 는다.",
     effects: { vision: 14, herding: 12 },
   },
   {
     id: "owl_eye",
     name: "올빼미 눈",
-    desc: "멀리 보면서도 에너지를 아낍니다. 시야가 늘고 대사가 줍니다.",
+    desc: "멀리 보면서도 기운을 아낀다. 시야가 늘고 대사가 준다.",
     effects: { vision: 16, metabolism: -8 },
   },
   {
     id: "nest_herd",
     name: "둥지 무리",
-    desc: "무리 속에서 안전하게 새끼를 칩니다. 번식과 무리 성향이 늘지만, 둥지를 지키느라 느려집니다.",
+    desc: "무리 속에서 안전하게 새끼를 친다. 번식과 무리 성향이 늘지만, 둥지를 지키느라 걸음이 느려진다.",
     effects: { fertility: 16, herding: 10, speed: -6 },
   },
   {
     id: "farsight",
     name: "천리안",
-    desc: "아주 멀리까지 봅니다. 대신 조금 느려집니다.",
+    desc: "아주 멀리까지 내다본다. 대신 걸음이 조금 느려진다.",
     effects: { vision: 26, speed: -6 },
   },
   {
     id: "evasive",
     name: "민첩한 회피",
-    desc: "빠르게 움직이며 위험을 멀리서 알아챕니다. 속도와 시야가 함께 늡니다.",
+    desc: "재빠르게 움직이며 위험을 멀리서 알아챈다. 걸음과 시야가 함께 는다.",
     effects: { speed: 12, vision: 12 },
   },
   {
     id: "beast_metab",
     name: "맹수의 대사",
-    desc: "사냥을 위해 힘이 세지만 에너지를 많이 씁니다.",
+    desc: "사냥을 위해 힘이 세지만 기운을 많이 쓴다.",
     effects: { attack: 16, metabolism: 8 },
   },
   {
     id: "glass_cannon",
     name: "유리 대포",
-    desc: "공격력이 폭발하지만 몸이 약해 번식이 줍니다.",
+    desc: "공격력은 무섭지만 몸이 약해 새끼는 덜 친다.",
     effects: { attack: 28, fertility: -10 },
   },
   {
     id: "swift_breeder",
     name: "잰걸음 번식",
-    desc: "재빠르게 늘어납니다. 속도와 번식이 함께 조금 늡니다.",
+    desc: "재빠르게 불어난다. 걸음과 번식이 함께 조금 는다.",
     effects: { speed: 8, fertility: 10 },
   },
   {
     id: "stoic",
     name: "굳건한 체질",
-    desc: "에너지를 아끼고 함께 버팁니다. 느린 대사와 무리 보온.",
+    desc: "기운을 아끼며 함께 버틴다. 느린 대사와 무리의 온기.",
     effects: { metabolism: -12, herding: 10 },
   },
   {
     id: "apex_scout",
     name: "정점의 사냥꾼",
-    desc: "넓은 시야로 먹이를 찾고 강하게 사냥합니다. 대신 굼떠집니다.",
+    desc: "넓은 시야로 먹이를 찾아 사납게 사냥한다. 대신 걸음이 굼떠진다.",
     effects: { vision: 16, attack: 16, speed: -7 },
   },
 
@@ -328,13 +328,13 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "fins",
     name: "지느러미",
-    desc: "헤엄쳐 바다의 먹이를 먹습니다. 바다는 다투는 경쟁자가 없습니다.",
+    desc: "헤엄쳐 바다의 먹이를 취한다. 바다에는 다투는 경쟁자가 없다.",
     effects: { swimming: 22 },
   },
   {
     id: "webbed",
     name: "물갈퀴 발",
-    desc: "물에서 잘 움직입니다. 수영과 속도가 함께 조금 늡니다.",
+    desc: "물에서 잘 움직인다. 수영과 걸음이 함께 조금 는다.",
     effects: { swimming: 16, speed: 6 },
   },
 
@@ -343,13 +343,13 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "wings",
     name: "날개",
-    desc: "날아서 산과 바다를 넘고 산 위의 먹이를 먹습니다. 대신 나느라 배가 빨리 고픕니다.",
+    desc: "날아서 산과 바다를 넘어 산 위의 먹이에 닿는다. 대신 쉼 없는 날갯짓에 배가 빨리 곯는다.",
     effects: { wings: 42 },
   },
   {
     id: "strong_wings",
     name: "튼튼한 날개",
-    desc: "더 멀리 잘 납니다. 날개가 커지고 조금 빨라집니다.",
+    desc: "더 멀리, 더 오래 난다. 날개가 커지고 조금 빨라진다.",
     effects: { wings: 30, speed: 6 },
   },
 
@@ -357,13 +357,13 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "echo",
     name: "초음파",
-    desc: "눈 대신 귀로 사방을 살핍니다. 시야가 줄지만 어둠·수풀에서도 사방의 가까운 것을 알아챕니다.",
+    desc: "눈 대신 귀로 사방을 더듬는다. 시야가 줄지만 어둠과 수풀에서도 가까운 것을 알아챈다.",
     effects: { echo: 42, vision: -24 },
   },
   {
     id: "bat_ear",
     name: "박쥐의 귀",
-    desc: "초음파에 완전히 의지합니다. 눈이 거의 멀지만 그만큼 사방을 아주 멀리까지 훤히 듣습니다.",
+    desc: "온전히 귀에 기댄다. 눈은 거의 멀지만, 그만큼 사방을 아주 멀리까지 훤히 듣는다.",
     effects: { echo: 48, vision: -30 },
   },
 
@@ -371,25 +371,25 @@ export const CARD_POOL: readonly Card[] = [
   {
     id: "venom_fang",
     name: "독 살갗",
-    desc: "몸에 독이 있어 잡아먹으려는 포식자가 중독됩니다. 잡아먹기 꺼려지는 먹이가 됩니다.",
+    desc: "살갗에 독이 돌아, 삼킨 포식자를 중독시킨다. 함부로 잡아먹기 꺼려지는 먹이가 된다.",
     effects: { venom: 42 },
   },
   {
     id: "venom_gland",
     name: "독샘",
-    desc: "독이 훨씬 강해집니다. 당신을 삼킨 포식자는 치명적으로 중독되지만, 독을 만드느라 몸이 약해 번식이 줍니다.",
+    desc: "독이 훨씬 짙어진다. 삼킨 포식자는 치명적으로 중독되지만, 독을 벼리느라 몸이 약해 새끼는 덜 친다.",
     effects: { venom: 48, fertility: -6 },
   },
   {
     id: "long_horn",
     name: "가시 쏘기",
-    desc: "날카로운 가시를 멀리 쏩니다. 붙지 않고 먼 거리에서 먹잇감을 맞혀 도망·반격 전에 잡습니다.",
+    desc: "날카로운 가시를 멀리 쏜다. 다가서지 않고 먼발치에서 맞혀, 먹잇감이 달아나거나 반격하기 전에 쓰러뜨린다.",
     effects: { ranged: 42 },
   },
   {
     id: "spit",
     name: "독 가시",
-    desc: "가시를 멀리 쏘고, 몸의 독으로 잡아먹는 포식자도 막습니다. 사거리와 방어 독이 함께 늡니다.",
+    desc: "가시를 멀리 쏘고, 살갗의 독으로 삼키려는 포식자도 막는다. 사거리와 방어 독이 함께 는다.",
     effects: { ranged: 26, venom: 22 },
   },
 ];
