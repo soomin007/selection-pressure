@@ -481,6 +481,10 @@ const VISION_FOV_HALF = Math.acos(SIM.fovHalfCos);
 // (느린 종은 미세 변위의 방향이 노이즈라, 낮으면 제자리에서 몸이 떤다.)
 const ROTATE_MIN_STEP = 0.35;
 
+// 등가시가 나기 시작하는 공격력 하한(0~1). 이보다 낮은 종(초식·약한 종)은 등이 매끈해 "가시=공격형"이
+// 한눈에 대비된다. 기본 게놈 attack 50(=0.5)이면 가시가 나므로, 확실히 순한 종만 매끈.
+const SPIKE_MIN = 0.28;
+
 function clamp255(v: number): number {
   const n = Math.round(v);
   return n < 0 ? 0 : n > 255 ? 255 : n;
@@ -688,14 +692,23 @@ export function makeCreatureTexture(
   // 안 넘게 한다(스티커 느낌엔 살짝 걸쳐도 무해). 색은 몸보다 어둡거나 밝게 대비.
   drawPattern(g, look, len, wid, color);
 
-  // === 등지느러미 능선 (공격력) — 힘셀수록 크고 날카로운 톱니(윤곽선 있는 삼각 능선) ===
-  if (attack01 > 0.08) {
-    const h = 3 + attack01 * 9;
-    const teeth = 3;
-    g.moveTo(len * 0.42, -wid * 0.78);
+  // === 등가시 능선 (공격력) — "가시 많고 크다 = 사납다"가 한눈에 읽히게 개수·크기를 공격력에 강하게
+  // 연동한다. 공격력 낮은 종(초식 등)은 등이 매끈(가시 없음)해 공격형과 확실히 대비된다. 개수는 공격력
+  // 정보이므로 종 고정, 각 톱니의 높이·기울기만 개체 룩 시드(spikeJit)로 흔들어 같은 종도 제각각(개성). ===
+  if (attack01 > SPIKE_MIN) {
+    const a = (attack01 - SPIKE_MIN) / (1 - SPIKE_MIN); // 0~1 (가시 나기 시작~최강)
+    const teeth = 1 + Math.round(a * 4); // 1~5개 — 셀수록 많다
+    const baseH = 3.5 + a * 10; // 톱니 기본 높이 — 셀수록 크다
+    const x0 = len * 0.44;
+    const span = len * 1.0; // 능선이 등 앞~뒤로 뻗는 길이
+    const step = span / teeth;
+    g.moveTo(x0, -wid * 0.76);
     for (let s = 1; s <= teeth; s++) {
-      const px = len * 0.42 - (s / teeth) * len * 0.9;
-      g.lineTo(px + len * 0.13, -wid - h).lineTo(px, -wid * 0.7);
+      const jit = look.spikeJit[(s - 1) % look.spikeJit.length] ?? 0;
+      const h = baseH * (1 + jit * 0.4); // 톱니마다 높이 지터(개성)
+      const px = x0 - s * step;
+      const tipX = px + step * 0.5 + jit * len * 0.08; // 톱니 끝 좌우 기울기(개성)
+      g.lineTo(tipX, -wid - h).lineTo(px, -wid * 0.7);
     }
     g.closePath().fill({ color: limb }).stroke({ color: line, width: 1.3 });
   }

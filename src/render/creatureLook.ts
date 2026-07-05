@@ -35,6 +35,9 @@ export interface CreatureLook {
   eyeScale: number; // 눈 크기 배율
   eyeDx: number; // 눈 위치 미세 이동(len 비율)
   eyeDy: number; // 눈 위치 미세 이동(wid 비율)
+  // 등 가시(공격력 능선) 톱니별 미세 변형 시드(-0.5~0.5). 개수는 공격력이 정하고(정보), 각 톱니의
+  // 높이·좌우 기울기만 이 값으로 흔들어 같은 종도 가시 모양이 제각각(개성). 최대 톱니 수만큼(≤6).
+  spikeJit: readonly number[];
 }
 
 // 종 "대표" 모습 — 프리셋 미리보기·도감처럼 개체가 아닌 종 자체를 보일 때. 무늬 없는 기본형.
@@ -46,6 +49,7 @@ export const DEFAULT_LOOK: CreatureLook = {
   eyeScale: 1,
   eyeDx: 0,
   eyeDy: 0,
+  spikeJit: [0, 0, 0, 0, 0, 0],
 };
 
 /** 개체 id → 텍스처 룩 버킷 번호(0~LOOK_BUCKETS-1). 텍스처 캐시 키에 쓴다. */
@@ -71,6 +75,8 @@ export function lookFromBucket(bucket: number): CreatureLook {
       });
     }
   }
+  const spikeJit: number[] = [];
+  for (let i = 0; i < 6; i++) spikeJit.push(r(20 + i) - 0.5);
   return {
     pattern,
     patternDark,
@@ -79,6 +85,7 @@ export function lookFromBucket(bucket: number): CreatureLook {
     eyeScale: 0.86 + r(5) * 0.32, // 0.86~1.18
     eyeDx: (r(6) - 0.5) * 0.12,
     eyeDy: (r(7) - 0.5) * 0.12,
+    spikeJit,
   };
 }
 
