@@ -1,83 +1,77 @@
 # 보스 아트 생성 프롬프트 (AI 이미지 에셋)
 
-보스는 형질 변화가 없어(고정) 절차 도형 대신 AI 생성 이미지로 대체한다. 아래 프롬프트로 뽑은 PNG를
-`assets/boss/` 에 넣으면 코드가 스프라이트로 로드한다(통합은 에셋 준비 후 별도 작업).
+보스는 형질 변화가 없어(고정) 절차 도형 대신 AI 생성 이미지로 대체한다. 아래 **프롬프트를 그대로 복사해**
+GPT(이미지 생성)에 붙이면 된다. 뽑은 PNG를 `assets/boss/` 에 넣으면 코드가 스프라이트로 로드한다(통합은
+에셋 준비 후 별도 작업).
 
 ---
 
-## 공통 스펙 (반드시 지킬 것 — 안 지키면 게임에 안 맞음)
+## 핵심 규칙 (왜 이렇게 쓰는가 — 지난 시행착오)
 
-- **뷰: 탑다운(바로 위에서 내려다본 부감).** 게임이 생물을 위에서 본다.
-- **방향: 오른쪽(→)을 향하게.** 게임이 진행 방향으로 스프라이트를 회전시키므로, 기준이 "오른쪽 보기"여야
-  아무 방향으로 움직여도 자연스럽다. (머리가 오른쪽, 꼬리가 왼쪽)
-- **배경: 완전 투명(PNG, alpha).** 색 배경·그림자 바닥 없음.
-- **캔버스: 정사각형(512×512 권장), 대상은 중앙 정렬 + 사방 여백 10% 정도.**
-- **스타일: 스티커/플랫 인디게임 아트** — 굵고 통일된 검은(어두운) 윤곽선 + 불투명 플랫 음영(2~3톤,
-  반투명 그라데이션 금지) + 크고 또렷한 사나운 눈. 사실적 렌더·질감·그림자 없음.
-- **작게 줄여도 읽히는 단순하고 위압적인 실루엣.** 화면에서 지름 20~40px로 작게 그려진다.
-- **한 캔버스에 한 마리만.** (떼 보스도 "떼의 한 마리"만 그린다 — 게임이 여러 개 배치한다.)
+- **"sticker(스티커)" 단어 금지.** 스티커라고 하면 GPT 가 실물 스티커처럼 **흰색 다이컷 테두리**를 둘러버린다.
+  대신 **"flat vector mascot logo / esports emblem"** 으로 부른다. 생물 자체의 **굵은 검은 윤곽선은 유지**하되,
+  그 바깥을 감싸는 흰 테두리·프레임은 뺀다.
+- **배경은 단색 마젠타(#FF00FF).** GPT 는 진짜 투명 PNG 를 못 만든다(검은 배경으로 나옴). 게다가 이 캐릭터들은
+  검은 윤곽선이 있어 검은 배경을 빼면 윤곽선까지 사라진다. 캐릭터에 없는 색(마젠타)을 배경으로 뽑으면 통합 때
+  코드로 깔끔히 제거해 투명으로 만들 수 있다.
+- **측면(side profile) 액션 포즈, 오른쪽(→)을 향하게.** 게임이 진행 방향으로 스프라이트를 회전시키므로 기준이
+  "오른쪽 보기"여야 한다. (GPT 가 잘 뽑는 esports 마스코트 측면 포즈가 그대로 맞다.)
+- **한 캔버스에 한 마리만**, 전신, 중앙 정렬. 떼 보스도 "떼의 한 마리"만 그린다(게임이 여러 개 배치).
+- 색은 아래 표대로(게임 코드와 맞춤). poison(독 안개)은 개체가 아니라 화면 전체 틴트라 **이미지 불필요**.
 
-### 네거티브(빼야 할 것)
-`background, ground, shadow on floor, text, watermark, multiple creatures, 3d render, realistic
-texture, photograph, drop shadow, side view, front view`
-
-### 파일명
-`boss_chaser.png` · `boss_swarm.png` · `boss_raider.png` · `boss_isolation.png` · `boss_stalker.png`
-
-### 색 (게임 코드와 맞춤 — 프롬프트에 주 색으로 반영)
-| 보스 | 주 색 | 성격 |
+| 보스 | 주 색 | 파일명 |
 |---|---|---|
-| chaser (빠른 추격자) | 새빨강 `#ff4028` | 단일 초고속 돌진 맹수 |
-| swarm (사나운 무리) | 성난 주황 `#ff7a2a` | 떼로 몰려드는 작은 포식자 |
-| raider (약탈자 무리) | 핏빛 진홍 `#ff2e5a` | 뿔·엄니로 들이받는 떼 |
-| isolation (외톨이 사냥꾼) | 청록 `#33c0d8` | 홀로 헤집는 날렵한 사냥꾼 |
-| stalker (그림자 매복자) | 자주 `#c060d0` | 어둠 속에 숨은 매복 괴물 |
-
-> **poison(독 안개)은 이미지 없음** — 개체가 아니라 화면 전체 틴트(전역 재난)라 스프라이트가 불필요하다.
+| chaser (빠른 추격자) | 새빨강 | `boss_chaser.png` |
+| swarm (사나운 무리) | 성난 주황 | `boss_swarm.png` |
+| raider (약탈자 무리) | 핏빛 진홍 | `boss_raider.png` |
+| isolation (외톨이 사냥꾼) | 청록 | `boss_isolation.png` |
+| stalker (그림자 매복자) | 자주/보라 | `boss_stalker.png` |
 
 ---
 
-## 보스별 프롬프트
+## 프롬프트 (각 블록을 통째로 복사해 붙여넣기)
 
-각 항목의 English prompt를 이미지 AI에 붙여넣고, 공통 스펙/네거티브를 함께 준다.
+### 1. chaser — 빠른 추격자 (⚠️ 상어/물고기 금지, 육상 맹수 · 새빨강)
 
-### 1. chaser — 빠른 추격자 (⚠️ 상어/물고기 금지, 육상 맹수)
-- 컨셉: **육지를 초고속으로 질주하는 맹수**(치타·늑대의 흉포 버전). 지금 상어처럼 생긴 게 문제 —
-  지느러미 없는 육상 포식자로.
-- English: `top-down view of a fierce fast land predator creature, sleek streamlined body like a
-  cheetah-wolf, sharp fangs, snarling open jaw, angry glowing red eyes, bold black outline, flat
-  cel-shaded sticker style, bright red color scheme, facing right, centered, transparent background`
-- 주의: **no fins, no shark, not aquatic.** 다리·발톱이 보이는 육상 짐승.
+```
+Flat vector mascot logo of a fierce fast LAND predator — a snarling red wolf-cheetah hybrid in a dynamic lunging run, side profile facing RIGHT (head and open jaw on the right, tail on the left). Bold clean black linework with flat cel-shaded coloring, bright red and dark crimson color scheme, angry glowing eyes, sharp white fangs, gaping snarling jaw, powerful legs and claws. Esports emblem / gaming mascot style. NO white outline, NO sticker border, NO die-cut edge, NO frame — the creature only. Solid flat magenta background (#FF00FF), no scenery, no ground shadow, no text. Full body, centered. It is a land beast: no fins, not a shark, not aquatic.
+```
 
-### 2. swarm — 사나운 무리 (떼의 한 마리)
-- 컨셉: 떼로 몰려드는 **작고 사나운 포식자 한 마리**(피라니아·성난 곤충 느낌). 큰 아가리·이빨.
-- English: `top-down view of a small vicious swarm predator, piranha-like with a big toothy jaw,
-  bulging angry eyes, bold black outline, flat cel-shaded sticker style, angry orange color scheme,
-  facing right, centered, transparent background`
+### 2. swarm — 사나운 무리 (떼의 한 마리 · 성난 주황)
 
-### 3. raider — 약탈자 무리 (떼의 한 마리)
-- 컨셉: **뿔과 엄니로 들이받는 공격적 짐승** 한 마리. 육중하고 사납게.
-- English: `top-down view of an aggressive charging beast with two forward horns and tusks, bulky
-  menacing head, fierce eyes, bold black outline, flat cel-shaded sticker style, crimson blood-red
-  color scheme, facing right, centered, transparent background`
+```
+Flat vector mascot logo of a small vicious swarm predator — a piranha-like biting creature with a big toothy open jaw and bulging angry eyes, side profile facing RIGHT. Bold clean black linework with flat cel-shaded coloring, angry orange and dark orange color scheme, sharp teeth, aggressive posture. Esports emblem / gaming mascot style. NO white outline, NO sticker border, NO die-cut edge, NO frame — the creature only. Solid flat magenta background (#FF00FF), no scenery, no ground shadow, no text. Full body, centered.
+```
 
-### 4. isolation — 외톨이 사냥꾼 (떼의 한 마리, 소수)
-- 컨셉: **홀로 헤집는 날렵한 늑대/맹금형 사냥꾼**. 뾰족한 귀, 좁은 주둥이, 매서운 눈.
-- English: `top-down view of a lean solitary hunter, sleek wolf-like predator with pointed ears, a
-  narrow snout and sharp menacing eyes, bold black outline, flat cel-shaded sticker style, teal cyan
-  color scheme, facing right, centered, transparent background`
+### 3. raider — 약탈자 무리 (떼의 한 마리 · 핏빛 진홍)
 
-### 5. stalker — 그림자 매복자 (떼의 한 마리)
-- 컨셉: **어둠 속에 숨은 그림자 괴물**. 검은 덩어리 몸 + 여러 개(또는 하나 큰) 번뜩이는 눈 + 삐죽한 가시.
-- English: `top-down view of a shadowy ambush monster, dark amorphous body with spiky edges and
-  multiple glowing menacing eyes, eerie and creepy, bold black outline, flat cel-shaded sticker
-  style, purple magenta glow color scheme, facing right, centered, transparent background`
+```
+Flat vector mascot logo of an aggressive charging beast with two forward-pointing horns and tusks, a bulky menacing head lowered to ram, side profile facing RIGHT. Bold clean black linework with flat cel-shaded coloring, crimson blood-red and dark red color scheme, fierce glowing eyes, sharp tusks. Esports emblem / gaming mascot style. NO white outline, NO sticker border, NO die-cut edge, NO frame — the creature only. Solid flat magenta background (#FF00FF), no scenery, no ground shadow, no text. Full body, centered.
+```
+
+### 4. isolation — 외톨이 사냥꾼 (떼의 한 마리 · 청록)
+
+```
+Flat vector mascot logo of a lean solitary hunter — a sleek wolf-like predator with pointed ears, a narrow snout and sharp menacing eyes, prowling in a low stalking pose, side profile facing RIGHT. Bold clean black linework with flat cel-shaded coloring, teal and cyan color scheme, sharp fangs. Esports emblem / gaming mascot style. NO white outline, NO sticker border, NO die-cut edge, NO frame — the creature only. Solid flat magenta background (#FF00FF), no scenery, no ground shadow, no text. Full body, centered.
+```
+
+### 5. stalker — 그림자 매복자 (떼의 한 마리 · 자주/보라)
+
+```
+Flat vector mascot logo of a shadowy ambush monster — a dark amorphous creature with spiky edges and multiple glowing menacing eyes, eerie and creepy, side profile facing RIGHT. Bold clean black linework with flat cel-shaded coloring, deep purple and magenta glow color scheme, sharp spikes, sinister expression. Esports emblem / gaming mascot style. NO white outline, NO sticker border, NO die-cut edge, NO frame — the creature only. Solid flat magenta background (#FF00FF), no scenery, no ground shadow, no text. Full body, centered.
+```
+
+> 흰 테두리가 또 생기면 프롬프트 맨 앞에 `Absolutely no white border or outline around the shape.` 한 줄을 더
+> 붙인다. 배경이 검게 나오면 `The background must be solid magenta #FF00FF, filling the entire canvas.` 를 강조한다.
 
 ---
 
 ## 통합 메모 (에셋 받은 뒤 코드 작업 — 지금은 참고만)
-- `worldView.ts` 의 `drawBossCreature`(절차 도형)를 스프라이트 로드로 교체. 보스 타입별 텍스처 캐시.
+- 배경 제거: 마젠타(#FF00FF)를 크로마키로 빼 투명 PNG 로. 캐릭터에 마젠타가 없어 윤곽선 손상 없이 깨끗하다
+  (사용자가 remove.bg 등으로 미리 빼 와도 됨). 반투명 가장자리는 알파 임계로 정리.
+- `render/worldView.ts` 의 `drawBossCreature`(절차 도형)를 스프라이트 로드로 교체. 보스 타입별 텍스처 캐시.
 - 회전: 스프라이트 anchor 0.5, 진행 방향(헤딩)으로 `rotation`. 기준이 "오른쪽 보기"라 `atan2(hy,hx)` 그대로.
+  (측면 포즈라 위/아래로 갈 때 90° 회전이 어색하면, 회전 대신 좌우 뒤집기(flip)만 하는 방식도 검토.)
 - 물기 반경(killRadius) 반투명 원 + 맥동 고리는 유지(게임성). 스프라이트는 그 위에.
-- 떼 보스(swarm/raider/isolation/stalker)는 같은 한 장을 멤버 수만큼 배치(각자 회전).
+- 떼 보스(swarm/raider/isolation/stalker)는 같은 한 장을 멤버 수만큼 배치(각자 회전/뒤집기).
 - poison 은 스프라이트 없음(전역 화면 틴트 유지).
