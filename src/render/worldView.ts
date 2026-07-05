@@ -12,7 +12,15 @@ import type { Biome } from "@/sim/environment";
 import { TRAIT_KEYS, TRAIT_MAX, type Genome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 import { DEBUG, TUNE } from "@/debug";
-import { personalityScale, personalityTint } from "@/render/creatureLook";
+import {
+  personalityScale,
+  personalityStretch,
+  personalityTint,
+  creatureLook,
+  lookBucket,
+  DEFAULT_LOOK,
+  type CreatureLook,
+} from "@/render/creatureLook";
 import { grassVisionFactor, nightVisionFactor } from "@/sim/behavior";
 
 export class WorldView {
@@ -93,12 +101,15 @@ export class WorldView {
    * 첫 모습 그대로라 진화가 화면에 안 보인다. 거친 버킷이라 미세 드리프트엔 안 바뀌고, 압력 적응처럼
    * 형질이 크게 움직일 때만 새 텍스처(캐시 폭증 방지 + 눈에 띄는 변화만 반영). */
   private textureFor(e: Entity): Texture {
+    // 개체별 룩 버킷을 키에 더한다 — 같은 종·세대라도 무늬·눈이 다른 텍스처를 버킷 수만큼 갖는다.
+    // 버킷이 유한(LOOK_BUCKETS)이라 캐시는 (게놈 서명 × 버킷)으로 상한이 있다.
+    const lb = lookBucket(e.id);
     const key = e.species.isPlayer
-      ? "p" + e.species.id + ":" + genomeSignature(e.genome)
-      : "s" + e.species.id + ":" + wildGenomeSignature(e.genome);
+      ? "p" + e.species.id + ":" + genomeSignature(e.genome) + ":" + lb
+      : "s" + e.species.id + ":" + wildGenomeSignature(e.genome) + ":" + lb;
     let tex = this.texCache.get(key);
     if (!tex) {
-      tex = makeCreatureTexture(this.renderer, e.genome, e.species.color);
+      tex = makeCreatureTexture(this.renderer, e.genome, e.species.color, creatureLook(e.id));
       this.texCache.set(key, tex);
     }
     return tex;
@@ -266,8 +277,11 @@ export class WorldView {
       sp.texture = this.textureFor(e);
       sp.x = rx;
       sp.y = ry;
-      // 개체별 미세 개성(크기·명암) — 같은 종이라도 한 마리씩 달라 보이게. id 결정론, sim 무관.
-      sp.scale.set(personalityScale(e.id));
+      // 개체별 미세 개성(크기·길쭉함·명암·색조) — 같은 종이라도 한 마리씩 달라 보이게. id 결정론, sim 무관.
+      // 무늬·눈은 텍스처(룩 버킷)에서, 크기·톤은 여기 스프라이트에서 — 두 층이 겹쳐 개체가 또렷이 갈린다.
+      const ps = personalityScale(e.id);
+      const st = personalityStretch(e.id); // >1 길고 홀쭉(몸 방향=x 늘림), <1 짧고 통통
+      sp.scale.set(ps * st, ps / st);
       // 독(중독) 걸린 개체는 보라빛으로 — "독이 퍼지는 중"이 한눈에(지속 피해의 시각 피드백).
       sp.tint = e.poison > 0 ? 0xcc66ff : personalityTint(e.id);
       // 회전: 떨림(좌우 진동)의 원인은 회전 "목표"가 매 스텝의 미세 이동 방향이라 노이즈가 크다는 것.
@@ -576,11 +590,38 @@ function wildGenomeSignature(g: Genome): string {
   return s;
 }
 
+// 개체 무늬를 몸통 위에 그린다(줄무늬/반점/얼룩). 개체 룩(look)에 따라 종류·배치가 갈려 같은 종
+// 안에서도 한 마리씩 달라 보인다. 좌표는 몸 반길이 len·반너비 wid 안쪽으로 잡아 윤곽선을 안 넘게 한다.
+function drawPattern(g: Graphics, look: CreatureLook, len: number, wid: number, color: number): void {
+  if (look.pattern === 0) return; // 민무늬
+  const pc = look.patternDark ? darken(color, 0.62) : lighten(color, 0.5);
+  if (look.pattern === 1) {
+    // 줄무늬 — 몸을 가로지르는 세로 줄 몇 개(호랑이 무늬처럼). 앞뒤로 고르게, 몸 곡률 따라 짧게.
+    const lw = 1.6 + wid * 0.16;
+    for (let s = 0; s < look.stripes; s++) {
+      const px = len * (0.42 - ((s + 1) / (look.stripes + 1)) * 1.05);
+      const hh = wid * 0.82 * (1 - Math.min(1, Math.abs(px) / (len * 1.02))); // 끝으로 갈수록 짧게
+      if (hh < 1) continue;
+      g.moveTo(px, -hh).lineTo(px, hh).stroke({ color: pc, width: lw, alpha: 0.92 });
+    }
+    return;
+  }
+  // 반점(2) / 얼룩(3) — 등쪽에 흩뿌린 타원.
+  for (const sp of look.spots) {
+    g.ellipse(sp.x * len, sp.y * wid, sp.r * len * 0.5, sp.r * wid * 0.72).fill({ color: pc });
+  }
+}
+
 // 게놈에서 한 종의 생물 스프라이트 텍스처를 만든다(앞쪽 = +x). 형질이 형태로 드러난다.
 // 아트 방향: "스티커/인디게임" 스타일 — 전체를 감싸는 **굵은 윤곽선** + **불투명 플랫 음영**(반투명
 // 겹침으로 탁해지지 않게) + **크고 또렷한 눈**. 사실적으로 그리려다 조잡해지는 대신, 단순하고 개성 있는
 // 실루엣으로 "일부러 이런 스타일"로 읽히게 한다. 형질은 여전히 형태로 드러난다(프리셋/빌드 구분).
-export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: number): Texture {
+export function makeCreatureTexture(
+  renderer: Renderer,
+  genome: Genome,
+  color: number,
+  look: CreatureLook = DEFAULT_LOOK,
+): Texture {
   const t = genome.traits;
   const speed01 = t.speed / TRAIT_MAX;
   const attack01 = t.attack / TRAIT_MAX;
@@ -643,6 +684,10 @@ export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: n
   g.ellipse(-len * 0.04, wid * 0.44, len * 0.6, wid * 0.44).fill({ color: belly });
   g.ellipse(len * 0.06, -wid * 0.5, len * 0.52, wid * 0.28).fill({ color: back });
 
+  // 개체 무늬(줄무늬/반점/얼룩) — 같은 종 안에서 한 마리씩 달라 보이는 핵심. 몸 안쪽에만 그려 윤곽선을
+  // 안 넘게 한다(스티커 느낌엔 살짝 걸쳐도 무해). 색은 몸보다 어둡거나 밝게 대비.
+  drawPattern(g, look, len, wid, color);
+
   // === 등지느러미 능선 (공격력) — 힘셀수록 크고 날카로운 톱니(윤곽선 있는 삼각 능선) ===
   if (attack01 > 0.08) {
     const h = 3 + attack01 * 9;
@@ -699,10 +744,11 @@ export function makeCreatureTexture(renderer: Renderer, genome: Genome, color: n
     }
   }
 
-  // === 눈 (시야) — 크고 또렷: 어두운 테 + 흰자 + 동공 + 반짝. 시야 클수록 큰 눈(개성의 핵심). ===
-  const eye = 2.6 + vision01 * 4;
-  const ex = len * 0.5;
-  const ey = -wid * 0.28;
+  // === 눈 (시야) — 크고 또렷: 어두운 테 + 흰자 + 동공 + 반짝. 시야 클수록 큰 눈(종 구분).
+  // 개체별 눈 크기·위치 미세 변형(look)까지 얹어 같은 종도 인상이 달라진다. ===
+  const eye = (2.6 + vision01 * 4) * look.eyeScale;
+  const ex = len * 0.5 + look.eyeDx * len;
+  const ey = -wid * 0.28 + look.eyeDy * wid;
   g.circle(ex, ey, eye + 0.7).fill({ color: line });
   g.circle(ex, ey, eye).fill({ color: 0xffffff });
   g.circle(ex + eye * 0.24, ey + eye * 0.06, eye * 0.52).fill({ color: 0x14171d });
