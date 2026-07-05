@@ -75,13 +75,18 @@
 5. `git log --oneline -10` + `git status` — 누적 변경
 사용자가 곧장 작업을 지시하면 그것부터 하되, 위 파일로 맥락을 먼저 맞춘다.
 
-### Git push 루틴
-의미 있는 작업 단위(기능·시스템 변경·문서 대량 갱신·세션 로그 등)가 끝나면 **즉시
-commit + push origin main** (사용자 지시 없어도 자동). 작은 단위로 자주 끊는다.
+### Git commit / push 루틴
+**커밋은 작은 단위로 자주(로컬), push 는 중요한 마일스톤마다 몰아서 한다.** (2026-07-05 사용자 지시)
+- 이유: push 가 GitHub Pages 배포를 트리거하는데, 짧은 간격으로 여러 번 push 하면 배포 큐가 엉켜
+  실패("Deployment failed")가 쌓이고 **사용자에게 fail 메일이 계속 온다**(known_issues 참조). 커밋
+  자체는 배포를 안 건드리므로 로컬 커밋은 자유롭게 자주 하되, push 만 묶는다.
+- 즉: 의미 있는 작업 단위가 끝날 때마다 **로컬 commit**(자동). **push 는** 기능 하나가 온전히
+  끝나는 등 "중요한 부분"에서 그동안 쌓인 커밋을 **한 번에 push origin main**. 자잘한 커밋마다
+  push 하지 않는다.
+- push 한 뒤엔 `gh run watch` 로 배포 성공을 확인하고, stuck 이면 `gh run rerun <id> --failed`.
 - 커밋 메시지: 한국어, `prefix(scope): 설명`(feat/fix/refactor/docs/chore), 이모지 없음,
   본문은 변경 항목 bullet.
 - `main`에 직접 push (이 프로젝트는 branch/PR 안 씀).
-- 아직 원격(origin)이 없으면 로컬 커밋만 하고, 원격이 생기면 그때 push 한다.
 - destructive 작업(force push, reset --hard 등)은 먼저 확인.
 
 ### 동시 세션 루틴 (여러 세션 병행 시)
