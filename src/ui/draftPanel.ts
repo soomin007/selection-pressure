@@ -10,7 +10,7 @@ export interface DraftPanel {
   hide: () => void;
 }
 
-export function createDraftPanel(onPick: (index: number) => void): DraftPanel {
+export function createDraftPanel(onPick: (index: number) => void, onSkip: () => void): DraftPanel {
   ensurePanelStyles();
 
   const root = document.createElement("div");
@@ -29,6 +29,15 @@ export function createDraftPanel(onPick: (index: number) => void): DraftPanel {
   const list = document.createElement("div");
   list.className = "ui-cards";
   root.appendChild(list);
+
+  // 스킵 — 3장이 다 별로면 형질 대신 소소한 보상(새끼)을 받는다. 은은한 보조 버튼(카드보다 약하게).
+  const skipBtn = document.createElement("button");
+  skipBtn.textContent = "건너뛰고 새끼 낳기";
+  skipBtn.style.cssText =
+    "display:block; width:100%; margin-top:10px; padding:9px; border:1px solid #3a4658; border-radius:12px;" +
+    "background:transparent; color:#8a93a6; font-size:13px; font-weight:600; cursor:pointer;";
+  skipBtn.addEventListener("click", onSkip);
+  root.appendChild(skipBtn);
 
   document.body.appendChild(root);
 

@@ -640,3 +640,13 @@ describe("비동기 생물(S2) — 챔피언 등장", () => {
     expect(nonChampFingerprint(withChamp)).toBe(nonChampFingerprint(noChamp));
   });
 });
+
+describe("드래프트 스킵 보상 — 새끼 낳기", () => {
+  it("spawnPlayerBrood(n) 은 내 종 개체를 n 마리 늘린다", () => {
+    const w = new World("brood-seed", W, H, defaultGenome());
+    const before = w.entities.filter((e) => e.species.isPlayer).length;
+    w.spawnPlayerBrood(3);
+    const after = w.entities.filter((e) => e.species.isPlayer).length;
+    expect(after).toBe(before + 3);
+  });
+});

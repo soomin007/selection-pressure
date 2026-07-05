@@ -105,13 +105,21 @@ async function boot(): Promise<void> {
 
   const glossary = createGlossary(); // 용어 사전(로비·일시정지에서 열기)
 
-  const draft = createDraftPanel((i) => {
-    game.pickCard(i);
-    refreshBuild(); // 방금 고른 카드를 빌드 패널(설계도=최신 게놈)에 반영
-    // 세대별 형질: 텍스처를 새로 만들지 않는다 — 이미 태어난 개체는 옛 모습을 유지하고, 이후 태어난
-    // 개체가 새 게놈 서명으로 lazy 생성된다(worldView.textureFor). refreshSpecies(전체 교체)는 안 부른다.
-    draft.hide();
-  });
+  const draft = createDraftPanel(
+    (i) => {
+      game.pickCard(i);
+      refreshBuild(); // 방금 고른 카드를 빌드 패널(설계도=최신 게놈)에 반영
+      // 세대별 형질: 텍스처를 새로 만들지 않는다 — 이미 태어난 개체는 옛 모습을 유지하고, 이후 태어난
+      // 개체가 새 게놈 서명으로 lazy 생성된다(worldView.textureFor). refreshSpecies(전체 교체)는 안 부른다.
+      draft.hide();
+    },
+    () => {
+      // 스킵 — 형질 대신 새끼 몇 마리를 낳고 관전으로 복귀.
+      game.skipDraft();
+      refreshBuild();
+      draft.hide();
+    },
+  );
   // 시작 프리셋은 캐릭터 선택 창으로(외형 미리보기 + 화살표로 페이지 넘기며 선택).
   const presetPanel = createPresetPanel(app.renderer, (i) => {
     game.pickCard(i);

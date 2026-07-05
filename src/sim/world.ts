@@ -290,6 +290,24 @@ export class World {
     return { x: sx / n, y: sy / n };
   }
 
+  /** 드래프트 스킵 보상 — 내 종 새끼 n 마리를 무리 중심 근처에 낳는다(형질 대신 개체 수). createEntity 가
+   * 내 종 게놈을 현재 세대로 복사하므로 갓 태어난 무리는 지금 형질을 물려받는다. rng 미사용(결정론 무관). */
+  spawnPlayerBrood(n: number): void {
+    const c = this.playerCentroid();
+    const tr = this.genome.traits;
+    const canSwim = tr.swimming >= SIM.swimThreshold;
+    const canLand = tr.swimming < SIM.aquaticOnlyThreshold;
+    const canFly = tr.wings >= SIM.flyThreshold;
+    for (let i = 0; i < n; i++) {
+      const ang = (i / Math.max(1, n)) * Math.PI * 2;
+      const x = Math.max(0, Math.min(this.width, c.x + Math.cos(ang) * 20));
+      const y = Math.max(0, Math.min(this.height, c.y + Math.sin(ang) * 20));
+      const spot = this.snapSpawn(x, y, canSwim, canLand, canFly);
+      this.entities.push(createEntity(this.nextId(), spot.x, spot.y, this.playerSpecies, SIM.startEnergy));
+      this.emit("birth", spot.x, spot.y); // 연출: 탄생 반짝임
+    }
+  }
+
   /** 죽음 1건 집계. 정산은 "왜 내 종이 죽었나"가 핵심이라 내 종만 센다. (rng 미사용 → 결정론 유지) */
   recordDeath(species: Species, cause: DeathCause): void {
     if (!species.isPlayer) return;

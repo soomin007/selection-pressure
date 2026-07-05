@@ -173,6 +173,16 @@ export class Game {
     }
   }
 
+  /** 레벨업 드래프트를 스킵 — 3장이 다 별로면 형질 대신 소소한 보상(새끼 몇 마리)을 받고 관전으로 복귀한다.
+   * 시작 프리셋 선택(firstChoice)은 스킵 불가(반드시 한 종으로 시작). */
+  skipDraft(): void {
+    if (this.phase !== "draft" || this.firstChoice) return;
+    this.world.spawnPlayerBrood(SIM.draftSkipBrood);
+    this.pickedCardNames.push("건너뜀");
+    this.phase = "watch";
+    this.acc = 0;
+  }
+
   update(deltaMS: number): void {
     if (this.paused) return;
     const stepMs = 1000 / SIM.stepsPerSecond;
