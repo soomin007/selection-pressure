@@ -468,6 +468,9 @@ async function boot(): Promise<void> {
     effects.update(ticker.deltaMS);
     hud.sync(game.world, statusLine(), game.level, game.xpProgress, game.timeline, app.screen.width);
     buildPanel.setVisible(game.phase === "draft" || game.phase === "watch");
+    // 좌하단 조작 열(한 마리 관찰·줌)은 관전 중 + 개체 미선택일 때만 — 로비·드래프트·개체 정보 카드와
+    // 좌하단에서 겹치지 않게(known_issues: 좌하단 UI 셋이 한자리에 겹친다).
+    zoomBar.style.display = game.phase === "watch" && selectedId === null ? "flex" : "none";
 
     updateCamera(ticker.deltaMS);
     // 미니맵 — 관전/드래프트 중에만(로비 제외). 카메라 뷰포트는 화면(layout)/줌 기준.
@@ -605,7 +608,9 @@ async function boot(): Promise<void> {
       }
     }
     view.setSelected(selectedId);
-    if (currentSelected) {
+    // 개체 정보 카드는 관전 중일 때만 그린다 — 드래프트가 뜨면 숨겨 하단 카드와 좌하단에서 겹치지 않게
+    // (카메라 추적은 currentSelected 로 계속 유지). known_issues: 좌하단 UI 셋이 한자리에 겹친다.
+    if (currentSelected && game.phase === "watch") {
       const en = currentSelected;
       creatureCard.update({
         name: creatureName(en.id),
