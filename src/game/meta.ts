@@ -209,6 +209,17 @@ export function debugSetMetaLevel(level: number): void {
   writeState(s);
 }
 
+/** 디버그 전용 — 저장된 진행도를 전부 지운다(메타 경험치·정복 + 챔피언 명예의 전당). 첫 플레이 상태로. */
+export function debugResetProgress(): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(CHAMPION_KEY);
+  } catch {
+    // 접근 실패면 조용히 무시(플레이는 계속된다)
+  }
+}
+
 /** 디버그 전용 — 메타 경험치를 더하고 진척도를 반환(종료 화면 애니메이션을 반복 없이 재생). */
 export function debugGrantMetaXp(amount: number): RunProgress {
   const s = readState();

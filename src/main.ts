@@ -248,13 +248,13 @@ async function boot(): Promise<void> {
     document.body.appendChild(debugBadge);
   }
 
-  // ?dev — 디버그 패널(접이식). 위협 즉시 소환 + 메타 레벨/진척도 테스트. 좌상단(정보 박스 아래)에 둬서
-  // 하단 드래프트 카드를 가리지 않는다(전엔 우하단이라 셋째 카드를 가렸다 — 폰 피드백).
+  // ?dev — 디버그 패널(접이식). 위협 즉시 소환 + 메타 레벨/진척도/초기화. 좌측 세로 중앙(월드 뷰 빈 구역)에
+  // 둬서 정보 박스(좌상단)·컨트롤(우상단)·드래프트 카드(하단)·미니맵(우하단) 어느 것도 안 가린다.
   if (DEBUG.devSummon) {
     const panel = document.createElement("div");
     panel.style.cssText =
-      "position:fixed; left:6px; top:112px; z-index:31; display:flex; flex-direction:column;" +
-      "align-items:flex-start; gap:4px; pointer-events:none;";
+      "position:fixed; left:6px; top:42%; transform:translateY(-50%); z-index:31; display:flex;" +
+      "flex-direction:column; align-items:flex-start; gap:4px; pointer-events:none;";
     const grid = document.createElement("div");
     grid.style.cssText =
       "display:none; flex-wrap:wrap; gap:4px; justify-content:flex-start; max-width:min(72vw,420px);";
@@ -298,6 +298,8 @@ async function boot(): Promise<void> {
         });
       }),
     );
+    // 저장된 진행도(레벨·챔피언) 초기화 — 첫 플레이 상태로 되돌려 테스트(레벨 1·리롤 잠금·챔피언 없음).
+    grid.appendChild(devBtn("초기화", (b) => { game.debugReset(); flash(b); updateToggle(); }));
     const toggle = document.createElement("button");
     toggle.style.cssText =
       "pointer-events:auto; padding:5px 11px; background:rgba(11,14,20,0.92); border:1px solid" +

@@ -10,7 +10,7 @@ import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, TRAIT_CEILING, type Genome, type Traits } from "@/sim/genome";
 import { drawCards, applyCard, boostCard, PRESET_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
-import { loadMeta, metaLevel, isPresetUnlocked, isCardUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
+import { loadMeta, metaLevel, isPresetUnlocked, isCardUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { buildRunReport } from "@/game/runReport";
@@ -579,6 +579,13 @@ export class Game {
     const progress = debugGrantMetaXp(amount);
     this.reloadMeta();
     return progress;
+  }
+
+  /** 디버그 전용(?dev) — 저장된 진행도(레벨·챔피언)를 전부 지우고 첫 플레이 상태로(즉시 이 런에 반영). */
+  debugReset(): void {
+    debugResetProgress();
+    this.reloadMeta(); // 메타 레벨·리롤 잠금 반영
+    this.champions = loadChampions(); // 비워진 챔피언(다음 런부터 안 나온다)
   }
 
   /**
