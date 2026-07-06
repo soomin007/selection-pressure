@@ -115,15 +115,16 @@ export interface UnlockTier {
   presetIds: string[];
   cardIds: string[];
   reroll?: boolean; // 이 레벨에서 드래프트 "다시 뽑기"가 열리는가
-  label: string; // 해금 알림 문구
+  label: string; // 해금 이름(제목)
+  detail: string; // 무엇이 열리는지 한 줄 설명(제목 아래 작게)
 }
 export const UNLOCK_TIERS: readonly UnlockTier[] = [
-  { atLevel: 2, presetIds: [], cardIds: [], reroll: true, label: "다시 뽑기 · 드래프트 카드를 새로 뽑는다" },
-  { atLevel: 3, presetIds: ["preset_sea"], cardIds: ["fins", "webbed"], label: "바다 개척자 · 헤엄 카드" },
-  { atLevel: 5, presetIds: ["preset_sky"], cardIds: ["wings", "strong_wings"], label: "하늘 개척자 · 날개 카드" },
-  { atLevel: 7, presetIds: ["preset_ranged"], cardIds: ["long_horn", "spit"], label: "원거리 사냥꾼 · 원거리 카드" },
-  { atLevel: 9, presetIds: ["preset_venom"], cardIds: ["venom_fang", "venom_gland"], label: "독 살갗 · 독 카드" },
-  { atLevel: 12, presetIds: [], cardIds: ["echo", "bat_ear"], label: "초음파 카드" },
+  { atLevel: 2, presetIds: [], cardIds: [], reroll: true, label: "다시 뽑기", detail: "드래프트에서 카드를 새로 뽑는다" },
+  { atLevel: 3, presetIds: ["preset_sea"], cardIds: ["fins", "webbed"], label: "바다 개척자", detail: "바다를 헤엄치는 새 갈래와 카드" },
+  { atLevel: 5, presetIds: ["preset_sky"], cardIds: ["wings", "strong_wings"], label: "하늘 개척자", detail: "산과 바다를 나는 새 갈래와 카드" },
+  { atLevel: 7, presetIds: ["preset_ranged"], cardIds: ["long_horn", "spit"], label: "원거리 사냥꾼", detail: "멀리서 쏘는 새 갈래와 카드" },
+  { atLevel: 9, presetIds: ["preset_venom"], cardIds: ["venom_fang", "venom_gland"], label: "독 살갗", detail: "독을 품는 새 갈래와 카드" },
+  { atLevel: 12, presetIds: [], cardIds: ["echo", "bat_ear"], label: "초음파", detail: "귀로 사방을 더듬는 카드" },
 ];
 
 // 티어로 잠갔다 여는 대상 전체(잠금 후보). 이 집합에 없는 id 는 처음부터 항상 열려 있다.

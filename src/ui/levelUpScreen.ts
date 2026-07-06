@@ -2,7 +2,7 @@
 // 연달아 오르고(탕탕탕), 넘긴 레벨마다 새로 열린 것을 하이라이트한다. 결과(사망 원인) 화면 직전에 낀다.
 // 순수 DOM + requestAnimationFrame 애니메이션(캔버스 위 HTML 오버레이). 탭하면 끝까지 건너뛴다.
 
-import { metaLevelInfo, type RunProgress } from "@/game/meta";
+import { metaLevelInfo, type RunProgress, type UnlockTier } from "@/game/meta";
 
 export interface LevelUpScreen {
   play: (progress: RunProgress, onDone: () => void) => void;
@@ -56,9 +56,20 @@ export function createLevelUpScreen(): LevelUpScreen {
   const gained = document.createElement("div");
   gained.style.cssText = "color:#8a93a6; font-size:13px; font-weight:600;";
 
-  const unlocks = document.createElement("div");
-  unlocks.style.cssText =
-    "display:flex; flex-direction:column; gap:6px; min-height:0; margin-top:4px; width:min(80vw,320px);";
+  // "새로 열림" 박스 — 넘긴 레벨에서 열린 것들을 담는다. 항목이 하나도 없으면 숨긴다.
+  const unlockBox = document.createElement("div");
+  unlockBox.style.cssText =
+    "display:none; flex-direction:column; gap:9px; width:min(82vw,330px); margin-top:6px; padding:13px 14px;" +
+    "border:1px solid #55672f; border-radius:16px;" +
+    "background:linear-gradient(180deg, rgba(42,54,26,0.55), rgba(20,26,13,0.75));" +
+    "box-shadow:0 0 22px rgba(120,180,60,0.16);";
+  const unlockHeader = document.createElement("div");
+  unlockHeader.textContent = "새로 열림";
+  unlockHeader.style.cssText =
+    "color:#cfe6b0; font-size:12px; font-weight:800; letter-spacing:3px; text-align:center; opacity:0.92;";
+  const unlockList = document.createElement("div");
+  unlockList.style.cssText = "display:flex; flex-direction:column; gap:8px;";
+  unlockBox.append(unlockHeader, unlockList);
 
   const continueBtn = document.createElement("button");
   continueBtn.textContent = "계속";
@@ -67,7 +78,7 @@ export function createLevelUpScreen(): LevelUpScreen {
     "background:linear-gradient(180deg,#7db0e0,#4f84b4); color:#08161f; font-size:16px;" +
     "font-weight:800; cursor:pointer;";
 
-  overlay.append(title, badge, track, gained, unlocks, continueBtn);
+  overlay.append(title, badge, track, gained, unlockBox, continueBtn);
   document.body.appendChild(overlay);
 
   let raf = 0;
@@ -81,19 +92,37 @@ export function createLevelUpScreen(): LevelUpScreen {
   };
 
   const play = (progress: RunProgress, onDone: () => void): void => {
-    unlocks.replaceChildren();
+    unlockList.replaceChildren();
+    unlockBox.style.display = "none";
     finished = false;
     let lastLevel = progress.beforeLevel;
     const revealed = new Set<number>();
 
-    const addUnlock = (label: string): void => {
-      const row = document.createElement("div");
-      row.className = "lvl-unlock";
-      row.textContent = "새로 열림 · " + label;
-      row.style.cssText =
-        "padding:8px 12px; border:1px solid #3f4a2a; border-radius:10px; background:#1a2012;" +
-        "color:#ffe08a; font-size:14px; font-weight:700;";
-      unlocks.appendChild(row);
+    // 한 해금 항목 — 금빛 표식(＋) + 제목 + 한 줄 설명. 가운뎃점 줄글 대신 구조로 읽힌다.
+    const addUnlock = (u: UnlockTier): void => {
+      unlockBox.style.display = "flex";
+      const item = document.createElement("div");
+      item.className = "lvl-unlock";
+      item.style.cssText =
+        "display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:12px;" +
+        "border:1px solid #46542a; background:rgba(255,224,138,0.06);";
+      const mark = document.createElement("div");
+      mark.textContent = "＋";
+      mark.style.cssText =
+        "flex:none; width:26px; height:26px; display:flex; align-items:center; justify-content:center;" +
+        "border-radius:50%; background:linear-gradient(180deg,#ffe08a,#f0b840); color:#2a1e06;" +
+        "font-size:16px; font-weight:900; box-shadow:0 0 10px rgba(255,210,90,0.5);";
+      const texts = document.createElement("div");
+      texts.style.cssText = "display:flex; flex-direction:column; gap:1px; text-align:left; min-width:0;";
+      const name = document.createElement("div");
+      name.textContent = u.label;
+      name.style.cssText = "color:#ffe08a; font-size:15px; font-weight:800;";
+      const detail = document.createElement("div");
+      detail.textContent = u.detail;
+      detail.style.cssText = "color:#a7b596; font-size:12px; font-weight:500; line-height:1.35;";
+      texts.append(name, detail);
+      item.append(mark, texts);
+      unlockList.appendChild(item);
     };
     const popLevel = (lv: number): void => {
       badge.classList.remove("pop");
@@ -102,7 +131,7 @@ export function createLevelUpScreen(): LevelUpScreen {
       if (revealed.has(lv)) return;
       revealed.add(lv);
       const lu = progress.levelUps.find((x) => x.level === lv);
-      for (const u of lu?.unlocks ?? []) addUnlock(u.label);
+      for (const u of lu?.unlocks ?? []) addUnlock(u);
     };
     const render = (xp: number): void => {
       const info = metaLevelInfo(xp);
@@ -128,7 +157,7 @@ export function createLevelUpScreen(): LevelUpScreen {
       for (const lu of progress.levelUps) {
         if (!revealed.has(lu.level)) {
           revealed.add(lu.level);
-          for (const u of lu.unlocks) addUnlock(u.label);
+          for (const u of lu.unlocks) addUnlock(u);
         }
       }
       continueBtn.style.display = "block";
