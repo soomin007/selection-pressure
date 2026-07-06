@@ -8,7 +8,7 @@
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, TRAIT_CEILING, type Genome, type Traits } from "@/sim/genome";
-import { drawCards, applyCard, PRESET_CARDS, type Card } from "@/game/cards";
+import { drawCards, applyCard, boostCard, PRESET_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
 import { loadMeta, isPresetUnlocked, isCardUnlocked, recordRunComplete, loadChampions, saveChampion, type UnlockTier, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
@@ -55,6 +55,7 @@ export class Game {
   private stageIndex = 0;
   private stageTicksLeft = 0;
   private firstChoice = true; // 런 첫 드래프트 = 시작 프리셋 선택
+  private eraReward = false; // 지금 드래프트가 "시대 보상"(다음 시대 진입 직전 강화 카드)인가
   private bossQueue: BossType[] = []; // 한 런의 보스들(서로 다른 종류)
   private extinctionQueue: ExtinctionType[] = []; // 한 런의 대멸종 종류들 — 미리 정해 예고 가능(보스와 대칭)
 
@@ -152,6 +153,15 @@ export class Game {
       applyCard(this.genome, card);
       this.pickedCardNames.push(card.name);
     }
+    if (this.eraReward) {
+      // 시대 보상을 골랐다 — 갓 태어난 이 시대 무리에 즉시 반영하고(성장 이어짐) 첫 채집 단계로.
+      this.eraReward = false;
+      for (const e of this.world.entities) {
+        if (e.species.isPlayer) e.genome = cloneGenome(this.world.genome);
+      }
+      this.beginStage();
+      return;
+    }
     if (this.firstChoice) {
       // 시작 프리셋을 골랐으니 곧장 첫 채집 단계로.
       this.firstChoice = false;
@@ -179,6 +189,12 @@ export class Game {
     if (this.phase !== "draft" || this.firstChoice) return;
     this.world.spawnPlayerBrood(SIM.draftSkipBrood);
     this.pickedCardNames.push("건너뜀");
+    if (this.eraReward) {
+      // 시대 보상을 건너뛰면 형질 대신 새끼로 받고 새 시대 첫 단계로(관전으로 복귀가 아님).
+      this.eraReward = false;
+      this.beginStage();
+      return;
+    }
     this.phase = "watch";
     this.acc = 0;
   }
@@ -524,7 +540,28 @@ export class Game {
       if (e.species.isPlayer) e.genome = cloneGenome(this.world.genome);
     }
     this.onWorldChanged?.(this.world);
-    this.beginStage(); // 첫 채집 단계부터 다시(phase = watch)
+    // 첫 채집 단계로 바로 가지 않고, 먼저 "시대 보상" 드래프트를 띄운다(강해진 형질 하나 = 난이도 도약 보상).
+    this.beginEraRewardDraft();
+  }
+
+  /**
+   * 시대 보상 드래프트 — 시대를 넘을 때마다 강화된 카드(정상 ×eraRewardBoost 강도) 3장 중 하나를 고른다.
+   * 위협이 시대마다 세지는 만큼 성장에 큰 도약을 줘 난이도 루프를 "갈수록 재밌게"(어렵기만 하지 않게).
+   * 결정론: 시대 시드에서 파생한 독립 RNG. 보상 카드는 boostCard 사본이라 표시값=실제 적용값.
+   */
+  private beginEraRewardDraft(): void {
+    this.phase = "draft";
+    this.eraReward = true;
+    const rng = new Rng(`${this.currentSeed}-erareward`);
+    const drawn = drawCards(
+      rng,
+      3,
+      (c) => isCardUnlocked(c.id, this.metaBestLevel) && !cardRedundant(c, this.genome.traits),
+    );
+    this.draftCards = drawn.map((c) => boostCard(c, GAME.eraRewardBoost));
+    this.preview =
+      "새로운 시대에 들어섭니다. 지난 시대를 넘어선 보상으로, 크게 강해진 형질 하나를 고르세요. 지금 무리에 바로 물려집니다.";
+    this.onDraft?.(this.draftCards, this.preview);
   }
 
   /** HUD 표시용 시대 라벨 — "시대 N / 5"로 지금 몇 번째인지·목표(정복)까지 얼마나 남았는지 항상 보인다. */

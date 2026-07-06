@@ -400,6 +400,17 @@ export function effectiveDelta(key: keyof Traits, raw: number): number {
   return Math.round(TRAIT_CEILING[key] > 100 ? raw * CARD_GROWTH_SCALE : raw);
 }
 
+/** 카드 효과를 boost 배로 키운 사본(시대 보상용). 표시값(effectiveDelta)과 실제 적용(applyCard)이 같은
+ * 카드 객체를 쓰므로 수치가 어긋나지 않는다. 대가(음수 효과)도 함께 커져 카드 정체성을 유지한다.
+ * set(프리셋 정체성 절대값)은 보상 풀(CARD_POOL)에 없어 그대로 둔다. */
+export function boostCard(card: Card, boost: number): Card {
+  const effects: Partial<Record<keyof Traits, number>> = {};
+  for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
+    effects[key] = Math.round((card.effects[key] ?? 0) * boost);
+  }
+  return { ...card, effects };
+}
+
 /** 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). allow 로 카드(메타 언락·프리셋 적합)를 걸러낸다. */
 export function drawCards(rng: Rng, n: number, allow?: (c: Card) => boolean): Card[] {
   const pool = (allow ? CARD_POOL.filter(allow) : CARD_POOL).slice();

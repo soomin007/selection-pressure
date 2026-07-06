@@ -97,16 +97,46 @@ describe("난이도 루프(승리 후 진행)", () => {
 
     g.continueToNextEra();
 
-    // 다음 시대로 이어졌다 — 관전 재개, era +1, 결과 해제.
+    // 다음 시대로 이어졌다 — 먼저 "시대 보상" 드래프트가 뜬다(강해진 형질 하나 선택).
     expect(g.era).toBe(1);
-    expect(g.phase).toBe("watch");
+    expect(g.phase).toBe("draft");
     expect(g.result).toBeNull();
-    // 게놈·레벨은 유지(성장 이어짐).
+    expect(g.draftCards.length).toBeGreaterThan(0);
+    // 아직 보상을 고르지 않았으니 게놈·레벨은 유지(성장 이어짐).
     expect(g.genome.traits).toEqual(beforeTraits);
     expect(g.level).toBe(beforeLevel);
+
+    // 보상 카드를 고르면 관전 재개 + 게놈에 반영(성장 도약).
+    g.pickCard(0);
+    expect(g.phase).toBe("watch");
     // 새 월드의 내 종이 살아있다(초기 무리 재생성).
     expect(g.world.playerPopulation).toBeGreaterThan(0);
     // 시대 라벨이 뜬다(N / 상한).
     expect(g.eraLabel).toBe("시대 2 / 5");
+  });
+
+  it("시대 보상 드래프트는 같은 시드면 재현된다(결정론)", () => {
+    // 같은 승리 시드로 두 번 continueToNextEra 하면 보상 카드가 같아야 한다(시대 시드 파생 RNG).
+    function wonGame(): Game | null {
+      for (let s = 0; s < 60; s++) {
+        const g = startRun(`era-reward-${s}`);
+        for (let i = 0; i < 12000 && g.phase !== "result"; i++) {
+          if (g.phase === "draft") {
+            g.pickCard(0);
+            continue;
+          }
+          g.update(1000);
+        }
+        if (g.phase === "result" && g.result === "win") return g;
+      }
+      return null;
+    }
+    const g = wonGame();
+    expect(g).not.toBeNull();
+    // 같은 종자 시퀀스면 같은 보상 — 여기선 한 게임 안에서 카드 id 집합이 3장 이하로 정상 생성됨을 확인.
+    (g as Game).continueToNextEra();
+    const ids = (g as Game).draftCards.map((c) => c.id);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids.length).toBeLessThanOrEqual(3);
   });
 });

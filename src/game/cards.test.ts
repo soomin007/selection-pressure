@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Rng } from "@/sim/rng";
-import { drawCards, applyCard, CARD_POOL, PRESET_CARDS } from "@/game/cards";
+import { drawCards, applyCard, boostCard, CARD_POOL, PRESET_CARDS } from "@/game/cards";
 import { defaultGenome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 
@@ -111,5 +111,31 @@ describe("카드 적용", () => {
     expect(g.traits.venom).toBe(42); // 안 줄임(상한 100 형질)
     for (let i = 0; i < 5; i++) applyCard(g, venomCard);
     expect(g.traits.venom).toBe(100); // 100 에서 멈춤
+  });
+});
+
+describe("시대 보상 카드 강화(boostCard)", () => {
+  it("효과가 배수만큼 커지고(대가 포함) 나머지 필드는 보존된다", () => {
+    const sprint = CARD_POOL.find((c) => c.id === "sprint"); // speed +22, metabolism +7
+    expect(sprint).toBeDefined();
+    if (!sprint) return;
+    const boosted = boostCard(sprint, 2);
+    expect(boosted.id).toBe(sprint.id);
+    expect(boosted.name).toBe(sprint.name);
+    expect(boosted.effects.speed).toBe(44); // +22 → ×2
+    expect(boosted.effects.metabolism).toBe(14); // 대가(+7)도 함께 ×2
+    // 원본은 안 건드린다(사본).
+    expect(sprint.effects.speed).toBe(22);
+  });
+
+  it("보상 카드는 표시값(effectiveDelta)과 실제 적용값이 같은 객체라 어긋나지 않는다", () => {
+    // 상한 200 형질은 applyCard 가 ×0.6 하지만, boostCard 로 값 자체가 커진 카드를 그대로 쓰므로
+    // 카드에 적힌 effects 가 곧 표시·적용의 단일 소스다(수치 불일치 방지).
+    const swift = CARD_POOL.find((c) => c.id === "swift"); // speed +15
+    if (!swift) return;
+    const boosted = boostCard(swift, 2); // speed +30
+    const g = defaultGenome(); // speed 50
+    applyCard(g, boosted); // 200 상한 형질 → ×0.6 = +18
+    expect(g.traits.speed).toBe(68);
   });
 });
