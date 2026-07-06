@@ -6,6 +6,7 @@
 - [`../적자생존_기획서_v0.1.md`](../적자생존_기획서_v0.1.md) — 게임 기획 전문 (코어 설계의 단일 진실)
 - [`design/open_questions.md`](design/open_questions.md) — 미해결 결정 (기획서 §11). 구현 전 확정 대상
 - [`ROADMAP.md`](ROADMAP.md) — 단계별 로드맵 (앞으로 할 일만)
+- [`UI_HANDOFF.md`](UI_HANDOFF.md) — **UI 핸드오프 문서** (코드 안 보고 맥락 파악: Game API·화면 흐름·컴포넌트·톤 규칙)
 
 ## 작업 관리
 - [`design/backlog.md`](design/backlog.md) — **다음 작업의 단일 소스** (앞으로 할 일만)

@@ -14,7 +14,7 @@ export interface CreatureCardData {
   sizeText: string; // 덩치 한 단어(개체 개성 — 작은 몸/보통/큰 몸집)
   activity: string; // 지금 무엇을 하는 중인지(사냥/먹이/배회)
   descriptor: string; // 종 한 줄 묘사(describeSpecies)
-  traits: Traits; // 형질값(종 공유 게놈)
+  traits: Traits; // 이 개체의 형질값 — 개체별 진화로 같은 무리 안에서도 개체마다 다르다(‹ ›로 넘겨 비교)
 }
 
 export interface CreatureCard {

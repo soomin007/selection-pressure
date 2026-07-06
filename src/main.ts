@@ -199,10 +199,16 @@ async function boot(): Promise<void> {
     controls.setVisible(false);
     // 정복 = 마지막 시대 승리(더 이어갈 수 없음), 승리 = 한 시대 넘김(이어감), 멸종 = 패배.
     const kind = res === "lose" ? "lose" : canContinue ? "win" : "conquest";
+    const showResult = (): void => {
+      // 순간 연출(멸종 비네트·"멸종" 글자 등)을 걷어낸 뒤 결과 화면 → 월드를 정상 밝기로 보여주고,
+      // 결과 패널 제목의 "멸종"과 순간 연출 글자가 겹쳐 두 번 보이던 문제를 없앤다.
+      moment.clear();
+      result.show(res === "win", summary, canContinue);
+    };
     moment.play(kind, () => {
       // 런이 진짜 끝났으면(progress 있음) 진척도 화면을 먼저, 그 뒤 결과 화면. 중간 시대 승리(이어감)면 바로 결과.
-      if (progress) levelScreen.play(progress, () => result.show(res === "win", summary, canContinue));
-      else result.show(res === "win", summary, canContinue);
+      if (progress) levelScreen.play(progress, showResult);
+      else showResult();
     });
   };
   // 카메라 상태 — onWorldChanged 가 game.start()에서 곧장 호출돼 camX/camY 를 스냅하므로, 그 콜백보다

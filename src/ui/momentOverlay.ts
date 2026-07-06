@@ -89,7 +89,7 @@ export function createMomentOverlay(): MomentOverlay {
       // 멸종 — 화면이 어둑히 닫히며 "멸종" 큰 글자. 어둠은 결과 패널 뒤로 남는다(clear 로 지운다).
       root.appendChild(
         layer(
-          "position:absolute; inset:0; background:radial-gradient(circle at 50% 50%, rgba(40,8,8,0.4) 15%, rgba(4,5,8,0.94) 92%)",
+          "position:absolute; inset:0; background:radial-gradient(circle at 50% 50%, rgba(30,10,10,0.35) 18%, rgba(8,11,17,0.82) 96%)",
           "moment-close 1.4s ease-out forwards",
         ),
       );

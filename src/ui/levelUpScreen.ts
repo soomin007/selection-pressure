@@ -36,7 +36,7 @@ export function createLevelUpScreen(): LevelUpScreen {
   const overlay = document.createElement("div");
   overlay.style.cssText =
     "position:fixed; inset:0; z-index:40; display:none; flex-direction:column; align-items:center;" +
-    "justify-content:center; gap:14px; padding:24px; background:rgba(6,9,14,0.86);" +
+    "justify-content:center; gap:14px; padding:24px; background:rgba(8,11,17,0.82);" +
     "font-family:system-ui,-apple-system,sans-serif; text-align:center; user-select:none;";
 
   const title = document.createElement("div");
