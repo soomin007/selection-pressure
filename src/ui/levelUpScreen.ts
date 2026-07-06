@@ -19,6 +19,13 @@ function ensureStyles(): void {
     @keyframes lvlRow { from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:translateY(0)} }
     .lvl-badge.pop { animation: lvlPop 380ms cubic-bezier(.2,1.4,.4,1); }
     .lvl-unlock { animation: lvlRow 320ms ease-out both; }
+    /* 해금 표식 — 글리프(전각 ＋) 대신 CSS 십자 막대로 원 정중앙에 딱 맞춘다(글꼴 편차 제거). */
+    .lvl-mark { position:relative; flex:none; width:26px; height:26px; border-radius:50%;
+      background:linear-gradient(180deg,#ffe08a,#f0b840); box-shadow:0 0 10px rgba(255,210,90,0.5); }
+    .lvl-mark::before, .lvl-mark::after { content:""; position:absolute; left:50%; top:50%;
+      background:#2a1e06; border-radius:1.5px; }
+    .lvl-mark::before { width:12px; height:3px; transform:translate(-50%,-50%); }
+    .lvl-mark::after  { width:3px; height:12px; transform:translate(-50%,-50%); }
   `;
   document.head.appendChild(s);
 }
@@ -107,11 +114,7 @@ export function createLevelUpScreen(): LevelUpScreen {
         "display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:12px;" +
         "border:1px solid #46542a; background:rgba(255,224,138,0.06);";
       const mark = document.createElement("div");
-      mark.textContent = "＋";
-      mark.style.cssText =
-        "flex:none; width:26px; height:26px; display:flex; align-items:center; justify-content:center;" +
-        "border-radius:50%; background:linear-gradient(180deg,#ffe08a,#f0b840); color:#2a1e06;" +
-        "font-size:16px; font-weight:900; box-shadow:0 0 10px rgba(255,210,90,0.5);";
+      mark.className = "lvl-mark"; // 원 + CSS 십자(글리프 편차 없이 정중앙)
       const texts = document.createElement("div");
       texts.style.cssText = "display:flex; flex-direction:column; gap:1px; text-align:left; min-width:0;";
       const name = document.createElement("div");
