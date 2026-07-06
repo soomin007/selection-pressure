@@ -11,7 +11,7 @@ import type { World, DeathCause } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
 import type { Food } from "@/sim/food";
 import type { Traits } from "@/sim/genome";
-import { TRAIT_MAX } from "@/sim/genome";
+import { TRAIT_MAX, cloneGenome, mutateGenome } from "@/sim/genome";
 import { createEntity } from "@/sim/entity";
 import { areFriends } from "@/sim/species";
 import { SIM } from "@/sim/params";
@@ -261,7 +261,12 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     const cy = e.y + world.rng.range(-6, 6);
     // 막힌 타일에 태어나면 갇히므로 가장 가까운 통행 타일로 스냅(rng 미사용 → 결정론·밸런스 보존).
     const spot = world.terrain.nearestPassable(cx, cy, canSwim, canLand, canFly);
-    newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, childEnergy));
+    // 개체별 진화 — 내 종 새끼는 부모 게놈을 물려받아 조금 변이한다(독립 mutRng → 메인 스트림 불변).
+    // 야생은 종 게놈 공유(개체 변이 없음 — 야생은 종 단위 진화가 따로 있다).
+    const childGenome = e.species.isPlayer
+      ? mutateGenome(cloneGenome(e.genome), world.mutRng, SIM.mutationStrength)
+      : undefined;
+    newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, childEnergy, childGenome));
     world.emit("birth", spot.x, spot.y); // 연출: 탄생(초록 반짝)
   }
 }

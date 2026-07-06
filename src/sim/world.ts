@@ -81,6 +81,9 @@ export class World {
    * 테스트는 작은 월드(1)로 빠르게, 게임은 큰 월드(맵 3배 → 9)로. 밀도가 같아 밸런스가 일관된다. */
   readonly areaScale: number;
   readonly rng: Rng;
+  /** 개체별 변이 전용 독립 rng — 새끼 게놈을 부모에서 조금 흔든다(개체별 진화). 메인 rng 소비 순서를 안
+   * 건드려 기존 밸런스를 보존한다(known_issues: rng 스트림을 늘리면 분포가 통째로 이동). */
+  readonly mutRng: Rng;
   /** 내 종 게놈 — 드래프트가 수정하는 대상(살아있는 중 바꾸면 즉시 반영). */
   readonly genome: Genome;
   readonly playerSpecies: Species;
@@ -127,6 +130,7 @@ export class World {
     this.height = height;
     this.areaScale = areaScale;
     this.rng = new Rng(seed);
+    this.mutRng = new Rng(String(seed) + "-mut"); // 개체 변이 전용 독립 스트림(메인 rng 불변)
     this.genome = genome;
     // 환경(바이옴)도 지형처럼 "독립된 rng"로 생성 → 앞으로 환경을 손봐도 메인 sim 동역학 스트림과 무관.
     this.environment = Environment.generate(new Rng(String(seed) + "-env"), width, height, SIM.cellSize);

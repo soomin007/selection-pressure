@@ -43,6 +43,8 @@ export function createEntity(
   y: number,
   species: Species,
   energy: number,
+  // 번식 시 개체별 진화 — 부모에서 변이시킨 게놈을 넘긴다(넘기면 이 게놈을 그대로 소유). 없으면 종 기준선.
+  genomeOverride?: Genome,
 ): Entity {
   return {
     id,
@@ -53,9 +55,9 @@ export function createEntity(
     energy,
     age: 0,
     species,
-    // 내 종은 태어난 시점의 게놈을 복사한다(세대별 형질) — 이후 카드(레벨업)로 종 게놈이 바뀌어도
-    // 이 개체는 옛 형질을 유지한다. 야생은 종 게놈을 공유(종 전체가 함께 진화).
-    genome: species.isPlayer ? cloneGenome(species.genome) : species.genome,
+    // 번식으로 부모 게놈(변이본)을 받으면 그걸 소유. 아니면 내 종은 종 기준선을 복사(초기 무리·보충),
+    // 야생은 종 게놈을 공유(종 전체가 함께 진화).
+    genome: genomeOverride ?? (species.isPlayer ? cloneGenome(species.genome) : species.genome),
     alive: true,
     prevX: x,
     prevY: y,

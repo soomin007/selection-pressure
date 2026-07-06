@@ -200,6 +200,24 @@ export function cloneGenome(genome: Genome): Genome {
   return { genomeVersion: genome.genomeVersion, traits: { ...genome.traits } };
 }
 
+// 개체별 변이(자연선택)에 흔들 연속 생태 형질 — 능력형 정체성(수영·날개·초음파·독·원거리)과 식성은 제외한다.
+// 식성은 초식/육식 갈래(정체성), 능력형은 플레이어가 카드로 여는 정체성이라 흔들지 않고, 생태 형질만 세대마다
+// 조금씩 달라져 개체가 갈린다(같은 무리 안에서도 빠른/느린·큰눈/작은눈이 섞이고, 환경에 맞는 쪽이 살아남는다).
+const MUTABLE_TRAITS = ["speed", "vision", "attack", "herding", "metabolism", "fertility"] as const;
+
+/**
+ * 새끼 게놈을 부모에서 조금 변이시킨다(개체별 진화의 핵심 — "부모 닮되 조금 다름"). 연속 생태 형질만
+ * ±strength 흔들고 상한 클램프. **rng 는 반드시 독립 스트림(world.mutRng)을 넘긴다** — 메인 rng 소비 순서를
+ * 안 건드려 기존 밸런스를 보존한다(known_issues: rng 스트림을 늘리면 분포가 통째로 이동). in-place 변이 후 반환.
+ */
+export function mutateGenome(genome: Genome, rng: Rng, strength: number): Genome {
+  if (strength <= 0) return genome;
+  for (const key of MUTABLE_TRAITS) {
+    genome.traits[key] = clampTraitValue(key, genome.traits[key] + rng.range(-strength, strength));
+  }
+  return genome;
+}
+
 /** 모든 형질을 0~100 자연수로 강제. (카드 효과 누적 후 호출) */
 export function clampGenome(genome: Genome): Genome {
   const traits = {} as Traits;

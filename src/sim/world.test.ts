@@ -332,6 +332,26 @@ describe("세대별 형질 (레벨 = 세대)", () => {
   });
 });
 
+describe("개체별 진화 (내 종 — 부모 상속 + 변이, 자연선택)", () => {
+  it("균일(형질 50)하게 시작해도 세대를 거치며 개체 게놈이 갈린다", () => {
+    // 새끼가 '종 기준선'이 아니라 '부모'를 물려받아 조금 변이하므로, 시작은 다 같아도 곧 제각각이 된다.
+    const w = new World("env-4", W, H, defaultGenome()); // 시작 전부 대사 50
+    for (let i = 0; i < 1500; i++) w.step();
+    const mets = w.entities.filter((e) => e.alive && e.species.isPlayer).map((e) => e.genome.traits.metabolism);
+    expect(mets.length).toBeGreaterThan(1); // 살아있는 내 종이 여럿
+    expect(new Set(mets).size).toBeGreaterThan(1); // 개체마다 대사가 갈린다(균일 50이 아님 = 개체차 창발)
+  });
+
+  it("개체 변이는 독립 mutRng 라 같은 시드면 완전히 동일(결정론 보존)", () => {
+    const run = (): number[] => {
+      const w = new World("env-4", W, H, defaultGenome());
+      for (let i = 0; i < 1200; i++) w.step();
+      return w.entities.filter((e) => e.alive && e.species.isPlayer).map((e) => e.genome.traits.metabolism);
+    };
+    expect(run()).toEqual(run());
+  });
+});
+
 describe("지형 이동 차단 (P1 결합)", () => {
   it("비수영 종은 물·산 타일에 들어가지 못한다", () => {
     // 야생/내 종 모두 기본 수영 0.5 < 0.65 → 물에 못 들어가고, 산은 누구도 못 넘는다.

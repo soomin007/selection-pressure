@@ -181,7 +181,15 @@ export class Game {
       }
       this.beginStage();
     } else {
-      // 레벨업 드래프트 — 진행 중이던 단계로 복귀(단계 타이머·보스 상태는 그대로 보존).
+      // 레벨업 드래프트(개체별 진화) — 카드는 종 기준선(위에서 적용)뿐 아니라 "살아있는 무리 전체"에도 같은
+      // 델타로 적용한다. 플레이어가 무리 전체의 방향을 쥐고(카드), 개체차(부모에서 받은 변이)는 보존한 채
+      // 다 같이 그 방향으로 이동한다. 이후 새끼는 부모를 닮아 조금씩 갈리며 환경에 맞는 쪽이 살아남는다.
+      if (card) {
+        for (const e of this.world.entities) {
+          if (e.species.isPlayer && e.alive) applyCard(e.genome, card);
+        }
+      }
+      // 진행 중이던 단계로 복귀(단계 타이머·보스 상태는 그대로 보존).
       this.phase = "watch";
       this.acc = 0;
     }
@@ -268,7 +276,7 @@ export class Game {
       (c) => isCardUnlocked(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
     );
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
-    this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (지금부터 태어나는 새끼에게 물려집니다)`;
+    this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (무리 전체에 퍼지고, 새끼는 부모를 닮아 조금씩 달라집니다)`;
     this.onDraft?.(this.draftCards, this.preview);
   }
 
