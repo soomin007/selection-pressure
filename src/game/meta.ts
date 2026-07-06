@@ -59,6 +59,16 @@ export function saveChampion(c: Champion): void {
 export interface MetaState {
   bestLevel: number; // 여러 런에서 도달한 최고 레벨 — 언락 기준(오래 살아 성장해야 열린다)
   conquered: boolean; // 시대 상한(정복) 달성 여부(표시용)
+  runsCompleted: number; // 끝까지 마친 런 수(멸종/정복) — "다시 뽑기" 해금 기준(꾸준함의 보상)
+}
+
+// 드래프트 "다시 뽑기"(리롤) — 이만큼 런을 마치면 열린다. 여러 런을 겪은 플레이어에게 열리는 편의(선택지
+// 확장): 3장이 마음에 안 들면 형질을 포기(스킵)하는 대신 새로 뽑는다. 파워가 아니라 운을 다시 굴릴 기회다.
+export const REROLL_UNLOCK_RUNS = 3;
+
+/** 지금 "다시 뽑기"가 열려 있는가 — 마친 런 수가 임계 이상이면 열린다. */
+export function isRerollUnlocked(state: MetaState): boolean {
+  return state.runsCompleted >= REROLL_UNLOCK_RUNS;
 }
 
 // 언락 티어 — "도달한 최고 레벨"이 atLevel 에 이르면 그 목록이 열린다. 레벨은 먹이 경험치로 오르므로,
@@ -86,12 +96,16 @@ function readState(): MetaState {
     const raw = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
     if (raw) {
       const p = JSON.parse(raw) as Partial<MetaState>;
-      return { bestLevel: Math.max(0, Math.trunc(p.bestLevel ?? 0)), conquered: !!p.conquered };
+      return {
+        bestLevel: Math.max(0, Math.trunc(p.bestLevel ?? 0)),
+        conquered: !!p.conquered,
+        runsCompleted: Math.max(0, Math.trunc(p.runsCompleted ?? 0)),
+      };
     }
   } catch {
     // 파싱/접근 실패(사생활 모드 등) → 첫 플레이로 취급
   }
-  return { bestLevel: 0, conquered: false };
+  return { bestLevel: 0, conquered: false, runsCompleted: 0 };
 }
 
 function writeState(s: MetaState): void {
@@ -122,9 +136,21 @@ export function isCardUnlocked(id: string, bestLevel: number): boolean {
 export function recordRunComplete(levelReached: number, conquered: boolean): UnlockTier[] {
   const s = readState();
   const before = s.bestLevel;
+  const beforeRuns = s.runsCompleted;
   s.bestLevel = Math.max(before, Math.trunc(levelReached));
   if (conquered) s.conquered = true;
+  s.runsCompleted = beforeRuns + 1;
   writeState(s);
   // before < atLevel <= after 인 티어가 이번 런으로 새로 열렸다(최고 레벨을 갱신했을 때만).
-  return UNLOCK_TIERS.filter((t) => t.atLevel > before && t.atLevel <= s.bestLevel);
+  const opened = UNLOCK_TIERS.filter((t) => t.atLevel > before && t.atLevel <= s.bestLevel);
+  // "다시 뽑기"가 이번 런으로 처음 열렸으면 같은 알림에 얹는다(레벨과 무관, 마친 런 수 기준).
+  if (beforeRuns < REROLL_UNLOCK_RUNS && s.runsCompleted >= REROLL_UNLOCK_RUNS) {
+    opened.push({
+      atLevel: 0,
+      presetIds: [],
+      cardIds: [],
+      label: "다시 뽑기 — 드래프트에서 카드를 새로 뽑을 수 있습니다",
+    });
+  }
+  return opened;
 }

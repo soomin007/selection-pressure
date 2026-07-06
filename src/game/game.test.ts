@@ -140,3 +140,90 @@ describe("난이도 루프(승리 후 진행)", () => {
     expect(ids.length).toBeLessThanOrEqual(3);
   });
 });
+
+describe("다시 뽑기(리롤)", () => {
+  // 메타 저장소(localStorage)를 인메모리로 흉내 — Game 생성 시 loadMeta 가 이걸 읽어 리롤 해금 상태가 된다.
+  function memStorage(store: Record<string, string>): Storage {
+    return {
+      get length(): number {
+        return Object.keys(store).length;
+      },
+      clear: (): void => {
+        for (const k of Object.keys(store)) delete store[k];
+      },
+      getItem: (k: string): string | null => store[k] ?? null,
+      key: (i: number): string | null => Object.keys(store)[i] ?? null,
+      removeItem: (k: string): void => {
+        delete store[k];
+      },
+      setItem: (k: string, v: string): void => {
+        store[k] = v;
+      },
+    } as unknown as Storage;
+  }
+
+  it("해금 상태면 드래프트에서 새로 뽑고 횟수가 1회로 제한된다", () => {
+    const store: Record<string, string> = {
+      selpress_meta_v1: JSON.stringify({ bestLevel: 6, conquered: false, runsCompleted: 5 }),
+    };
+    const gl = globalThis as unknown as { localStorage?: Storage | undefined };
+    const prev = gl.localStorage;
+    gl.localStorage = memStorage(store);
+    try {
+      // 프리셋 선택 뒤 레벨업 드래프트가 뜨는 지점까지 진행(여러 시드로 견고히).
+      let drafted: Game | null = null;
+      for (let s = 0; s < 40 && !drafted; s++) {
+        const g = startRun(`reroll-${s}`);
+        for (let i = 0; i < 8000; i++) {
+          if (g.phase === "draft" && !g.isChoosingPreset) {
+            drafted = g;
+            break;
+          }
+          if (g.phase === "result") break;
+          g.update(1000);
+        }
+      }
+      expect(drafted).not.toBeNull();
+      const g = drafted as Game;
+      expect(g.canReroll).toBe(true); // 해금됐고 아직 안 뽑음
+      const before = g.draftCards.length;
+      g.reroll();
+      expect(g.draftCards.length).toBe(before); // 여전히 3장(새로 뽑음)
+      expect(g.canReroll).toBe(false); // 드래프트당 1회 제한 → 더는 못 뽑음
+      // 리롤 후에도 정상적으로 카드를 고를 수 있다(관전 복귀).
+      g.pickCard(0);
+      expect(g.phase).toBe("watch");
+    } finally {
+      gl.localStorage = prev;
+    }
+  });
+
+  it("해금 전이면 다시 뽑기가 잠겨 있다(canReroll=false)", () => {
+    // 저장소를 비워 두면(런 0회) 리롤이 잠긴다 — 기본 상태.
+    const gl = globalThis as unknown as { localStorage?: Storage | undefined };
+    const prev = gl.localStorage;
+    gl.localStorage = memStorage({});
+    try {
+      let drafted: Game | null = null;
+      for (let s = 0; s < 40 && !drafted; s++) {
+        const g = startRun(`noreroll-${s}`);
+        for (let i = 0; i < 8000; i++) {
+          if (g.phase === "draft" && !g.isChoosingPreset) {
+            drafted = g;
+            break;
+          }
+          if (g.phase === "result") break;
+          g.update(1000);
+        }
+      }
+      expect(drafted).not.toBeNull();
+      const g = drafted as Game;
+      expect(g.canReroll).toBe(false);
+      const before = g.draftCards.map((c) => c.id);
+      g.reroll(); // 잠겨 있어 아무 일도 없다
+      expect(g.draftCards.map((c) => c.id)).toEqual(before);
+    } finally {
+      gl.localStorage = prev;
+    }
+  });
+});

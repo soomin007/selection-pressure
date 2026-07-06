@@ -120,6 +120,11 @@ async function boot(): Promise<void> {
       refreshBuild();
       draft.hide();
     },
+    () => {
+      // 다시 뽑기 — 카드를 새로 뽑는다(game.reroll 이 onDraft 를 다시 불러 패널이 새 카드로 갱신된다).
+      game.reroll();
+      refreshBuild();
+    },
   );
   // 시작 프리셋은 캐릭터 선택 창으로(외형 미리보기 + 화살표로 페이지 넘기며 선택).
   const presetPanel = createPresetPanel(app.renderer, (i) => {
@@ -183,7 +188,7 @@ async function boot(): Promise<void> {
   game.onDraft = (cards, preview) => {
     // 시작 프리셋 선택은 캐릭터 선택 창, 레벨업 형질은 일반 카드 창.
     if (game.isChoosingPreset) presetPanel.show(cards, preview);
-    else draft.show(cards, preview);
+    else draft.show(cards, preview, game.canReroll);
   };
   // 승리·정복·멸종 순간 연출 — 결과 패널 직전에 전역 화면 클라이맥스를 얹는다.
   const moment = createMomentOverlay();

@@ -10,7 +10,7 @@ import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, TRAIT_CEILING, type Genome, type Traits } from "@/sim/genome";
 import { drawCards, applyCard, boostCard, PRESET_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
-import { loadMeta, isPresetUnlocked, isCardUnlocked, recordRunComplete, loadChampions, saveChampion, type UnlockTier, type Champion } from "@/game/meta";
+import { loadMeta, isPresetUnlocked, isCardUnlocked, isRerollUnlocked, recordRunComplete, loadChampions, saveChampion, type UnlockTier, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { buildRunReport } from "@/game/runReport";
@@ -69,6 +69,10 @@ export class Game {
   /** 메타 언락 기준(여러 런에서 도달한 최고 레벨) — 런 시작 시 저장본에서 읽어 프리셋·카드 풀을 거른다.
    * 오래 살아 레벨을 높인 런일수록 다음 런에 더 많이 열린다(빨리 죽으면 안 열림). 런 도중엔 안 바뀐다. */
   private metaBestLevel = 0;
+  /** 이번 런에서 "다시 뽑기"(리롤)가 열려 있는가 — 여러 런을 마친 저장본이면 true(런 시작 시 고정). */
+  private metaRerollUnlocked = false;
+  /** 현재 드래프트에서 남은 리롤 횟수(드래프트가 열릴 때 리셋). 프리셋 선택엔 리롤 없음. */
+  private rerollsLeft = 0;
 
   /** 비동기 생물(S2) — 이 런의 세계에 등장시킬 지난 챔피언들. 런 시작 시 저장본에서 읽어 makeWorld 로 넘긴다. */
   private champions: Champion[] = [];
@@ -111,7 +115,9 @@ export class Game {
     this.stageRng = new Rng("stage-0");
     this.extRng = new Rng("ext-0");
     this.currentSeed = randomSeed(); // 로비 배경 맵도 매번 다르게
-    this.metaBestLevel = loadMeta().bestLevel;
+    const meta = loadMeta();
+    this.metaBestLevel = meta.bestLevel;
+    this.metaRerollUnlocked = isRerollUnlocked(meta);
     this.champions = loadChampions();
     this.world = this.makeWorld();
   }
@@ -263,8 +269,31 @@ export class Game {
       3,
       (c) => isCardUnlocked(c.id, this.metaBestLevel) && !cardRedundant(c, this.genome.traits),
     );
+    this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
     this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (지금부터 태어나는 새끼에게 물려집니다)`;
     this.onDraft?.(this.draftCards, this.preview);
+  }
+
+  /**
+   * 다시 뽑기(리롤) — 3장이 마음에 안 들면 형질 포기(스킵) 대신 카드를 새로 뽑는다. 여러 런을 마쳐야 열리는
+   * 편의(meta.isRerollUnlocked). 드래프트당 GAME.rerollsPerDraft 회 제한(무한 낚시 방지). 프리셋 선택엔 없음.
+   * 결정론: 시드 draftRng 로 다음 후보를 뽑는다(같은 플레이 → 같은 결과). 시대 보상 리롤이면 강화 사본으로.
+   */
+  reroll(): void {
+    if (this.phase !== "draft" || this.firstChoice || this.rerollsLeft <= 0) return;
+    this.rerollsLeft -= 1;
+    const drawn = drawCards(
+      this.draftRng,
+      3,
+      (c) => isCardUnlocked(c.id, this.metaBestLevel) && !cardRedundant(c, this.genome.traits),
+    );
+    this.draftCards = this.eraReward ? drawn.map((c) => boostCard(c, GAME.eraRewardBoost)) : drawn;
+    this.onDraft?.(this.draftCards, this.preview);
+  }
+
+  /** UI 표시용 — 지금 드래프트에서 "다시 뽑기"를 누를 수 있는가(열려 있고 횟수 남음, 프리셋 아님). */
+  get canReroll(): boolean {
+    return this.phase === "draft" && !this.firstChoice && this.rerollsLeft > 0;
   }
 
   get secondsLeft(): number {
@@ -385,7 +414,9 @@ export class Game {
     // 시드 하나에서 맵·드래프트·보스를 모두 파생. 기본은 랜덤(매 런 다름), 고정 시드면 완전 재현.
     this.baseSeed = this.fixedSeed ?? randomSeed();
     this.currentSeed = this.baseSeed;
-    this.metaBestLevel = loadMeta().bestLevel; // 이전 런의 해금을 이번 런부터 반영
+    const meta = loadMeta(); // 이전 런들의 해금을 이번 런부터 반영
+    this.metaBestLevel = meta.bestLevel;
+    this.metaRerollUnlocked = isRerollUnlocked(meta);
     this.champions = loadChampions(); // 지난 챔피언들을 이 런 세계에 등장(비동기 생물)
     this.era = 0; // 새 런은 첫 시대부터
     this.playerColor = undefined;
@@ -418,6 +449,7 @@ export class Game {
   /** 런 첫 드래프트 — 시작 프리셋 선택(어떤 종으로 시작할지). 이후 형질은 레벨업으로 얻는다. */
   private beginFirstDraft(): void {
     this.phase = "draft";
+    this.rerollsLeft = 0; // 시작 프리셋 선택엔 리롤 없음(한 종으로 시작을 정하는 자리)
     // 메타 언락: 열린 프리셋만 보여준다(잠긴 특수 갈래는 런을 거듭해 해금). 항상 최소한 기본 갈래는 열려 있다.
     this.draftCards = PRESET_CARDS.filter((c) => isPresetUnlocked(c.id, this.metaBestLevel));
     this.preview = "어떤 종으로 시작할까요? 시작 프리셋을 고르세요. (먹이를 먹어 레벨업하며 형질을 더합니다)";
@@ -559,6 +591,7 @@ export class Game {
       (c) => isCardUnlocked(c.id, this.metaBestLevel) && !cardRedundant(c, this.genome.traits),
     );
     this.draftCards = drawn.map((c) => boostCard(c, GAME.eraRewardBoost));
+    this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
     this.preview =
       "새로운 시대에 들어섭니다. 지난 시대를 넘어선 보상으로, 크게 강해진 형질 하나를 고르세요. 지금 무리에 바로 물려집니다.";
     this.onDraft?.(this.draftCards, this.preview);

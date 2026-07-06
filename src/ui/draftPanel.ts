@@ -7,11 +7,15 @@ import { ABILITY_KEYS } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 
 export interface DraftPanel {
-  show: (cards: Card[], preview: string) => void;
+  show: (cards: Card[], preview: string, canReroll: boolean) => void;
   hide: () => void;
 }
 
-export function createDraftPanel(onPick: (index: number) => void, onSkip: () => void): DraftPanel {
+export function createDraftPanel(
+  onPick: (index: number) => void,
+  onSkip: () => void,
+  onReroll: () => void,
+): DraftPanel {
   ensurePanelStyles();
 
   const root = document.createElement("div");
@@ -31,19 +35,29 @@ export function createDraftPanel(onPick: (index: number) => void, onSkip: () => 
   list.className = "ui-cards";
   root.appendChild(list);
 
+  // 다시 뽑기(리롤) — 여러 런을 마치면 열리는 편의(meta). 3장이 별로면 새로 뽑는다. 열렸을 때만 보인다.
+  const rerollBtn = document.createElement("button");
+  rerollBtn.textContent = "다시 뽑기";
+  rerollBtn.style.cssText =
+    "display:none; width:100%; margin-top:10px; padding:10px; border:1px solid #4a6a8a; border-radius:12px;" +
+    "background:rgba(74,106,138,0.18); color:#bcd6ee; font-size:14px; font-weight:700; cursor:pointer;";
+  rerollBtn.addEventListener("click", onReroll);
+  root.appendChild(rerollBtn);
+
   // 스킵 — 3장이 다 별로면 형질 대신 소소한 보상(새끼)을 받는다. 은은한 보조 버튼(카드보다 약하게).
   const skipBtn = document.createElement("button");
   skipBtn.textContent = "건너뛰고 새끼 치기";
   skipBtn.style.cssText =
-    "display:block; width:100%; margin-top:10px; padding:9px; border:1px solid #3a4658; border-radius:12px;" +
+    "display:block; width:100%; margin-top:8px; padding:9px; border:1px solid #3a4658; border-radius:12px;" +
     "background:transparent; color:#8a93a6; font-size:13px; font-weight:600; cursor:pointer;";
   skipBtn.addEventListener("click", onSkip);
   root.appendChild(skipBtn);
 
   document.body.appendChild(root);
 
-  const show = (cards: Card[], preview: string): void => {
+  const show = (cards: Card[], preview: string, canReroll: boolean): void => {
     previewBox.textContent = preview;
+    rerollBtn.style.display = canReroll ? "block" : "none";
     list.replaceChildren();
     cards.forEach((card, i) => {
       const btn = document.createElement("button");
