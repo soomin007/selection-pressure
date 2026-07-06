@@ -8,6 +8,9 @@ dist/
 # 시각 검증 스크린샷(boss-preview 기본 출력)
 boss-preview.png
 
+# 화면 소개 스크린샷(scripts/screenshots.mjs 출력 — 외부 공유용, 언제든 재생성)
+screenshots/
+
 # 동시 세션 작업 조율판 (로컬 실시간 공유, 절대 커밋하지 않음)
 ACTIVE_WORK.md
 
