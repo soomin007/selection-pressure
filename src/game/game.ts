@@ -294,6 +294,15 @@ export class Game {
     return this.phase === "draft" && !this.firstChoice && this.rerollsLeft > 0;
   }
 
+  /** 디버그 표시용 — 지금 이 런에 반영된 메타 플레이어 레벨. */
+  get metaLevelNow(): number {
+    return this.metaLvl;
+  }
+  /** 디버그 표시용 — 지금 이 런에 "다시 뽑기"가 해금돼 있는가. */
+  get rerollUnlockedNow(): boolean {
+    return this.metaRerollUnlocked;
+  }
+
   get secondsLeft(): number {
     return Math.max(0, Math.ceil(this.stageTicksLeft / SIM.stepsPerSecond));
   }

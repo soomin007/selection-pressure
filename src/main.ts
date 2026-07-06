@@ -248,16 +248,16 @@ async function boot(): Promise<void> {
     document.body.appendChild(debugBadge);
   }
 
-  // ?dev — 위협 소환 패널(접이식). 관전 중 아무 보스/시련/대멸종을 즉시 띄워 반복 플레이 없이 확인.
-  // 평소엔 우하단 "dev" 토글만 작게 두고, 탭하면 버튼 그리드가 펼쳐진다(모바일 화면을 안 가리게).
+  // ?dev — 디버그 패널(접이식). 위협 즉시 소환 + 메타 레벨/진척도 테스트. 좌상단(정보 박스 아래)에 둬서
+  // 하단 드래프트 카드를 가리지 않는다(전엔 우하단이라 셋째 카드를 가렸다 — 폰 피드백).
   if (DEBUG.devSummon) {
     const panel = document.createElement("div");
     panel.style.cssText =
-      "position:fixed; right:6px; bottom:52px; z-index:31; display:flex; flex-direction:column;" +
-      "align-items:flex-end; gap:4px; pointer-events:none;";
+      "position:fixed; left:6px; top:112px; z-index:31; display:flex; flex-direction:column;" +
+      "align-items:flex-start; gap:4px; pointer-events:none;";
     const grid = document.createElement("div");
     grid.style.cssText =
-      "display:none; flex-wrap:wrap; gap:4px; justify-content:flex-end; max-width:80vw;";
+      "display:none; flex-wrap:wrap; gap:4px; justify-content:flex-start; max-width:min(72vw,420px);";
     const threats: { kind: BossType | ExtinctionType; label: string }[] = [
       ...BOSS_TYPES.map((t) => ({ kind: t as BossType | ExtinctionType, label: bossName(t) })),
       { kind: "cold", label: "한파" },
@@ -265,38 +265,57 @@ async function boot(): Promise<void> {
       { kind: "heat", label: "폭염" },
       { kind: "plague", label: "역병" },
     ];
-    const devBtn = (label: string, on: () => void): HTMLButtonElement => {
+    // 누른 버튼을 잠깐 밝게(적용됐다는 즉각 피드백) + 현재 메타 상태를 토글에 항상 표시(뭐가 적용됐는지 확인).
+    const flash = (b: HTMLButtonElement): void => {
+      b.style.background = "rgba(255,224,138,0.9)";
+      b.style.color = "#1a1406";
+      window.setTimeout(() => {
+        b.style.background = "rgba(11,14,20,0.92)";
+        b.style.color = "#ffe08a";
+      }, 260);
+    };
+    const devBtn = (label: string, on: (b: HTMLButtonElement) => void): HTMLButtonElement => {
       const b = document.createElement("button");
       b.textContent = label;
       b.style.cssText =
         "pointer-events:auto; padding:6px 9px; background:rgba(11,14,20,0.92); border:1px solid" +
         " #4a4030; border-radius:7px; color:#ffe08a; font:700 12px system-ui,-apple-system;";
-      b.addEventListener("click", on);
+      b.addEventListener("click", () => on(b));
       return b;
     };
-    for (const th of threats) grid.appendChild(devBtn(th.label, () => game.debugSummon(th.kind)));
+    for (const th of threats) grid.appendChild(devBtn(th.label, (b) => { game.debugSummon(th.kind); flash(b); }));
     // 메타 진행 테스트 — 레벨을 바로 세팅(리롤=Lv2, 바다=Lv3, 하늘=Lv5, 독=Lv9)하거나, 종료 진척도 화면을
     // 반복 플레이 없이 재생(+120 경험치 적립 애니메이션). 리롤은 드래프트 중 눌러 바로 확인 가능.
-    for (const lv of [1, 2, 3, 5, 9, 12]) grid.appendChild(devBtn(`Lv${lv}`, () => game.debugSetMetaLevel(lv)));
+    for (const lv of [1, 2, 3, 5, 9, 12])
+      grid.appendChild(devBtn(`Lv${lv}`, (b) => { game.debugSetMetaLevel(lv); flash(b); updateToggle(); }));
     grid.appendChild(
-      devBtn("진척도+120", () => {
+      devBtn("진척도+120", (b) => {
+        flash(b);
         controls.setVisible(false);
-        levelScreen.play(game.debugGrantMetaXp(120), () => controls.setVisible(true));
+        levelScreen.play(game.debugGrantMetaXp(120), () => {
+          controls.setVisible(true);
+          updateToggle();
+        });
       }),
     );
     const toggle = document.createElement("button");
-    toggle.textContent = "dev ▾";
     toggle.style.cssText =
       "pointer-events:auto; padding:5px 11px; background:rgba(11,14,20,0.92); border:1px solid" +
       " #4a4030; border-radius:7px; color:#ffe08a; font:700 12px system-ui,-apple-system;";
+    // 토글에 현재 메타 레벨·리롤 상태를 항상 표시 → 레벨 버튼을 눌렀을 때 "적용됐다"가 바로 읽힌다.
+    const updateToggle = (): void => {
+      const open = grid.style.display !== "none";
+      const roll = game.rerollUnlockedNow ? " 리롤" : "";
+      toggle.textContent = `dev · Lv${game.metaLevelNow}${roll} ${open ? "▴" : "▾"}`;
+    };
     toggle.addEventListener("click", () => {
-      const open = grid.style.display === "none";
-      grid.style.display = open ? "flex" : "none";
-      toggle.textContent = open ? "dev ▴" : "dev ▾";
+      grid.style.display = grid.style.display === "none" ? "flex" : "none";
+      updateToggle();
     });
-    panel.appendChild(grid);
     panel.appendChild(toggle);
+    panel.appendChild(grid);
     document.body.appendChild(panel);
+    updateToggle();
   }
 
   // 하이라이트 이벤트 감지 상태(카메라 변수는 위에서 onWorldChanged 보다 먼저 선언했다).
