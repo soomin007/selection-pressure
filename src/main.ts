@@ -15,6 +15,7 @@ import { createDraftPanel } from "@/ui/draftPanel";
 import { createPresetPanel } from "@/ui/presetPanel";
 import { createResultPanel } from "@/ui/resultPanel";
 import { createMomentOverlay } from "@/ui/momentOverlay";
+import { createLevelUpScreen } from "@/ui/levelUpScreen";
 import { createLobby } from "@/ui/lobby";
 import { createControls } from "@/ui/controls";
 import { createBuildPanel } from "@/ui/buildPanel";
@@ -192,11 +193,17 @@ async function boot(): Promise<void> {
   };
   // 승리·정복·멸종 순간 연출 — 결과 패널 직전에 전역 화면 클라이맥스를 얹는다.
   const moment = createMomentOverlay();
-  game.onResult = (res, summary, canContinue, newUnlocks) => {
+  // 런 종료 진척도 화면 — 순간 연출 다음, 결과(사망 원인) 화면 직전에 경험치바·레벨업·해금을 보여준다.
+  const levelScreen = createLevelUpScreen();
+  game.onResult = (res, summary, canContinue, progress) => {
     controls.setVisible(false);
     // 정복 = 마지막 시대 승리(더 이어갈 수 없음), 승리 = 한 시대 넘김(이어감), 멸종 = 패배.
     const kind = res === "lose" ? "lose" : canContinue ? "win" : "conquest";
-    moment.play(kind, () => result.show(res === "win", summary, canContinue, newUnlocks));
+    moment.play(kind, () => {
+      // 런이 진짜 끝났으면(progress 있음) 진척도 화면을 먼저, 그 뒤 결과 화면. 중간 시대 승리(이어감)면 바로 결과.
+      if (progress) levelScreen.play(progress, () => result.show(res === "win", summary, canContinue));
+      else result.show(res === "win", summary, canContinue);
+    });
   };
   // 카메라 상태 — onWorldChanged 가 game.start()에서 곧장 호출돼 camX/camY 를 스냅하므로, 그 콜백보다
   // 반드시 먼저 선언한다. (전엔 아래쪽에 뒀다가 TDZ ReferenceError 로 부팅이 통째로 죽었다 — known_issues.)
@@ -213,6 +220,7 @@ async function boot(): Promise<void> {
     hud.reset();
     effects.clear();
     moment.clear(); // 멸종 암전 등 남은 순간 연출을 지운다(새 월드 시작).
+    levelScreen.clear(); // 진척도 화면도 닫는다(혹시 남아 있으면).
     selectedId = null; // 새 월드 → 옛 선택(개체 id)은 무효
     currentSelected = null;
     manualCam = null; // 수동 조망도 초기화
@@ -257,15 +265,25 @@ async function boot(): Promise<void> {
       { kind: "heat", label: "폭염" },
       { kind: "plague", label: "역병" },
     ];
-    for (const th of threats) {
-      const btn = document.createElement("button");
-      btn.textContent = th.label;
-      btn.style.cssText =
+    const devBtn = (label: string, on: () => void): HTMLButtonElement => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.cssText =
         "pointer-events:auto; padding:6px 9px; background:rgba(11,14,20,0.92); border:1px solid" +
         " #4a4030; border-radius:7px; color:#ffe08a; font:700 12px system-ui,-apple-system;";
-      btn.addEventListener("click", () => game.debugSummon(th.kind));
-      grid.appendChild(btn);
-    }
+      b.addEventListener("click", on);
+      return b;
+    };
+    for (const th of threats) grid.appendChild(devBtn(th.label, () => game.debugSummon(th.kind)));
+    // 메타 진행 테스트 — 레벨을 바로 세팅(리롤=Lv2, 바다=Lv3, 하늘=Lv5, 독=Lv9)하거나, 종료 진척도 화면을
+    // 반복 플레이 없이 재생(+120 경험치 적립 애니메이션). 리롤은 드래프트 중 눌러 바로 확인 가능.
+    for (const lv of [1, 2, 3, 5, 9, 12]) grid.appendChild(devBtn(`Lv${lv}`, () => game.debugSetMetaLevel(lv)));
+    grid.appendChild(
+      devBtn("진척도+120", () => {
+        controls.setVisible(false);
+        levelScreen.play(game.debugGrantMetaXp(120), () => controls.setVisible(true));
+      }),
+    );
     const toggle = document.createElement("button");
     toggle.textContent = "dev ▾";
     toggle.style.cssText =

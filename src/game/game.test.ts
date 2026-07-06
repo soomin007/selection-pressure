@@ -164,7 +164,8 @@ describe("다시 뽑기(리롤)", () => {
 
   it("해금 상태면 드래프트에서 새로 뽑고 횟수가 1회로 제한된다", () => {
     const store: Record<string, string> = {
-      selpress_meta_v1: JSON.stringify({ bestLevel: 6, conquered: false, runsCompleted: 5 }),
+      // metaXp 300 → 메타 레벨 여러 단계(리롤 티어 레벨 2 이상) 해금.
+      selpress_meta_v1: JSON.stringify({ metaXp: 300, conquered: false }),
     };
     const gl = globalThis as unknown as { localStorage?: Storage | undefined };
     const prev = gl.localStorage;

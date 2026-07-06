@@ -10,7 +10,7 @@ import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, TRAIT_CEILING, type Genome, type Traits } from "@/sim/genome";
 import { drawCards, applyCard, boostCard, PRESET_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
-import { loadMeta, isPresetUnlocked, isCardUnlocked, isRerollUnlocked, recordRunComplete, loadChampions, saveChampion, type UnlockTier, type Champion } from "@/game/meta";
+import { loadMeta, metaLevel, isPresetUnlocked, isCardUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { buildRunReport } from "@/game/runReport";
@@ -66,10 +66,10 @@ export class Game {
   /** 내 종 시작 색(프리셋에서 정함) — 다음 시대에 새 월드를 만들어도 같은 색을 유지한다. */
   private playerColor: number | undefined;
 
-  /** 메타 언락 기준(여러 런에서 도달한 최고 레벨) — 런 시작 시 저장본에서 읽어 프리셋·카드 풀을 거른다.
-   * 오래 살아 레벨을 높인 런일수록 다음 런에 더 많이 열린다(빨리 죽으면 안 열림). 런 도중엔 안 바뀐다. */
-  private metaBestLevel = 0;
-  /** 이번 런에서 "다시 뽑기"(리롤)가 열려 있는가 — 여러 런을 마친 저장본이면 true(런 시작 시 고정). */
+  /** 메타 언락 기준(플레이어 레벨) — 런 시작 시 저장본의 누적 경험치에서 레벨을 읽어 프리셋·카드 풀을 거른다.
+   * 런을 거듭해 경험치가 쌓일수록 레벨이 올라 더 많이 열린다. 런 도중엔 안 바뀐다(디버그 제외). */
+  private metaLvl = 1;
+  /** 이번 런에서 "다시 뽑기"(리롤)가 열려 있는가 — 메타 레벨이 리롤 티어 이상이면 true(런 시작 시 고정). */
   private metaRerollUnlocked = false;
   /** 현재 드래프트에서 남은 리롤 횟수(드래프트가 열릴 때 리셋). 프리셋 선택엔 리롤 없음. */
   private rerollsLeft = 0;
@@ -99,10 +99,10 @@ export class Game {
 
   // main 이 설정하는 훅
   onDraft: ((cards: Card[], preview: string) => void) | null = null;
-  // canContinue = 승리라서 "다음 시대로" 이어갈 수 있는가(패배는 false). newUnlocks = 이번 런 완료로 새로 열린
-  // 프리셋·카드(해금 알림용, 없으면 빈 배열). main 이 결과 화면 버튼·해금 배너를 가른다.
+  // canContinue = 승리라서 "다음 시대로" 이어갈 수 있는가(패배는 false). progress = 런이 진짜 끝났을 때(멸종·정복)의
+  // 메타 진척도(경험치·레벨업·레벨별 해금) — 종료 화면 애니메이션용. 이어가는 중간 시대 승리면 null.
   onResult:
-    | ((result: RunResult, summary: string, canContinue: boolean, newUnlocks: UnlockTier[]) => void)
+    | ((result: RunResult, summary: string, canContinue: boolean, progress: RunProgress | null) => void)
     | null = null;
   onWorldChanged: ((world: World) => void) | null = null;
 
@@ -115,9 +115,7 @@ export class Game {
     this.stageRng = new Rng("stage-0");
     this.extRng = new Rng("ext-0");
     this.currentSeed = randomSeed(); // 로비 배경 맵도 매번 다르게
-    const meta = loadMeta();
-    this.metaBestLevel = meta.bestLevel;
-    this.metaRerollUnlocked = isRerollUnlocked(meta);
+    this.reloadMeta();
     this.champions = loadChampions();
     this.world = this.makeWorld();
   }
@@ -267,7 +265,7 @@ export class Game {
     this.draftCards = drawCards(
       this.draftRng,
       3,
-      (c) => isCardUnlocked(c.id, this.metaBestLevel) && !cardRedundant(c, this.genome.traits),
+      (c) => isCardUnlocked(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
     );
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
     this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (지금부터 태어나는 새끼에게 물려집니다)`;
@@ -285,7 +283,7 @@ export class Game {
     const drawn = drawCards(
       this.draftRng,
       3,
-      (c) => isCardUnlocked(c.id, this.metaBestLevel) && !cardRedundant(c, this.genome.traits),
+      (c) => isCardUnlocked(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
     );
     this.draftCards = this.eraReward ? drawn.map((c) => boostCard(c, GAME.eraRewardBoost)) : drawn;
     this.onDraft?.(this.draftCards, this.preview);
@@ -414,9 +412,7 @@ export class Game {
     // 시드 하나에서 맵·드래프트·보스를 모두 파생. 기본은 랜덤(매 런 다름), 고정 시드면 완전 재현.
     this.baseSeed = this.fixedSeed ?? randomSeed();
     this.currentSeed = this.baseSeed;
-    const meta = loadMeta(); // 이전 런들의 해금을 이번 런부터 반영
-    this.metaBestLevel = meta.bestLevel;
-    this.metaRerollUnlocked = isRerollUnlocked(meta);
+    this.reloadMeta(); // 이전 런들의 해금(누적 경험치 → 레벨)을 이번 런부터 반영
     this.champions = loadChampions(); // 지난 챔피언들을 이 런 세계에 등장(비동기 생물)
     this.era = 0; // 새 런은 첫 시대부터
     this.playerColor = undefined;
@@ -451,7 +447,7 @@ export class Game {
     this.phase = "draft";
     this.rerollsLeft = 0; // 시작 프리셋 선택엔 리롤 없음(한 종으로 시작을 정하는 자리)
     // 메타 언락: 열린 프리셋만 보여준다(잠긴 특수 갈래는 런을 거듭해 해금). 항상 최소한 기본 갈래는 열려 있다.
-    this.draftCards = PRESET_CARDS.filter((c) => isPresetUnlocked(c.id, this.metaBestLevel));
+    this.draftCards = PRESET_CARDS.filter((c) => isPresetUnlocked(c.id, this.metaLvl));
     this.preview = "어떤 종으로 시작할까요? 시작 프리셋을 고르세요. (먹이를 먹어 레벨업하며 형질을 더합니다)";
   }
 
@@ -520,15 +516,21 @@ export class Game {
     this.world.plagueRate = 0;
   }
 
+  /** 저장본에서 메타(누적 경험치 → 레벨·리롤 해금)를 다시 읽어 필드에 반영. 런 시작·디버그 변경 시 호출. */
+  private reloadMeta(): void {
+    this.metaLvl = metaLevel(loadMeta().metaXp);
+    this.metaRerollUnlocked = isRerollUnlockedAtLevel(this.metaLvl);
+  }
+
   private endRun(result: RunResult): void {
     this.phase = "result";
     this.result = result;
-    // 런이 진짜 끝났을 때만(멸종 또는 정복) 메타에 완료 기록 + 해금. 중간 시대 승리는 "다음 시대로"
-    // 이어지므로 세지 않는다(그때는 endRun 이 canContinue=true 로 뜨지만 런은 계속된다).
+    // 런이 진짜 끝났을 때만(멸종 또는 정복) 메타 경험치 적립 + 해금. 중간 시대 승리는 "다음 시대로"
+    // 이어지므로 적립하지 않는다(그때는 endRun 이 canContinue=true 로 뜨지만 런은 계속된다 → progress=null).
     const conquered = result === "win" && this.isFinalEra;
     const runOver = result === "lose" || conquered;
-    // 언락은 "이번 런에서 도달한 레벨"로 — 오래 살아 성장할수록 열린다(빨리 죽으면 안 열림 = 생존의 보람).
-    const newUnlocks: UnlockTier[] = runOver ? recordRunComplete(this.level, conquered) : [];
+    // 성적(도달 레벨·시대·정복)만큼 메타 경험치가 쌓여 플레이어 레벨이 오른다 → 종료 화면에서 애니메이션.
+    const progress: RunProgress | null = runOver ? recordRunComplete(this.level, this.era, conquered) : null;
     // 비동기 생물(S2) — 시대 2 이상까지 간(또는 정복한) 종은 "기억할 만한 챔피언"으로 저장해 다음 런의
     // 세계에 다시 등장시킨다. 게놈은 성장한 현재 형태 그대로(versioned 직렬화).
     if (runOver && (conquered || this.era >= 1)) {
@@ -541,7 +543,25 @@ export class Game {
       saveChampion(champ);
     }
     // 승리면 "다음 시대로" 이어갈 수 있다(brotato식 난이도 루프) — 단 마지막 시대(정복)면 더는 없다.
-    this.onResult?.(result, this.buildSummary(result), result === "win" && !this.isFinalEra, newUnlocks);
+    this.onResult?.(result, this.buildSummary(result), result === "win" && !this.isFinalEra, progress);
+  }
+
+  /** 디버그 전용(?dev) — 메타 레벨을 바로 세팅해 해금·리롤을 즉시 이 런에 반영(반복 플레이 없이 테스트). */
+  debugSetMetaLevel(level: number): void {
+    debugSetMetaLevel(level);
+    this.reloadMeta();
+    // 드래프트 중이면 리롤 가용을 즉시 반영해 지금 화면에서 바로 확인할 수 있게 한다(패널 재표시).
+    if (this.phase === "draft" && !this.firstChoice) {
+      this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
+      this.onDraft?.(this.draftCards, this.preview);
+    }
+  }
+
+  /** 디버그 전용(?dev) — 메타 경험치를 더하고 진척도를 반환(종료 화면 애니메이션을 반복 없이 재생). */
+  debugGrantMetaXp(amount: number): RunProgress {
+    const progress = debugGrantMetaXp(amount);
+    this.reloadMeta();
+    return progress;
   }
 
   /**
@@ -588,7 +608,7 @@ export class Game {
     const drawn = drawCards(
       rng,
       3,
-      (c) => isCardUnlocked(c.id, this.metaBestLevel) && !cardRedundant(c, this.genome.traits),
+      (c) => isCardUnlocked(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
     );
     this.draftCards = drawn.map((c) => boostCard(c, GAME.eraRewardBoost));
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;

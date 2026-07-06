@@ -56,30 +56,69 @@ export function saveChampion(c: Champion): void {
   }
 }
 
+// 지속되는 "플레이어(메타) 레벨" — 런마다 성적(도달 레벨·시대·정복)만큼 메타 경험치(metaXp)가 쌓이고,
+// 그 누적으로 레벨이 오른다. 런 종료 화면에서 이 경험치바가 차오르며 레벨업이 터지고, 레벨마다 해금이 열린다.
 export interface MetaState {
-  bestLevel: number; // 여러 런에서 도달한 최고 레벨 — 언락 기준(오래 살아 성장해야 열린다)
+  metaXp: number; // 누적 메타 경험치(런마다 적립) — 플레이어 레벨의 원천
   conquered: boolean; // 시대 상한(정복) 달성 여부(표시용)
-  runsCompleted: number; // 끝까지 마친 런 수(멸종/정복) — "다시 뽑기" 해금 기준(꾸준함의 보상)
 }
 
-// 드래프트 "다시 뽑기"(리롤) — 이만큼 런을 마치면 열린다. 여러 런을 겪은 플레이어에게 열리는 편의(선택지
-// 확장): 3장이 마음에 안 들면 형질을 포기(스킵)하는 대신 새로 뽑는다. 파워가 아니라 운을 다시 굴릴 기회다.
-export const REROLL_UNLOCK_RUNS = 3;
-
-/** 지금 "다시 뽑기"가 열려 있는가 — 마친 런 수가 임계 이상이면 열린다. */
-export function isRerollUnlocked(state: MetaState): boolean {
-  return state.runsCompleted >= REROLL_UNLOCK_RUNS;
+// 메타 레벨 곡선 — 레벨 L→L+1 에 드는 경험치. 초반은 싸서 첫 런에도 여러 번 오른다("탕탕탕"). 뒤로 갈수록 늘어난다.
+const META_LEVEL_BASE = 30;
+const META_LEVEL_STEP = 18;
+/** 레벨 L(1부터) → L+1 로 오르는 데 필요한 경험치. */
+export function metaLevelCost(level: number): number {
+  return META_LEVEL_BASE + Math.max(0, level - 1) * META_LEVEL_STEP;
 }
 
-// 언락 티어 — "도달한 최고 레벨"이 atLevel 에 이르면 그 목록이 열린다. 레벨은 먹이 경험치로 오르므로,
-// 오래 살아남아 무리를 키운 런일수록 많이 열린다(빨리 죽으면 안 열림 — 생존의 보람). 특수 갈래·특화 카드를 순차로.
+// 런 성적 → 적립 메타 경험치. 오래 살아 레벨을 높이고(도달 레벨), 시대를 넘고, 정복할수록 많이 쌓인다.
+const XP_PER_INRUN_LEVEL = 14; // 그 런에서 도달한 레벨 1당
+const XP_PER_ERA = 18; // 넘어선 시대 1당
+const XP_CONQUER_BONUS = 80; // 정복(최종 승리) 보너스
+/** 이번 런이 적립하는 메타 경험치. */
+export function runMetaXp(inRunLevel: number, era: number, conquered: boolean): number {
+  return (
+    Math.max(0, Math.trunc(inRunLevel)) * XP_PER_INRUN_LEVEL +
+    Math.max(0, Math.trunc(era)) * XP_PER_ERA +
+    (conquered ? XP_CONQUER_BONUS : 0)
+  );
+}
+
+/** 누적 경험치 → 현재 레벨과 그 레벨 안 진척도. into=이번 레벨에 들어간 양, need=이번 레벨→다음까지 필요량. */
+export function metaLevelInfo(totalXp: number): { level: number; into: number; need: number } {
+  let level = 1;
+  let remain = Math.max(0, Math.floor(totalXp));
+  // 안전 상한(무한 루프 방지) — 현실 경험치로는 닿지 않는다.
+  while (level < 999 && remain >= metaLevelCost(level)) {
+    remain -= metaLevelCost(level);
+    level += 1;
+  }
+  return { level, into: remain, need: metaLevelCost(level) };
+}
+
+/** 누적 경험치 → 레벨(정수). */
+export function metaLevel(totalXp: number): number {
+  return metaLevelInfo(totalXp).level;
+}
+
+/** 특정 레벨의 시작에 해당하는 누적 경험치(디버그로 레벨을 바로 세팅할 때 쓴다). */
+export function xpForLevelStart(level: number): number {
+  let xp = 0;
+  for (let l = 1; l < Math.max(1, Math.trunc(level)); l++) xp += metaLevelCost(l);
+  return xp;
+}
+
+// 언락 티어 — 플레이어(메타) 레벨이 atLevel 에 이르면 그 목록이 열린다. 런을 거듭해 메타 경험치가 쌓일수록
+// 순차로 열린다(수평 확장: 파워가 아니라 갈래·카드·편의). reroll=true 면 그 레벨에서 "다시 뽑기"가 열린다.
 export interface UnlockTier {
   atLevel: number;
   presetIds: string[];
   cardIds: string[];
+  reroll?: boolean; // 이 레벨에서 드래프트 "다시 뽑기"가 열리는가
   label: string; // 해금 알림 문구
 }
 export const UNLOCK_TIERS: readonly UnlockTier[] = [
+  { atLevel: 2, presetIds: [], cardIds: [], reroll: true, label: "다시 뽑기 · 드래프트 카드를 새로 뽑는다" },
   { atLevel: 3, presetIds: ["preset_sea"], cardIds: ["fins", "webbed"], label: "바다 개척자 · 헤엄 카드" },
   { atLevel: 5, presetIds: ["preset_sky"], cardIds: ["wings", "strong_wings"], label: "하늘 개척자 · 날개 카드" },
   { atLevel: 7, presetIds: ["preset_ranged"], cardIds: ["long_horn", "spit"], label: "원거리 사냥꾼 · 원거리 카드" },
@@ -90,22 +129,19 @@ export const UNLOCK_TIERS: readonly UnlockTier[] = [
 // 티어로 잠갔다 여는 대상 전체(잠금 후보). 이 집합에 없는 id 는 처음부터 항상 열려 있다.
 const LOCKABLE_PRESETS = new Set(UNLOCK_TIERS.flatMap((t) => t.presetIds));
 const LOCKABLE_CARDS = new Set(UNLOCK_TIERS.flatMap((t) => t.cardIds));
+const REROLL_LEVEL = UNLOCK_TIERS.find((t) => t.reroll)?.atLevel ?? 999;
 
 function readState(): MetaState {
   try {
     const raw = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
     if (raw) {
       const p = JSON.parse(raw) as Partial<MetaState>;
-      return {
-        bestLevel: Math.max(0, Math.trunc(p.bestLevel ?? 0)),
-        conquered: !!p.conquered,
-        runsCompleted: Math.max(0, Math.trunc(p.runsCompleted ?? 0)),
-      };
+      return { metaXp: Math.max(0, Math.floor(p.metaXp ?? 0)), conquered: !!p.conquered };
     }
   } catch {
     // 파싱/접근 실패(사생활 모드 등) → 첫 플레이로 취급
   }
-  return { bestLevel: 0, conquered: false, runsCompleted: 0 };
+  return { metaXp: 0, conquered: false };
 }
 
 function writeState(s: MetaState): void {
@@ -120,37 +156,69 @@ export function loadMeta(): MetaState {
   return readState();
 }
 
-/** 프리셋 id 가 지금 열려 있는가 — 잠금 후보가 아니면 항상 열림, 후보면 도달 레벨까지 열림. */
-export function isPresetUnlocked(id: string, bestLevel: number): boolean {
+/** 프리셋 id 가 지금 열려 있는가 — 잠금 후보가 아니면 항상 열림, 후보면 메타 레벨까지 열림. */
+export function isPresetUnlocked(id: string, level: number): boolean {
   if (!LOCKABLE_PRESETS.has(id)) return true;
-  return UNLOCK_TIERS.some((t) => t.atLevel <= bestLevel && t.presetIds.includes(id));
+  return UNLOCK_TIERS.some((t) => t.atLevel <= level && t.presetIds.includes(id));
 }
 
-/** 카드 id 가 지금 열려 있는가 — 잠금 후보가 아니면 항상 열림, 후보면 도달 레벨까지 열림. */
-export function isCardUnlocked(id: string, bestLevel: number): boolean {
+/** 카드 id 가 지금 열려 있는가 — 잠금 후보가 아니면 항상 열림, 후보면 메타 레벨까지 열림. */
+export function isCardUnlocked(id: string, level: number): boolean {
   if (!LOCKABLE_CARDS.has(id)) return true;
-  return UNLOCK_TIERS.some((t) => t.atLevel <= bestLevel && t.cardIds.includes(id));
+  return UNLOCK_TIERS.some((t) => t.atLevel <= level && t.cardIds.includes(id));
 }
 
-/** 런 완료 기록 — 이번 런의 도달 레벨로 최고 레벨 갱신, 정복 여부 갱신. 이번에 새로 열린 티어들을 반환(알림용). */
-export function recordRunComplete(levelReached: number, conquered: boolean): UnlockTier[] {
+/** 지금 "다시 뽑기"가 열려 있는가 — 메타 레벨이 리롤 티어 레벨 이상이면 열린다. */
+export function isRerollUnlockedAtLevel(level: number): boolean {
+  return level >= REROLL_LEVEL;
+}
+
+// 런 종료 화면(진척도 애니메이션)에 넘길 데이터 — 이번 런으로 오른 경험치와 넘긴 레벨들, 레벨별 해금.
+export interface RunProgress {
+  gained: number; // 이번 런 적립 경험치
+  beforeXp: number;
+  afterXp: number;
+  beforeLevel: number;
+  afterLevel: number;
+  // 넘긴 각 레벨(beforeLevel+1 … afterLevel)과 거기서 열린 티어(레벨별 하이라이트용).
+  levelUps: { level: number; unlocks: UnlockTier[] }[];
+}
+
+/** 런 완료 기록 — 성적만큼 메타 경험치 적립 + 정복 갱신. 진척도(경험치·레벨·레벨별 해금)를 반환(종료 화면용). */
+export function recordRunComplete(inRunLevel: number, era: number, conquered: boolean): RunProgress {
   const s = readState();
-  const before = s.bestLevel;
-  const beforeRuns = s.runsCompleted;
-  s.bestLevel = Math.max(before, Math.trunc(levelReached));
+  const beforeXp = s.metaXp;
+  const beforeLevel = metaLevel(beforeXp);
+  const gained = runMetaXp(inRunLevel, era, conquered);
+  s.metaXp = beforeXp + gained;
   if (conquered) s.conquered = true;
-  s.runsCompleted = beforeRuns + 1;
   writeState(s);
-  // before < atLevel <= after 인 티어가 이번 런으로 새로 열렸다(최고 레벨을 갱신했을 때만).
-  const opened = UNLOCK_TIERS.filter((t) => t.atLevel > before && t.atLevel <= s.bestLevel);
-  // "다시 뽑기"가 이번 런으로 처음 열렸으면 같은 알림에 얹는다(레벨과 무관, 마친 런 수 기준).
-  if (beforeRuns < REROLL_UNLOCK_RUNS && s.runsCompleted >= REROLL_UNLOCK_RUNS) {
-    opened.push({
-      atLevel: 0,
-      presetIds: [],
-      cardIds: [],
-      label: "다시 뽑기 — 드래프트에서 카드를 새로 뽑을 수 있습니다",
-    });
+  const afterLevel = metaLevel(s.metaXp);
+  const levelUps: { level: number; unlocks: UnlockTier[] }[] = [];
+  for (let lv = beforeLevel + 1; lv <= afterLevel; lv++) {
+    levelUps.push({ level: lv, unlocks: UNLOCK_TIERS.filter((t) => t.atLevel === lv) });
   }
-  return opened;
+  return { gained, beforeXp, afterXp: s.metaXp, beforeLevel, afterLevel, levelUps };
+}
+
+/** 디버그 전용 — 메타 레벨을 그 레벨 시작 경험치로 바로 세팅(레벨·리롤 해금 즉시 테스트). */
+export function debugSetMetaLevel(level: number): void {
+  const s = readState();
+  s.metaXp = xpForLevelStart(level);
+  writeState(s);
+}
+
+/** 디버그 전용 — 메타 경험치를 더하고 진척도를 반환(종료 화면 애니메이션을 반복 없이 재생). */
+export function debugGrantMetaXp(amount: number): RunProgress {
+  const s = readState();
+  const beforeXp = s.metaXp;
+  const beforeLevel = metaLevel(beforeXp);
+  s.metaXp = beforeXp + Math.max(0, Math.floor(amount));
+  writeState(s);
+  const afterLevel = metaLevel(s.metaXp);
+  const levelUps: { level: number; unlocks: UnlockTier[] }[] = [];
+  for (let lv = beforeLevel + 1; lv <= afterLevel; lv++) {
+    levelUps.push({ level: lv, unlocks: UNLOCK_TIERS.filter((t) => t.atLevel === lv) });
+  }
+  return { gained: s.metaXp - beforeXp, beforeXp, afterXp: s.metaXp, beforeLevel, afterLevel, levelUps };
 }
