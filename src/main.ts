@@ -261,13 +261,17 @@ async function boot(): Promise<void> {
     document.body.appendChild(debugBadge);
   }
 
-  // ?dev — 디버그 패널(접이식). 위협 즉시 소환 + 메타 레벨/진척도/초기화. 좌측 세로 중앙(월드 뷰 빈 구역)에
-  // 둬서 정보 박스(좌상단)·컨트롤(우상단)·드래프트 카드(하단)·미니맵(우하단) 어느 것도 안 가린다.
+  // ?dev — 디버그 패널(접이식). 위협 즉시 소환 + 메타 레벨/진척도/초기화. 정보 박스(좌상단)·컨트롤(우상단)·
+  // 드래프트 카드(하단)·미니맵(우하단) 어느 것도 안 가리게 둔다.
+  // 데스크톱은 "종 안내" 범례가 자동으로 펼쳐져 좌상단~중앙을 덮으므로, dev 패널을 좌하단(줌 바 위)으로 내리고
+  // 그리드를 위로 펼친다(column-reverse). 모바일은 범례가 접혀 있어 좌측 세로 중앙 그대로 둔다.
   if (DEBUG.devSummon) {
     const panel = document.createElement("div");
-    panel.style.cssText =
-      "position:fixed; left:6px; top:42%; transform:translateY(-50%); z-index:31; display:flex;" +
-      "flex-direction:column; align-items:flex-start; gap:4px; pointer-events:none;";
+    panel.style.cssText = layout.isDesktop
+      ? "position:fixed; left:6px; bottom:150px; z-index:31; display:flex; flex-direction:column-reverse;" +
+        " align-items:flex-start; gap:4px; pointer-events:none;"
+      : "position:fixed; left:6px; top:42%; transform:translateY(-50%); z-index:31; display:flex;" +
+        " flex-direction:column; align-items:flex-start; gap:4px; pointer-events:none;";
     const grid = document.createElement("div");
     grid.style.cssText =
       "display:none; flex-wrap:wrap; gap:4px; justify-content:flex-start; max-width:min(72vw,420px);";
