@@ -12,6 +12,9 @@ boss-preview.png
 screenshots/*
 !screenshots/README.md
 
+# UI 디자인 목업 번들(claude.ai artifact export, 각 10MB+). 로컬 참조용 — 스펙은 docs/UI_HANDOFF.md 가 진실.
+docs/적자생존 UI *.html
+
 # 동시 세션 작업 조율판 (로컬 실시간 공유, 절대 커밋하지 않음)
 ACTIVE_WORK.md
 

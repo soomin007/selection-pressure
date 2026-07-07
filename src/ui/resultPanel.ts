@@ -4,14 +4,14 @@
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { parseDeathLine, type DeathRow } from "@/game/runReport";
 
-// 사망 원인별 색 — 게임 화면의 시각 언어와 맞춘다(추위=파랑/폭염·잡아먹힘=빨강 계열/보스=보라 등).
+// 사망 원인별 색 — 3a 의미 색 팔레트와 맞춘다(추위=물빛/폭염=사냥빛/굶음=호박/잡아먹힘·보스/노화=중립).
 const DEATH_COLOR: Record<string, string> = {
-  추위: "#5a8cff",
-  폭염: "#ff6a3a",
-  굶음: "#c9a23a",
-  잡아먹힘: "#e0604a",
-  보스: "#c060e0",
-  노화: "#7aa86a",
+  추위: "#5AB0E2",
+  폭염: "#F2903A",
+  굶음: "#F5C33B",
+  잡아먹힘: "#E85C43",
+  보스: "#B98CE0",
+  노화: "#C6B7A2",
 };
 
 export interface ResultPanel {
@@ -39,21 +39,21 @@ export function createResultPanel(
   const summary = document.createElement("div");
   summary.className = "ui-result-summary";
 
-  // 승리 후에만 뜨는 주 버튼 — 성장을 이어 더 험한 다음 시대로. 크고 밝게 강조(한눈에 "이걸 눌러라").
+  // 승리 후에만 뜨는 주 버튼 — 성장을 이어 더 험한 다음 시대로. 입체 키 버튼(한눈에 "이걸 눌러라").
   const continueBtn = document.createElement("button");
   continueBtn.textContent = "다음 시대로 →";
-  continueBtn.style.cssText =
-    "display:block; width:100%; margin:18px 0 0; padding:16px; border:none; border-radius:14px;" +
-    "background:linear-gradient(180deg,#7de06a,#4fb43a); color:#08210a; font-size:18px; font-weight:800;" +
-    "cursor:pointer; box-shadow:0 4px 18px rgba(90,200,80,0.45); letter-spacing:0.3px;";
+  continueBtn.className = "ui-btn-primary";
+  continueBtn.style.marginTop = "18px";
+  continueBtn.style.display = "none";
   continueBtn.addEventListener("click", onContinue);
 
-  // 이 혈통의 기록(보고서) 열기 — 승패와 무관하게 늘 있는 자취. 은은한 테두리 버튼(주 행동은 아래 두 개).
+  // 이 혈통의 기록(보고서) 열기 — 승패와 무관하게 늘 있는 자취. 은은한 보조 버튼(주 행동은 아래 두 개).
   const reportBtn = document.createElement("button");
   reportBtn.textContent = "이 혈통의 기록 보기";
   reportBtn.style.cssText =
-    "display:block; width:100%; margin:14px 0 0; padding:11px; border:1px solid #3a4658;" +
-    "border-radius:12px; background:rgba(22,27,38,0.6); color:#a8bcd0; font-size:14px; font-weight:700; cursor:pointer;";
+    "display:block; width:100%; margin:14px 0 0; padding:11px; border:1px solid var(--line);" +
+    "border-radius:var(--r-btn); background:rgba(255,255,255,0.04); color:var(--sub);" +
+    "font-family:var(--font-body); font-size:14px; cursor:pointer;";
   reportBtn.addEventListener("click", onReport);
 
   // 새 종으로 다시 시작 — 승리 시엔 보조(작고 은은한 테두리 버튼), 패배 시엔 유일한 주 버튼.
@@ -70,7 +70,7 @@ export function createResultPanel(
 
   const show = (win: boolean, text: string, canContinue: boolean): void => {
     heading.textContent = win ? "승리" : "멸종";
-    heading.style.color = win ? "#6cc24a" : "#e0604a";
+    heading.style.color = win ? "var(--lime)" : "var(--red)";
     // 본문은 빈 줄(\n\n)로 나뉜 문단들. 사망 원인 문단은 막대로, 나머지는 텍스트로 그린다.
     summary.replaceChildren();
     const blocks = text.split("\n\n");
@@ -84,17 +84,18 @@ export function createResultPanel(
     const emphasize = win && canContinue;
     continueBtn.style.display = emphasize ? "block" : "none";
     if (emphasize) {
-      // 보조 버튼 — 테두리만 있는 은은한 스타일 + 위 여백으로 주 버튼과 확실히 떨어뜨린다.
+      // 보조 버튼 — 은은한 텍스트 버튼 + 위 여백으로 주 버튼(다음 시대로)과 확실히 떨어뜨린다.
+      newRunBtn.className = "";
       newRunBtn.textContent = "여기서 마치고 새 혈통으로";
       newRunBtn.style.cssText =
-        "display:block; width:100%; margin:12px 0 0; padding:11px; border:1px solid #3a4658;" +
-        "border-radius:12px; background:transparent; color:#8a93a6; font-size:13px; font-weight:600; cursor:pointer;";
+        "display:block; width:100%; margin:12px 0 0; padding:11px; border:0;" +
+        "background:transparent; color:var(--faint); font-family:var(--font-body); font-size:13px; cursor:pointer;";
     } else {
-      // 패배 — 새 런이 유일한 주 버튼(밝게).
+      // 패배 — 새 런이 유일한 주 버튼(입체 키).
+      newRunBtn.className = "ui-btn-primary";
       newRunBtn.textContent = "새 혈통으로 시작";
-      newRunBtn.style.cssText =
-        "display:block; width:100%; margin:18px 0 0; padding:14px; border:none; border-radius:14px;" +
-        "background:linear-gradient(180deg,#7db0e0,#4f84b4); color:#08161f; font-size:16px; font-weight:800; cursor:pointer;";
+      newRunBtn.style.cssText = "";
+      newRunBtn.style.marginTop = "18px";
     }
     root.style.display = "block";
   };
@@ -119,7 +120,7 @@ function deathBars(rows: DeathRow[]): HTMLDivElement {
 
   const title = document.createElement("div");
   title.textContent = "사망 원인";
-  title.style.cssText = "color:#ffba8a; font-weight:600; margin-bottom:6px;";
+  title.style.cssText = "color:var(--red); font-family:var(--font-title); font-size:14px; margin-bottom:7px;";
   wrap.appendChild(title);
 
   const max = Math.max(1, ...rows.map((r) => r.count));
@@ -129,11 +130,11 @@ function deathBars(rows: DeathRow[]): HTMLDivElement {
 
     const label = document.createElement("span");
     label.textContent = r.label;
-    label.style.cssText = "width:62px; flex:none; font-size:13px; color:#b6bdca;";
+    label.style.cssText = "width:62px; flex:none; font-size:13px; color:var(--sub); font-family:var(--font-body);";
 
     const track = document.createElement("span");
     track.style.cssText =
-      "flex:1; height:11px; background:#222a38; border-radius:6px; overflow:hidden;";
+      "flex:1; height:11px; background:rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;";
     const fill = document.createElement("span");
     const pct = Math.round((r.count / max) * 100);
     fill.style.cssText =
@@ -144,7 +145,8 @@ function deathBars(rows: DeathRow[]): HTMLDivElement {
     const num = document.createElement("span");
     num.textContent = String(r.count);
     num.style.cssText =
-      "width:34px; flex:none; text-align:right; font-size:13px; font-variant-numeric:tabular-nums;";
+      "width:34px; flex:none; text-align:right; font-size:13px; color:var(--ink);" +
+      "font-family:var(--font-mono); font-variant-numeric:tabular-nums;";
 
     row.append(label, track, num);
     wrap.appendChild(row);

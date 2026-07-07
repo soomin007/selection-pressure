@@ -2,7 +2,8 @@
 // 종 한 줄 요약 + 현재 형질값(7개) + 고른 카드 목록. 캔버스 위 HTML 오버레이(인라인 스타일, 터치 통과).
 
 import { TRAIT_KEYS, TRAIT_LABELS, TRAIT_CEILING, type Traits } from "@/sim/genome";
-import { ABILITY_KEYS, abilityLevel, abilityWord } from "@/ui/traitDisplay";
+import { ABILITY_KEYS, abilityLevel, abilityWord, traitColor } from "@/ui/traitDisplay";
+import { ensurePanelStyles } from "@/ui/panelStyles";
 
 export interface BuildData {
   headline: string; // "빠른 잡식성" 같은 종 한 줄 요약
@@ -21,12 +22,15 @@ export interface BuildPanel {
 }
 
 export function createBuildPanel(): BuildPanel {
+  ensurePanelStyles(); // :root 토큰 보장
   const root = document.createElement("div");
   // 컨트롤바(우상단 top:12 높이 42)와 안 겹치게 그 아래로 내린다(모바일 겹침 해소).
   root.style.cssText =
-    "position:fixed; top:62px; right:12px; width:138px; box-sizing:border-box; padding:8px 10px;" +
-    "background:rgba(11,14,20,0.82); border:1px solid #2a3346; border-radius:10px;" +
-    "color:#dfe6ee; font-family:system-ui,-apple-system,sans-serif; font-size:12px; line-height:1.4;" +
+    "position:fixed; top:calc(62px + env(safe-area-inset-top)); right:calc(12px + env(safe-area-inset-right));" +
+    "width:138px; box-sizing:border-box; padding:9px 11px;" +
+    "background:var(--panel); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);" +
+    "border:1px solid var(--line); border-radius:var(--r-panel);" +
+    "color:var(--ink); font-family:var(--font-body); font-size:12px; line-height:1.4;" +
     "z-index:9; pointer-events:none; user-select:none; display:none;";
 
   // 헤더(탭하면 접기/펴기). 헤더만 클릭 가능(pointer-events:auto), 본문 영역은 터치 통과.
@@ -36,28 +40,28 @@ export function createBuildPanel(): BuildPanel {
     "cursor:pointer; pointer-events:auto;";
   const title = document.createElement("span");
   title.textContent = "선택한 형질";
-  title.style.cssText = "font-weight:700; font-size:12px; color:#aeb7c4;";
+  title.style.cssText = "font-family:var(--font-title); font-size:12.5px; color:var(--ink);";
   const arrow = document.createElement("span");
-  arrow.style.cssText = "font-size:11px; color:#aeb7c4;";
+  arrow.style.cssText = "font-size:11px; color:var(--faint);";
   header.append(title, arrow);
 
   const body = document.createElement("div");
-  body.style.cssText = "margin-top:5px;";
+  body.style.cssText = "margin-top:6px;";
 
   const headline = document.createElement("div");
   headline.style.cssText =
-    "color:#9bffa0; font-weight:700; font-size:12.5px; margin-bottom:6px; word-break:keep-all;";
+    "color:var(--lime); font-family:var(--font-title); font-size:12.5px; margin-bottom:7px; word-break:keep-all;";
 
   // 현재 형질값 readout — "내 종이 지금 얼마인지". 카드 누적 결과를 그대로 보여준다.
   const traitsLabel = document.createElement("div");
   traitsLabel.textContent = "현재 형질";
-  traitsLabel.style.cssText = "color:#8a93a6; font-weight:700; font-size:11px; margin:2px 0 4px;";
+  traitsLabel.style.cssText = "color:var(--faint); font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; margin:2px 0 5px;";
   const traitsBox = document.createElement("div");
-  traitsBox.style.cssText = "margin-bottom:7px;";
+  traitsBox.style.cssText = "margin-bottom:8px;";
 
   const cardsLabel = document.createElement("div");
   cardsLabel.textContent = "고른 카드";
-  cardsLabel.style.cssText = "color:#8a93a6; font-weight:700; font-size:11px; margin:2px 0 4px;";
+  cardsLabel.style.cssText = "color:var(--faint); font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; margin:2px 0 5px;";
 
   const list = document.createElement("div");
   body.append(headline, traitsLabel, traitsBox, cardsLabel, list);
@@ -93,20 +97,20 @@ export function createBuildPanel(): BuildPanel {
       top.style.cssText = "display:flex; justify-content:space-between; gap:6px;";
       const name = document.createElement("span");
       name.textContent = TRAIT_LABELS[key];
-      name.style.cssText = "color:#aeb7c4;";
+      name.style.cssText = "color:var(--sub);";
       const val = document.createElement("span");
       // 능력형=3단계 단어, 식성=초식/잡식/육식, 나머지=숫자(상한 200 형질은 100 초과도 그대로).
       val.textContent = isAbility ? abilityWord(lvl) : key === "diet" ? dietWord(v) : String(Math.round(v));
-      val.style.cssText = "color:#dfe6ee; font-weight:700; font-variant-numeric:tabular-nums;";
+      val.style.cssText = "color:var(--ink); font-family:var(--font-mono); font-variant-numeric:tabular-nums;";
       top.append(name, val);
       row.appendChild(top);
       if (key !== "diet") {
         const track = document.createElement("div");
-        track.style.cssText = "margin-top:2px; height:4px; border-radius:3px; background:#1a2230; overflow:hidden;";
+        track.style.cssText = "margin-top:2px; height:4px; border-radius:3px; background:rgba(255,255,255,0.06); overflow:hidden;";
         const fill = document.createElement("div");
-        // 능력형은 3단계 눈금(0/50/100%), 연속형은 형질별 상한(200 등) 기준 비율.
+        // 능력형은 3단계 눈금(0/50/100%), 연속형은 형질별 상한(200 등) 기준 비율. 색은 형질 6색 매핑.
         const pct = isAbility ? lvl * 50 : Math.round(Math.max(0, Math.min(100, (v / TRAIT_CEILING[key]) * 100)));
-        fill.style.cssText = "height:100%; width:" + pct + "%; border-radius:3px; background:#6cc24a;";
+        fill.style.cssText = `height:100%; width:${pct}%; border-radius:3px; background:${traitColor(key)};`;
         track.appendChild(fill);
         row.appendChild(track);
       }
@@ -117,14 +121,14 @@ export function createBuildPanel(): BuildPanel {
     if (data.cards.length === 0) {
       const empty = document.createElement("div");
       empty.textContent = "아직 고른 카드 없음";
-      empty.style.cssText = "color:#7b8595;";
+      empty.style.cssText = "color:var(--faint);";
       list.appendChild(empty);
       return;
     }
     data.cards.forEach((name, i) => {
       const row = document.createElement("div");
       row.textContent = `${i + 1}. ${name}`;
-      row.style.cssText = "color:#cdd5df; word-break:keep-all; margin-top:2px;";
+      row.style.cssText = "color:var(--sub); word-break:keep-all; margin-top:2px;";
       list.appendChild(row);
     });
   };

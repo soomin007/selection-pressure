@@ -3,6 +3,8 @@
 // 캔버스 위 HTML 오버레이(buildPanel 과 같은 방식). 본문은 터치 통과, 닫기 버튼만 누를 수 있다.
 
 import { TRAIT_KEYS, TRAIT_LABELS, type Traits } from "@/sim/genome";
+import { traitColor } from "@/ui/traitDisplay";
+import { ensurePanelStyles } from "@/ui/panelStyles";
 
 export interface CreatureCardData {
   name: string; // 개체 애칭(예: "보리")
@@ -40,17 +42,20 @@ function energyWord(v: number): string {
   return v >= 0.7 ? "배부름" : v >= 0.34 ? "보통" : "굶주림";
 }
 
-/** 기운 막대 색 — 높으면 초록, 중간 호박, 낮으면 빨강(한눈에 위태로움을 읽게). */
+/** 기운 막대 색 — 높으면 초록, 중간 호박, 낮으면 빨강(한눈에 위태로움을 읽게). 3a 의미 색. */
 function energyColor(v: number): string {
-  return v >= 0.7 ? "#6cc24a" : v >= 0.34 ? "#e0b94a" : "#e05a4a";
+  return v >= 0.7 ? "#8FD14F" : v >= 0.34 ? "#F5C33B" : "#E85C43";
 }
 
 export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
+  ensurePanelStyles(); // :root 토큰(var(--*)) 보장
   const root = document.createElement("div");
   root.style.cssText =
-    "position:fixed; left:8px; bottom:8px; width:188px; box-sizing:border-box; padding:9px 11px;" +
-    "background:rgba(11,14,20,0.9); border:1px solid #2a3346; border-radius:11px;" +
-    "color:#dfe6ee; font-family:system-ui,-apple-system,sans-serif; font-size:12px; line-height:1.4;" +
+    "position:fixed; left:calc(8px + env(safe-area-inset-left)); bottom:calc(8px + env(safe-area-inset-bottom));" +
+    "width:190px; box-sizing:border-box; padding:10px 12px;" +
+    "background:var(--panel); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);" +
+    "border:1px solid var(--line); border-radius:var(--r-focus);" +
+    "color:var(--ink); font-family:var(--font-body); font-size:12px; line-height:1.4;" +
     "z-index:11; pointer-events:none; user-select:none; display:none;";
 
   // 헤더 — 종 색 점 + 이름(크게) + 이전/다음 화살표 + 닫기. 버튼만 누를 수 있고 나머지는 터치 통과.
@@ -59,14 +64,14 @@ export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
   const dot = document.createElement("span");
   dot.style.cssText = "width:11px; height:11px; border-radius:50%; flex:none;";
   const name = document.createElement("span");
-  name.style.cssText = "font-size:16px; font-weight:800; flex:1; word-break:keep-all;";
-  // ‹ › — 같은 무리의 다른 개체로 포커스 이동. 폰 손가락 기준 넉넉한 탭 영역.
+  name.style.cssText = "font-family:var(--font-title); font-size:16px; flex:1; word-break:keep-all;";
+  // ‹ › — 같은 무리의 다른 개체로 포커스 이동. 폰 손가락 기준 넉넉한 탭 영역. 계측 알약 톤.
   const mkBtn = (label: string, onTap: () => void): HTMLSpanElement => {
     const b = document.createElement("span");
     b.textContent = label;
     b.style.cssText =
-      "pointer-events:auto; cursor:pointer; color:#cdd5df; font-size:17px; font-weight:700;" +
-      "line-height:1; padding:2px 6px; border-radius:6px; background:#20293a; flex:none;";
+      "pointer-events:auto; cursor:pointer; color:var(--ink); font-size:17px;" +
+      "line-height:1; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.08); flex:none;";
     b.addEventListener("click", onTap);
     return b;
   };
@@ -75,28 +80,28 @@ export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
   const close = document.createElement("span");
   close.textContent = "✕";
   close.style.cssText =
-    "pointer-events:auto; cursor:pointer; color:#8a93a6; font-size:13px; padding:1px 4px; flex:none;";
+    "pointer-events:auto; cursor:pointer; color:var(--faint); font-size:13px; padding:1px 4px; flex:none;";
   close.addEventListener("click", cb.onClose);
   header.append(dot, name, prev, next, close);
 
   // 종 · 한 줄 묘사.
   const sub = document.createElement("div");
-  sub.style.cssText = "margin-top:2px; color:#9fb0c4; font-size:11.5px; word-break:keep-all;";
+  sub.style.cssText = "margin-top:2px; color:var(--sub); font-size:11.5px; word-break:keep-all;";
 
   // 기운 — 라벨 + 막대 + 한 단어.
   const energyRow = document.createElement("div");
   energyRow.style.cssText = "display:flex; align-items:center; gap:6px; margin-top:8px;";
   const energyLabel = document.createElement("span");
   energyLabel.textContent = "기운";
-  energyLabel.style.cssText = "color:#9aa6b6; font-size:11px; flex:none;";
+  energyLabel.style.cssText = "color:var(--sub); font-size:11px; flex:none;";
   const energyTrack = document.createElement("div");
   energyTrack.style.cssText =
-    "flex:1; height:6px; border-radius:4px; background:#1a2230; overflow:hidden;";
+    "flex:1; height:6px; border-radius:4px; background:rgba(255,255,255,0.06); overflow:hidden;";
   const energyFill = document.createElement("div");
   energyFill.style.cssText = "height:100%; width:0%; border-radius:4px;";
   energyTrack.appendChild(energyFill);
   const energyText = document.createElement("span");
-  energyText.style.cssText = "color:#cdd5df; font-size:11px; flex:none; min-width:48px; text-align:right;";
+  energyText.style.cssText = "font-family:var(--font-mono); font-size:11px; flex:none; min-width:48px; text-align:right;";
   energyRow.append(energyLabel, energyTrack, energyText);
 
   // 나이 · 지금 하는 일.
@@ -104,15 +109,15 @@ export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
   lifeRow.style.cssText =
     "display:flex; justify-content:space-between; gap:8px; margin-top:5px; font-size:11.5px;";
   const ageText = document.createElement("span");
-  ageText.style.cssText = "color:#aeb7c4;";
+  ageText.style.cssText = "color:var(--sub); font-family:var(--font-mono);";
   const activityText = document.createElement("span");
-  activityText.style.cssText = "color:#cdd5df; font-weight:600; word-break:keep-all;";
+  activityText.style.cssText = "color:var(--ink); font-weight:600; word-break:keep-all;";
   lifeRow.append(ageText, activityText);
 
   // 형질 — 작은 2열 막대 격자(이 아이가 어떤 형질을 가졌는지). diet 는 단어로.
   const traitsLabel = document.createElement("div");
   traitsLabel.textContent = "형질";
-  traitsLabel.style.cssText = "color:#8a93a6; font-weight:700; font-size:11px; margin:9px 0 4px;";
+  traitsLabel.style.cssText = "color:var(--faint); font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; margin:9px 0 4px;";
   const traitsGrid = document.createElement("div");
   traitsGrid.style.cssText = "display:grid; grid-template-columns:1fr 1fr; gap:4px 10px;";
 
@@ -125,16 +130,17 @@ export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
     top.style.cssText = "display:flex; justify-content:space-between; gap:4px;";
     const label = document.createElement("span");
     label.textContent = TRAIT_LABELS[key];
-    label.style.cssText = "color:#9aa6b6; font-size:10.5px;";
+    label.style.cssText = "color:var(--sub); font-size:10.5px;";
     const val = document.createElement("span");
-    val.style.cssText = "color:#dfe6ee; font-size:10.5px; font-weight:700; font-variant-numeric:tabular-nums;";
+    val.style.cssText = "color:var(--ink); font-size:10.5px; font-family:var(--font-mono); font-variant-numeric:tabular-nums;";
     top.append(label, val);
     cell.appendChild(top);
     if (key !== "diet") {
       const track = document.createElement("div");
-      track.style.cssText = "margin-top:2px; height:3px; border-radius:2px; background:#1a2230; overflow:hidden;";
+      track.style.cssText = "margin-top:2px; height:3px; border-radius:2px; background:rgba(255,255,255,0.06); overflow:hidden;";
       const fill = document.createElement("div");
-      fill.style.cssText = "height:100%; width:0%; border-radius:2px; background:#5a86c8;";
+      // 형질 6색 매핑 — 막대 색만 봐도 어떤 형질인지 읽힌다.
+      fill.style.cssText = `height:100%; width:0%; border-radius:2px; background:${traitColor(key)};`;
       track.appendChild(fill);
       cell.appendChild(track);
       traitFills.set(key, fill);
@@ -154,7 +160,7 @@ export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
     root.style.display = "block";
     dot.style.background = hex(data.color);
     name.textContent = data.name;
-    name.style.color = data.isPlayer ? "#9bffa0" : "#e7edf4";
+    name.style.color = data.isPlayer ? "var(--lime)" : "var(--ink)";
     sub.textContent = `${data.speciesName} · ${data.descriptor}`;
 
     const e = Math.max(0, Math.min(1, data.energy));

@@ -3,7 +3,7 @@
 
 import { effectiveDelta, type Card } from "@/game/cards";
 import { TRAIT_LABELS, type Traits } from "@/sim/genome";
-import { ABILITY_KEYS } from "@/ui/traitDisplay";
+import { ABILITY_KEYS, traitColor } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 
 export interface DraftPanel {
@@ -39,8 +39,8 @@ export function createDraftPanel(
   const rerollBtn = document.createElement("button");
   rerollBtn.textContent = "다시 뽑기";
   rerollBtn.style.cssText =
-    "display:none; width:100%; margin-top:10px; padding:10px; border:1px solid #4a6a8a; border-radius:12px;" +
-    "background:rgba(74,106,138,0.18); color:#bcd6ee; font-size:14px; font-weight:700; cursor:pointer;";
+    "display:none; width:100%; margin-top:10px; padding:10px; border:1px solid var(--line); border-radius:var(--r-btn);" +
+    "background:rgba(255,255,255,0.05); color:var(--ink); font-family:var(--font-body); font-size:14px; cursor:pointer;";
   rerollBtn.addEventListener("click", onReroll);
   root.appendChild(rerollBtn);
 
@@ -48,8 +48,8 @@ export function createDraftPanel(
   const skipBtn = document.createElement("button");
   skipBtn.textContent = "건너뛰고 새끼 치기";
   skipBtn.style.cssText =
-    "display:block; width:100%; margin-top:8px; padding:9px; border:1px solid #3a4658; border-radius:12px;" +
-    "background:transparent; color:#8a93a6; font-size:13px; font-weight:600; cursor:pointer;";
+    "display:block; width:100%; margin-top:8px; padding:9px; border:0;" +
+    "background:transparent; color:var(--faint); font-family:var(--font-body); font-size:13px; cursor:pointer;";
   skipBtn.addEventListener("click", onSkip);
   root.appendChild(skipBtn);
 
@@ -62,6 +62,9 @@ export function createDraftPanel(
     cards.forEach((card, i) => {
       const btn = document.createElement("button");
       btn.className = "ui-card";
+      // 카드 왼쪽 휜 액센트를 대표 형질 색으로 — "무엇이 바뀌는지"가 색으로 먼저 읽힌다.
+      const accent = traitColor(dominantTrait(card));
+      btn.style.borderLeftColor = accent;
 
       const name = document.createElement("div");
       name.className = "ui-card-name";
@@ -73,6 +76,7 @@ export function createDraftPanel(
 
       const eff = document.createElement("div");
       eff.className = "ui-card-eff";
+      eff.style.color = accent;
       eff.textContent = formatEffects(card);
 
       btn.appendChild(name);
@@ -89,6 +93,21 @@ export function createDraftPanel(
   };
 
   return { show, hide };
+}
+
+/** 카드 효과 중 가장 크게 바뀌는 형질 — 카드 액센트 색을 정한다. */
+function dominantTrait(card: Card): keyof Traits {
+  const keys = Object.keys(card.effects) as (keyof Traits)[];
+  let best: keyof Traits = keys[0] ?? "fertility";
+  let bestMag = -1;
+  for (const key of keys) {
+    const mag = Math.abs(card.effects[key] ?? 0);
+    if (mag > bestMag) {
+      bestMag = mag;
+      best = key;
+    }
+  }
+  return best;
 }
 
 function formatEffects(card: Card): string {

@@ -89,12 +89,12 @@ export function createMomentOverlay(): MomentOverlay {
       // 멸종 — 화면이 어둑히 닫히며 "멸종" 큰 글자. 어둠은 결과 패널 뒤로 남는다(clear 로 지운다).
       root.appendChild(
         layer(
-          "position:absolute; inset:0; background:radial-gradient(circle at 50% 50%, rgba(30,10,10,0.35) 18%, rgba(8,11,17,0.82) 96%)",
+          "position:absolute; inset:0; background:radial-gradient(circle at 50% 50%, rgba(40,14,10,0.35) 18%, rgba(11,9,6,0.85) 96%)",
           "moment-close 1.4s ease-out forwards",
         ),
       );
       root.appendChild(
-        wordLayer("멸종", "#e0604a", "0 3px 20px rgba(0,0,0,0.8)", "moment-word-dim 1.6s ease-out forwards"),
+        wordLayer("멸종", "#E85C43", "0 3px 20px rgba(0,0,0,0.8)", "moment-word-dim 1.6s ease-out forwards"),
       );
       window.setTimeout(onDone, 1250);
       // lose 는 오버레이를 안 숨긴다 — 결과 패널 뒤로 어둠 유지. clear() 에서 지운다.
@@ -114,7 +114,7 @@ function wordLayer(text: string, color: string, shadow: string, anim: string): H
   d.textContent = text;
   d.style.cssText =
     "position:absolute; inset:0; display:flex; align-items:center; justify-content:center;" +
-    `color:${color}; font-size:min(22vw,120px); font-weight:900; letter-spacing:0.1em;` +
+    `color:${color}; font-family:'Black Han Sans',sans-serif; font-size:min(24vw,132px); letter-spacing:0.06em;` +
     `text-shadow:${shadow}; animation:${anim};`;
   return d;
 }

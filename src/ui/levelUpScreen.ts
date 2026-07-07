@@ -36,23 +36,23 @@ export function createLevelUpScreen(): LevelUpScreen {
   const overlay = document.createElement("div");
   overlay.style.cssText =
     "position:fixed; inset:0; z-index:40; display:none; flex-direction:column; align-items:center;" +
-    "justify-content:center; gap:14px; padding:24px; background:rgba(8,11,17,0.82);" +
-    "font-family:system-ui,-apple-system,sans-serif; text-align:center; user-select:none;";
+    "justify-content:center; gap:14px; padding:24px; background:rgba(11,9,6,0.85);" +
+    "font-family:var(--font-body); text-align:center; user-select:none;";
 
   const title = document.createElement("div");
   title.textContent = "이번 혈통이 남긴 자취";
-  title.style.cssText = "color:#cfe6b0; font-size:15px; font-weight:600; letter-spacing:0.4px;";
+  title.style.cssText = "color:var(--sub); font-size:15px; letter-spacing:0.4px;";
 
   const badge = document.createElement("div");
   badge.className = "lvl-badge";
   badge.style.cssText =
-    "color:#ffe08a; font-size:44px; font-weight:900; letter-spacing:0.5px;" +
+    "color:#ffe08a; font-family:'Black Han Sans',sans-serif; font-size:46px; letter-spacing:0.02em;" +
     "text-shadow:0 2px 14px rgba(255,210,90,0.4); transform-origin:center;";
 
   // 경험치바 — 트랙 + 차오르는 채움. 폭(%)을 매 프레임 갱신.
   const track = document.createElement("div");
   track.style.cssText =
-    "width:min(78vw,300px); height:16px; background:#1b2230; border:1px solid #33405a;" +
+    "width:min(78vw,300px); height:16px; background:rgba(255,255,255,0.06); border:1px solid var(--line);" +
     "border-radius:9px; overflow:hidden;";
   const fill = document.createElement("div");
   fill.style.cssText =
@@ -61,7 +61,7 @@ export function createLevelUpScreen(): LevelUpScreen {
   track.appendChild(fill);
 
   const gained = document.createElement("div");
-  gained.style.cssText = "color:#8a93a6; font-size:13px; font-weight:600;";
+  gained.style.cssText = "color:var(--faint); font-family:var(--font-mono); font-size:12.5px;";
 
   // "새로 열림" 박스 — 넘긴 레벨에서 열린 것들을 담는다. 항목이 하나도 없으면 숨긴다.
   const unlockBox = document.createElement("div");
@@ -73,7 +73,7 @@ export function createLevelUpScreen(): LevelUpScreen {
   const unlockHeader = document.createElement("div");
   unlockHeader.textContent = "새로 열림";
   unlockHeader.style.cssText =
-    "color:#cfe6b0; font-size:12px; font-weight:800; letter-spacing:3px; text-align:center; opacity:0.92;";
+    "color:#cfe6b0; font-family:var(--font-mono); font-size:11px; letter-spacing:0.24em; text-align:center; opacity:0.92;";
   const unlockList = document.createElement("div");
   unlockList.style.cssText = "display:flex; flex-direction:column; gap:8px;";
   unlockBox.append(unlockHeader, unlockList);
@@ -81,9 +81,9 @@ export function createLevelUpScreen(): LevelUpScreen {
   const continueBtn = document.createElement("button");
   continueBtn.textContent = "계속";
   continueBtn.style.cssText =
-    "display:none; margin-top:10px; padding:12px 30px; border:none; border-radius:12px;" +
-    "background:linear-gradient(180deg,#7db0e0,#4f84b4); color:#08161f; font-size:16px;" +
-    "font-weight:800; cursor:pointer;";
+    "display:none; margin-top:10px; padding:12px 34px; border:0; border-radius:var(--r-btn);" +
+    "background:var(--lime); color:#1B2A0A; font-family:var(--font-title); font-size:16px;" +
+    "border-bottom:5px solid var(--limeD); cursor:pointer;";
 
   overlay.append(title, badge, track, gained, unlockBox, continueBtn);
   document.body.appendChild(overlay);
@@ -119,7 +119,7 @@ export function createLevelUpScreen(): LevelUpScreen {
       texts.style.cssText = "display:flex; flex-direction:column; gap:1px; text-align:left; min-width:0;";
       const name = document.createElement("div");
       name.textContent = u.label;
-      name.style.cssText = "color:#ffe08a; font-size:15px; font-weight:800;";
+      name.style.cssText = "color:#ffe08a; font-family:var(--font-title); font-size:15px;";
       const detail = document.createElement("div");
       detail.textContent = u.detail;
       detail.style.cssText = "color:#a7b596; font-size:12px; font-weight:500; line-height:1.35;";

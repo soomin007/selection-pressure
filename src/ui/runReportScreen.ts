@@ -5,6 +5,7 @@
 
 import type { RunHistory, RunSample, RunEvent, RunEventKind } from "@/game/game";
 import { MUTABLE_TRAITS, TRAIT_LABELS, type MutableTrait } from "@/sim/genome";
+import { ensurePanelStyles } from "@/ui/panelStyles";
 
 export interface RunReportScreen {
   show: (history: RunHistory) => void;
@@ -13,36 +14,37 @@ export interface RunReportScreen {
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-// 형질별 선 색 — 화면의 형질 색 언어와 대략 맞춘다(속도=노랑, 시야=하늘, 공격=빨강 …).
+// 형질별 선 색 — 형질 6색 매핑(고정)과 일치(속도 amber·시야 blue·공격 red·무리 purple·대사 orange·번식 lime).
 const TRAIT_COLOR: Record<MutableTrait, string> = {
-  speed: "#ffd24a",
-  vision: "#5aa0f0",
-  attack: "#e0604a",
-  herding: "#b070e0",
-  metabolism: "#ff9a3a",
-  fertility: "#6cc24a",
+  speed: "#F5C33B",
+  vision: "#5AB0E2",
+  attack: "#E85C43",
+  herding: "#B98CE0",
+  metabolism: "#F2903A",
+  fertility: "#8FD14F",
 };
 
-// 사건 종류별 점 색 — 연대기에서 무슨 일이었는지 한눈에.
+// 사건 종류별 점 색 — 연대기에서 무슨 일이었는지 한눈에. 3a 의미 색.
 const EVENT_COLOR: Record<RunEventKind, string> = {
-  start: "#6cc24a",
-  card: "#ffd24a",
-  boss: "#e0604a",
-  extinction: "#5a8cff",
-  era: "#b070e0",
-  end: "#cdd5df",
+  start: "#8FD14F",
+  card: "#F5C33B",
+  boss: "#E85C43",
+  extinction: "#5AB0E2",
+  era: "#B98CE0",
+  end: "#F5EEE1",
 };
 
 export function createRunReportScreen(onClose: () => void): RunReportScreen {
+  ensurePanelStyles(); // :root 토큰 보장
   const overlay = document.createElement("div");
   overlay.style.cssText =
     "position:fixed; inset:0; z-index:41; display:none; overflow-y:auto;" +
-    "background:#080b11; font-family:system-ui,-apple-system,sans-serif;" +
+    "background:var(--bg-report); font-family:var(--font-body);" +
     "-webkit-overflow-scrolling:touch;";
 
   const panel = document.createElement("div");
   panel.style.cssText =
-    "max-width:440px; margin:0 auto; box-sizing:border-box; padding:20px 18px 44px; color:#dfe6ee;";
+    "max-width:440px; margin:0 auto; box-sizing:border-box; padding:calc(20px + env(safe-area-inset-top)) 18px 44px; color:var(--ink);";
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
 
@@ -54,19 +56,19 @@ export function createRunReportScreen(onClose: () => void): RunReportScreen {
     head.style.cssText = "display:flex; align-items:center; justify-content:space-between; gap:10px;";
     const title = document.createElement("div");
     title.textContent = "이 혈통의 기록";
-    title.style.cssText = "font-size:19px; font-weight:800; color:#eaf0f6;";
+    title.style.cssText = "font-family:var(--font-title); font-size:20px; color:var(--ink);";
     const close = document.createElement("button");
     close.textContent = "닫기";
     close.style.cssText =
-      "flex:none; padding:8px 16px; border:1px solid #3b465c; border-radius:10px;" +
-      "background:rgba(22,27,38,0.9); color:#cdd5df; font-size:14px; font-weight:700; cursor:pointer;";
+      "flex:none; padding:8px 18px; border:1px solid var(--line); border-radius:999px;" +
+      "background:rgba(255,255,255,0.05); color:var(--sub); font-family:var(--font-body); font-size:14px; cursor:pointer;";
     close.addEventListener("click", onClose);
     head.append(title, close);
     panel.appendChild(head);
 
     const sub = document.createElement("div");
     sub.textContent = `한 종이 걸어온 길. ${history.durationSec}초 동안 개체 수와 형질이 어떻게 움직였는지 되짚습니다.`;
-    sub.style.cssText = "margin-top:6px; color:#9fb0c4; font-size:13px; line-height:1.5; word-break:keep-all;";
+    sub.style.cssText = "margin-top:8px; color:var(--sub); font-size:13px; line-height:1.55; word-break:keep-all;";
     panel.appendChild(sub);
 
     const samples = history.samples;
@@ -99,21 +101,21 @@ function sectionTitle(text: string): HTMLElement {
   const t = document.createElement("div");
   t.textContent = text;
   t.style.cssText =
-    "margin:24px 0 8px; font-size:14px; font-weight:800; color:#cfe0b0; letter-spacing:0.3px;";
+    "margin:24px 0 8px; font-family:var(--font-title); font-size:15px; color:var(--ink); letter-spacing:0.02em;";
   return t;
 }
 
 function caption(text: string): HTMLElement {
   const c = document.createElement("div");
   c.textContent = text;
-  c.style.cssText = "margin:-2px 0 8px; color:#8a93a6; font-size:12px; line-height:1.5; word-break:keep-all;";
+  c.style.cssText = "margin:-2px 0 8px; color:var(--faint); font-size:12px; line-height:1.55; word-break:keep-all;";
   return c;
 }
 
 function graphFrame(): HTMLElement {
   const box = document.createElement("div");
   box.style.cssText =
-    "padding:8px 10px; background:#0d1119; border:1px solid #232c3c; border-radius:12px;";
+    "padding:9px 11px; background:var(--panelSolid); border:1px solid var(--line); border-radius:var(--r-card);";
   return box;
 }
 
@@ -144,7 +146,7 @@ function svgText(x: number, y: number, text: string, color: string, anchor: stri
   t.setAttribute("fill", color);
   t.setAttribute("font-size", "9");
   t.setAttribute("text-anchor", anchor);
-  t.setAttribute("font-family", "system-ui,-apple-system,sans-serif");
+  t.setAttribute("font-family", "'JetBrains Mono',ui-monospace,monospace");
   t.textContent = text;
   return t;
 }
@@ -168,14 +170,14 @@ function populationGraph(samples: RunSample[]): HTMLElement {
   const areaPts = `${x(0).toFixed(1)},${(H - PADB).toFixed(1)} ${linePts.join(" ")} ${x(tMax).toFixed(1)},${(H - PADB).toFixed(1)}`;
   const area = document.createElementNS(SVG_NS, "polygon");
   area.setAttribute("points", areaPts);
-  area.setAttribute("fill", "#6cc24a");
-  area.setAttribute("fill-opacity", "0.14");
+  area.setAttribute("fill", "#8FD14F");
+  area.setAttribute("fill-opacity", "0.16");
   svg.appendChild(area);
-  svg.appendChild(polyline(linePts.join(" "), "#6cc24a", 2));
+  svg.appendChild(polyline(linePts.join(" "), "#8FD14F", 2));
 
   // 최댓값·끝시간 라벨.
-  svg.appendChild(svgText(PADX, PADT - 3, `최대 ${pMax}`, "#7b8595", "start"));
-  svg.appendChild(svgText(W - PADX, H - 2, `${tMax}초`, "#7b8595", "end"));
+  svg.appendChild(svgText(PADX, PADT - 3, `최대 ${pMax}`, "#8C7C68", "start"));
+  svg.appendChild(svgText(W - PADX, H - 2, `${tMax}초`, "#8C7C68", "end"));
   box.appendChild(svg);
   return box;
 }
@@ -223,11 +225,11 @@ function traitGraph(samples: RunSample[]): HTMLElement {
     base.setAttribute("x2", String(x(tMax)));
     base.setAttribute("y1", y(50).toFixed(1));
     base.setAttribute("y2", y(50).toFixed(1));
-    base.setAttribute("stroke", "#33405a");
+    base.setAttribute("stroke", "#4a4234");
     base.setAttribute("stroke-width", "1");
     base.setAttribute("stroke-dasharray", "3 3");
     svg.appendChild(base);
-    svg.appendChild(svgText(PADX, y(50) - 3, "50", "#5a6478", "start"));
+    svg.appendChild(svgText(PADX, y(50) - 3, "50", "#8C7C68", "start"));
   }
 
   for (const k of MUTABLE_TRAITS) {
@@ -248,7 +250,7 @@ function traitLegend(): HTMLElement {
     sw.style.cssText = `flex:none; width:13px; height:3px; border-radius:2px; background:${TRAIT_COLOR[k]};`;
     const lb = document.createElement("span");
     lb.textContent = TRAIT_LABELS[k];
-    lb.style.cssText = "font-size:12px; color:#aeb7c4;";
+    lb.style.cssText = "font-size:12px; color:var(--sub);";
     item.append(sw, lb);
     wrap.appendChild(item);
   }
@@ -262,24 +264,24 @@ function chronicle(events: RunEvent[]): HTMLElement {
   if (events.length === 0) {
     const empty = document.createElement("div");
     empty.textContent = "남긴 자취가 없습니다.";
-    empty.style.cssText = "color:#7b8595; font-size:13px; padding:8px 0;";
+    empty.style.cssText = "color:var(--faint); font-size:13px; padding:8px 0;";
     list.appendChild(empty);
     return list;
   }
   events.forEach((e) => {
     const row = document.createElement("div");
     row.style.cssText =
-      "display:flex; align-items:flex-start; gap:10px; padding:8px 0; border-top:1px solid #1b2331;";
+      "display:flex; align-items:flex-start; gap:10px; padding:8px 0; border-top:1px solid var(--line);";
     const time = document.createElement("div");
     time.textContent = `${e.t}초`;
     time.style.cssText =
-      "flex:none; width:42px; color:#7b8595; font-size:12px; font-variant-numeric:tabular-nums; padding-top:2px;";
+      "flex:none; width:42px; color:var(--faint); font-family:var(--font-mono); font-size:12px; font-variant-numeric:tabular-nums; padding-top:2px;";
     const dot = document.createElement("div");
     dot.style.cssText =
       `flex:none; width:9px; height:9px; border-radius:50%; margin-top:4px; background:${EVENT_COLOR[e.kind]};`;
     const label = document.createElement("div");
     label.textContent = e.label;
-    label.style.cssText = "flex:1; font-size:14px; color:#dfe6ee; line-height:1.4; word-break:keep-all;";
+    label.style.cssText = "flex:1; font-size:14px; color:var(--ink); line-height:1.45; word-break:keep-all;";
     row.append(time, dot, label);
     list.appendChild(row);
   });

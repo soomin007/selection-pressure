@@ -17,3 +17,20 @@ export function abilityLevel(key: keyof Traits, v: number): 0 | 1 | 2 {
 export function abilityWord(level: 0 | 1 | 2): string {
   return level === 0 ? "없음" : level === 1 ? "보통" : "강함";
 }
+
+/**
+ * 형질 6색 매핑(고정) — 스탯바·범례·보고서 라인이 전부 이 색을 공유한다(핸드오프 §2·§9).
+ * "형질이 곧 색"이라 한눈에 어떤 형질인지 읽힌다. 매핑에 없는 형질(식성·능력형)은 lime(내 종)으로.
+ */
+export const TRAIT_COLORS: Partial<Record<keyof Traits, string>> = {
+  speed: "#F5C33B", // 속도 · amber
+  vision: "#5AB0E2", // 시야 · blue
+  attack: "#E85C43", // 공격력 · red
+  fertility: "#8FD14F", // 번식력 · lime
+  herding: "#B98CE0", // 무리 성향 · purple
+  metabolism: "#F2903A", // 대사 · orange
+};
+
+export function traitColor(key: keyof Traits): string {
+  return TRAIT_COLORS[key] ?? "#8FD14F";
+}

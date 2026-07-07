@@ -26,12 +26,13 @@ export function createLobby(onStart: () => void, onGlossary: () => void): Lobby 
   start.textContent = "게임 시작";
   start.addEventListener("click", onStart);
 
-  // 대백과 열기(부 버튼). 시작 버튼 아래 차분한 스타일.
+  // 대백과 열기(보조 버튼) — 투명 배경 + 호박빛 밑줄(핸드오프 §4 보조 버튼).
   const glossary = document.createElement("button");
   glossary.textContent = "대백과";
   glossary.style.cssText =
-    "margin-top:4px; padding:10px 28px; border:1px solid #3b465c; border-radius:10px;" +
-    "background:rgba(22,27,38,0.9); color:#cdd5df; font-size:15px; font-weight:700; cursor:pointer;";
+    "margin-top:8px; padding:6px 4px 3px; border:0; background:transparent;" +
+    "color:var(--ink); font-family:var(--font-body); font-size:14px; cursor:pointer;" +
+    "border-bottom:1.5px solid var(--amber);";
   glossary.addEventListener("click", onGlossary);
 
   const hint = document.createElement("div");

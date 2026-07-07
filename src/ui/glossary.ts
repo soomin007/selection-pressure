@@ -3,6 +3,8 @@
 // 자족적 HTML 오버레이. 로비, 일시정지에서 연다. sim 과 무관(읽기 전용).
 // 문구 규칙: 쉬운 말, 한글 사이 em dash 금지(마침표·쉼표·줄바꿈으로 대신).
 
+import { ensurePanelStyles } from "@/ui/panelStyles";
+
 export interface Glossary {
   show: () => void;
   hide: () => void;
@@ -346,33 +348,34 @@ const SECTIONS: readonly Section[] = [
 ];
 
 export function createGlossary(): Glossary {
+  ensurePanelStyles(); // :root 토큰 보장
   const scrim = document.createElement("div");
   scrim.style.cssText =
     "position:fixed; inset:0; z-index:40; display:none; box-sizing:border-box; padding:16px;" +
-    "background:rgba(6,9,14,0.8); justify-content:center; align-items:center;" +
-    "font-family:system-ui,-apple-system,sans-serif;";
+    "background:rgba(11,9,6,0.82); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);" +
+    "justify-content:center; align-items:center; font-family:var(--font-body);";
 
   const panel = document.createElement("div");
   panel.style.cssText =
     "width:min(100%,460px); height:min(88vh,680px); box-sizing:border-box; display:flex; flex-direction:column;" +
-    "background:#0c1018; border:1px solid #3b465c; border-radius:14px; color:#e6e6e6; overflow:hidden;";
+    "background:var(--bg-report); border:1px solid var(--line); border-radius:var(--r-panel); color:var(--ink); overflow:hidden;";
 
   const header = document.createElement("div");
   header.style.cssText =
-    "display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid #232c3c;";
+    "display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--line);";
   const back = document.createElement("button");
   back.textContent = "‹ 뒤로";
   back.style.cssText =
-    "border:1px solid #3b465c; background:#161b26; color:#cdd5df; border-radius:9px;" +
-    "padding:7px 12px; font-size:14px; font-weight:700; cursor:pointer; visibility:hidden;";
+    "border:1px solid var(--line); background:rgba(255,255,255,0.05); color:var(--sub); border-radius:999px;" +
+    "padding:7px 14px; font-family:var(--font-body); font-size:14px; cursor:pointer; visibility:hidden;";
   const title = document.createElement("div");
   title.textContent = "대백과";
-  title.style.cssText = "flex:1; font-size:18px; font-weight:800;";
+  title.style.cssText = "flex:1; font-family:var(--font-title); font-size:19px; color:var(--ink);";
   const close = document.createElement("button");
   close.textContent = "닫기";
   close.style.cssText =
-    "border:1px solid #3b465c; background:#161b26; color:#e6e6e6; border-radius:9px;" +
-    "padding:7px 13px; font-size:14px; font-weight:700; cursor:pointer;";
+    "border:1px solid var(--line); background:rgba(255,255,255,0.05); color:var(--ink); border-radius:999px;" +
+    "padding:7px 15px; font-family:var(--font-body); font-size:14px; cursor:pointer;";
   header.append(back, title, close);
 
   const body = document.createElement("div");
@@ -383,12 +386,12 @@ export function createGlossary(): Glossary {
   for (const sec of SECTIONS) {
     const h = document.createElement("div");
     h.textContent = sec.title;
-    h.style.cssText = "color:#9bffa0; font-size:14px; font-weight:800; margin:16px 2px 6px;";
+    h.style.cssText = "color:var(--lime); font-family:var(--font-title); font-size:15px; margin:16px 2px 6px;";
     listView.appendChild(h);
     if (sec.intro) {
       const intro = document.createElement("div");
       intro.textContent = sec.intro;
-      intro.style.cssText = "color:#aeb7c4; font-size:12.5px; line-height:1.5; margin:0 2px 8px;";
+      intro.style.cssText = "color:var(--sub); font-size:12.5px; line-height:1.5; margin:0 2px 8px;";
       listView.appendChild(intro);
     }
     const grid = document.createElement("div");
@@ -397,8 +400,8 @@ export function createGlossary(): Glossary {
       const b = document.createElement("button");
       b.textContent = e.term;
       b.style.cssText =
-        "border:1px solid #2a3346; background:#161b26; color:#e6e6e6; border-radius:10px;" +
-        "padding:10px 14px; font-size:15px; font-weight:700; cursor:pointer;";
+        "border:1px solid var(--line); background:var(--panelSolid); color:var(--ink); border-radius:var(--r-card);" +
+        "padding:10px 14px; font-family:var(--font-title); font-size:15px; cursor:pointer;";
       b.addEventListener("click", () => showDetail(e));
       grid.appendChild(b);
     }
@@ -421,7 +424,7 @@ export function createGlossary(): Glossary {
     if (e.svg) {
       const img = document.createElement("div");
       img.style.cssText =
-        "margin:14px 0; padding:12px; background:#0a0e16; border:1px solid #232c3c; border-radius:12px;" +
+        "margin:14px 0; padding:12px; background:var(--panelSolid); border:1px solid var(--line); border-radius:var(--r-card);" +
         "display:flex; justify-content:center; align-items:center; height:140px;";
       img.innerHTML = e.svg;
       detailView.appendChild(img);
@@ -429,45 +432,45 @@ export function createGlossary(): Glossary {
 
     const term = document.createElement("div");
     term.textContent = e.term;
-    term.style.cssText = "font-size:21px; font-weight:800; margin:8px 0 6px;";
+    term.style.cssText = "font-family:var(--font-title); font-size:22px; color:var(--ink); margin:8px 0 6px;";
     detailView.appendChild(term);
 
     const desc = document.createElement("div");
     desc.textContent = e.desc;
-    desc.style.cssText = "color:#cdd5df; font-size:15px; line-height:1.65; word-break:keep-all;";
+    desc.style.cssText = "color:var(--sub); font-size:15px; line-height:1.65; word-break:keep-all;";
     detailView.appendChild(desc);
 
     if (e.rows) {
       const label = document.createElement("div");
       label.textContent = "인게임 수치";
-      label.style.cssText = "color:#8a93a6; font-size:12px; font-weight:700; margin:16px 0 6px;";
+      label.style.cssText = "color:var(--faint); font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; margin:16px 0 6px;";
       detailView.appendChild(label);
       const table = document.createElement("div");
       table.style.cssText =
-        "border:1px solid #232c3c; border-radius:10px; overflow:hidden; background:#0a0e16;";
+        "border:1px solid var(--line); border-radius:var(--r-card); overflow:hidden; background:var(--panelSolid);";
       e.rows.forEach((r, idx) => {
         const row = document.createElement("div");
         row.style.cssText =
           "padding:9px 12px;" +
-          (idx > 0 ? "border-top:1px solid #1a2230;" : "") +
-          (r.base ? "background:#101a18;" : "");
+          (idx > 0 ? "border-top:1px solid var(--line);" : "") +
+          (r.base ? "background:rgba(143,209,79,0.08);" : "");
         const head = document.createElement("div");
         head.style.cssText = "display:flex; justify-content:space-between; gap:10px; align-items:baseline;";
         const k = document.createElement("span");
         k.textContent = r.base ? r.k + " ◀ 시작값" : r.k;
-        k.style.cssText = "color:" + (r.base ? "#9bffb0" : "#aeb7c4") + "; font-size:13.5px; flex:0 0 auto; font-weight:" + (r.base ? "700" : "400") + ";";
+        k.style.cssText = "color:" + (r.base ? "var(--lime)" : "var(--sub)") + "; font-size:13.5px; flex:0 0 auto;";
         const v = document.createElement("span");
         v.textContent = r.v;
-        v.style.cssText = "color:#e6e6e6; font-size:13.5px; font-weight:600; text-align:right; word-break:keep-all;";
+        v.style.cssText = "color:var(--ink); font-family:var(--font-mono); font-size:13px; text-align:right; word-break:keep-all;";
         head.append(k, v);
         row.appendChild(head);
         if (r.bar !== undefined) {
           const pct = Math.round(Math.max(0, Math.min(1, r.bar)) * 100);
           const track = document.createElement("div");
-          track.style.cssText = "margin-top:7px; height:7px; border-radius:4px; background:#1a2230; overflow:hidden;";
+          track.style.cssText = "margin-top:7px; height:7px; border-radius:4px; background:rgba(255,255,255,0.06); overflow:hidden;";
           const fill = document.createElement("div");
           fill.style.cssText =
-            "height:100%; width:" + pct + "%; border-radius:4px; background:" + (r.base ? "#9bffb0" : "#6cff7a") + ";";
+            "height:100%; width:" + pct + "%; border-radius:4px; background:var(--lime); opacity:" + (r.base ? "1" : "0.7") + ";";
           track.appendChild(fill);
           row.appendChild(track);
         }
@@ -479,20 +482,20 @@ export function createGlossary(): Glossary {
     if (e.weak) {
       const label = document.createElement("div");
       label.textContent = "약점 (키우면 유리한 형질)";
-      label.style.cssText = "color:#8a93a6; font-size:12px; font-weight:700; margin:16px 0 5px;";
+      label.style.cssText = "color:var(--faint); font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; margin:16px 0 5px;";
       detailView.appendChild(label);
       const box = document.createElement("div");
       box.textContent = e.weak;
       box.style.cssText =
-        "background:#13201a; border:1px solid #2c4a38; border-radius:10px; padding:11px 13px;" +
-        "color:#9bffb0; font-size:15px; font-weight:700;";
+        "background:rgba(143,209,79,0.08); border:1px solid rgba(143,209,79,0.28); border-radius:var(--r-card); padding:11px 13px;" +
+        "color:var(--lime); font-family:var(--font-title); font-size:15px;";
       detailView.appendChild(box);
     }
 
     if (e.note) {
       const note = document.createElement("div");
       note.textContent = e.note;
-      note.style.cssText = "color:#9aa3b2; font-size:13px; line-height:1.55; margin-top:14px; word-break:keep-all;";
+      note.style.cssText = "color:var(--faint); font-size:13px; line-height:1.55; margin-top:14px; word-break:keep-all;";
       detailView.appendChild(note);
     }
 
