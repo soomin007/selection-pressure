@@ -7,7 +7,7 @@
 
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
-import { defaultGenome, cloneGenome, TRAIT_CEILING, type Genome, type Traits } from "@/sim/genome";
+import { defaultGenome, cloneGenome, MUTABLE_TRAITS, TRAIT_CEILING, type Genome, type Traits, type MutableTrait } from "@/sim/genome";
 import { drawCards, applyCard, boostCard, PRESET_CARDS, type Card } from "@/game/cards";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isCardUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
@@ -30,6 +30,33 @@ export interface RunTimeline {
 export type ExtinctionType = "cold" | "famine" | "heat" | "plague";
 
 const EXTINCTION_TYPES: readonly ExtinctionType[] = ["cold", "famine", "heat", "plague"];
+
+/** 런 보고서용 시계열 샘플 — 한 시점의 내 종 개체 수 + 무리 평균 형질(개체별 진화의 추이). */
+export interface RunSample {
+  /** 경과 시간(초) — 런 전체 누적(시대를 넘어도 이어진다). */
+  t: number;
+  /** 그 시점의 내 종 개체 수. */
+  population: number;
+  /** 살아있는 무리의 평균 형질(변이 6종). 개체마다 조금씩 다른 값이 세대가 지나며 어디로 쏠리는지 보인다. */
+  traits: Record<MutableTrait, number>;
+}
+/** 런 보고서용 사건 종류 — 연대기에서 색·묶음을 가른다. */
+export type RunEventKind = "start" | "card" | "boss" | "extinction" | "era" | "end";
+/** 런 보고서용 사건 — 언제 무슨 일이 있었나(연대기 한 줄). */
+export interface RunEvent {
+  t: number; // 경과 시간(초)
+  kind: RunEventKind;
+  label: string; // 쉬운 말 한 줄(관찰 다큐 톤)
+}
+/** 한 혈통(run)의 일생 기록 — 결과 화면의 "이 혈통의 기록" 보고서가 읽는다. */
+export interface RunHistory {
+  samples: RunSample[];
+  events: RunEvent[];
+  durationSec: number;
+}
+
+/** 런 보고서 시계열 샘플 주기(스텝). 30 = 1초마다(sim 30스텝/초). 형질 추이는 완만해 이 정도면 충분. */
+const REPORT_SAMPLE_STEPS = 30;
 
 export class Game {
   readonly width: number;
@@ -83,6 +110,12 @@ export class Game {
   xp = 0; // 현재 레벨에서 쌓은 경험치(먹은 먹이 수)
   xpToNext: number = GAME.xpBase; // 다음 레벨까지 필요한 경험치(GAME.xpBase 는 리터럴이라 number 명시)
   private lastFoodEaten = 0; // world.playerFoodEaten 직전 값(매 update 의 delta 를 xp 로 누적)
+
+  // 런 보고서(연대기 + 형질 추이) — 이 혈통의 일생을 game 층에서만 기록한다(world/sim rng 미소비 →
+  // 결정론·밸런스 무관). 시대를 넘어가도 이어서 누적하고, 새 런(setupRun)에서만 비운다.
+  private runSamples: RunSample[] = [];
+  private runEvents: RunEvent[] = [];
+  private runSteps = 0; // 런 전체 누적 스텝(시대 넘어가도 이어짐) → 경과 초 = runSteps / stepsPerSecond
 
   /** 디버그용 고정 시드(URL ?seed=). null 이면 런마다 랜덤(맵·카드·보스가 매번 다름). */
   fixedSeed: string | null = null;
@@ -163,6 +196,7 @@ export class Game {
       for (const e of this.world.entities) {
         if (e.species.isPlayer) e.genome = cloneGenome(this.world.genome);
       }
+      if (card) this.logEvent("card", `시대 보상 · ${card.name}`);
       this.beginStage();
       return;
     }
@@ -179,6 +213,9 @@ export class Game {
       for (const e of this.world.entities) {
         if (e.species.isPlayer) e.genome = cloneGenome(this.world.genome);
       }
+      // 보고서: 이 혈통의 출발점(어떤 종으로 시작했나) + 시작 시점 형질 샘플(t0).
+      this.logEvent("start", card ? card.name : "새 혈통");
+      this.sampleRun();
       this.beginStage();
     } else {
       // 레벨업 드래프트(개체별 진화) — 카드는 종 기준선(위에서 적용)뿐 아니라 "살아있는 무리 전체"에도 같은
@@ -188,6 +225,7 @@ export class Game {
         for (const e of this.world.entities) {
           if (e.species.isPlayer && e.alive) applyCard(e.genome, card);
         }
+        this.logEvent("card", `레벨 ${this.level} · ${card.name}`);
       }
       // 진행 중이던 단계로 복귀(단계 타이머·보스 상태는 그대로 보존).
       this.phase = "watch";
@@ -201,6 +239,7 @@ export class Game {
     if (this.phase !== "draft" || this.firstChoice) return;
     this.world.spawnPlayerBrood(SIM.draftSkipBrood);
     this.pickedCardNames.push("건너뜀");
+    this.logEvent("card", `레벨 ${this.level} · 건너뜀(새끼)`);
     if (this.eraReward) {
       // 시대 보상을 건너뛰면 형질 대신 새끼로 받고 새 시대 첫 단계로(관전으로 복귀가 아님).
       this.eraReward = false;
@@ -238,6 +277,9 @@ export class Game {
       for (let s = 0; s < this.speed; s++) {
         this.world.step();
         this.stageTicksLeft -= 1;
+        this.runSteps += 1;
+        // 런 보고서 시계열 — 일정 주기로 개체 수·형질 평균을 남긴다(연대기 그래프의 점들).
+        if (this.runSteps % REPORT_SAMPLE_STEPS === 0) this.sampleRun();
         if (this.world.playerPopulation === 0) {
           this.finishStage(false);
           return;
@@ -435,6 +477,10 @@ export class Game {
     this.playerColor = undefined;
     this.genome = defaultGenome();
     this.pickedCardNames = [];
+    // 새 혈통 — 보고서 기록을 비운다(시대를 넘어갈 때는 이어서 누적, 새 런에서만 리셋).
+    this.runSamples = [];
+    this.runEvents = [];
+    this.runSteps = 0;
     this.stageIndex = 0;
     this.result = null;
     this.firstChoice = true;
@@ -517,6 +563,10 @@ export class Game {
       return;
     }
 
+    // 보고서: 위협을 넘긴 순간(연대기). stageLabel 은 "보스 · 약탈자" · "대멸종 · 혹독한 추위" 형태.
+    if (kind === "boss") this.logEvent("boss", `${this.stageLabel} 넘김`);
+    else if (kind === "extinction") this.logEvent("extinction", `${this.stageLabel} 견딤`);
+
     this.stageIndex += 1;
     if (this.stageIndex >= SCHEDULE.length) {
       this.endRun("win");
@@ -542,6 +592,9 @@ export class Game {
   private endRun(result: RunResult): void {
     this.phase = "result";
     this.result = result;
+    // 보고서: 종료 시점 최종 샘플(멸종이면 개체 수가 0으로 떨어지는 게 그래프에 남는다) + 끝 사건.
+    this.sampleRun();
+    this.logEvent("end", result === "win" ? (this.isFinalEra ? "정복" : "정점 등극") : "멸종");
     // 런이 진짜 끝났을 때만(멸종 또는 정복) 메타 경험치 적립 + 해금. 중간 시대 승리는 "다음 시대로"
     // 이어지므로 적립하지 않는다(그때는 endRun 이 canContinue=true 로 뜨지만 런은 계속된다 → progress=null).
     const conquered = result === "win" && this.isFinalEra;
@@ -596,6 +649,7 @@ export class Game {
   continueToNextEra(): void {
     if (this.result !== "win") return; // 승리 직후에만 유효
     this.era += 1;
+    this.logEvent("era", `시대 ${this.era + 1} 진입`);
     this.paused = false;
     this.result = null;
     this.stageIndex = 0;
@@ -649,6 +703,49 @@ export class Game {
   /** 마지막 시대인가(이 시대의 대멸종을 넘으면 정복=최종 승리, 더는 "다음 시대로"가 없다). */
   get isFinalEra(): boolean {
     return this.era >= GAME.eraCap - 1;
+  }
+
+  /** 이 혈통의 일생 기록(보고서 화면용) — 결과 화면에서 game.runHistory 로 읽어 연대기·형질 추이를 그린다. */
+  get runHistory(): RunHistory {
+    return {
+      samples: this.runSamples.slice(),
+      events: this.runEvents.slice(),
+      durationSec: Math.round(this.runElapsedSec),
+    };
+  }
+
+  /** 현재 경과 시간(초, 런 전체 누적 — 시대를 넘어도 이어짐). */
+  private get runElapsedSec(): number {
+    return this.runSteps / SIM.stepsPerSecond;
+  }
+
+  /** 보고서에 사건 하나 기록(현재 경과 시각으로). */
+  private logEvent(kind: RunEventKind, label: string): void {
+    this.runEvents.push({ t: Math.round(this.runElapsedSec), kind, label });
+  }
+
+  /** 시계열 샘플 하나 — 현재 개체 수 + 무리 평균 형질. game 층 읽기라 sim rng 미소비(결정론 무관). */
+  private sampleRun(): void {
+    this.runSamples.push({
+      t: Math.round(this.runElapsedSec),
+      population: this.world.playerPopulation,
+      traits: this.playerTraitAverages(),
+    });
+  }
+
+  /** 지금 살아있는 내 무리의 평균 형질(변이 6종). 개체가 없으면 0들. 개체별 게놈을 평균해 진화 추이를 낸다. */
+  private playerTraitAverages(): Record<MutableTrait, number> {
+    const avg = {} as Record<MutableTrait, number>;
+    for (const k of MUTABLE_TRAITS) avg[k] = 0;
+    let n = 0;
+    for (const e of this.world.entities) {
+      if (e.species.isPlayer && e.alive) {
+        for (const k of MUTABLE_TRAITS) avg[k] += e.genome.traits[k];
+        n += 1;
+      }
+    }
+    if (n > 0) for (const k of MUTABLE_TRAITS) avg[k] = Math.round(avg[k] / n);
+    return avg;
   }
 
   private buildSummary(result: RunResult): string {

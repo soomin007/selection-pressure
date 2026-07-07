@@ -21,7 +21,12 @@ export interface ResultPanel {
 }
 
 // onNewRun = 완전히 새 종으로 다시 시작. onContinue = 승리 후 "다음 시대로"(성장 유지, 위협 강화).
-export function createResultPanel(onNewRun: () => void, onContinue: () => void): ResultPanel {
+// onReport = "이 혈통의 기록" 보고서 화면 열기(연대기 + 형질 추이).
+export function createResultPanel(
+  onNewRun: () => void,
+  onContinue: () => void,
+  onReport: () => void,
+): ResultPanel {
   ensurePanelStyles();
 
   const root = document.createElement("div");
@@ -43,6 +48,14 @@ export function createResultPanel(onNewRun: () => void, onContinue: () => void):
     "cursor:pointer; box-shadow:0 4px 18px rgba(90,200,80,0.45); letter-spacing:0.3px;";
   continueBtn.addEventListener("click", onContinue);
 
+  // 이 혈통의 기록(보고서) 열기 — 승패와 무관하게 늘 있는 자취. 은은한 테두리 버튼(주 행동은 아래 두 개).
+  const reportBtn = document.createElement("button");
+  reportBtn.textContent = "이 혈통의 기록 보기";
+  reportBtn.style.cssText =
+    "display:block; width:100%; margin:14px 0 0; padding:11px; border:1px solid #3a4658;" +
+    "border-radius:12px; background:rgba(22,27,38,0.6); color:#a8bcd0; font-size:14px; font-weight:700; cursor:pointer;";
+  reportBtn.addEventListener("click", onReport);
+
   // 새 종으로 다시 시작 — 승리 시엔 보조(작고 은은한 테두리 버튼), 패배 시엔 유일한 주 버튼.
   const newRunBtn = document.createElement("button");
   newRunBtn.textContent = "새 혈통으로 시작";
@@ -50,6 +63,7 @@ export function createResultPanel(onNewRun: () => void, onContinue: () => void):
 
   root.appendChild(heading);
   root.appendChild(summary);
+  root.appendChild(reportBtn);
   root.appendChild(continueBtn);
   root.appendChild(newRunBtn);
   document.body.appendChild(root);

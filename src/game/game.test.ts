@@ -1,7 +1,7 @@
 // 대멸종 종류 예고 검증 — 미리 정해 둔 큐(extinctionQueue)에서 예고와 실제가 같은 값을 봐야 한다.
 // Game 은 순수 TS(Pixi 무관)라 headless 로 런을 끝까지 돌려 관찰할 수 있다.
 import { describe, it, expect } from "vitest";
-import { Game } from "@/game/game";
+import { Game, type RunHistory } from "@/game/game";
 import { eraDifficulty } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 
@@ -226,5 +226,54 @@ describe("다시 뽑기(리롤)", () => {
     } finally {
       gl.localStorage = prev;
     }
+  });
+});
+
+describe("런 보고서(히스토리)", () => {
+  const MUTABLE = ["attack", "fertility", "herding", "metabolism", "speed", "vision"];
+
+  // 한 런을 result 까지 끝까지 돌린다(드래프트는 첫 카드로 넘긴다).
+  function playToEnd(seed: string): Game {
+    const g = startRun(seed);
+    for (let i = 0; i < 8000 && g.phase !== "result"; i++) {
+      if (g.phase === "draft") {
+        g.pickCard(0);
+        continue;
+      }
+      g.update(1000);
+    }
+    return g;
+  }
+
+  it("프리셋을 고르면 시작 사건과 t0 샘플이 남는다", () => {
+    const g = startRun("report-start");
+    const h = g.runHistory;
+    expect(h.events.some((e) => e.kind === "start")).toBe(true);
+    expect(h.samples.length).toBeGreaterThanOrEqual(1);
+    // 샘플의 형질 평균은 변이 6종을 모두 담는다.
+    const s0 = h.samples[0] as RunHistory["samples"][number];
+    expect(Object.keys(s0.traits).sort()).toEqual(MUTABLE);
+  });
+
+  it("진행하면 시계열 샘플이 시간순으로 쌓이고, 카드·종료 사건이 기록된다", () => {
+    const g = playToEnd("report-timeline");
+    const h = g.runHistory;
+    expect(h.samples.length).toBeGreaterThan(2);
+    // t 는 단조 증가(뒤로 갈수록 큼).
+    for (let i = 1; i < h.samples.length; i++) {
+      expect(h.samples[i]!.t).toBeGreaterThanOrEqual(h.samples[i - 1]!.t);
+    }
+    // 레벨업 카드 사건과 종료 사건이 남는다(대부분 시드는 완주 전 한 번은 레벨업).
+    expect(h.events.some((e) => e.kind === "card")).toBe(true);
+    expect(h.events.some((e) => e.kind === "end")).toBe(true);
+    expect(h.durationSec).toBeGreaterThan(0);
+  });
+
+  it("같은 시드면 히스토리가 완전히 재현된다(결정론 — game 층 샘플은 rng 미소비)", () => {
+    const a = playToEnd("report-determinism").runHistory;
+    const b = playToEnd("report-determinism").runHistory;
+    expect(a.events).toEqual(b.events);
+    expect(a.samples).toEqual(b.samples);
+    expect(a.durationSec).toBe(b.durationSec);
   });
 });

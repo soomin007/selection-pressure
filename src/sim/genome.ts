@@ -203,7 +203,9 @@ export function cloneGenome(genome: Genome): Genome {
 // 개체별 변이(자연선택)에 흔들 연속 생태 형질 — 능력형 정체성(수영·날개·초음파·독·원거리)과 식성은 제외한다.
 // 식성은 초식/육식 갈래(정체성), 능력형은 플레이어가 카드로 여는 정체성이라 흔들지 않고, 생태 형질만 세대마다
 // 조금씩 달라져 개체가 갈린다(같은 무리 안에서도 빠른/느린·큰눈/작은눈이 섞이고, 환경에 맞는 쪽이 살아남는다).
-const MUTABLE_TRAITS = ["speed", "vision", "attack", "herding", "metabolism", "fertility"] as const;
+// export: 런 보고서의 "형질 평균 추이" 그래프도 정확히 이 형질들을 그린다(개체 진화가 드러나는 축).
+export const MUTABLE_TRAITS = ["speed", "vision", "attack", "herding", "metabolism", "fertility"] as const;
+export type MutableTrait = (typeof MUTABLE_TRAITS)[number];
 
 /**
  * 새끼 게놈을 부모에서 조금 변이시킨다(개체별 진화의 핵심 — "부모 닮되 조금 다름"). 연속 생태 형질만

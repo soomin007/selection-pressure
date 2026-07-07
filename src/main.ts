@@ -14,6 +14,7 @@ import { BOSS_TYPES, bossName, type BossType } from "@/sim/boss";
 import { createDraftPanel } from "@/ui/draftPanel";
 import { createPresetPanel } from "@/ui/presetPanel";
 import { createResultPanel } from "@/ui/resultPanel";
+import { createRunReportScreen } from "@/ui/runReportScreen";
 import { createMomentOverlay } from "@/ui/momentOverlay";
 import { createLevelUpScreen } from "@/ui/levelUpScreen";
 import { createLobby } from "@/ui/lobby";
@@ -133,9 +134,12 @@ async function boot(): Promise<void> {
     refreshBuild();
     presetPanel.hide();
   });
+  // 런 보고서(연대기 + 형질 추이) — 결과 화면 위에 뜨는 별도 화면. 닫으면 결과 화면으로 돌아간다.
+  const reportScreen = createRunReportScreen(() => reportScreen.hide());
   const result = createResultPanel(
     () => {
       // 새 종으로 다시 시작(완전 리셋).
+      reportScreen.hide();
       result.hide();
       game.beginRun();
       refreshBuild();
@@ -144,11 +148,13 @@ async function boot(): Promise<void> {
     },
     () => {
       // 승리 후 "다음 시대로" — 성장 유지, 위협 강화. 새 월드는 continueToNextEra 가 만든다.
+      reportScreen.hide();
       result.hide();
       game.continueToNextEra();
       refreshBuild();
       controls.setVisible(true);
     },
+    () => reportScreen.show(game.runHistory), // "이 혈통의 기록 보기"
   );
   const lobby = createLobby(() => {
     lobby.hide();
@@ -227,6 +233,7 @@ async function boot(): Promise<void> {
     effects.clear();
     moment.clear(); // 멸종 암전 등 남은 순간 연출을 지운다(새 월드 시작).
     levelScreen.clear(); // 진척도 화면도 닫는다(혹시 남아 있으면).
+    reportScreen.hide(); // 이전 혈통의 보고서 화면이 남아 있으면 닫는다.
     selectedId = null; // 새 월드 → 옛 선택(개체 id)은 무효
     currentSelected = null;
     manualCam = null; // 수동 조망도 초기화
