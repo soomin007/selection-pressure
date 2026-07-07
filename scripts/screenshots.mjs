@@ -111,6 +111,27 @@ async function run() {
     console.log("  ✗ 07-draft 미도달(시간 초과) — 수동 확인 필요");
   }
 
+  // 런을 끝까지 진행 → 결과 화면의 "이 혈통의 기록"(런 보고서) 캡처. 드래프트가 뜨면 첫 카드로 넘기고,
+  // 진척도 화면이 뜨면 "계속"을 눌러 결과 화면까지 간다.
+  console.log("  … 런 종료(결과 화면)까지 진행 중 (최대 90s)");
+  const reportBtn = page.getByRole("button", { name: "이 혈통의 기록 보기" });
+  let reachedResult = false;
+  for (let i = 0; i < 220; i++) {
+    if (await reportBtn.isVisible().catch(() => false)) { reachedResult = true; break; }
+    const card = page.locator(".ui-card").first();
+    if (await card.isVisible().catch(() => false)) { await card.click(); await page.waitForTimeout(120); continue; }
+    const cont = page.getByRole("button", { name: "계속" });
+    if (await cont.isVisible().catch(() => false)) { await cont.click(); await page.waitForTimeout(300); continue; }
+    await page.waitForTimeout(400);
+  }
+  if (reachedResult) {
+    await reportBtn.click();
+    await page.waitForTimeout(700);
+    await shot("09-report");
+  } else {
+    console.log("  ✗ 09-report 미도달(결과 화면 시간 초과)");
+  }
+
   await ctx.close();
 
   // ─────────── 데스크톱 가로 관전 (한 장, 순수 관전) ───────────
