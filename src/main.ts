@@ -85,6 +85,7 @@ async function boot(): Promise<void> {
 
   // 개인 카메라(방향 전환 2단계) — 탭으로 고른 한 개체를 따라가며 클로즈업한다(소수 개체 애착의 핵심).
   let selectedId: number | null = null; // 따라가는 개체 id(없으면 무리 추적)
+  let favoriteId: number | null = null; // 즐겨찾기(단골)로 고정한 개체 id(선택과 무관, 월드에 별 마커)
   let currentSelected: Entity | null = null; // 이번 프레임의 선택 개체(카메라가 읽음)
   const INDIVIDUAL_ZOOM = 2.6; // 개체 추적 시 줌 배율(클로즈업)
 
@@ -350,6 +351,10 @@ async function boot(): Promise<void> {
     },
     onPrev: () => cycleSelection(-1),
     onNext: () => cycleSelection(1),
+    // ★ 지금 보는 개체를 단골로 고정/해제 — 이미 이 개체가 단골이면 해제, 아니면 새로 지정.
+    onFavorite: () => {
+      if (currentSelected) favoriteId = favoriteId === currentSelected.id ? null : currentSelected.id;
+    },
   });
 
   // 월드 탭 → 가장 가까운 개체를 골라 따라간다. 같은 개체를 다시 탭하거나 빈 곳을 탭하면 선택 해제.
@@ -628,6 +633,18 @@ async function boot(): Promise<void> {
       }
     }
     view.setSelected(selectedId);
+    // 즐겨찾기(단골) 개체가 죽었으면 마커를 조용히 해제(작별 인사는 선택 개체에만). 살아있으면 상시 별 유지.
+    if (favoriteId !== null) {
+      let favAlive = false;
+      for (const en of game.world.entities) {
+        if (en.id === favoriteId) {
+          favAlive = true;
+          break;
+        }
+      }
+      if (!favAlive) favoriteId = null;
+    }
+    view.setFavorite(favoriteId);
     // 개체 정보 카드는 관전 중일 때만 그린다 — 드래프트가 뜨면 숨겨 하단 카드와 좌하단에서 겹치지 않게
     // (카메라 추적은 currentSelected 로 계속 유지). known_issues: 좌하단 UI 셋이 한자리에 겹친다.
     if (currentSelected && game.phase === "watch") {
@@ -645,6 +662,7 @@ async function boot(): Promise<void> {
         activity: en.targetPrey ? "사냥하는 중" : en.targetFood ? "먹이로 가는 중" : "돌아다니는 중",
         descriptor: describeSpecies(en.genome),
         traits: en.genome.traits,
+        isFavorite: favoriteId === en.id,
       });
     } else {
       creatureCard.update(null);

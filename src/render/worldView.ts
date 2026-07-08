@@ -31,9 +31,11 @@ export class WorldView {
   private readonly playerG = new Graphics(); // 내 종 강조(스프라이트 아래 빛나는 고리)
   private readonly creatureLayer = new Container();
   private readonly selectG = new Graphics(); // 탭으로 고른 개체 강조 고리(개인 카메라)
+  private readonly favG = new Graphics(); // 즐겨찾기(단골) 개체 상시 마커(머리 위 금빛 별)
   private readonly bossG = new Graphics();
   private readonly overlayG = new Graphics();
   private selectedId: number | null = null; // 따라가며 관찰 중인 개체
+  private favoriteId: number | null = null; // 즐겨찾기로 고정한 개체(선택과 무관하게 상시 표시)
 
   private readonly pool: Sprite[] = [];
   // 생물 텍스처 캐시 — 키가 "내 종 세대별 게놈 서명" 또는 "야생 종 id". 내 종은 레벨업으로 게놈이
@@ -51,6 +53,7 @@ export class WorldView {
     this.container.addChild(this.playerG);
     this.container.addChild(this.creatureLayer);
     this.container.addChild(this.selectG);
+    this.container.addChild(this.favG);
     this.container.addChild(this.bossG);
     this.container.addChild(this.overlayG);
   }
@@ -58,6 +61,11 @@ export class WorldView {
   /** 따라가며 관찰할 개체를 정한다(탭 선택). null 이면 선택 해제. 강조 고리를 그릴 대상. */
   setSelected(id: number | null): void {
     this.selectedId = id;
+  }
+
+  /** 즐겨찾기(단골) 개체 — 선택과 무관하게 상시 금빛 별로 표시해 무리 속에서 놓치지 않게. null 이면 해제. */
+  setFavorite(id: number | null): void {
+    this.favoriteId = id;
   }
 
   /** 개체의 렌더 표시 위치(저역통과된 부드러운 좌표). 카메라가 이 위치를 따라가면 떨림 없이 추적된다. */
@@ -167,6 +175,8 @@ export class WorldView {
     // 생물 스프라이트 풀 — sim(30/s)과 화면(60fps) 사이를 prev→현재로 보간해 드득거림을 없앤다.
     this.playerG.clear();
     const ringPulse = 0.5 + 0.5 * Math.sin((this.frame % 70) / 70 * Math.PI * 2);
+    const nbWindow = 2.4 * SIM.stepsPerSecond; // 신생아 강조 지속(스텝)
+    const nbPeriod = 0.8 * SIM.stepsPerSecond; // nb-pulse 반복 주기(스텝)
     let i = 0;
     let visionRings = 0; // 시야 반경은 일부 개체에만 옅게(클러터 없이 "얼마나 멀리 보는지" 감)
     for (const e of world.entities) {
@@ -239,6 +249,18 @@ export class WorldView {
         this.playerG
           .circle(rx, ry, 12.5)
           .stroke({ color: 0xaaffb0, width: 1.6, alpha: 0.35 + 0.25 * ringPulse });
+        // 신생아 표식 — 갓 태어난 내 종 개체를 amber 링(nb-pulse: 밖으로 퍼지며 옅어짐)으로 잠깐 강조.
+        // 초록 발광 고리와 달리 "퍼지는 핑"이라 움직임으로 구분되고, id 위상 오프셋으로 개체마다 어긋나
+        // 펄스해(초기 무리가 같은 나이라도 동기 스트로브가 안 생김) 자연스럽다. age 기반이라 결정론.
+        if (e.age < nbWindow) {
+          const ph = ((e.age + (e.id % nbPeriod)) % nbPeriod) / nbPeriod; // 0→1 반복(개체별 위상)
+          const a = 0.9 * Math.max(0, 1 - ph / 0.65) * (1 - e.age / nbWindow);
+          if (a > 0.02) {
+            this.playerG
+              .circle(rx, ry, 6 + ph * 18)
+              .stroke({ color: 0xf5c33b, width: 2.6 * (1 - ph) + 0.5, alpha: a });
+          }
+        }
       } else if (e.species.champion) {
         // 비동기 생물(S2) — 지난 런의 "예전의 나". 금빛 고리 + 머리 위 왕관으로 "정복자가 돌아왔다"를 표시.
         this.playerG.circle(rx, ry, 13).fill({ color: 0xffd24a, alpha: 0.1 });
@@ -360,6 +382,17 @@ export class WorldView {
         const r = 17 + pulse * 3;
         this.selectG.circle(dp.x, dp.y, r).stroke({ color: 0xffe08a, width: 2.4, alpha: 0.9 });
         this.selectG.circle(dp.x, dp.y, r + 3).stroke({ color: 0xffe08a, width: 1.2, alpha: 0.3 });
+      }
+    }
+
+    // 즐겨찾기(단골) 마커 — 선택과 무관하게 상시. 머리 위 금빛 별 + 은은한 고리로 무리 속에서 바로 찾는다.
+    this.favG.clear();
+    if (this.favoriteId !== null) {
+      const dp = this.dispPos.get(this.favoriteId);
+      if (dp) {
+        const twinkle = 0.72 + 0.28 * Math.sin((this.frame % 90) / 90 * Math.PI * 2);
+        this.favG.circle(dp.x, dp.y, 15).stroke({ color: 0xffd24a, width: 1.4, alpha: 0.4 });
+        drawStar(this.favG, dp.x, dp.y - 20, 6, 0xffd24a, twinkle);
       }
     }
 
@@ -834,6 +867,17 @@ function drawPattern(g: Graphics, look: CreatureLook, len: number, wid: number, 
   for (const sp of look.spots) {
     g.ellipse(sp.x * len, sp.y * wid, sp.r * len * 0.5, sp.r * wid * 0.72).fill({ color: pc });
   }
+}
+
+/** 작은 5각 별(즐겨찾기 마커). cx,cy=중심, r=바깥 반지름. alpha 로 은은히 반짝인다. */
+function drawStar(g: Graphics, cx: number, cy: number, r: number, color: number, alpha = 1): void {
+  const pts: number[] = [];
+  for (let k = 0; k < 10; k++) {
+    const rad = k % 2 === 0 ? r : r * 0.45; // 바깥 꼭짓점/안쪽 오목
+    const a = -Math.PI / 2 + (k / 10) * Math.PI * 2;
+    pts.push(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
+  }
+  g.poly(pts).fill({ color, alpha }).stroke({ color: 0x5a3d08, width: 1, alpha: alpha * 0.9 });
 }
 
 // 게놈에서 한 종의 생물 스프라이트 텍스처를 만든다(앞쪽 = +x). 형질이 형태로 드러난다.

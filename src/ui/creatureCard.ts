@@ -21,6 +21,7 @@ export interface CreatureCardData {
   activity: string; // 지금 무엇을 하는 중인지(사냥/먹이/배회)
   descriptor: string; // 종 한 줄 묘사(describeSpecies)
   traits: Traits; // 이 개체의 형질값 — 개체별 진화로 같은 무리 안에서도 개체마다 다르다(‹ ›로 넘겨 비교)
+  isFavorite: boolean; // 즐겨찾기(단골)로 고정된 개체인가 — ★ 채움/빔으로 표시
 }
 
 export interface CreatureCard {
@@ -32,6 +33,7 @@ export interface CreatureCardCallbacks {
   onClose: () => void; // 닫기(✕) — 선택 해제
   onPrev: () => void; // ‹ 같은 무리의 이전 개체로
   onNext: () => void; // › 같은 무리의 다음 개체로
+  onFavorite: () => void; // ★ 이 개체를 즐겨찾기(단골)로 고정/해제
 }
 
 /** 식성값 → 쉬운 범주(형질 도감·빌드 패널과 같은 경계). */
@@ -87,12 +89,18 @@ export function createCreatureCard(renderer: Renderer, cb: CreatureCardCallbacks
   };
   const prev = mkBtn("‹", cb.onPrev);
   const next = mkBtn("›", cb.onNext);
+  // ★ 즐겨찾기(단골) — 이 개체를 고정해 무리 속에서 놓치지 않게(월드에 금빛 별 마커). 채움=단골, 빔=아님.
+  const fav = document.createElement("span");
+  fav.textContent = "☆";
+  fav.style.cssText =
+    "pointer-events:auto; cursor:pointer; font-size:16px; line-height:1; padding:2px 4px; flex:none;";
+  fav.addEventListener("click", cb.onFavorite);
   const close = document.createElement("span");
   close.textContent = "✕";
   close.style.cssText =
     "pointer-events:auto; cursor:pointer; color:var(--faint); font-size:13px; padding:1px 4px; flex:none;";
   close.addEventListener("click", cb.onClose);
-  topRow.append(name, prev, next, close);
+  topRow.append(name, fav, prev, next, close);
 
   // 종 · 한 줄 묘사.
   const sub = document.createElement("div");
@@ -184,6 +192,8 @@ export function createCreatureCard(renderer: Renderer, cb: CreatureCardCallbacks
     }
     root.style.display = "block";
     renderPortrait(data);
+    fav.textContent = data.isFavorite ? "★" : "☆";
+    fav.style.color = data.isFavorite ? "#F5C33B" : "var(--faint)";
     name.textContent = data.name;
     name.style.color = data.isPlayer ? "var(--lime)" : "var(--ink)";
     sub.textContent = `${data.speciesName} · ${data.descriptor}`;
