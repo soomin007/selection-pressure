@@ -8,7 +8,7 @@ import { chooseLayout, COLORS } from "@/config";
 import { DEBUG, DEBUG_ACTIVE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
-import { Hud } from "@/render/hud";
+import { createHudPanel } from "@/ui/hudPanel";
 import { Game, type ExtinctionType } from "@/game/game";
 import { BOSS_TYPES, bossName, type BossType } from "@/sim/boss";
 import { createDraftPanel } from "@/ui/draftPanel";
@@ -62,14 +62,13 @@ async function boot(): Promise<void> {
   const view = new WorldView(app.renderer);
   const effects = new Effects();
   view.container.addChild(effects.container); // 사건 연출(월드 좌표 → 카메라와 함께 움직임)
-  const hud = new Hud();
+  const hud = createHudPanel(); // 상단 HUD — 캔버스 위 DOM 오버레이(정보 카드·타임라인·범례)
   const highlights = new Highlights();
   root.addChild(view.container);
   // 월드를 논리 사각형으로 클리핑 — 가장자리 생물이 레터박스 밖으로 삐져나오지 않게.
   const worldMask = new Graphics().rect(0, 0, layout.width, layout.height).fill(0xffffff);
   root.addChild(worldMask);
   view.container.mask = worldMask;
-  app.stage.addChild(hud.container); // ← root(스케일) 밖 = 네이티브 해상도
   app.stage.addChild(highlights.container);
   const minimap = new Minimap(); // 큰 맵 조망 — 화면 픽셀 좌표(카메라 변환 밖, 모서리 고정)
   app.stage.addChild(minimap.container);
@@ -447,16 +446,20 @@ async function boot(): Promise<void> {
   const focusBtn = document.createElement("button");
   focusBtn.textContent = "◎ 한 마리 관찰";
   focusBtn.title = "내 종 한 마리를 가까이 따라갑니다 (다시 누르면 다음 개체)";
+  // 주요(입체 키) 버튼 — 3a 스펙상 "한 마리 관찰"은 화면당 하나의 lime 키 버튼.
   focusBtn.style.cssText =
-    "height:40px; padding:0 12px; border:1px solid #3f6a34; border-radius:10px; background:rgba(20,40,20,0.92);" +
-    "color:#9bffa0; font-size:14px; font-weight:800; line-height:1; cursor:pointer; white-space:nowrap;";
+    "height:44px; padding:0 16px; border:0; border-radius:var(--r-btn); background:var(--lime);" +
+    "color:#1B2A0A; font-family:var(--font-title); font-size:14.5px; line-height:1; cursor:pointer;" +
+    "white-space:nowrap; border-bottom:4px solid var(--limeD);";
   focusBtn.addEventListener("click", () => focusMyCreature());
   const mkZoom = (label: string, dz: number): HTMLButtonElement => {
     const b = document.createElement("button");
     b.textContent = label;
+    // 계측(알약) 버튼 — 줌 +/−.
     b.style.cssText =
-      "width:40px; height:40px; border:1px solid #3b465c; border-radius:10px; background:rgba(11,14,20,0.92);" +
-      "color:#dfe6ee; font-size:22px; font-weight:800; line-height:1; cursor:pointer;";
+      "width:44px; height:44px; border:1px solid var(--line); border-radius:999px;" +
+      "background:var(--panel); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);" +
+      "color:var(--ink); font-family:var(--font-mono); font-size:22px; line-height:1; cursor:pointer;";
     b.addEventListener("click", () => {
       userZoom = clampUserZoom(userZoom * dz);
     });
@@ -477,7 +480,13 @@ async function boot(): Promise<void> {
     for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y);
     game.world.events.length = 0;
     effects.update(ticker.deltaMS);
-    hud.sync(game.world, statusLine(), game.level, game.xpProgress, game.timeline, app.screen.width);
+    hud.update({
+      world: game.world,
+      statusText: statusLine(),
+      level: game.level,
+      xpProgress: game.xpProgress,
+      timeline: game.timeline,
+    });
     buildPanel.setVisible(game.phase === "draft" || game.phase === "watch");
     // 좌하단 조작 열(한 마리 관찰·줌)은 관전 중 + 개체 미선택일 때만 — 로비·드래프트·개체 정보 카드와
     // 좌하단에서 겹치지 않게(known_issues: 좌하단 UI 셋이 한자리에 겹친다).

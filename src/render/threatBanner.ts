@@ -16,10 +16,10 @@ export class ThreatBanner {
     this.text = new Text({
       text: "",
       style: new TextStyle({
-        fill: 0xffe08a,
+        fill: 0xf5c33b, // amber(3a 위협 예고)
         fontSize: 38,
         fontWeight: "900",
-        stroke: { color: 0x1a0606, width: 7 },
+        stroke: { color: 0x1a0d06, width: 7 },
         align: "center",
       }),
     });
@@ -27,10 +27,10 @@ export class ThreatBanner {
     this.subText = new Text({
       text: "",
       style: new TextStyle({
-        fill: 0xffd6b0,
+        fill: 0xead9b8,
         fontSize: 16,
         fontWeight: "700",
-        stroke: { color: 0x1a0606, width: 4 },
+        stroke: { color: 0x1a0d06, width: 4 },
         align: "center",
       }),
     });
@@ -70,8 +70,8 @@ export class ThreatBanner {
       : cy + this.text.height / 2 + 14;
     this.bg.clear();
     this.bg
-      .roundRect(cx - w / 2, top, w, bottom - top, 12)
-      .fill({ color: 0x1a0808, alpha: 0.75 })
-      .stroke({ color: 0xff6a4a, width: 2, alpha: 0.85 });
+      .roundRect(cx - w / 2, top, w, bottom - top, 14)
+      .fill({ color: 0x1a0d06, alpha: 0.78 })
+      .stroke({ color: 0xe85c43, width: 2, alpha: 0.85 });
   }
 }

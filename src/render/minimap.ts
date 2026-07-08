@@ -63,9 +63,9 @@ export class Minimap {
 
     this.bgG.clear();
     this.bgG
-      .roundRect(-3, -3, MM_W + 6, this.mmH + 6, 5)
-      .fill({ color: 0x0c1018, alpha: 0.82 })
-      .stroke({ color: 0x3b465c, width: 1, alpha: 0.95 });
+      .roundRect(-4, -4, MM_W + 8, this.mmH + 8, 6)
+      .fill({ color: 0x1a140e, alpha: 0.82 }) // 따뜻한 흙빛 프레임(3a 토큰)
+      .stroke({ color: 0x3a352c, width: 1, alpha: 0.95 });
     // 드래그 히트 영역(패널 크기가 월드 종횡비로 정해지므로 여기서 갱신).
     this.container.hitArea = new Rectangle(-3, -3, MM_W + 6, this.mmH + 6);
 
@@ -85,14 +85,14 @@ export class Minimap {
     const s = this.scale;
     this.dynG.clear();
 
-    // 내 무리 — 작은 초록 점(내 종만; 야생은 배경 지형으로 충분).
+    // 내 무리 — 작은 lime 점(내 종만; 야생은 배경 지형으로 충분).
     for (const e of world.entities) {
-      if (e.species.isPlayer) this.dynG.rect(e.x * s - 0.6, e.y * s - 0.6, 1.6, 1.6).fill(0x7cff88);
+      if (e.species.isPlayer) this.dynG.rect(e.x * s - 0.6, e.y * s - 0.6, 1.6, 1.6).fill(0x8fd14f);
     }
 
-    // 보스 — 눈에 띄는 빨강.
+    // 보스 — 눈에 띄는 red(3a 위협 색).
     const boss = world.boss;
-    if (boss) this.dynG.circle(boss.x * s, boss.y * s, 2.4).fill(0xff4030);
+    if (boss) this.dynG.circle(boss.x * s, boss.y * s, 2.4).fill(0xe85c43);
 
     // 현재 보는 영역(카메라 뷰포트) — 화면 절반을 월드 좌표로 환산해 사각형으로.
     const halfW = (screenW / (2 * zoom)) * s;
