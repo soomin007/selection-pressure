@@ -2,11 +2,15 @@
 // 소수 개체 게임의 애착: 카메라가 따라가며 클로즈업하는 동안 "이 아이는 누구인지"를 읽게 한다.
 // 캔버스 위 HTML 오버레이(buildPanel 과 같은 방식). 본문은 터치 통과, 닫기 버튼만 누를 수 있다.
 
-import { TRAIT_KEYS, TRAIT_LABELS, type Traits } from "@/sim/genome";
+import { TRAIT_KEYS, TRAIT_LABELS, type Traits, type Genome } from "@/sim/genome";
 import { traitColor } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { makeCreatureTexture } from "@/render/worldView";
+import type { Renderer } from "pixi.js";
 
 export interface CreatureCardData {
+  id: number; // 개체 고유 id — 선택이 바뀌었는지 판별해 초상 썸네일을 그때만 다시 렌더한다
+  genome: Genome; // 이 개체의 게놈 — 초상 스프라이트를 개체별 생김새로 만든다(개체차, §9)
   name: string; // 개체 애칭(예: "보리")
   speciesName: string; // 소속 종 이름("내 종" 또는 야생종)
   isPlayer: boolean; // 내 종이면 강조
@@ -30,8 +34,6 @@ export interface CreatureCardCallbacks {
   onNext: () => void; // › 같은 무리의 다음 개체로
 }
 
-const hex = (c: number): string => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
-
 /** 식성값 → 쉬운 범주(형질 도감·빌드 패널과 같은 경계). */
 function dietWord(v: number): string {
   return v < 0.35 ? "초식" : v > 0.7 ? "육식" : "잡식";
@@ -47,31 +49,39 @@ function energyColor(v: number): string {
   return v >= 0.7 ? "#8FD14F" : v >= 0.34 ? "#F5C33B" : "#E85C43";
 }
 
-export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
+export function createCreatureCard(renderer: Renderer, cb: CreatureCardCallbacks): CreatureCard {
   ensurePanelStyles(); // :root 토큰(var(--*)) 보장
   const root = document.createElement("div");
   root.style.cssText =
     "position:fixed; left:calc(8px + env(safe-area-inset-left)); bottom:calc(8px + env(safe-area-inset-bottom));" +
-    "width:190px; box-sizing:border-box; padding:10px 12px;" +
+    "width:194px; box-sizing:border-box; padding:10px 12px;" +
     "background:var(--panel); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);" +
     "border:1px solid var(--line); border-radius:var(--r-focus);" +
     "color:var(--ink); font-family:var(--font-body); font-size:12px; line-height:1.4;" +
     "z-index:11; pointer-events:none; user-select:none; display:none;";
 
-  // 헤더 — 종 색 점 + 이름(크게) + 이전/다음 화살표 + 닫기. 버튼만 누를 수 있고 나머지는 터치 통과.
+  // 헤더 — 생물 초상(실제 스프라이트 썸네일) + 이름·종 + 이전/다음 + 닫기. 버튼만 누를 수 있고 나머지는 터치 통과.
+  // 초상은 개체별 게놈으로 오프스크린 렌더 → 이 아이의 생김새가 그대로 카드에 선다(개체 애착·개체차, §9).
   const header = document.createElement("div");
-  header.style.cssText = "display:flex; align-items:center; gap:5px;";
-  const dot = document.createElement("span");
-  dot.style.cssText = "width:11px; height:11px; border-radius:50%; flex:none;";
+  header.style.cssText = "display:flex; align-items:flex-start; gap:9px;";
+  const portrait = document.createElement("div");
+  portrait.style.cssText =
+    "flex:none; width:56px; height:52px; border-radius:14px; overflow:hidden;" +
+    "background:rgba(255,255,255,0.05); border:1px solid var(--line);" +
+    "display:flex; align-items:center; justify-content:center;";
+  const info = document.createElement("div");
+  info.style.cssText = "flex:1; min-width:0;";
+  const topRow = document.createElement("div");
+  topRow.style.cssText = "display:flex; align-items:center; gap:4px;";
   const name = document.createElement("span");
-  name.style.cssText = "font-family:var(--font-title); font-size:16px; flex:1; word-break:keep-all;";
+  name.style.cssText = "font-family:var(--font-title); font-size:16px; flex:1; min-width:0; word-break:keep-all;";
   // ‹ › — 같은 무리의 다른 개체로 포커스 이동. 폰 손가락 기준 넉넉한 탭 영역. 계측 알약 톤.
   const mkBtn = (label: string, onTap: () => void): HTMLSpanElement => {
     const b = document.createElement("span");
     b.textContent = label;
     b.style.cssText =
-      "pointer-events:auto; cursor:pointer; color:var(--ink); font-size:17px;" +
-      "line-height:1; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.08); flex:none;";
+      "pointer-events:auto; cursor:pointer; color:var(--ink); font-size:16px;" +
+      "line-height:1; padding:3px 7px; border-radius:999px; background:rgba(255,255,255,0.08); flex:none;";
     b.addEventListener("click", onTap);
     return b;
   };
@@ -82,11 +92,13 @@ export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
   close.style.cssText =
     "pointer-events:auto; cursor:pointer; color:var(--faint); font-size:13px; padding:1px 4px; flex:none;";
   close.addEventListener("click", cb.onClose);
-  header.append(dot, name, prev, next, close);
+  topRow.append(name, prev, next, close);
 
   // 종 · 한 줄 묘사.
   const sub = document.createElement("div");
-  sub.style.cssText = "margin-top:2px; color:var(--sub); font-size:11.5px; word-break:keep-all;";
+  sub.style.cssText = "margin-top:2px; color:var(--sub); font-size:11.5px; line-height:1.35; word-break:keep-all;";
+  info.append(topRow, sub);
+  header.append(portrait, info);
 
   // 기운 — 라벨 + 막대 + 한 단어.
   const energyRow = document.createElement("div");
@@ -149,8 +161,21 @@ export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
     traitVals.set(key, val);
   }
 
-  root.append(header, sub, energyRow, lifeRow, traitsLabel, traitsGrid);
+  root.append(header, energyRow, lifeRow, traitsLabel, traitsGrid);
   document.body.appendChild(root);
+
+  // 초상 캐시 — 선택 개체가 바뀔 때만(id 변화) 다시 렌더한다. 매 프레임 재렌더는 무겁다(GPU 읽기).
+  let portraitId = -1;
+  const renderPortrait = (data: CreatureCardData): void => {
+    if (data.id === portraitId) return;
+    portraitId = data.id;
+    const tex = makeCreatureTexture(renderer, data.genome, data.color);
+    const canvas = renderer.extract.canvas(tex) as HTMLCanvasElement;
+    // 종횡비 유지(가로로 긴 생물이 찌그러지지 않게 — 프리셋 창과 같은 방식).
+    canvas.style.cssText = "max-width:100%; max-height:100%; display:block; image-rendering:auto;";
+    portrait.replaceChildren(canvas);
+    tex.destroy(true); // 캔버스로 뽑았으니 GPU 텍스처는 즉시 해제(누수 방지)
+  };
 
   const update = (data: CreatureCardData | null): void => {
     if (!data) {
@@ -158,7 +183,7 @@ export function createCreatureCard(cb: CreatureCardCallbacks): CreatureCard {
       return;
     }
     root.style.display = "block";
-    dot.style.background = hex(data.color);
+    renderPortrait(data);
     name.textContent = data.name;
     name.style.color = data.isPlayer ? "var(--lime)" : "var(--ink)";
     sub.textContent = `${data.speciesName} · ${data.descriptor}`;

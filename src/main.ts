@@ -344,7 +344,7 @@ async function boot(): Promise<void> {
   let prevThreat: string | null = null;
 
   // 선택 개체 정보 카드(좌하단). 닫기(✕)=선택 해제, ‹ ›=같은 무리의 다른 개체로 포커스 이동.
-  const creatureCard = createCreatureCard({
+  const creatureCard = createCreatureCard(app.renderer, {
     onClose: () => {
       selectedId = null;
     },
@@ -633,6 +633,8 @@ async function boot(): Promise<void> {
     if (currentSelected && game.phase === "watch") {
       const en = currentSelected;
       creatureCard.update({
+        id: en.id,
+        genome: en.genome,
         name: creatureName(en.id),
         speciesName: en.species.name,
         isPlayer: en.species.isPlayer,
