@@ -37,15 +37,15 @@
 
 ```
 ┌─────────────────────────────────────┐
-│ [정보 박스: 종/야생 수, 단계, Lv바]   [1x][⏸]  │  ← HUD(캔버스) + 컨트롤 바(HTML, 우상단)
+│ [정보 카드: 종/야생 수, 단계, Lv바]   [1x][⏸]  │  ← hudPanel(HTML 오버레이) + 컨트롤 바(HTML, 우상단)
 │                        [선택한 형질 ▸] │  ← 빌드 패널(HTML, 우측, 접이식)
-│  ──진행 타임라인 막대(보스/멸종 마커)──   │  ← HUD(캔버스)
+│  ──진행 타임라인 막대(보스/멸종 마커)──   │  ← hudPanel(HTML 오버레이)
 │                                     │
 │           (월드 = 생물들이 사는 곳)      │  ← worldView(Pixi 캔버스): 지형·생물·먹이
 │                                     │
-│  [◎ 한 마리 관찰]         [미니맵]      │  ← 관찰 버튼·미니맵
+│  [◎ 한 마리 관찰]         [미니맵]      │  ← 관찰 버튼(HTML) · 미니맵(Pixi 캔버스)
 │  [개체 정보 카드]                      │  ← creatureCard(HTML, 좌하단, 개체 탭 시)
-│  [＋][－]                             │  ← 줌 버튼(좌하단)
+│  [＋][－]                             │  ← 줌 버튼(HTML, 좌하단)
 │─────────────────────────────────────│
 │  [드래프트 카드 3장 / 결과 / 로비]       │  ← 하단 오버레이(HTML): 상황에 따라 교체
 └─────────────────────────────────────┘
@@ -162,8 +162,13 @@ game.onWorldChanged = (world: World) => { ... }
 각 컴포넌트는 `create*()` 팩토리로 만들고, `Game` 콜백/메서드에 배선된다(`src/main.ts`가 배선).
 **UI를 새로 짠다면 이 목록의 역할을 그대로 대체하면 된다.**
 
-| 컴포넌트(`src/ui/…`) | 역할 | 무엇을 읽나 / 부르나 |
+> **이 표 읽는 법(핸드오프 완결성).** 각 행은 "현재 어떤 형식으로 무엇을 표시하는가(역할)" + "어떤 데이터를
+> 받아 어떻게 처리·표시하는가(계약)"를 담는다. 맥락을 모르는 사람이 이 표만 보고 같은 컴포넌트를
+> 다시 만들 수 있어야 한다. 형식·데이터가 복잡한 컴포넌트는 아래 §5.1처럼 별도 계약 절을 둔다.
+
+| 컴포넌트(`src/ui/…`) | 역할(현재 형식) | 받는 데이터 / 처리·호출 |
 |---|---|---|
+| `hudPanel` | **상단 HUD(DOM 오버레이)** — 정보 카드·진행 타임라인·접이식 "종 안내" 범례 | 매 프레임 `update(HudData)` 로 표시, 새 런에 `reset()`. **상세 계약은 §5.1** |
 | `lobby` | 타이틀/로비 | "시작" → `beginRun()`, "도감" → glossary |
 | `presetPanel` | 시작 프리셋(종) 선택 창(외형 미리보기 + 페이지 넘김) | `onDraft`로 열림(`isChoosingPreset`), 탭 → `pickCard(i)` |
 | `draftPanel` | 레벨업/시대보상 카드 3장 | `onDraft`로 열림, `pickCard`/`skipDraft`/`reroll`, `canReroll`로 리롤 버튼 표시 |
@@ -175,20 +180,63 @@ game.onWorldChanged = (world: World) => { ... }
 | `buildPanel` | "설계도"(우측, 접이식) — 내 종 게놈·고른 카드 | `genome`/`pickedCardNames` 읽어 표시 |
 | `glossary` | 용어·형질·생물 도감 | 로비·멈춤에서 열기 |
 
-렌더 쪽(`src/render/`): `worldView`(생물·지형·먹이·보스 스프라이트, 카메라, 선택 고리), `hud`(캔버스
-상단 정보 박스·타임라인 막대·사망 피드·개체 수 그래프[데스크탑]). UI를 바꿔도 이건 그대로 쓰면 된다.
+**공용 스타일·토큰:** `panelStyles.ts` 의 `:root` 가 색·활자·반경 토큰(§10·§4 참조)을 선언하고,
+모든 컴포넌트가 `var(--*)` 로 공유한다. 좌하단 조작 열(한 마리 관찰=lime 입체 키, 줌 +/−=알약)은
+`main.ts` 가 직접 만든다.
+
+렌더 쪽(`src/render/`, 여전히 Pixi 캔버스): `worldView`(생물·지형·먹이·보스 스프라이트, 카메라,
+선택 고리), `minimap`(지형 축소 맵 + 무리·보스·뷰포트 점 — 픽셀 맵이라 DOM 아님), `threatBanner`
+(위협 예고 전광판), `effects`·`highlights`(사건 연출). 이 캔버스 레이어 위에 위 DOM 오버레이가 얹힌다.
+(상단 HUD 는 예전엔 Pixi `render/hud.ts` 였으나 2026-07-08 DOM `ui/hudPanel.ts` 로 이관됨.)
+
+### 5.1 상단 HUD — 현재 형식·표시 방식·데이터 계약 (완결 계약의 본보기)
+
+> 이 절은 "맥락 없는 사람이 이것만 보고 HUD 를 다시 만들 수 있게"의 본보기다. 형식이 복잡한 다른
+> 컴포넌트도 새로 손볼 때 이 틀(현재 형식 → 받는 데이터 → 처리 규칙)로 문서를 남긴다.
+
+**현재 형식(무엇을 어떻게 표시하나).** 캔버스 위 DOM 오버레이 세 조각. 전부 3a 유리 패널·둥근 모서리:
+- **정보 카드(좌상단 알약).** 1행 `내 종 N`(Jua) + `야생 M`(faint) · 우측 낮밤 점+라벨. 2행 상태줄
+  (시대·단계·남은 시간·환경, 여러 줄). 데스크톱은 개체 수 추이 스파크라인(lime SVG). 아래 `Lv.N`(mono
+  amber) + 경험치 진행바(amber). 사망이 생기면 맨 아래 "사망 …" 한 줄(red).
+- **진행 타임라인.** 얇은 막대(모바일=카드 아래 full-width, 데스크톱=상단 중앙). 진행 채움 lime,
+  보스 마커=red 탭+"보스" 칩, 종료(대멸종) 마커=ink 탭+"멸종" 칩.
+- **범례(접이식 "종 안내").** 관전 중에만. 종별 색 점(내 종=lime 고리, 우호=청록, 야생 동맹=금빛)·이름·
+  실시간 개체 수, 그 아래 먹이 색 점.
+
+**받는 데이터(입력 계약).** `main.ts` 가 매 프레임 `hud.update(data)` 를, 새 런/다음 시대에 `hud.reset()` 을
+부른다. `HudData` 는 모두 `Game`/`World` 에서 읽는다(HUD 는 sim 을 바꾸지 않는다):
+
+```ts
+interface HudData {
+  world: World;        // playerPopulation·population, species[], entities[], deaths, daylight, dayPhase 를 읽음
+  statusText: string;  // game 의 statusLine() 결과. 여러 줄(\n). "" 이면 로비 → HUD 전체 숨김
+  level: number;       // 인런 레벨(=세대)
+  xpProgress: number;  // 0~1 (경험치 진행바)
+  timeline: { progress: number; markers: readonly { kind: "boss" | "extinction"; at: number }[] };
+}
+hud.update(data): void   // 매 프레임
+hud.reset(): void        // 추이 표본·사망 집계·범례/타임라인 시그니처 리셋
+```
+
+**처리 규칙(받으면 어떻게 그리나).** 성능을 위해 값과 DOM 재생성을 나눈다:
+- **매 프레임 텍스트·폭만** 갱신(개체 수·상태줄·낮밤·레벨·경험치 폭·타임라인 채움 폭).
+- **시그니처가 바뀔 때만 재생성**: 타임라인 마커(markers 배열 변화 시), 범례 행(species 구성·접힘 상태 변화 시).
+- 사망 알림은 48프레임마다 `world.deaths` 델타를 집계해 상위 2개만. 데스크톱 추이선은 8프레임마다 표본.
+- `statusText === ""`(로비) → 전체 숨김. `statusText` 에 "카드 선택" 포함(드래프트) → 범례만 숨김.
+- 탭 처리: 카드·범례는 `pointer-events:auto`(탭이 뒤 캔버스로 안 샘), 타임라인은 `none`(카메라 드래그 통과).
 
 ---
 
 ## 6. 렌더 루프와 배선(요지)
 
 `src/main.ts`가 부팅 시:
-1. Pixi `Application` + `WorldView` + `Hud` 생성, 캔버스를 화면에 채운다(scale-to-fit).
+1. Pixi `Application` + `WorldView`(+ `minimap`·`threatBanner`·`effects`·`highlights`) 생성, 캔버스를
+   화면에 채운다(scale-to-fit). 상단 HUD 는 캔버스가 아니라 DOM 오버레이(`createHudPanel()`)로 만든다.
 2. `Game` 생성, 위 UI 컴포넌트들을 만들어 콜백/메서드로 배선.
 3. 매 프레임 `app.ticker`:
    - `game.update(deltaMS)` (관전 중이면 sim 진행)
    - 카메라 목표 계산(자동 추적/수동 팬·줌/개체 포커스)
-   - `worldView.sync(game.world, game.interpAlpha, dtMS)` + `hud` 갱신 + 하이라이트 이벤트 감지
+   - `worldView.sync(game.world, game.interpAlpha, dtMS)` + `hud.update({...})`(§5.1) + 하이라이트 감지
    - 선택 개체가 있으면 `creatureCard.update({... en.genome.traits ...})`
 
 즉 **UI 오버레이는 이벤트/상태 기반(콜백), 렌더는 매 프레임 pull 기반**이다.
