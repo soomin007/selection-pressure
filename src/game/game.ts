@@ -46,7 +46,7 @@ export type RunEventKind = "start" | "card" | "boss" | "extinction" | "era" | "e
 export interface RunEvent {
   t: number; // 경과 시간(초)
   kind: RunEventKind;
-  label: string; // 쉬운 말 한 줄(관찰 다큐 톤)
+  label: string; // 쉬운 말 한 줄
 }
 /** 한 혈통(run)의 일생 기록 — 결과 화면의 "이 혈통의 기록" 보고서가 읽는다. */
 export interface RunHistory {

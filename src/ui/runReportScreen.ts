@@ -1,7 +1,7 @@
 // 런 보고서 화면 — 한 혈통(run)이 끝나면 그 일생을 되짚는다. 캔버스 위 HTML 오버레이(결과 화면 위에 뜬다).
 // ① 개체 수 추이 ② 형질의 흐름(개체별 진화가 무리 평균으로 드러난다) ③ 연대기(무슨 일이 언제 있었나).
 // 결정론·밸런스와 무관 — game 층이 관전 중 남긴 RunHistory 를 읽어 그리기만 한다.
-// 톤은 관찰 다큐(현재형·담백·쉬운 말). 그래프는 self-contained SVG(반응형, 세로 화면 우선).
+// 문구는 쉬운 말·담백. 그래프는 self-contained SVG(반응형, 세로 화면 우선).
 
 import type { RunHistory, RunSample, RunEvent, RunEventKind } from "@/game/game";
 import { MUTABLE_TRAITS, TRAIT_LABELS, type MutableTrait } from "@/sim/genome";

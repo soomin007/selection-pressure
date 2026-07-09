@@ -41,7 +41,7 @@ function dietWord(v: number): string {
   return v < 0.35 ? "초식" : v > 0.7 ? "육식" : "잡식";
 }
 
-/** 기운 정도를 한 단어로(즉각적 시각 피드백 — 색과 함께). 관찰 톤: 담백한 상태어. */
+/** 기운 정도를 한 단어로(즉각적 시각 피드백 — 색과 함께). 쉬운 상태어 하나. */
 function energyWord(v: number): string {
   return v >= 0.7 ? "배부름" : v >= 0.34 ? "보통" : "굶주림";
 }
