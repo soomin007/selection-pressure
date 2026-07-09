@@ -352,12 +352,16 @@ function injectHudStyles(): void {
   }
   /* 정보 카드 — 따뜻한 유리 알약 */
   .hud-card {
-    pointer-events: auto; box-sizing: border-box; max-width: min(94vw, 300px); padding: 9px 13px 10px;
+    pointer-events: auto; box-sizing: border-box;
+    /* 폭을 우상단 컨트롤(1x·⏸) 앞에서 끊는다 — 안 그러면 카드 오른쪽이 버튼 밑으로 파고들어 낮밤 표식이 깔린다. */
+    max-width: min(300px, calc(100vw - 128px)); padding: 8px 12px 9px;
     background: var(--panel); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
     border: 1px solid var(--line); border-radius: var(--r-panel);
     color: var(--ink); user-select: none;
   }
-  .hud-row1 { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  /* 개체 수 왼쪽, 낮밤 표식을 바로 그 오른쪽에 붙인다(왼쪽 정렬). 예전 space-between 은 낮밤을 카드
+     오른쪽 끝으로 밀어 컨트롤 버튼 밑에 가렸다. */
+  .hud-row1 { display: flex; align-items: baseline; justify-content: flex-start; gap: 11px; }
   .hud-stat { display: flex; align-items: baseline; gap: 12px; }
   .hud-stat-mine { font-family: var(--font-title); font-size: 21px; color: var(--ink); }
   .hud-stat-wild { font-family: var(--font-title); font-size: 15px; color: var(--faint); }
@@ -388,9 +392,11 @@ function injectHudStyles(): void {
   .hud-marker.boss .hud-marker-label { color: var(--red); box-shadow: 0 0 0 1px rgba(232,92,67,0.5); }
   .hud-marker.end .hud-marker-label { color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
 
-  /* 범례 — 접이식 "종 안내" */
+  /* 범례 — 접이식 "종 안내". 접혔을 땐 내용(제목 한 줄)만큼만 차지하는 칩으로 둔다(전체 폭 바로
+     늘어나면 상단이 꽉 막혀 보인다). 펼치면 종 목록에 맞춰 fit-content 가 알아서 넓어진다. */
   .hud-legend {
     pointer-events: auto; box-sizing: border-box; padding: 7px 10px;
+    align-self: flex-start; width: fit-content; max-width: min(300px, calc(100vw - 16px));
     background: var(--panel); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
     border: 1px solid var(--line); border-radius: var(--r-card); color: var(--ink); user-select: none; cursor: pointer;
   }
