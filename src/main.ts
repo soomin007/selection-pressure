@@ -108,26 +108,26 @@ async function boot(): Promise<void> {
 
   const glossary = createGlossary(); // 용어 사전(로비·일시정지에서 열기)
 
-  const draft = createDraftPanel(
-    (i) => {
+  const draft = createDraftPanel(app.renderer, app.canvas, {
+    onPick: (i) => {
       game.pickCard(i);
       refreshBuild(); // 방금 고른 카드를 빌드 패널(설계도=최신 게놈)에 반영
       // 세대별 형질: 텍스처를 새로 만들지 않는다 — 이미 태어난 개체는 옛 모습을 유지하고, 이후 태어난
       // 개체가 새 게놈 서명으로 lazy 생성된다(worldView.textureFor). refreshSpecies(전체 교체)는 안 부른다.
       draft.hide();
     },
-    () => {
+    onSkip: () => {
       // 스킵 — 형질 대신 새끼 몇 마리를 낳고 관전으로 복귀.
       game.skipDraft();
       refreshBuild();
       draft.hide();
     },
-    () => {
+    onReroll: () => {
       // 다시 뽑기 — 카드를 새로 뽑는다(game.reroll 이 onDraft 를 다시 불러 패널이 새 카드로 갱신된다).
       game.reroll();
       refreshBuild();
     },
-  );
+  });
   // 시작 프리셋은 캐릭터 선택 창으로(외형 미리보기 + 화살표로 페이지 넘기며 선택).
   const presetPanel = createPresetPanel(app.renderer, (i) => {
     game.pickCard(i);
@@ -194,8 +194,18 @@ async function boot(): Promise<void> {
 
   game.onDraft = (cards, preview) => {
     // 시작 프리셋 선택은 캐릭터 선택 창, 레벨업 형질은 일반 카드 창.
+    // 드래프트 화면은 게임 객체를 모른다 — 그릴 때 필요한 종 상태만 넘긴다(레벨 = 세대).
     if (game.isChoosingPreset) presetPanel.show(cards, preview);
-    else draft.show(cards, preview, game.canReroll);
+    else
+      draft.show(cards, {
+        level: game.level,
+        genome: game.genome,
+        speciesColor: game.world.playerSpecies.color,
+        speciesName: describeSpecies(game.genome),
+        population: game.world.playerPopulation,
+        pickedCardNames: game.pickedCardNames,
+        canReroll: game.canReroll,
+      });
   };
   // 승리·정복·멸종 순간 연출 — 결과 패널 직전에 전역 화면 클라이맥스를 얹는다.
   const moment = createMomentOverlay();
@@ -492,14 +502,16 @@ async function boot(): Promise<void> {
       xpProgress: game.xpProgress,
       timeline: game.timeline,
     });
-    buildPanel.setVisible(game.phase === "draft" || game.phase === "watch");
+    // 설계도는 관전 중에만 — 드래프트는 전체 화면이라 그 아래 깔린 UI 가 뿌연 유리로 비쳐 보인다.
+    // 드래프트 중 내 종 정보는 헤더의 "내 종" 팝업이 대신한다(핸드오프 §9).
+    buildPanel.setVisible(game.phase === "watch");
     // 좌하단 조작 열(한 마리 관찰·줌)은 관전 중 + 개체 미선택일 때만 — 로비·드래프트·개체 정보 카드와
     // 좌하단에서 겹치지 않게(known_issues: 좌하단 UI 셋이 한자리에 겹친다).
     zoomBar.style.display = game.phase === "watch" && selectedId === null ? "flex" : "none";
 
     updateCamera(ticker.deltaMS);
-    // 미니맵 — 관전/드래프트 중에만(로비 제외). 카메라 뷰포트는 화면(layout)/줌 기준.
-    minimap.container.visible = game.phase !== "lobby";
+    // 미니맵 — 관전 중에만. 드래프트에선 캔버스 전체가 블러라 뭉갠 미니맵이 남으면 지저분하다.
+    minimap.container.visible = game.phase === "watch";
     if (minimap.container.visible) {
       minimap.sync(game.world, camX, camY, camZoom, layout.width, layout.height);
       minimap.place(app.screen.width, app.screen.height);

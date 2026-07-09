@@ -14,6 +14,25 @@ import { clampTraitValue, TRAIT_CEILING } from "@/sim/genome";
 // 잘림이 사라진다. set(프리셋 정체성 값)은 안 줄인다(증분만).
 const CARD_GROWTH_SCALE = 0.6;
 
+/**
+ * 카드 희귀도 5단계 (핸드오프 §2). 색·등장 뜸·연출은 UI(`@/ui/rarity`)가 정하고, 여기서는 "얼마나 드물게
+ * 뽑히는가"만 정한다 — 배지에 "전설"이라 써 놓고 흔하게 뽑히면 표시가 거짓말이 되므로, 희귀도는 반드시
+ * 뽑기 확률과 묶여 있어야 한다.
+ */
+export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
+
+/**
+ * 뽑기 가중치(상대값). 카드 한 장이 후보로 뽑힐 상대 확률이다. 이 값만 만지면 희귀도 체감이 바뀐다.
+ * 현재 풀(흔함 16·드묾 12·귀함 7·아주 귀함 8·전설 5) 기준 전설이 3장 중 하나로 뜰 확률 ≈ 5%.
+ */
+export const RARITY_WEIGHT: Record<Rarity, number> = {
+  common: 100,
+  uncommon: 65,
+  rare: 38,
+  epic: 20,
+  legendary: 10,
+};
+
 export interface Card {
   id: string;
   name: string;
@@ -394,6 +413,77 @@ export const CARD_POOL: readonly Card[] = [
   },
 ];
 
+/**
+ * 카드 id → 희귀도. 카드 리터럴에 흩어 두지 않고 한곳에 모아, 풀 전체의 희귀도 분포를 한눈에 보며 튜닝한다.
+ * 여기 없는 카드는 흔함으로 떨어진다 — 새 카드를 넣으면 여기에도 반드시 추가할 것(cards.test.ts 가 강제).
+ * 기준: 단일 소폭 상승 = 흔함 / 소폭 조합·작은 대가 = 드묾 / 큰 상승 + 뚜렷한 대가 = 귀함 /
+ *       빌드를 기울이는 특화 = 아주 귀함 / 종의 정체성을 바꾸는 한 수(날개·초음파·독) = 전설.
+ */
+export const CARD_RARITY: Record<string, Rarity> = {
+  // 흔함 — 대가 없는 단일 소폭 상승, 순한 조합
+  swift: "common",
+  keen: "common",
+  thrifty: "common",
+  hotblood: "common",
+  fertile: "common",
+  herd: "common",
+  pack_hunt: "common",
+  warm_pack: "common",
+  fangs: "common",
+  all_rounder: "common",
+  scout_pack: "common",
+  owl_eye: "common",
+  evasive: "common",
+  beast_metab: "common",
+  swift_breeder: "common",
+  stoic: "common",
+
+  // 드묾 — 소폭 조합 + 작은 대가, 식성 전환, 바다 적응 입문
+  eagle_eye: "uncommon",
+  sprint: "uncommon",
+  hunter_eye: "uncommon",
+  giant: "uncommon",
+  furnace: "uncommon",
+  predator: "uncommon",
+  grazer: "uncommon",
+  ambush: "uncommon",
+  thick_fur: "uncommon",
+  nest_herd: "uncommon",
+  fins: "uncommon",
+  webbed: "uncommon",
+
+  // 귀함 — 큰 상승 + 뚜렷한 대가
+  brood: "rare",
+  loner: "rare",
+  savage: "rare",
+  locust: "rare",
+  ascetic: "rare",
+  farsight: "rare",
+  apex_scout: "rare",
+
+  // 아주 귀함 — 빌드를 한쪽으로 크게 기울이는 특화
+  great_fangs: "epic",
+  phalanx: "epic",
+  lone_warrior: "epic",
+  glass_cannon: "epic",
+  strong_wings: "epic",
+  echo: "epic",
+  venom_fang: "epic",
+  long_horn: "epic",
+
+  // 전설 — 종의 정체성 자체를 바꾸는 한 수
+  cheetah: "legendary",
+  wings: "legendary",
+  bat_ear: "legendary",
+  venom_gland: "legendary",
+  spit: "legendary",
+};
+
+/** 카드의 희귀도(미등록 카드는 흔함). 표시(배지·색·연출)와 뽑기 가중치가 같은 값을 쓴다. */
+export function cardRarity(card: Card): Rarity {
+  return CARD_RARITY[card.id] ?? "common";
+}
+
 /** 카드가 게놈에 실제로 더하는 값(표시용) — 상한 200 연속 형질은 CARD_GROWTH_SCALE 로 줄어드므로, 카드에
  * 뜨는 수치를 실제 적용값과 맞추려면 이걸 쓴다(전엔 원값 +15 를 보여줬으나 실제론 +9 만 붙었다 — 폰 피드백). */
 export function effectiveDelta(key: keyof Traits, raw: number): number {
@@ -411,19 +501,32 @@ export function boostCard(card: Card, boost: number): Card {
   return { ...card, effects };
 }
 
-/** 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). allow 로 카드(메타 언락·프리셋 적합)를 걸러낸다. */
+/**
+ * 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). allow 로 카드(메타 언락·프리셋 적합)를 걸러낸다.
+ * 희귀도 가중치(RARITY_WEIGHT)를 반영한 비복원 추출 — 흔한 카드가 자주, 전설이 드물게 뜬다. 균등 셔플이던
+ * 예전과 달리 카드에 붙는 희귀도 배지가 실제 등장 빈도와 일치한다.
+ */
 export function drawCards(rng: Rng, n: number, allow?: (c: Card) => boolean): Card[] {
   const pool = (allow ? CARD_POOL.filter(allow) : CARD_POOL).slice();
-  // Fisher-Yates 부분 셔플
   const count = Math.min(n, pool.length);
-  for (let i = 0; i < count; i++) {
-    const j = rng.int(i, pool.length - 1);
-    const a = pool[i] as Card;
-    const b = pool[j] as Card;
-    pool[i] = b;
-    pool[j] = a;
+  const out: Card[] = [];
+  for (let k = 0; k < count; k++) {
+    let total = 0;
+    for (const c of pool) total += RARITY_WEIGHT[cardRarity(c)];
+    // 룰렛 휠 — rng.unit() 한 번으로 한 장. 부동소수 오차로 끝까지 못 고르면 마지막 장을 집는다.
+    let r = rng.unit() * total;
+    let idx = pool.length - 1;
+    for (let i = 0; i < pool.length; i++) {
+      r -= RARITY_WEIGHT[cardRarity(pool[i] as Card)];
+      if (r <= 0) {
+        idx = i;
+        break;
+      }
+    }
+    out.push(pool[idx] as Card);
+    pool.splice(idx, 1);
   }
-  return pool.slice(0, count);
+  return out;
 }
 
 /** 카드 효과를 게놈에 그 자리에서 적용 + 형질별 상한 클램프. (공유 게놈이라 즉시 반영)

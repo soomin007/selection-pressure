@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { Rng } from "@/sim/rng";
-import { drawCards, applyCard, boostCard, CARD_POOL, PRESET_CARDS } from "@/game/cards";
+import {
+  drawCards,
+  applyCard,
+  boostCard,
+  cardRarity,
+  CARD_POOL,
+  CARD_RARITY,
+  PRESET_CARDS,
+  RARITY_WEIGHT,
+} from "@/game/cards";
 import { defaultGenome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 
@@ -19,6 +28,62 @@ describe("드래프트", () => {
   it("카드 풀의 모든 id 는 고유하다", () => {
     const ids = CARD_POOL.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("allow 로 걸러낸 풀에서만 뽑는다", () => {
+    const only = new Set(["swift", "keen", "fertile"]);
+    const ids = drawCards(new Rng("filtered"), 3, (c) => only.has(c.id)).map((c) => c.id);
+    expect(new Set(ids)).toEqual(only);
+  });
+
+  it("풀보다 많이 요청해도 있는 만큼만 뽑는다", () => {
+    const drawn = drawCards(new Rng("small"), 5, (c) => c.id === "swift" || c.id === "keen");
+    expect(drawn.length).toBe(2);
+  });
+});
+
+describe("희귀도", () => {
+  it("풀의 모든 카드가 희귀도를 갖는다 (새 카드를 넣으면 CARD_RARITY 에도 추가할 것)", () => {
+    const missing = CARD_POOL.filter((c) => CARD_RARITY[c.id] === undefined).map((c) => c.id);
+    expect(missing).toEqual([]);
+  });
+
+  it("CARD_RARITY 에 풀에 없는 유령 id 가 없다", () => {
+    const poolIds = new Set(CARD_POOL.map((c) => c.id));
+    const ghosts = Object.keys(CARD_RARITY).filter((id) => !poolIds.has(id));
+    expect(ghosts).toEqual([]);
+  });
+
+  it("전설이 흔함보다 실제로 드물게 뽑힌다 — 배지가 등장 빈도와 일치한다", () => {
+    // 배지에 "전설"이라 써 놓고 흔하게 뜨면 표시가 거짓말이 된다. 뽑기 가중치가 이를 보장한다.
+    const rng = new Rng("rarity-dist");
+    let legendary = 0;
+    let common = 0;
+    const rounds = 2000;
+    for (let i = 0; i < rounds; i++) {
+      for (const card of drawCards(rng, 3)) {
+        const r = cardRarity(card);
+        if (r === "legendary") legendary += 1;
+        else if (r === "common") common += 1;
+      }
+    }
+    expect(legendary).toBeGreaterThan(0); // 아예 안 뜨면 콘페티 연출이 죽는다
+    expect(legendary * 5).toBeLessThan(common); // 흔함이 압도적으로 많다
+    // 전설이 3장 안에 들 확률 ≈ 5% — 한 런(레벨업 십여 번)에 한 번 볼까 말까.
+    const perDraft = legendary / rounds;
+    expect(perDraft).toBeGreaterThan(0.01);
+    expect(perDraft).toBeLessThan(0.15);
+  });
+
+  it("가중치는 희귀할수록 작다(단조 감소)", () => {
+    expect(RARITY_WEIGHT.common).toBeGreaterThan(RARITY_WEIGHT.uncommon);
+    expect(RARITY_WEIGHT.uncommon).toBeGreaterThan(RARITY_WEIGHT.rare);
+    expect(RARITY_WEIGHT.rare).toBeGreaterThan(RARITY_WEIGHT.epic);
+    expect(RARITY_WEIGHT.epic).toBeGreaterThan(RARITY_WEIGHT.legendary);
+  });
+
+  it("미등록 카드는 흔함으로 떨어진다", () => {
+    expect(cardRarity({ id: "없는카드", name: "x", desc: "", effects: {} })).toBe("common");
   });
 });
 

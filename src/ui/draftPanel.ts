@@ -1,101 +1,624 @@
-// 드래프트 UI — 카드 3장 중 1장 탭. 캔버스 위 HTML 오버레이(터치 친화).
-// 관전 중엔 숨고, 드래프트 단계에만 보인다.
+// 드래프트 UI — 레벨업 시 형질 카드 3장 중 하나를 고르는 전체 화면. 핸드오프 스펙 v1.0 구현.
+//
+// 배경: 월드는 멈춰 있고(game.update 가 draft phase 에서 world.step 을 건너뛴다) 캔버스는 계속 그려진다.
+// 그 위에 뿌연 유리 3겹(블러 캔버스 + 김 서림 + 하단 가독성 그라데이션)을 얹는다. 마지막 프레임을 비트맵으로
+// 캡처하지 않는다 — 캔버스에 CSS 필터만 건다(리사이즈·선명도 유지). 살아 움직이는 건 히어로 미리보기다.
+//
+// 히어로 자리가 곧 미리보기다: 지금 보고 있는 카드를 실제로 내 종 게놈에 적용한 사본으로 생물을 그려,
+// "이 형질을 얻으면 내 애들이 이렇게 생긴다"를 고르기 전에 보여준다.
 
-import { effectiveDelta, type Card } from "@/game/cards";
-import { TRAIT_LABELS, type Traits } from "@/sim/genome";
+import type { Renderer } from "pixi.js";
+import {
+  applyCard,
+  cardRarity,
+  effectiveDelta,
+  CARD_POOL,
+  PRESET_CARDS,
+  type Card,
+  type Rarity,
+} from "@/game/cards";
+import { cloneGenome, TRAIT_CEILING, TRAIT_LABELS, type Genome, type Traits } from "@/sim/genome";
+import { makeCreatureTexture } from "@/render/worldView";
 import { ABILITY_KEYS, traitColor } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import {
+  DRAFT_TIMING,
+  RARITY_STYLE,
+  rarityDelayMs,
+  rarityIndex,
+  restingShadow,
+  selectionRing,
+  withAlpha,
+} from "@/ui/rarity";
+
+/** 내 종 팝업의 스탯 6종 — 핸드오프 §9 순서(속도·시야·공격·번식·무리·대사). */
+const STAT_KEYS: readonly (keyof Traits)[] = [
+  "speed",
+  "vision",
+  "attack",
+  "fertility",
+  "herding",
+  "metabolism",
+];
+
+const CONFETTI_COLORS: readonly string[] = [
+  "#F5C33B",
+  "#8FD14F",
+  "#5AB0E2",
+  "#B98CE0",
+  "#E85C43",
+  "#F2903A",
+];
+
+/** 확정(퍼뜨리기·건너뛰기) 후 토스트를 읽을 시간. 이 동안 월드는 여전히 멈춰 있다. */
+const COMMIT_DELAY_MS = 850;
+
+/** 드래프트 화면이 그리는 데 필요한 종 상태. 패널은 게임 객체를 모르고 이 값만 읽는다. */
+export interface DraftContext {
+  level: number; // 레벨 = 세대
+  genome: Genome; // 카드 적용 전 현재 종 게놈
+  speciesColor: number;
+  speciesName: string;
+  population: number;
+  pickedCardNames: readonly string[];
+  canReroll: boolean;
+}
+
+export interface DraftPanelCallbacks {
+  onPick: (index: number) => void;
+  onSkip: () => void;
+  onReroll: () => void;
+}
 
 export interface DraftPanel {
-  show: (cards: Card[], preview: string, canReroll: boolean) => void;
+  show: (cards: Card[], ctx: DraftContext) => void;
   hide: () => void;
 }
 
 export function createDraftPanel(
-  onPick: (index: number) => void,
-  onSkip: () => void,
-  onReroll: () => void,
+  renderer: Renderer,
+  gameCanvas: HTMLCanvasElement,
+  cb: DraftPanelCallbacks,
 ): DraftPanel {
   ensurePanelStyles();
 
-  const root = document.createElement("div");
-  root.className = "ui-root ui-draft";
-  root.style.display = "none";
+  const root = el("div", "draft-root");
+  root.append(el("div", "draft-veil"), el("div", "draft-grad"));
 
-  const previewBox = document.createElement("div");
-  previewBox.className = "ui-preview";
-  root.appendChild(previewBox);
+  const shell = el("div", "draft-shell");
+  root.appendChild(shell);
 
-  const title = document.createElement("div");
-  title.className = "ui-title";
-  title.textContent = "형질을 하나 고르세요";
-  root.appendChild(title);
+  // ── 헤더 (연출 없이 즉시 표시) ──
+  const hd = el("div", "draft-hd");
+  const levelText = el("div", "draft-level");
+  const title = el("div", "draft-title");
+  title.textContent = "새 형질이 무리에 퍼져요";
+  const mineBtn = el("button", "draft-mine");
+  const mineThumb = el("span", "draft-mine-thumb");
+  const mineLabel = el("span", "draft-mine-label");
+  mineLabel.textContent = "내 종";
+  mineBtn.append(mineThumb, mineLabel);
+  hd.append(levelText, title, mineBtn);
+  shell.appendChild(hd);
 
-  const list = document.createElement("div");
-  list.className = "ui-cards";
-  root.appendChild(list);
+  // ── 히어로 미리보기 (맨 마지막 등장 — 스포일러 방지) ──
+  const hero = el("div", "draft-hero");
+  const prevBtn = el("button", "draft-arrow prev");
+  prevBtn.textContent = "‹";
+  const nextBtn = el("button", "draft-arrow next");
+  nextBtn.textContent = "›";
+  // 배율 래퍼와 등장 연출 래퍼를 나눈다 — 한 엘리먼트에 transform 배율과 transform 키프레임을 함께 두면
+  // 키프레임이 배율을 통째로 덮어쓴다(§8 함정 2와 같은 종류).
+  const heroScale = el("div", "draft-hero-scale");
+  const heroGroup = el("div", "draft-hero-group");
+  heroScale.appendChild(heroGroup);
+  const zone = el("div", "draft-medallion-zone");
+  const aura = el("div", "draft-aura");
+  const flourish = el("div", "draft-flourish");
+  const medallion = el("div", "draft-medallion");
+  const sprite = el("div", "draft-sprite");
+  const tint = el("div", "draft-tint");
+  medallion.append(sprite, tint);
+  zone.append(aura, flourish, medallion);
+  const heroBadge = el("div", "draft-hero-badge");
+  const dots = el("div", "draft-dots");
+  heroGroup.append(zone, heroBadge, dots);
+  hero.append(prevBtn, nextBtn, heroScale);
+  shell.appendChild(hero);
 
-  // 다시 뽑기(리롤) — 여러 런을 마치면 열리는 편의(meta). 3장이 별로면 새로 뽑는다. 열렸을 때만 보인다.
-  const rerollBtn = document.createElement("button");
-  rerollBtn.textContent = "다시 뽑기";
-  rerollBtn.style.cssText =
-    "display:none; width:100%; margin-top:10px; padding:10px; border:1px solid var(--line); border-radius:var(--r-btn);" +
-    "background:rgba(255,255,255,0.05); color:var(--ink); font-family:var(--font-body); font-size:14px; cursor:pointer;";
-  rerollBtn.addEventListener("click", onReroll);
-  root.appendChild(rerollBtn);
+  // ── 카드 ──
+  const cardList = el("div", "draft-cards");
+  shell.appendChild(cardList);
 
-  // 스킵 — 3장이 다 별로면 형질 대신 소소한 보상(새끼)을 받는다. 은은한 보조 버튼(카드보다 약하게).
-  const skipBtn = document.createElement("button");
+  // ── CTA + 푸터 (연출 없이 즉시 표시되는 건너뛰기·다시 뽑기, CTA 만 히어로와 함께 등장) ──
+  const ft = el("div", "draft-ft");
+  const cta = el("button", "draft-cta");
+  const ftRow = el("div", "draft-ft-row");
+  const skipBtn = el("button", "draft-skip");
   skipBtn.textContent = "건너뛰고 새끼 치기";
-  skipBtn.style.cssText =
-    "display:block; width:100%; margin-top:8px; padding:9px; border:0;" +
-    "background:transparent; color:var(--faint); font-family:var(--font-body); font-size:13px; cursor:pointer;";
-  skipBtn.addEventListener("click", onSkip);
-  root.appendChild(skipBtn);
+  const rerollBtn = el("button", "draft-reroll");
+  rerollBtn.textContent = "↻ 다시 뽑기";
+  ftRow.append(skipBtn, rerollBtn);
+  ft.append(cta, ftRow);
+  shell.appendChild(ft);
 
-  document.body.appendChild(root);
+  // ── 토스트 (래퍼가 중앙정렬, 안쪽 알약만 애니메이션 — §8 함정: transform 충돌) ──
+  const toastWrap = el("div", "draft-toast");
+  const toastPill = el("div");
+  toastWrap.appendChild(toastPill);
 
-  const show = (cards: Card[], preview: string, canReroll: boolean): void => {
-    previewBox.textContent = preview;
-    rerollBtn.style.display = canReroll ? "block" : "none";
-    list.replaceChildren();
-    cards.forEach((card, i) => {
-      const btn = document.createElement("button");
-      btn.className = "ui-card";
-      // 카드 왼쪽 휜 액센트를 대표 형질 색으로 — "무엇이 바뀌는지"가 색으로 먼저 읽힌다.
-      const accent = traitColor(dominantTrait(card));
-      btn.style.borderLeftColor = accent;
+  // ── 내 종 팝업 ──
+  const dim = el("div", "draft-dim");
+  const popupWrap = el("div", "draft-popup-wrap");
+  const popup = el("div", "draft-popup");
+  popupWrap.appendChild(popup);
 
-      const name = document.createElement("div");
-      name.className = "ui-card-name";
-      name.textContent = card.name;
+  document.body.append(root, toastWrap, dim, popupWrap);
 
-      const desc = document.createElement("div");
-      desc.className = "ui-card-desc";
-      desc.textContent = card.desc;
+  // ── 상태 ──
+  let cards: Card[] = [];
+  let ctx: DraftContext | null = null;
+  let preview = 0;
+  let busy = false; // 확정 연출 중 — 중복 입력 차단
+  let popupOpen = false;
+  let commitTimer = 0;
+  let toastTimer = 0;
+  const spriteUrls: (string | null)[] = [];
+  const cardEls: HTMLElement[] = [];
 
-      const eff = document.createElement("div");
-      eff.className = "ui-card-eff";
-      eff.style.color = accent;
-      eff.textContent = formatEffects(card);
+  /** 카드가 적용된 게놈으로 그린 생물 그림(데이터 URL). 카드마다 한 번만 만들고 캐시한다. */
+  const spriteFor = (i: number): string => {
+    const cached = spriteUrls[i];
+    if (cached) return cached;
+    const card = cards[i];
+    const c = ctx;
+    if (!card || !c) return "";
+    const g = cloneGenome(c.genome);
+    applyCard(g, card); // 사본에만 적용 — 실제 종 게놈은 카드를 고를 때 game 이 바꾼다
+    const tex = makeCreatureTexture(renderer, g, c.speciesColor);
+    const canvas = renderer.extract.canvas(tex) as HTMLCanvasElement;
+    const url = canvas.toDataURL();
+    tex.destroy(true); // 픽셀은 canvas 로 복사됐다 — 드래프트마다 3장씩 쌓이는 걸 막는다
+    spriteUrls[i] = url;
+    return url;
+  };
 
-      btn.appendChild(name);
-      btn.appendChild(desc);
-      btn.appendChild(eff);
-      btn.addEventListener("click", () => onPick(i));
-      list.appendChild(btn);
+  /**
+   * 히어로를 남는 세로 공간에 맞춰 줄인다(§8 함정: 고정 크기 히어로는 낮은 창에서 헤더·카드·CTA 를 밀어낸다).
+   * transform 이라 레이아웃 높이는 그대로다 — 히어로 칸(1fr) 안에서 가운데 정렬된 채 시각적으로만 줄어든다.
+   * 여유가 있으면 조금 키운다(스펙의 데스크톱 확대). 화살표 자리(42px)는 가로 계산에서 빼 둔다.
+   */
+  const fitHero = (): void => {
+    const availH = hero.clientHeight - 14; // 헤더·카드와 맞닿지 않게 위아래 숨 쉴 틈
+    const availW = hero.clientWidth - 2 * 50;
+    const natH = heroGroup.offsetHeight;
+    const natW = heroGroup.offsetWidth;
+    if (!availH || !availW || !natH || !natW) return;
+    // 위: 여유가 있으면 1.4배까지 키운다. 아래: 세로가 아주 짧은 폰에서도 히어로가 헤더·카드를 안 덮게 0.4까지 줄인다.
+    const s = Math.min(availH / natH, availW / natW, 1.4);
+    heroScale.style.transform = `scale(${Math.max(0.4, s).toFixed(3)})`;
+  };
+
+  window.addEventListener("resize", () => {
+    if (root.classList.contains("open")) fitHero();
+  });
+
+  const showToast = (msg: string): void => {
+    window.clearTimeout(toastTimer);
+    toastPill.textContent = msg;
+    toastWrap.classList.remove("on");
+    void toastWrap.offsetWidth; // 리플로우로 pop-bounce 재시작
+    toastWrap.classList.add("on");
+    toastTimer = window.setTimeout(() => toastWrap.classList.remove("on"), 1700);
+  };
+
+  /** 확정 — 토스트를 읽을 동안 월드는 멈춘 채로 두고, 그 뒤에 game 으로 넘긴다. */
+  const commit = (msg: string, done: () => void): void => {
+    if (busy) return;
+    busy = true;
+    showToast(msg);
+    commitTimer = window.setTimeout(() => {
+      busy = false;
+      done();
+    }, COMMIT_DELAY_MS);
+  };
+
+  const setPreview = (i: number): void => {
+    if (!cards.length) return;
+    preview = ((i % cards.length) + cards.length) % cards.length;
+    const card = cards[preview] as Card;
+    const accent = traitColor(dominantTrait(card));
+
+    // 히어로 — DOM 은 그대로 두고 색·그림만 갈아 끼운다(등장 연출을 다시 재생하지 않도록).
+    sprite.style.backgroundImage = `url("${spriteFor(preview)}")`;
+    aura.style.background = `radial-gradient(circle, ${withAlpha(accent, 0.31)}, transparent 66%)`;
+    medallion.style.border = `2px solid ${withAlpha(accent, 0.55)}`;
+    medallion.style.boxShadow = `0 12px 24px -8px rgba(0,0,0,.55), 0 0 18px ${withAlpha(accent, 0.3)}`;
+    tint.style.background = `radial-gradient(circle at 50% 42%, ${withAlpha(accent, 0.22)}, transparent 72%)`;
+    heroBadge.textContent = `이 형질을 얻으면 · ${card.name}`;
+    heroBadge.style.background = withAlpha(accent, 0.9);
+    heroBadge.style.color = "#241C10";
+    flourish.replaceChildren(...heroFlourish(card, accent, spriteFor(preview)));
+
+    dots.replaceChildren();
+    cards.forEach((_, k) => {
+      const dot = el("span");
+      if (k === preview) dot.style.background = accent;
+      dots.appendChild(dot);
     });
-    root.style.display = "block";
+
+    cardEls.forEach((node, k) => {
+      const r = cardRarity(cards[k] as Card);
+      node.style.boxShadow = k === preview ? selectionRing(r) : restingShadow(r);
+    });
+
+    cta.textContent = `${card.name} 퍼뜨리기`;
+    fitHero(); // 카드 이름 길이에 따라 배지 폭이 달라진다
+    if (popupOpen) renderPopup();
+  };
+
+  /** 내 종 팝업 — 지금 보고 있는 카드의 변화를 스탯 막대 위에 겹쳐 보여준다(§9 미리보기 델타). */
+  const renderPopup = (): void => {
+    const c = ctx;
+    const card = cards[preview];
+    if (!c || !card) return;
+    popup.replaceChildren();
+
+    const head = el("div", "draft-popup-head");
+    const idBox = el("div", "draft-popup-id");
+    const thumb = el("span", "draft-popup-thumb");
+    thumb.style.backgroundImage = `url("${spriteFor(preview)}")`;
+    const names = el("div");
+    const nm = el("div", "draft-popup-name");
+    nm.textContent = "지금 내 종";
+    const sub = el("div", "draft-popup-sub");
+    sub.textContent = `${c.speciesName} · ${c.population}마리 · ${c.level}세대`;
+    names.append(nm, sub);
+    idBox.append(thumb, names);
+    const closeBtn = el("button", "draft-popup-close");
+    closeBtn.textContent = "닫기";
+    closeBtn.addEventListener("click", closePopup);
+    head.append(idBox, closeBtn);
+    popup.appendChild(head);
+
+    const rows = el("div", "draft-stats");
+    for (const key of STAT_KEYS) {
+      const value = c.genome.traits[key];
+      const ceiling = TRAIT_CEILING[key];
+      const delta = effectiveDelta(key, card.effects[key] ?? 0);
+      const basePct = (value / ceiling) * 100;
+      const deltaPct = (Math.abs(delta) / ceiling) * 100;
+
+      const row = el("div", "draft-stat");
+      const label = el("span", "draft-stat-label");
+      label.textContent = TRAIT_LABELS[key];
+      const track = el("div", "draft-stat-track");
+      const fill = el("div", "draft-stat-fill");
+      fill.style.width = `${clamp(basePct, 0, 100)}%`;
+      fill.style.background = traitColor(key);
+      track.appendChild(fill);
+
+      if (delta > 0) {
+        const ghost = el("div", "draft-stat-gain");
+        ghost.style.left = `${clamp(basePct, 0, 100)}%`;
+        ghost.style.width = `${clamp(deltaPct, 0, 100 - basePct)}%`;
+        track.appendChild(ghost);
+      } else if (delta < 0) {
+        const ghost = el("div", "draft-stat-loss");
+        ghost.style.left = `${clamp(basePct - deltaPct, 0, 100)}%`;
+        ghost.style.width = `${clamp(deltaPct, 0, basePct)}%`;
+        track.appendChild(ghost);
+      }
+
+      const val = el("span", "draft-stat-val");
+      val.textContent = String(value);
+      if (delta !== 0) {
+        const d = el("b");
+        d.textContent = delta > 0 ? `+${delta}` : String(delta);
+        d.style.color = delta > 0 ? "#8FD14F" : "#E85C43";
+        val.append(" ", d);
+      }
+      row.append(label, track, val);
+      rows.appendChild(row);
+    }
+    popup.appendChild(rows);
+
+    const legend = el("div", "draft-legend");
+    const swatch = el("span", "draft-legend-swatch");
+    const legendText = el("span");
+    legendText.textContent = `보고 있던 카드(${card.name})를 고르면 이렇게 변해요.`;
+    legend.append(swatch, legendText);
+    popup.appendChild(legend);
+
+    popup.appendChild(el("div", "draft-divider"));
+
+    const pickedTitle = el("div", "draft-picked-title");
+    pickedTitle.textContent = "이번 혈통이 고른 형질";
+    popup.appendChild(pickedTitle);
+    const chips = el("div", "draft-picked");
+    if (c.pickedCardNames.length === 0) {
+      const none = el("div", "draft-picked-none");
+      none.textContent = "아직 없어요. 이번이 첫 형질이에요.";
+      chips.appendChild(none);
+    }
+    for (const name of c.pickedCardNames) {
+      const chip = el("span", "draft-picked-chip");
+      const dot = el("i");
+      dot.style.background = colorForCardName(name);
+      const text = el("span");
+      text.textContent = name;
+      chip.append(dot, text);
+      chips.appendChild(chip);
+    }
+    popup.appendChild(chips);
+  };
+
+  const openPopup = (): void => {
+    popupOpen = true;
+    renderPopup();
+    dim.classList.add("on");
+    popupWrap.classList.add("on");
+  };
+  const closePopup = (): void => {
+    popupOpen = false;
+    dim.classList.remove("on");
+    popupWrap.classList.remove("on");
+  };
+
+  mineBtn.addEventListener("click", openPopup);
+  dim.addEventListener("click", closePopup);
+  prevBtn.addEventListener("click", () => setPreview(preview - 1));
+  nextBtn.addEventListener("click", () => setPreview(preview + 1));
+  cta.addEventListener("click", () => {
+    const card = cards[preview];
+    if (!card) return;
+    const idx = preview;
+    commit(`${card.name} · 무리 전체에 퍼졌어요`, () => cb.onPick(idx));
+  });
+  skipBtn.addEventListener("click", () => {
+    commit("형질 대신 새끼를 몇 마리 쳤어요", () => cb.onSkip());
+  });
+  rerollBtn.addEventListener("click", () => {
+    if (busy) return;
+    showToast("카드를 다시 뽑아요");
+    cb.onReroll(); // game.reroll → onDraft → show() 로 카드가 새로 그려진다
+  });
+
+  const show = (nextCards: Card[], nextCtx: DraftContext): void => {
+    window.clearTimeout(commitTimer);
+    busy = false;
+    closePopup();
+    cards = nextCards;
+    ctx = nextCtx;
+    spriteUrls.length = 0;
+    cardEls.length = 0;
+
+    levelText.textContent = `레벨 ${nextCtx.level} 달성`;
+    mineThumb.style.backgroundImage = `url("${currentSpriteUrl(renderer, nextCtx)}")`;
+    rerollBtn.style.display = nextCtx.canReroll ? "inline-flex" : "none";
+
+    const bounce = DRAFT_TIMING.bounceMs;
+    const delays = cards.map((card) => rarityDelayMs(cardRarity(card)));
+    const endDelay = Math.max(...delays, 0) + bounce;
+
+    // 카드 — 희귀도 낮은 순으로 뜬다. 전설은 금빛 플래시 + 콘페티.
+    cardList.replaceChildren();
+    cards.forEach((card, i) => {
+      const rarity = cardRarity(card);
+      const style = RARITY_STYLE[rarity];
+      const delay = delays[i] ?? 0;
+
+      const wrap = el("div", "draft-card-wrap");
+      const node = el("button", "draft-card");
+      node.style.borderTopColor = style.color;
+      if (style.glow) node.style.borderColor = withAlpha(style.color, 0.45);
+
+      const row = el("div", "draft-card-row");
+      const dot = el("span", "draft-dot");
+      dot.style.background = traitColor(dominantTrait(card));
+      const name = el("span", "draft-card-name");
+      name.textContent = card.name;
+      row.append(dot, name, rarityBadge(rarity));
+
+      const body = el("div", "draft-card-body");
+      const desc = el("span", "draft-card-desc");
+      desc.textContent = card.desc;
+      const chips = el("span", "draft-chips");
+      for (const c of effectChips(card)) chips.appendChild(effectChipEl(c));
+      body.append(desc, chips);
+
+      node.append(row, body);
+      node.style.boxShadow = restingShadow(rarity);
+      node.style.animation = cardAnimation(rarity, delay, bounce);
+      node.addEventListener("click", () => setPreview(i));
+      node.addEventListener("mouseenter", () => setPreview(i));
+
+      wrap.appendChild(node);
+      if (style.glow) spawnConfetti(wrap, delay + Math.round(bounce * 0.45));
+      cardList.appendChild(wrap);
+      cardEls.push(node);
+    });
+
+    // 히어로·CTA 는 카드가 전부 뜬 뒤에(스포일러 방지).
+    const late = `pop-soft ${Math.round(bounce * 1.2)}ms ease-out ${endDelay}ms both`;
+    heroGroup.style.animation = late;
+    cta.style.animation = late;
+
+    // 가장 귀한 카드를 처음 보여준다 — 히어로가 뜨는 순간 이번 판의 가장 큰 선택지가 보인다.
+    let best = 0;
+    cards.forEach((card, i) => {
+      if (rarityIndex(cardRarity(card)) > rarityIndex(cardRarity(cards[best] as Card))) best = i;
+    });
+    setPreview(best);
+
+    root.classList.add("open");
+    gameCanvas.classList.add("game-view-frosted");
+    document.body.classList.add("draft-open");
+    // display:none 상태에선 크기를 못 재므로 보이게 한 다음 맞춘다.
+    fitHero();
   };
 
   const hide = (): void => {
-    root.style.display = "none";
+    window.clearTimeout(commitTimer);
+    window.clearTimeout(toastTimer);
+    busy = false;
+    closePopup();
+    toastWrap.classList.remove("on");
+    root.classList.remove("open");
+    gameCanvas.classList.remove("game-view-frosted");
+    document.body.classList.remove("draft-open");
   };
 
   return { show, hide };
 }
 
-/** 카드 효과 중 가장 크게 바뀌는 형질 — 카드 액센트 색을 정한다. */
+// ────────────────────────────── 조각들 ──────────────────────────────
+
+/** 현재(카드 적용 전) 종 그림 — 헤더의 "내 종" 버튼 썸네일. */
+function currentSpriteUrl(renderer: Renderer, ctx: DraftContext): string {
+  const tex = makeCreatureTexture(renderer, ctx.genome, ctx.speciesColor);
+  const canvas = renderer.extract.canvas(tex) as HTMLCanvasElement;
+  const url = canvas.toDataURL();
+  tex.destroy(true);
+  return url;
+}
+
+function cardAnimation(rarity: Rarity, delay: number, bounce: number): string {
+  const bez = "cubic-bezier(.34,1.3,.64,1)";
+  const pop = `pop-bounce ${bounce}ms ${bez} ${delay}ms both`;
+  if (!RARITY_STYLE[rarity].glow) return pop;
+  // §8 함정: rare-flash 는 backwards 로. both/forwards 면 마지막 키프레임의 box-shadow 가
+  // 인라인 선택 링을 영구히 덮어써 링이 안 보인다.
+  return `${pop}, rare-flash 1100ms ease ${delay + Math.round(bounce * 0.55)}ms backwards`;
+}
+
+function rarityBadge(rarity: Rarity): HTMLElement {
+  const style = RARITY_STYLE[rarity];
+  const badge = el("span", "draft-badge");
+  badge.style.color = style.color;
+  badge.style.background = style.badgeBg;
+  const dot = el("i");
+  dot.style.background = style.color;
+  if (style.glow) dot.style.boxShadow = `0 0 5px ${withAlpha(style.color, 0.9)}`;
+  const text = el("span");
+  text.textContent = style.label;
+  badge.append(dot, text);
+  return badge;
+}
+
+interface EffectChip {
+  text: string;
+  up: boolean;
+}
+
+function effectChipEl(chip: EffectChip): HTMLElement {
+  const node = el("span", "draft-chip");
+  const color = chip.up ? "#8FD14F" : "#E85C43";
+  node.style.color = color;
+  node.style.background = withAlpha(color, 0.13);
+  const arrow = el("i");
+  arrow.textContent = chip.up ? "▲" : "▼";
+  const text = el("span");
+  text.textContent = chip.text;
+  node.append(arrow, text);
+  return node;
+}
+
+/** 카드의 얻음/잃음 — 카드 안에서 항상 한눈에 보이게(§1 설계 원칙). */
+export function effectChips(card: Card): EffectChip[] {
+  const chips: EffectChip[] = [];
+  for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
+    const v = card.effects[key] ?? 0;
+    if (ABILITY_KEYS.has(key)) {
+      // 능력형(수영·날개·초음파·독·원거리)은 수치가 무의미(3단계) → 방향만 표시.
+      chips.push({ text: `${TRAIT_LABELS[key]} ${v >= 0 ? "강화" : "약화"}`, up: v >= 0 });
+    } else {
+      const d = effectiveDelta(key, v);
+      chips.push({ text: `${TRAIT_LABELS[key]} ${d >= 0 ? "+" : ""}${d}`, up: d >= 0 });
+    }
+  }
+  return chips;
+}
+
+/**
+ * 형질별 히어로 연출 — 무리·번식이 늘면 새끼 메달리온이 주위를 떠다니고, 속도가 늘면 속도 대시가 흐른다.
+ * 카드마다 손으로 짜지 않고 효과에서 뽑아내, 새 카드가 들어와도 알아서 붙는다.
+ */
+function heroFlourish(card: Card, accent: string, spriteUrl: string): HTMLElement[] {
+  const e = card.effects;
+  const herding = e.herding ?? 0;
+  const fertility = e.fertility ?? 0;
+  const speed = e.speed ?? 0;
+
+  const pup = (css: string, delay: number, flip: boolean): HTMLElement => {
+    const node = el("div", "draft-pup");
+    node.style.cssText += css;
+    node.style.animation = `float-soft ${(4.2 + delay * 0.4).toFixed(1)}s ease-in-out ${delay}s infinite`;
+    node.style.border = `1.5px solid ${withAlpha(accent, 0.45)}`;
+    const inner = el("i");
+    inner.style.backgroundImage = `url("${spriteUrl}")`;
+    if (flip) inner.style.transform = "scaleX(-1)";
+    node.appendChild(inner);
+    return node;
+  };
+
+  if (herding > 0) {
+    return [
+      pup("left:0; top:10px; width:46px; height:41px; border-radius:14px;", 0.5, false),
+      pup("right:2px; top:2px; width:41px; height:37px; border-radius:13px;", 1, true),
+      pup("right:8px; bottom:6px; width:36px; height:32px; border-radius:12px;", 1.4, true),
+    ];
+  }
+  if (fertility > 0) {
+    return [
+      pup("left:2px; top:16px; width:46px; height:41px; border-radius:14px;", 0.6, false),
+      pup("right:4px; top:8px; width:38px; height:34px; border-radius:12px;", 1.1, true),
+    ];
+  }
+  if (speed > 0) {
+    return [30, 20, 13].map((w, i) => {
+      const dash = el("div", "draft-dash");
+      dash.style.cssText += `left:${[2, 10, 6][i] ?? 2}px; top:${56 + i * 20}px; width:${w}px;`;
+      dash.style.background = accent;
+      dash.style.opacity = String(0.6 - i * 0.1);
+      dash.style.animationDelay = `${i * 0.3}s`;
+      return dash;
+    });
+  }
+  return [];
+}
+
+function spawnConfetti(host: HTMLElement, burstDelayMs: number): void {
+  for (let i = 0; i < DRAFT_TIMING.confettiCount; i++) {
+    const round = Math.random() < 0.3;
+    // 전방향 발사 — i 번째 각도에 지터를 얹어 고르게 퍼지되 규칙적으로 보이지 않게.
+    const angle = (i / DRAFT_TIMING.confettiCount) * Math.PI * 2 + Math.random() * 0.7;
+    const dist = 55 + Math.random() * 75;
+    const dx = Math.round(Math.cos(angle) * dist);
+    const dy = Math.round(Math.sin(angle) * dist);
+    const rot = (Math.random() < 0.5 ? -1 : 1) * (160 + Math.round(Math.random() * 220));
+
+    const bit = el("span", "draft-confetti");
+    bit.style.left = `${Math.round(35 + Math.random() * 30)}%`;
+    bit.style.top = `${Math.round(30 + Math.random() * 40)}%`;
+    bit.style.width = `${round ? 6 : 5 + Math.round(Math.random() * 2)}px`;
+    bit.style.height = `${round ? 6 : 7 + Math.round(Math.random() * 3)}px`;
+    bit.style.borderRadius = round ? "50%" : "2px";
+    bit.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length] ?? "#F5C33B";
+    bit.style.setProperty("--dx", `${dx}px`);
+    bit.style.setProperty("--dy", `${dy}px`);
+    bit.style.setProperty("--dx1", `${Math.round(dx * 0.35)}px`);
+    bit.style.setProperty("--dy1", `${Math.round(dy * 0.35)}px`);
+    bit.style.setProperty("--rot", `${rot}deg`);
+    bit.style.setProperty("--r1", `${Math.round(rot * 0.3)}deg`);
+    const dur = 850 + Math.round(Math.random() * 400);
+    const start = burstDelayMs + Math.round(Math.random() * 180);
+    bit.style.animation = `confetti-burst ${dur}ms cubic-bezier(.17,.67,.4,1) ${start}ms both`;
+    host.appendChild(bit);
+  }
+}
+
+/** 카드 효과 중 가장 크게 바뀌는 형질 — 카드 점·히어로 색을 정한다. */
 function dominantTrait(card: Card): keyof Traits {
   const keys = Object.keys(card.effects) as (keyof Traits)[];
   let best: keyof Traits = keys[0] ?? "fertility";
@@ -110,18 +633,25 @@ function dominantTrait(card: Card): keyof Traits {
   return best;
 }
 
-function formatEffects(card: Card): string {
-  const parts: string[] = [];
-  for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
-    const v = card.effects[key] ?? 0;
-    if (ABILITY_KEYS.has(key)) {
-      // 능력형(수영·날개·초음파·독·원거리)은 수치가 무의미(3단계) → 방향만 표시(강화/약화).
-      parts.push(`${TRAIT_LABELS[key]} ${v >= 0 ? "강화 ↑" : "약화 ↓"}`);
-    } else {
-      // 실제 적용값(연속 형질은 ×0.6 축소분)을 보여준다 — 카드 수치 = 실제 붙는 값(폰 피드백).
-      const d = effectiveDelta(key, v);
-      parts.push(`${TRAIT_LABELS[key]} ${d >= 0 ? "+" : ""}${d}`);
-    }
-  }
-  return parts.join("  ·  ");
+const ALL_CARDS: readonly Card[] = [...CARD_POOL, ...PRESET_CARDS];
+
+/** 고른 형질 칩의 점 색 — 프리셋은 종 시작색, 일반 카드는 대표 형질 색. */
+function colorForCardName(name: string): string {
+  const card = ALL_CARDS.find((c) => c.name === name);
+  if (!card) return "#8C7C68"; // "건너뜀" 등 카드가 아닌 항목
+  if (card.color !== undefined) return `#${card.color.toString(16).padStart(6, "0")}`;
+  return traitColor(dominantTrait(card));
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+function el<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  cls = "",
+): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  return node;
 }
