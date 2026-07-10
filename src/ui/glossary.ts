@@ -4,7 +4,14 @@
 // 문구 규칙: 쉬운 말, 한글 사이 em dash 금지(마침표·쉼표·줄바꿈으로 대신).
 
 import { ensurePanelStyles } from "@/ui/panelStyles";
-import { CARD_POOL, cardRarity, rarityOdds, type Card, type Rarity } from "@/game/cards";
+import {
+  CARD_POOL,
+  cardRarity,
+  rarityOdds,
+  RARITY_BOOST_FULL_LEVEL,
+  type Card,
+  type Rarity,
+} from "@/game/cards";
 import { isCardUnlocked, loadMeta, metaLevel, UNLOCK_TIERS } from "@/game/meta";
 import { RARITY_STYLE, withAlpha } from "@/ui/rarity";
 import { cardEffectChips, dominantTrait, traitColor } from "@/ui/traitDisplay";
@@ -243,14 +250,14 @@ const SECTIONS: readonly Section[] = [
   {
     title: "카드 도감",
     intro:
-      "카드마다 희귀도가 있습니다. 희귀할수록 후보로 잘 안 뜨고, 드래프트에서도 더 늦게 등장합니다. 아래 확률은 지금 열려 있는 카드만 세어 계산합니다.",
+      "카드마다 희귀도가 있습니다. 희귀할수록 후보로 잘 안 뜨고, 드래프트에서도 더 늦게 등장합니다. 무리가 세대를 거듭할수록 높은 등급이 더 자주 찾아옵니다.",
     entries: [
       {
         term: "희귀도와 확률",
         svg: SVG.card,
-        desc: "카드는 다섯 등급으로 나뉩니다. 흔함은 대가 없이 조금 오르는 카드, 전설은 종의 정체성을 바꾸는 한 수입니다. 등급이 높을수록 뽑기에서 덜 나옵니다.",
+        desc: `카드는 다섯 등급으로 나뉩니다. 등급은 그 카드가 종을 얼마나 바꾸는지로 정합니다. 흔함은 대가 없이 한 가지가 조금 오르고, 전설은 종의 정체성 자체를 바꿉니다. 세대(레벨)가 오를수록 높은 등급의 확률이 올라가며, 세대 ${RARITY_BOOST_FULL_LEVEL}에서 최대가 됩니다.`,
         oddsTable: true,
-        note: "판이 진행되는 동안에는 이미 소용없는 카드(예: 벌써 나는데 또 나오는 날개)가 후보에서 빠지므로, 실제 확률은 위 값과 조금 달라집니다.",
+        note: "확률은 지금 열려 있는 카드만 세어 계산합니다. 판이 진행되는 동안에는 이미 소용없는 카드(예: 벌써 나는데 또 나오는 날개)가 후보에서 빠지므로, 실제 확률은 위 값과 조금 달라집니다.",
       },
       {
         term: "흔함",
@@ -432,19 +439,65 @@ function chipRow(card: Card): HTMLElement {
   return wrap;
 }
 
+/** 대백과가 확률을 보여줄 런 레벨들. 마지막이 보정 최대(그 위는 같다). */
+const SHOWN_LEVELS: readonly number[] = [1, 3, 5, RARITY_BOOST_FULL_LEVEL];
+
+/** 지금 열려 있는 카드만. 잠긴 카드는 후보에 안 나오므로 확률 계산에서도 빼야 한다. */
+function unlockedPool(): Card[] {
+  const lvl = currentMetaLevel();
+  return CARD_POOL.filter((c) => isCardUnlocked(c.id, lvl));
+}
+
 /** 다섯 등급의 카드 수와 등장 확률. 확률은 `drawCards` 와 같은 가중치로 계산한 정확값이다. */
 function buildOddsTable(): HTMLElement {
-  const lvl = currentMetaLevel();
-  const pool = CARD_POOL.filter((c) => isCardUnlocked(c.id, lvl));
-  const odds = rarityOdds(pool);
-
+  const metaLvl = currentMetaLevel();
+  const pool = unlockedPool();
   const box = document.createElement("div");
+
   const label = document.createElement("div");
-  label.textContent = `지금 열린 카드 ${pool.length}장 기준 (플레이어 레벨 ${lvl})`;
+  label.textContent = `지금 열린 카드 ${pool.length}장 기준 (플레이어 레벨 ${metaLvl})`;
   label.style.cssText =
     "color:var(--faint); font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; margin:16px 0 6px;";
   box.appendChild(label);
 
+  // 런 레벨(세대) 선택 — 레벨이 오를수록 높은 등급의 가중치가 커진다.
+  let runLevel = 1;
+  const tabs = document.createElement("div");
+  tabs.style.cssText = "display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap;";
+  const tabBtns: HTMLButtonElement[] = [];
+  const host = document.createElement("div");
+
+  const paint = (): void => {
+    tabBtns.forEach((b, i) => {
+      const on = SHOWN_LEVELS[i] === runLevel;
+      b.style.background = on ? "rgba(143,209,79,0.16)" : "var(--panelSolid)";
+      b.style.borderColor = on ? "rgba(143,209,79,0.5)" : "var(--line)";
+      b.style.color = on ? "var(--lime)" : "var(--sub)";
+    });
+    host.replaceChildren(oddsRows(pool, runLevel));
+  };
+
+  for (const lv of SHOWN_LEVELS) {
+    const b = document.createElement("button");
+    b.textContent = lv === RARITY_BOOST_FULL_LEVEL ? `세대 ${lv} 이상` : `세대 ${lv}`;
+    b.style.cssText =
+      "border:1px solid var(--line); background:var(--panelSolid); color:var(--sub); border-radius:999px;" +
+      "padding:6px 12px; font-family:var(--font-mono); font-size:11.5px; cursor:pointer;";
+    b.addEventListener("click", () => {
+      runLevel = lv;
+      paint();
+    });
+    tabBtns.push(b);
+    tabs.appendChild(b);
+  }
+  box.append(tabs, host);
+  paint();
+  return box;
+}
+
+/** 한 레벨에서의 등급별 확률 표. */
+function oddsRows(pool: readonly Card[], runLevel: number): HTMLElement {
+  const odds = rarityOdds(pool, 3, runLevel);
   const table = document.createElement("div");
   table.style.cssText =
     "border:1px solid var(--line); border-radius:var(--r-card); overflow:hidden; background:var(--panelSolid);";
@@ -487,8 +540,7 @@ function buildOddsTable(): HTMLElement {
 
     table.appendChild(row);
   });
-  box.appendChild(table);
-  return box;
+  return table;
 }
 
 /** 한 등급의 카드 전부. 잠긴 카드는 흐리게 + 열리는 레벨을 적는다(후보에 안 나온다). */
@@ -496,8 +548,9 @@ function buildRarityList(rarity: Rarity): HTMLElement {
   const lvl = currentMetaLevel();
   const style = RARITY_STYLE[rarity];
   const cards = CARD_POOL.filter((c) => cardRarity(c) === rarity);
-  const pool = CARD_POOL.filter((c) => isCardUnlocked(c.id, lvl));
-  const o = rarityOdds(pool)[rarity];
+  const pool = unlockedPool();
+  const o = rarityOdds(pool, 3, 1)[rarity];
+  const top = rarityOdds(pool, 3, RARITY_BOOST_FULL_LEVEL)[rarity];
 
   const box = document.createElement("div");
 
@@ -505,7 +558,7 @@ function buildRarityList(rarity: Rarity): HTMLElement {
   summary.textContent =
     o.count === 0
       ? `이 등급은 아직 한 장도 안 열렸습니다 (전체 ${cards.length}장).`
-      : `열린 ${o.count}장 · 후보 3장에 뜰 확률 ${pct(o.inDraft)}`;
+      : `열린 ${o.count}장 · 후보 3장에 뜰 확률 ${pct(o.inDraft)} (세대 1) → ${pct(top.inDraft)} (세대 ${RARITY_BOOST_FULL_LEVEL} 이상)`;
   summary.style.cssText =
     `margin:16px 0 8px; padding:10px 12px; border-radius:var(--r-card); font-family:var(--font-mono); font-size:12.5px;` +
     `color:${style.color}; background:${withAlpha(style.color, 0.1)}; border:1px solid ${withAlpha(style.color, 0.3)};`;

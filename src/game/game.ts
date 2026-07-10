@@ -316,6 +316,7 @@ export class Game {
       this.draftRng,
       3,
       (c) => isCardUnlocked(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
+      this.level, // 레벨이 오를수록 높은 등급이 더 자주 뜬다(rarityWeightsAtLevel)
     );
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
     this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (무리 전체에 퍼지고, 새끼는 부모를 닮아 조금씩 달라집니다)`;
@@ -334,6 +335,7 @@ export class Game {
       this.draftRng,
       3,
       (c) => isCardUnlocked(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
+      this.level, // 다시 뽑아도 같은 레벨 보정을 받는다
     );
     this.draftCards = this.eraReward ? drawn.map((c) => boostCard(c, GAME.eraRewardBoost)) : drawn;
     this.onDraft?.(this.draftCards, this.preview);
@@ -687,6 +689,7 @@ export class Game {
       rng,
       3,
       (c) => isCardUnlocked(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
+      this.level, // 시대 보상도 지금까지 키운 레벨의 보정을 받는다
     );
     this.draftCards = drawn.map((c) => boostCard(c, GAME.eraRewardBoost));
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;

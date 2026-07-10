@@ -22,8 +22,8 @@ const CARD_GROWTH_SCALE = 0.6;
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 
 /**
- * 뽑기 가중치(상대값). 카드 한 장이 후보로 뽑힐 상대 확률이다. 이 값만 만지면 희귀도 체감이 바뀐다.
- * 현재 풀(흔함 16·드묾 12·귀함 7·아주 귀함 8·전설 5) 기준 전설이 3장 중 하나로 뜰 확률 ≈ 5%.
+ * 뽑기 가중치의 **기준값(레벨 1)**. 카드 한 장이 후보로 뽑힐 상대 확률이다.
+ * 레벨이 오르면 `rarityWeightsAtLevel` 이 높은 등급 쪽을 키운다(아래 참고).
  */
 export const RARITY_WEIGHT: Record<Rarity, number> = {
   common: 100,
@@ -32,6 +32,40 @@ export const RARITY_WEIGHT: Record<Rarity, number> = {
   epic: 20,
   legendary: 10,
 };
+
+/**
+ * 레벨 보정이 최대에 이르는 런 레벨(세대). 한 판은 보통 레벨 5~7에서 끝나므로 그 안에서 체감되게 잡는다.
+ * 이 레벨 이상은 전부 최대 보정.
+ */
+export const RARITY_BOOST_FULL_LEVEL = 7;
+
+/**
+ * 최대 보정에서 각 등급의 가중치가 기준값의 몇 배가 되는가. 흔함은 1배(그대로)이고, 높은 등급만 커진다
+ * → 흔함의 **몫**이 자연히 줄어든다. "무리가 자라면 더 큰 변화가 찾아온다"를 확률로 표현한 것.
+ * 레벨 1 에서는 전부 1배(보정 없음)이고, RARITY_BOOST_FULL_LEVEL 까지 선형으로 커진다.
+ */
+export const RARITY_BOOST_MAX: Record<Rarity, number> = {
+  common: 1,
+  uncommon: 1.5,
+  rare: 2.4,
+  epic: 3.6,
+  legendary: 5.5,
+};
+
+/**
+ * 런 레벨(세대)에 따른 뽑기 가중치. 레벨 1 = `RARITY_WEIGHT` 그대로,
+ * `RARITY_BOOST_FULL_LEVEL` 이상 = `RARITY_WEIGHT × RARITY_BOOST_MAX`. 사이는 선형 보간.
+ * 결정론: 레벨은 시드와 무관하게 정해지는 값이라 같은 시드 + 같은 진행이면 같은 후보가 나온다.
+ */
+export function rarityWeightsAtLevel(level: number): Record<Rarity, number> {
+  const span = Math.max(1, RARITY_BOOST_FULL_LEVEL - 1);
+  const t = Math.max(0, Math.min(1, (level - 1) / span));
+  const out = {} as Record<Rarity, number>;
+  for (const r of Object.keys(RARITY_WEIGHT) as Rarity[]) {
+    out[r] = RARITY_WEIGHT[r] * (1 + (RARITY_BOOST_MAX[r] - 1) * t);
+  }
+  return out;
+}
 
 export interface Card {
   id: string;
@@ -414,10 +448,25 @@ export const CARD_POOL: readonly Card[] = [
 ];
 
 /**
- * 카드 id → 희귀도. 카드 리터럴에 흩어 두지 않고 한곳에 모아, 풀 전체의 희귀도 분포를 한눈에 보며 튜닝한다.
+ * 카드 id → 희귀도. 카드 리터럴에 흩어 두지 않고 한곳에 모아, 풀 전체의 분포를 한눈에 보며 튜닝한다.
  * 여기 없는 카드는 흔함으로 떨어진다 — 새 카드를 넣으면 여기에도 반드시 추가할 것(cards.test.ts 가 강제).
- * 기준: 단일 소폭 상승 = 흔함 / 소폭 조합·작은 대가 = 드묾 / 큰 상승 + 뚜렷한 대가 = 귀함 /
- *       빌드를 기울이는 특화 = 아주 귀함 / 종의 정체성을 바꾸는 한 수(날개·초음파·독) = 전설.
+ *
+ * ## 등급 기준 — "수치 총량"이 아니라 "종을 얼마나 바꾸는가"
+ * 숫자가 큰 카드가 곧 높은 등급은 아니다. 능력형(날개·초음파·독·원거리)은 0에서 시작하는 스위치라
+ * 값이 42~48 로 크지만, 그건 "켜는 데 필요한 값"이지 강함의 척도가 아니다. 실제로 `치타의 다리`(총량 23)가
+ * 전설이고 `고행자`(총량 30)가 귀함이다. 기준은 다음 네 가지를 순서대로 본다:
+ *
+ *  1. **대가가 있는가.** 없으면 흔함 쪽. 귀함은 전부 뚜렷한 대가를 치른다.
+ *  2. **판단을 요구하는가.** 무조건 좋으면 흔함, 무엇을 포기할지 골라야 하면 귀함 이상.
+ *  3. **빌드를 기울이는가.** 이 카드 한 장으로 종의 방향(사냥꾼/번식형/무리형)이 정해지면 아주 귀함.
+ *  4. **못 하던 걸 하게 되는가.** 새 지형·새 감각·새 전투 수단이 열리면 전설(날개=비행, 초음파=전방위 청각,
+ *     독샘=포식자 반격, 독 가시=원거리+방어독).
+ *
+ * ## 경계가 자의적인 것들 (고칠 때 참고)
+ * - `cheetah`(전설): 위 4번을 만족하지 않는다. 디자인 프로토타입이 "치타의 다리 = 전설"로 그려져 있어 맞췄다.
+ *   기준대로면 아주 귀함이 옳다.
+ * - `venom_fang`(아주 귀함) vs `venom_gland`(전설): 둘 다 독을 켠다. 대가 유무로 갈랐을 뿐이다.
+ * - `long_horn`(아주 귀함) vs `spit`(전설): spit 이 더 세지 않다. 두 능력(원거리+독)을 함께 켠다는 이유로 올렸다.
  */
 export const CARD_RARITY: Record<string, Rarity> = {
   // 흔함 — 대가 없는 단일 소폭 상승, 순한 조합
@@ -503,21 +552,22 @@ export function boostCard(card: Card, boost: number): Card {
 
 /**
  * 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). allow 로 카드(메타 언락·프리셋 적합)를 걸러낸다.
- * 희귀도 가중치(RARITY_WEIGHT)를 반영한 비복원 추출 — 흔한 카드가 자주, 전설이 드물게 뜬다. 균등 셔플이던
- * 예전과 달리 카드에 붙는 희귀도 배지가 실제 등장 빈도와 일치한다.
+ * 희귀도 가중치를 반영한 비복원 추출 — 흔한 카드가 자주, 전설이 드물게 뜬다. 카드에 붙는 희귀도 배지가
+ * 실제 등장 빈도와 일치한다. `level`(런 레벨=세대)이 오르면 높은 등급이 더 자주 나온다.
  */
-export function drawCards(rng: Rng, n: number, allow?: (c: Card) => boolean): Card[] {
+export function drawCards(rng: Rng, n: number, allow?: (c: Card) => boolean, level = 1): Card[] {
   const pool = (allow ? CARD_POOL.filter(allow) : CARD_POOL).slice();
+  const weights = rarityWeightsAtLevel(level);
   const count = Math.min(n, pool.length);
   const out: Card[] = [];
   for (let k = 0; k < count; k++) {
     let total = 0;
-    for (const c of pool) total += RARITY_WEIGHT[cardRarity(c)];
+    for (const c of pool) total += weights[cardRarity(c)];
     // 룰렛 휠 — rng.unit() 한 번으로 한 장. 부동소수 오차로 끝까지 못 고르면 마지막 장을 집는다.
     let r = rng.unit() * total;
     let idx = pool.length - 1;
     for (let i = 0; i < pool.length; i++) {
-      r -= RARITY_WEIGHT[cardRarity(pool[i] as Card)];
+      r -= weights[cardRarity(pool[i] as Card)];
       if (r <= 0) {
         idx = i;
         break;
@@ -562,10 +612,12 @@ function probNone(counts: number[], weights: readonly number[], skip: number, dr
 /**
  * 주어진 풀에서 등급별 등장 확률(정확값). `drawCards` 의 가중치 비복원 추출을 그대로 반영한다.
  * 풀은 호출자가 정한다 — 대백과는 "지금 열려 있는 카드"만 넘겨 실제 확률을 보여준다.
+ * `level` 은 런 레벨(세대) — 같은 레벨의 `drawCards` 와 정확히 같은 가중치를 쓴다.
  */
-export function rarityOdds(pool: readonly Card[], draws = 3): Record<Rarity, RarityOdds> {
+export function rarityOdds(pool: readonly Card[], draws = 3, level = 1): Record<Rarity, RarityOdds> {
   const counts = RARITIES.map((r) => pool.filter((c) => cardRarity(c) === r).length);
-  const weights = RARITIES.map((r) => RARITY_WEIGHT[r]);
+  const levelWeights = rarityWeightsAtLevel(level);
+  const weights = RARITIES.map((r) => levelWeights[r]);
   let total = 0;
   for (let i = 0; i < counts.length; i++) total += (counts[i] ?? 0) * (weights[i] ?? 0);
   const n = Math.min(draws, pool.length);

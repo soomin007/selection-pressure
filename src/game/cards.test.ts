@@ -9,7 +9,10 @@ import {
   CARD_RARITY,
   PRESET_CARDS,
   RARITY_WEIGHT,
+  RARITY_BOOST_MAX,
+  RARITY_BOOST_FULL_LEVEL,
   rarityOdds,
+  rarityWeightsAtLevel,
 } from "@/game/cards";
 import { defaultGenome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
@@ -89,14 +92,14 @@ describe("희귀도", () => {
 });
 
 describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
-  it("대백과가 보여주는 확률이 drawCards 의 실제 빈도와 맞는다", () => {
+  it.each([1, 4, 7, 20])("레벨 %i 에서 대백과 표시 확률이 drawCards 의 실제 빈도와 맞는다", (level) => {
     // 표시값이 실제와 어긋나면 그게 곧 거짓말이다. 정확값 계산을 몬테카를로로 교차검증한다.
-    const odds = rarityOdds(CARD_POOL, 3);
-    const rng = new Rng("odds-check");
+    const odds = rarityOdds(CARD_POOL, 3, level);
+    const rng = new Rng(`odds-check-${level}`);
     const rounds = 4000;
     const seen: Record<string, number> = {};
     for (let i = 0; i < rounds; i++) {
-      const drawn = drawCards(rng, 3);
+      const drawn = drawCards(rng, 3, undefined, level);
       for (const r of new Set(drawn.map(cardRarity))) seen[r] = (seen[r] ?? 0) + 1;
     }
     for (const r of ["common", "uncommon", "rare", "epic", "legendary"] as const) {
@@ -140,6 +143,64 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
     // 2장뿐이라 둘 다 뽑힌다 → 두 등급 모두 확률 1
     expect(odds.common.inDraft).toBeCloseTo(1, 10);
     expect(odds.legendary.inDraft).toBeCloseTo(1, 10);
+  });
+});
+
+describe("레벨 보정 (세대가 오를수록 높은 등급이 자주 뜬다)", () => {
+  it("레벨 1 은 보정이 없다(기준 가중치 그대로)", () => {
+    const w = rarityWeightsAtLevel(1);
+    for (const r of ["common", "uncommon", "rare", "epic", "legendary"] as const) {
+      expect(w[r]).toBeCloseTo(RARITY_WEIGHT[r], 10);
+    }
+  });
+
+  it("보정 최대 레벨에서 각 등급이 정확히 RARITY_BOOST_MAX 배가 된다", () => {
+    const w = rarityWeightsAtLevel(RARITY_BOOST_FULL_LEVEL);
+    for (const r of ["common", "uncommon", "rare", "epic", "legendary"] as const) {
+      expect(w[r]).toBeCloseTo(RARITY_WEIGHT[r] * RARITY_BOOST_MAX[r], 10);
+    }
+  });
+
+  it("보정 최대 레벨을 넘어도 더 커지지 않는다(상한)", () => {
+    const at = rarityWeightsAtLevel(RARITY_BOOST_FULL_LEVEL);
+    const far = rarityWeightsAtLevel(RARITY_BOOST_FULL_LEVEL + 50);
+    expect(far.legendary).toBeCloseTo(at.legendary, 10);
+    expect(far.common).toBeCloseTo(at.common, 10);
+  });
+
+  it("흔함은 안 커지고 희귀할수록 더 많이 커진다", () => {
+    const w = rarityWeightsAtLevel(RARITY_BOOST_FULL_LEVEL);
+    const ratio = (r: keyof typeof RARITY_WEIGHT): number => w[r] / RARITY_WEIGHT[r];
+    expect(ratio("common")).toBeCloseTo(1, 10); // 흔함은 그대로 — 몫만 자연히 줄어든다
+    expect(ratio("uncommon")).toBeGreaterThan(ratio("common"));
+    expect(ratio("rare")).toBeGreaterThan(ratio("uncommon"));
+    expect(ratio("epic")).toBeGreaterThan(ratio("rare"));
+    expect(ratio("legendary")).toBeGreaterThan(ratio("epic"));
+  });
+
+  it("레벨이 오를수록 전설이 잘 뜨고 흔함은 덜 뜬다", () => {
+    const low = rarityOdds(CARD_POOL, 3, 1);
+    const mid = rarityOdds(CARD_POOL, 3, 4);
+    const high = rarityOdds(CARD_POOL, 3, RARITY_BOOST_FULL_LEVEL);
+    expect(mid.legendary.inDraft).toBeGreaterThan(low.legendary.inDraft);
+    expect(high.legendary.inDraft).toBeGreaterThan(mid.legendary.inDraft);
+    expect(high.common.inDraft).toBeLessThan(low.common.inDraft);
+  });
+
+  it("보정을 받아도 등급 서열은 안 뒤집힌다(전설이 흔함보다 잦아지지 않는다)", () => {
+    for (const level of [1, 3, 5, 7, 30]) {
+      const o = rarityOdds(CARD_POOL, 3, level);
+      expect(o.legendary.perCard).toBeLessThan(o.epic.perCard);
+      expect(o.epic.perCard).toBeLessThan(o.rare.perCard);
+      expect(o.rare.perCard).toBeLessThan(o.uncommon.perCard);
+      expect(o.uncommon.perCard).toBeLessThan(o.common.perCard);
+    }
+  });
+
+  it("보정이 걸려도 같은 시드 + 같은 레벨이면 같은 후보(결정론 유지)", () => {
+    const a = drawCards(new Rng("lvl"), 3, undefined, 6).map((c) => c.id);
+    const b = drawCards(new Rng("lvl"), 3, undefined, 6).map((c) => c.id);
+    expect(a).toEqual(b);
   });
 });
 
