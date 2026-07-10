@@ -321,7 +321,10 @@ interface DraftContext {
     렌더는 `WorldView.playerCosmetic` 을 보고 `drawCosmetic()` 이 그린다. 스프라이트 **아래** 레이어(`playerG`)라
     몸 안쪽(반지름 ~15px)에 그리면 가려진다 — 별가루가 바깥에서 시작하는 이유.
   - `card` — 지금은 「거인」 하나뿐. 도전 과제로만 열리는 카드이고, **레벨로는 절대 안 열린다.**
-- **카드 문지기는 둘**: `cardAvailable(id, metaLevel) = isCardUnlocked(...) && isAchievementCardUnlocked(...)`.
+- **카드 문지기는 셋**: `cardAvailable(id, metaLevel)`(레벨+과제) · `cardPrereqMet(card, traits)`(전제 조건) ·
+  `!cardRedundant(card, traits)`(이미 무의미). `requiresTrait` 가 붙은 **강화 카드**는 그 능력을 이미 갖춘 종에게만
+  나오고, 능력이 상한에 닿아야 비로소 무의미해진다(관문 카드와 규칙이 반대다 — 관문은 능력이 켜지면 사라진다).
+- `cardAvailable(id, metaLevel) = isCardUnlocked(...) && isAchievementCardUnlocked(...)`.
   드래프트 뽑기(`game.ts`)와 대백과 확률 계산(`glossary.ts`)이 **반드시 같은 이 함수**를 써야 한다. 한쪽만 쓰면
   대백과에 뜨는 확률이 실제와 어긋난다.
 - **「거인」의 몸집**: `CARD_BODY_SCALE.titan = 1.42` → `pickCard` 가 `world.playerSpecies.bodyScale` 을 세우고

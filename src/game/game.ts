@@ -8,7 +8,7 @@
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, MUTABLE_TRAITS, TRAIT_CEILING, type Genome, type Traits, type MutableTrait } from "@/sim/genome";
-import { drawCards, applyCard, boostCard, CARD_BODY_SCALE, PRESET_CARDS, type Card } from "@/game/cards";
+import { drawCards, applyCard, boostCard, cardPrereqMet, CARD_BODY_SCALE, PRESET_CARDS, type Card } from "@/game/cards";
 import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
@@ -340,7 +340,10 @@ export class Game {
     this.draftCards = drawCards(
       this.draftRng,
       3,
-      (c) => cardAvailable(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
+      (c) =>
+        cardAvailable(c.id, this.metaLvl) &&
+        cardPrereqMet(c, this.genome.traits) &&
+        !cardRedundant(c, this.genome.traits),
       this.level, // 레벨이 오를수록 높은 등급이 더 자주 뜬다(rarityWeightsAtLevel)
     );
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
@@ -360,7 +363,10 @@ export class Game {
     const drawn = drawCards(
       this.draftRng,
       3,
-      (c) => cardAvailable(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
+      (c) =>
+        cardAvailable(c.id, this.metaLvl) &&
+        cardPrereqMet(c, this.genome.traits) &&
+        !cardRedundant(c, this.genome.traits),
       this.level, // 다시 뽑아도 같은 레벨 보정을 받는다
     );
     this.draftCards = this.eraReward ? drawn.map((c) => boostCard(c, GAME.eraRewardBoost)) : drawn;
@@ -739,7 +745,10 @@ export class Game {
     const drawn = drawCards(
       rng,
       3,
-      (c) => cardAvailable(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
+      (c) =>
+        cardAvailable(c.id, this.metaLvl) &&
+        cardPrereqMet(c, this.genome.traits) &&
+        !cardRedundant(c, this.genome.traits),
       this.level, // 시대 보상도 지금까지 키운 레벨의 보정을 받는다
     );
     this.draftCards = drawn.map((c) => boostCard(c, GAME.eraRewardBoost));
@@ -849,6 +858,13 @@ function championName(g: Genome, conquered: boolean): string {
  * diet·대사는 방향/절충이라 늘 유효(제외 안 함).
  */
 function cardRedundant(card: Card, t: Traits): boolean {
+  // 강화 카드(전제 조건이 붙은 카드)는 그 능력이 **상한에 닿았을 때만** 무의미하다.
+  // 관문 카드와 규칙이 반대다 — 관문은 능력이 켜지면 쓸모없어지고, 강화는 켜져야 비로소 쓸모가 생긴다.
+  // (전제 미달은 cardPrereqMet 이 걸러 낸다.)
+  if (card.requiresTrait) {
+    const key = card.requiresTrait.key;
+    return t[key] >= TRAIT_CEILING[key];
+  }
   let primary: keyof Traits | null = null;
   let best = 0;
   for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
@@ -860,7 +876,7 @@ function cardRedundant(card: Card, t: Traits): boolean {
   }
   if (!primary) return false;
   const cur = t[primary];
-  if (primary === "wings") return cur >= SIM.flyThreshold; // 이미 날면 더 올려도 무의미
+  if (primary === "wings") return cur >= SIM.flyThreshold; // 관문: 이미 날면 이 카드는 무의미
   if (primary === "swimming") return cur >= SIM.aquaticOnlyThreshold; // 물 전용이 최대
   if (primary === "echo" || primary === "venom" || primary === "ranged") return cur >= 100;
   if (TRAIT_CEILING[primary] > 100) return cur >= TRAIT_CEILING[primary]; // 연속형 200 상한

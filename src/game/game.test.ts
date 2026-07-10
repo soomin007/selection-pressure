@@ -4,7 +4,11 @@ import { describe, it, expect } from "vitest";
 import { Game, type RunHistory } from "@/game/game";
 import { eraDifficulty } from "@/game/config";
 import { createBoss } from "@/sim/boss";
-import { CARD_BODY_SCALE, CARD_POOL } from "@/game/cards";
+import { CARD_BODY_SCALE, CARD_POOL, cardPrereqMet, drawCards, type Card } from "@/game/cards";
+import { Rng } from "@/sim/rng";
+import { defaultGenome, type Traits } from "@/sim/genome";
+import { SIM } from "@/sim/params";
+import { debugSetMetaLevel } from "@/game/meta";
 import { debugResetAchievements, debugUnlockAchievement } from "@/game/achievements";
 
 // 대멸종 이름 4종(game.ts extinctionName 과 일치) — 예고 title 이 보스 예고와 섞이지 않게 거른다.
@@ -347,3 +351,38 @@ describe("런 통계(도전 과제 판정의 재료)", () => {
     expect(g.pickedCardIds).toEqual([]);
   });
 });
+
+describe("날개 강화 카드의 전제 조건(드래프트 후보 필터)", () => {
+  it("못 나는 종에게는 「튼튼한 날개」가 한 번도 안 나온다", () => {
+    debugSetMetaLevel(20); // 모든 카드 해금
+    const rng = new Rng("prereq");
+    const ground = defaultGenome(); // wings 0
+    let seen = 0;
+    for (let i = 0; i < 3000; i++) {
+      const drawn = drawCards(rng, 3, (c) => cardPrereqMet(c, ground.traits), 7);
+      if (drawn.some((c) => c.id === "strong_wings")) seen += 1;
+    }
+    expect(seen).toBe(0);
+  });
+
+  it("나는 종에게는 「튼튼한 날개」가 나오고, 관문 「날개」는 더 이상 안 나온다", () => {
+    const flyer = defaultGenome();
+    flyer.traits.wings = SIM.flyThreshold + 3; // 「날개」 한 장 고른 상태
+    const rng = new Rng("flyer");
+    let strong = 0;
+    let gateway = 0;
+    for (let i = 0; i < 3000; i++) {
+      const drawn = drawCards(rng, 3, (c) => cardPrereqMet(c, flyer.traits) && !isRedundant(c, flyer.traits), 7);
+      if (drawn.some((c) => c.id === "strong_wings")) strong += 1;
+      if (drawn.some((c) => c.id === "wings")) gateway += 1;
+    }
+    expect(strong).toBeGreaterThan(0);
+    expect(gateway).toBe(0); // 이미 나는 종에게 관문 카드는 무의미(cardRedundant)
+  });
+});
+
+/** game.ts 의 cardRedundant 와 같은 규칙(테스트에서 필터를 재현). */
+function isRedundant(card: Card, t: Traits): boolean {
+  if (card.requiresTrait) return t[card.requiresTrait.key] >= 100;
+  return card.id === "wings" && t.wings >= SIM.flyThreshold;
+}

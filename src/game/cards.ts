@@ -8,6 +8,7 @@
 import type { Rng } from "@/sim/rng";
 import type { Genome, Traits } from "@/sim/genome";
 import { clampTraitValue, TRAIT_CEILING } from "@/sim/genome";
+import { SIM } from "@/sim/params";
 
 // 상한 200 연속 형질(속도·시야·공격·번식·무리)의 카드 증가폭을 이만큼으로 줄인다 — 극단(200)까지 여러 장을
 // 쌓아야 도달(폰 피드백: 100 에 너무 쉽게 붙어 잘림). 100 이하 구간이 예전보다 천천히 오르되, 100~200 이 열려
@@ -75,6 +76,18 @@ export interface Card {
   set?: Partial<Record<keyof Traits, number>>;
   /** 시작 프리셋의 내 종 시작 색(프리셋 전용) — 종마다 뚜렷이 달라 외형만으로 구분된다. */
   color?: number;
+  /**
+   * 전제 조건 — 이 형질이 min 이상인 종에게만 후보로 나온다. **강화 카드 전용**.
+   * 예: 「튼튼한 날개」는 이미 나는 종(날개 ≥ flyThreshold)에게만. 없으면 아무 종에게나 나온다.
+   * 이게 없으면 못 나는 종이 "튼튼한 날개"를 골라 아무 일도 안 일어나는 손해 카드가 된다.
+   */
+  requiresTrait?: { key: keyof Traits; min: number };
+}
+
+/** 이 카드의 전제 조건을 이 종이 갖췄는가(전제가 없으면 항상 true). */
+export function cardPrereqMet(card: Card, traits: Traits): boolean {
+  if (!card.requiresTrait) return true;
+  return traits[card.requiresTrait.key] >= card.requiresTrait.min;
 }
 
 // 런 첫 드래프트 — 시작 프리셋(빌드 방향)을 정한다. 식성(set diet) + 특화 형질 두엇.
@@ -391,19 +404,22 @@ export const CARD_POOL: readonly Card[] = [
     effects: { swimming: 16, speed: 6 },
   },
 
-  // 날개 비행 — 날개를 키우면 산·물을 날아 넘고 산 위 고산 먹이를 먹는다(지상 종은 못 넘는 무경쟁 틈새).
-  // 대사 대가는 sim(비행 = 날갯짓)에서. 기본 날개 0 이라 큰 효과로(두 장 or 프리셋이면 비행 전환).
+  // 날개 비행 — 산·물을 날아 넘고 산 위 고산 먹이를 먹는다(지상 종은 못 넘는 무경쟁 틈새).
+  // 「날개」는 **한 장으로 비행 문턱(SIM.flyThreshold)을 넘긴다** — 관문 카드는 그 능력을 실제로 열어야 한다.
+  // (예전엔 +42 라 혼자서는 아무 일도 안 일어났는데 설명은 "날아 넘는다"였다 — 거짓말이었다.)
+  // 「튼튼한 날개」는 이미 나는 종에게만 나오는 강화다(requiresTrait). 날개를 100 까지 채워 비행 대사를 덜어낸다.
   {
     id: "wings",
     name: "날개",
-    desc: "산과 바다 위를 날아 넘고, 산 위의 먹이를 먹는다. 바다의 먹이는 헤엄치는 종의 몫이다. 대신 쉼 없는 날갯짓에 배가 빨리 곯는다.",
-    effects: { wings: 42 },
+    desc: "날개가 돋는다. 산과 바다 위를 날아 넘고 산 위의 먹이를 먹는다. 바다의 먹이는 헤엄치는 종의 몫이다. 대신 쉼 없는 날갯짓에 배가 빨리 곯는다.",
+    effects: { wings: SIM.flyThreshold + 3 },
   },
   {
     id: "strong_wings",
     name: "튼튼한 날개",
-    desc: "더 멀리, 더 오래 난다. 날개가 커지고 조금 빨라진다.",
-    effects: { wings: 30, speed: 6 },
+    desc: "날개가 크고 튼튼해진다. 같은 거리를 날아도 덜 지치고, 걸음도 조금 는다. 이미 나는 종만 얻을 수 있다.",
+    effects: { wings: 32, speed: 6 },
+    requiresTrait: { key: "wings", min: SIM.flyThreshold },
   },
 
   // 초음파 감각 — 눈 대신 귀. 시야를 잃는 대신 전방위(어둠·수풀 무관) 근거리 탐지(눈 vs 귀 트레이드오프).

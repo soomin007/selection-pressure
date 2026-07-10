@@ -278,6 +278,7 @@ async function boot(): Promise<void> {
   let debugBadge: HTMLDivElement | null = null;
   if (DEBUG_ACTIVE) {
     debugBadge = document.createElement("div");
+    debugBadge.className = "dev-overlay";
     debugBadge.style.cssText =
       "position:fixed; left:8px; bottom:8px; z-index:30; padding:6px 9px;" +
       "background:rgba(11,14,20,0.9); border:1px solid #4a4030; border-radius:8px;" +
@@ -287,11 +288,13 @@ async function boot(): Promise<void> {
   }
 
   // ?dev — 디버그 패널(접이식). 위협 즉시 소환 + 메타 레벨/진척도/초기화. 정보 박스(좌상단)·컨트롤(우상단)·
-  // 드래프트 카드(하단)·미니맵(우하단) 어느 것도 안 가리게 둔다.
+  // 미니맵(우하단) 어느 것도 안 가리게 둔다.
   // 데스크톱은 "종 안내" 범례가 자동으로 펼쳐져 좌상단~중앙을 덮으므로, dev 패널을 좌하단(줌 바 위)으로 내리고
   // 그리드를 위로 펼친다(column-reverse). 모바일은 범례가 접혀 있어 좌측 세로 중앙 그대로 둔다.
+  // 드래프트는 전체 화면이라(z-index 15) 그 위를 덮는다 → `dev-overlay` 클래스로 드래프트 중엔 숨긴다.
   if (DEBUG.devSummon) {
     const panel = document.createElement("div");
+    panel.className = "dev-overlay";
     panel.style.cssText = layout.isDesktop
       ? "position:fixed; left:6px; bottom:150px; z-index:31; display:flex; flex-direction:column-reverse;" +
         " align-items:flex-start; gap:4px; pointer-events:none;"

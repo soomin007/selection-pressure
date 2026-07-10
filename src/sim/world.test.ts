@@ -5,7 +5,7 @@ import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
-import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor } from "@/sim/behavior";
+import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier } from "@/sim/behavior";
 import { areFriends } from "@/sim/species";
 import { createEntity, type Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
@@ -693,5 +693,31 @@ describe("카메라 초점 — 주 무리를 잡는다(낙오자 무시)", () =>
     w.entities.push(createEntity(w.nextId(), 315, 540, w.playerSpecies, 50));
     const after = w.playerFocus(300, 520);
     expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeLessThan(10);
+  });
+});
+
+describe("비행 대사 — 날개 크기가 의미를 갖는다", () => {
+  it("못 나는 종은 영향이 없다(배수 1)", () => {
+    expect(flyDrainMultiplier(0)).toBe(1);
+    expect(flyDrainMultiplier(SIM.flyThreshold - 1)).toBe(1);
+  });
+
+  it("겨우 나는 종(문턱)은 대가가 가장 크다", () => {
+    expect(flyDrainMultiplier(SIM.flyThreshold)).toBeCloseTo(1 + SIM.flyMetabolismCost, 10);
+  });
+
+  it("날개가 클수록 덜 지친다(단조 감소)", () => {
+    const atThreshold = flyDrainMultiplier(SIM.flyThreshold);
+    const mid = flyDrainMultiplier(Math.round((SIM.flyThreshold + 100) / 2));
+    const full = flyDrainMultiplier(100);
+    expect(mid).toBeLessThan(atThreshold);
+    expect(full).toBeLessThan(mid);
+    // 날개 100 이면 비행 대가가 relief 만큼 줄어든다.
+    expect(full).toBeCloseTo(1 + SIM.flyMetabolismCost * (1 - SIM.flyMetabolismRelief), 10);
+  });
+
+  it("아무리 커도 비행이 공짜가 되지는 않는다", () => {
+    expect(flyDrainMultiplier(100)).toBeGreaterThan(1);
+    expect(flyDrainMultiplier(999)).toBe(flyDrainMultiplier(100)); // 상한 밖은 같은 값
   });
 });

@@ -13,6 +13,7 @@ import {
   RARITY_BOOST_FULL_LEVEL,
   rarityOdds,
   rarityWeightsAtLevel,
+  cardPrereqMet,
 } from "@/game/cards";
 import { defaultGenome, type Traits } from "@/sim/genome";
 import { SIM } from "@/sim/params";
@@ -369,5 +370,47 @@ describe("시대 보상 카드 강화(boostCard)", () => {
     const g = defaultGenome(); // speed 50
     applyCard(g, boosted); // 200 상한 형질 → ×0.6 = +18
     expect(g.traits.speed).toBe(68);
+  });
+});
+
+describe("날개 계열 — 관문과 강화가 실제로 다르다", () => {
+  it("「날개」 한 장이면 바로 난다(관문 카드는 그 능력을 실제로 열어야 한다)", () => {
+    const g = defaultGenome(); // wings 0
+    const wings = CARD_POOL.find((c) => c.id === "wings");
+    expect(wings).toBeDefined();
+    if (!wings) return;
+    applyCard(g, wings);
+    expect(g.traits.wings).toBeGreaterThanOrEqual(SIM.flyThreshold);
+  });
+
+  it("「튼튼한 날개」는 못 나는 종에게는 후보로 안 나온다(전제 조건)", () => {
+    const strong = CARD_POOL.find((c) => c.id === "strong_wings");
+    expect(strong).toBeDefined();
+    if (!strong) return;
+    const ground = defaultGenome(); // wings 0
+    expect(cardPrereqMet(strong, ground.traits)).toBe(false);
+
+    const flyer = defaultGenome();
+    flyer.traits.wings = SIM.flyThreshold;
+    expect(cardPrereqMet(strong, flyer.traits)).toBe(true);
+  });
+
+  it("「튼튼한 날개」는 날개를 상한까지 채운다(비행 대사를 덜어낸다)", () => {
+    const g = defaultGenome();
+    const wings = CARD_POOL.find((c) => c.id === "wings");
+    const strong = CARD_POOL.find((c) => c.id === "strong_wings");
+    if (!wings || !strong) return;
+    applyCard(g, wings);
+    applyCard(g, strong);
+    expect(g.traits.wings).toBe(100);
+  });
+
+  it("전제 조건이 붙은 카드는 강화 카드뿐이다(관문에는 안 붙는다)", () => {
+    const gateways = ["fins", "wings", "echo", "venom_fang", "long_horn"];
+    for (const card of CARD_POOL) {
+      if (!card.requiresTrait) continue;
+      expect(gateways).not.toContain(card.id);
+    }
+    expect(CARD_POOL.find((c) => c.id === "wings")?.requiresTrait).toBeUndefined();
   });
 });

@@ -21,6 +21,20 @@ interface Vec {
   y: number;
 }
 
+/**
+ * 비행이 대사에 곱하는 배수(못 나는 종은 1 = 영향 없음).
+ *
+ * 날개가 클수록 같은 거리를 덜 지치며 난다 — 문턱(flyThreshold)에서 대가가 가장 크고, 100 에서
+ * `flyMetabolismRelief` 만큼 줄어든다. 이 기울기가 없으면 날개 수치는 순전히 켜짐/꺼짐이라
+ * 「튼튼한 날개」 같은 강화 카드가 아무 의미도 없다(수영·초음파·독·원거리는 모두 수치가 의미를 갖는다).
+ */
+export function flyDrainMultiplier(wings: number): number {
+  if (wings < SIM.flyThreshold) return 1;
+  const span = Math.max(1, TRAIT_MAX - SIM.flyThreshold);
+  const span01 = Math.min(1, Math.max(0, (wings - SIM.flyThreshold) / span));
+  return 1 + SIM.flyMetabolismCost * (1 - SIM.flyMetabolismRelief * span01);
+}
+
 export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const t = e.genome.traits;
   // 형질은 0~100 자연수 저장 → 계수 계산은 0~1 로 정규화(÷TRAIT_MAX)해 해석한다(임계 비교는 0~100 그대로).
@@ -53,7 +67,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     nightVisionFactor(world.daylight, vision01) *
     grassVisionFactor(world, e.x, e.y, vision01) *
     (canFly ? 1 + SIM.flyVisionBonus : 1);
-  const drain = SIM.metabolismDrain * (0.5 + metabolism01) * (canFly ? 1 + SIM.flyMetabolismCost : 1);
+  const drain = SIM.metabolismDrain * (0.5 + metabolism01) * flyDrainMultiplier(t.wings);
   const maxAge = SIM.baseMaxAge;
   // 식성 구간: 초식(<35) 식물만 / 잡식(35~70) 둘 다 / 육식(>70) 사냥만.
   const canHunt = t.diet > SIM.dietHuntMin;

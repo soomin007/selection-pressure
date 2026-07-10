@@ -169,7 +169,8 @@ export function ensurePanelStyles(): void {
      내 종 정보는 헤더의 "내 종" 팝업이 대신한다(§9).
      !important 필수: hudPanel·controls 가 display 를 인라인으로 쓴다(그냥 두면 이 규칙이 진다). */
   body.draft-open .hud-root,
-  body.draft-open .controls-bar { display: none !important; }
+  body.draft-open .controls-bar,
+  body.draft-open .dev-overlay { display: none !important; }
 
   .draft-root { position: fixed; inset: 0; z-index: 15; display: none;
     font-family: var(--font-body); color: var(--ink); user-select: none; }
@@ -250,9 +251,12 @@ export function ensurePanelStyles(): void {
   .draft-badge { display: inline-flex; align-items: center; gap: 5px; flex: none;
     font-family: var(--font-mono); font-size: 9.5px; border-radius: 999px; padding: 3px 9px; }
   .draft-badge > i { width: 5px; height: 5px; border-radius: 1px; display: block; flex: none; }
-  .draft-card-body { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
-    gap: 6px 10px; margin-top: 7px; }
-  .draft-card-desc { font-size: 11.5px; color: var(--sub); line-height: 1.4; }
+  .draft-card-body { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start;
+    gap: 7px 10px; margin-top: 7px; }
+  /* 설명은 항상 제 줄을 통째로 쓴다 — flex-basis:100%.
+     안 그러면 설명이 짧은 카드(예: "다산")만 칩이 같은 줄 오른쪽에 붙어 카드마다 레이아웃이 달라진다.
+     스펙 목업은 설명이 짧아 한 줄에 나란히 뒀지만, 실제 한국어 설명은 대부분 줄바꿈된다. */
+  .draft-card-desc { flex: 1 1 100%; font-size: 11.5px; color: var(--sub); line-height: 1.4; }
   .draft-chips { display: flex; gap: 5px; flex: none; flex-wrap: wrap; }
   .draft-chip { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
     font-family: var(--font-mono); font-size: 10.5px; border-radius: 8px; padding: 4px 9px; }
@@ -348,7 +352,8 @@ export function ensurePanelStyles(): void {
     .draft-badge > i { width: 6px; height: 6px; }
     .draft-card-body { flex: 1; flex-direction: column; align-items: center; justify-content: space-between;
       gap: 16px; margin-top: 10px; }
-    .draft-card-desc { font-size: 13px; line-height: 1.55; }
+    /* 데스크톱은 세로 배치 — flex-basis:100% 는 세로축(높이)이 되므로 되돌린다. */
+    .draft-card-desc { flex: 1 1 auto; font-size: 13px; line-height: 1.55; }
     .draft-chips { justify-content: center; gap: 7px; }
     .draft-chip { font-size: 11.5px; border-radius: 9px; padding: 5px 11px; }
     .draft-chip > i { font-size: 8px; }
