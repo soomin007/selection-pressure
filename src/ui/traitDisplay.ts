@@ -36,10 +36,36 @@ export function traitColor(key: keyof Traits): string {
   return TRAIT_COLORS[key] ?? "#8FD14F";
 }
 
-/** 카드 한 줄 효과 — "속도 +17"(얻음) / "번식력 -6"(잃음). up 이 색(lime/red)과 ▲▼ 를 정한다. */
+/**
+ * **좋고 나쁨이 없는 형질.** ▲=이득 / ▼=손해 규칙이 이 둘에는 안 맞는다.
+ * - `metabolism`(대사): 높으면 추위에 강하고 기운을 많이 쓴다. 낮으면 기운을 아끼고 더위·가뭄에 강하다.
+ *   어느 쪽이 이득인지는 이번 판 환경과 다가오는 대멸종이 정한다.
+ * - `diet`(식성): 초식↔육식 스펙트럼. 어느 쪽도 더 낫지 않다.
+ *
+ * 이 둘은 초록/빨강 대신 중립색으로 칠하고, 방향(▲▼)만 사실대로 알린다.
+ */
+export const NEUTRAL_TRAITS = new Set<keyof Traits>(["metabolism", "diet"]);
+
+/** 칩의 성격 — 얻음(초록) / 잃음(빨강) / 중립(회색, 좋고 나쁨 없음). */
+export type ChipTone = "gain" | "loss" | "neutral";
+
+/** 카드 한 줄 효과 — "속도 +17"(얻음) / "번식력 -6"(잃음) / "대사 +14"(중립). */
 export interface EffectChip {
   text: string;
+  tone: ChipTone;
+  /** 방향(늘어남/줄어듦) — 중립 형질도 방향 자체는 사실이라 ▲▼ 는 그대로 보여준다. */
   up: boolean;
+}
+
+/** 칩 색 — 중립은 초록도 빨강도 아니어야 한다("이건 이득/손해가 아니라 성질이 바뀐다"). */
+export const CHIP_COLORS: Record<ChipTone, string> = {
+  gain: "#8FD14F",
+  loss: "#E85C43",
+  neutral: "#C6B7A2",
+};
+
+export function chipColor(tone: ChipTone): string {
+  return CHIP_COLORS[tone];
 }
 
 /**
@@ -50,12 +76,14 @@ export function cardEffectChips(card: Card): EffectChip[] {
   const chips: EffectChip[] = [];
   for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
     const v = card.effects[key] ?? 0;
+    const up = v >= 0;
+    const tone: ChipTone = NEUTRAL_TRAITS.has(key) ? "neutral" : up ? "gain" : "loss";
     if (ABILITY_KEYS.has(key)) {
       // 능력형(수영·날개·초음파·독·원거리)은 수치가 무의미(3단계) → 방향만 표시.
-      chips.push({ text: `${TRAIT_LABELS[key]} ${v >= 0 ? "강화" : "약화"}`, up: v >= 0 });
+      chips.push({ text: `${TRAIT_LABELS[key]} ${up ? "강화" : "약화"}`, tone, up });
     } else {
       const d = effectiveDelta(key, v);
-      chips.push({ text: `${TRAIT_LABELS[key]} ${d >= 0 ? "+" : ""}${d}`, up: d >= 0 });
+      chips.push({ text: `${TRAIT_LABELS[key]} ${d >= 0 ? "+" : ""}${d}`, tone: NEUTRAL_TRAITS.has(key) ? "neutral" : d >= 0 ? "gain" : "loss", up: d >= 0 });
     }
   }
   return chips;

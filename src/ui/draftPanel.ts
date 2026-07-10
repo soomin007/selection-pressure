@@ -19,7 +19,14 @@ import {
 } from "@/game/cards";
 import { cloneGenome, TRAIT_CEILING, TRAIT_LABELS, type Genome, type Traits } from "@/sim/genome";
 import { makeCreatureTexture } from "@/render/worldView";
-import { cardEffectChips, dominantTrait, traitColor, type EffectChip } from "@/ui/traitDisplay";
+import {
+  cardEffectChips,
+  chipColor,
+  dominantTrait,
+  traitColor,
+  NEUTRAL_TRAITS,
+  type EffectChip,
+} from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import {
   DRAFT_TIMING,
@@ -289,6 +296,9 @@ export function createDraftPanel(
       const basePct = (value / ceiling) * 100;
       const deltaPct = (Math.abs(delta) / ceiling) * 100;
 
+      // 대사는 좋고 나쁨이 없다 — 늘어도 줄어도 중립색. 방향(막대가 늘어남/줄어듦)만 보여준다.
+      const neutral = NEUTRAL_TRAITS.has(key);
+
       const row = el("div", "draft-stat");
       const label = el("span", "draft-stat-label");
       label.textContent = TRAIT_LABELS[key];
@@ -302,11 +312,16 @@ export function createDraftPanel(
         const ghost = el("div", "draft-stat-gain");
         ghost.style.left = `${clamp(basePct, 0, 100)}%`;
         ghost.style.width = `${clamp(deltaPct, 0, 100 - basePct)}%`;
+        if (neutral) {
+          ghost.style.background = withAlpha(chipColor("neutral"), 0.3);
+          ghost.style.borderColor = withAlpha(chipColor("neutral"), 0.7);
+        }
         track.appendChild(ghost);
       } else if (delta < 0) {
         const ghost = el("div", "draft-stat-loss");
         ghost.style.left = `${clamp(basePct - deltaPct, 0, 100)}%`;
         ghost.style.width = `${clamp(deltaPct, 0, basePct)}%`;
+        if (neutral) ghost.style.background = withAlpha(chipColor("neutral"), 0.55);
         track.appendChild(ghost);
       }
 
@@ -315,7 +330,7 @@ export function createDraftPanel(
       if (delta !== 0) {
         const d = el("b");
         d.textContent = delta > 0 ? `+${delta}` : String(delta);
-        d.style.color = delta > 0 ? "#8FD14F" : "#E85C43";
+        d.style.color = neutral ? chipColor("neutral") : delta > 0 ? "#8FD14F" : "#E85C43";
         val.append(" ", d);
       }
       row.append(label, track, val);
@@ -508,7 +523,9 @@ function rarityBadge(rarity: Rarity): HTMLElement {
 
 function effectChipEl(chip: EffectChip): HTMLElement {
   const node = el("span", "draft-chip");
-  const color = chip.up ? "#8FD14F" : "#E85C43";
+  // 색은 성격(얻음/잃음/중립)이 정하고, 화살표는 방향만 알린다. 대사·식성은 중립색 — 어느 쪽이 이득인지는
+  // 이번 판 환경이 정하지 카드가 정하지 않는다.
+  const color = chipColor(chip.tone);
   node.style.color = color;
   node.style.background = withAlpha(color, 0.13);
   const arrow = el("i");

@@ -22,7 +22,7 @@ import {
   type Achievement,
 } from "@/game/achievements";
 import { RARITY_STYLE, withAlpha } from "@/ui/rarity";
-import { cardEffectChips, dominantTrait, traitColor } from "@/ui/traitDisplay";
+import { cardEffectChips, chipColor, dominantTrait, traitColor } from "@/ui/traitDisplay";
 
 export interface Glossary {
   show: () => void;
@@ -453,7 +453,8 @@ function chipRow(card: Card): HTMLElement {
   wrap.style.cssText = "display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;";
   for (const c of cardEffectChips(card)) {
     const chip = document.createElement("span");
-    const color = c.up ? "#8FD14F" : "#E85C43";
+    // 대사·식성은 중립색 — 방향은 알리되 이득/손해로 물들이지 않는다.
+    const color = chipColor(c.tone);
     chip.textContent = `${c.up ? "▲" : "▼"} ${c.text}`;
     chip.style.cssText =
       `display:inline-flex; align-items:center; font-family:var(--font-mono); font-size:10.5px;` +
