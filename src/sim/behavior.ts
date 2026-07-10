@@ -233,8 +233,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
           devour(e, prey, world);
         } else {
           prey.energy -= bite.damage;
+          prey.woundTicks = SIM.woundTicks; // 다쳤다 — 이 동안 쓰러지면 "부상"이지 굶주림이 아니다
           world.emit("bite", prey.x, prey.y); // 연출: 물렸다(작은 붉은 튐)
-          // 여러 번 물려 기운이 다하면 그 자리에서 잡아먹힌다(사망 원인은 잡아먹힘).
+          // 여러 번 물려 기운이 다하면 그 자리에서 잡아먹힌다(사망 원인은 잡아먹힘 — 포식자가 먹는다).
           if (prey.energy <= 0) devour(e, prey, world);
         }
       }
@@ -284,12 +285,16 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   if (poisonDmg > 0) e.poison -= poisonDmg;
   e.energy -= drain + coldDrain + heatDrain + poisonDmg;
   e.age += 1;
+  if (e.woundTicks > 0) e.woundTicks -= 1;
 
   // --- 죽음 (사망 원인 집계, §7). 이번 틱 가장 큰 소모로 귀속(독>추위/폭염>기본 대사). ---
   if (e.energy <= 0) {
     let cause: DeathCause = "starve";
     if (poisonDmg > 0 && poisonDmg >= coldDrain && poisonDmg >= heatDrain && poisonDmg >= drain) {
       cause = "venom"; // 방어 독으로 중독사 — 독먹이를 삼킨 포식자가 되갚음당해 죽는다
+    } else if (e.woundTicks > 0) {
+      // 물려서 기운이 깎인 채 도망치다 쓰러졌다. 못 먹어서 죽은 게 아니다(포식자는 놓쳤으니 못 먹는다).
+      cause = "wound";
     } else if (coldDrain >= heatDrain && coldDrain > drain) cause = "cold";
     else if (heatDrain > coldDrain && heatDrain > drain) cause = "heat";
     e.alive = false;
@@ -369,7 +374,11 @@ function computeFlee(
     SIM.predatorSenseRange,
     (p) =>
       p.alive && p !== e && p.species.id !== e.species.id && !areFriends(e.species, p.species) &&
-      p.genome.traits.diet > SIM.dietHuntMin && p.genome.traits.attack >= t.attack,
+      p.genome.traits.diet > SIM.dietHuntMin && p.genome.traits.attack >= t.attack &&
+      // **닿을 수 있는 포식자만 무섭다.** 먹잇감 조준(chooseGoal)과 같은 규칙 — 물 건너 물고기한테서
+      // 도망칠 이유가 없다. 지금 야생 물고기는 초식이라 실제로는 안 걸리지만(프로브: 0건), 육식 수생종이
+      // 생기면 곧바로 터진다. 같은 종류의 버그를 먹잇감 쪽에서 이미 겪었다(물가 머리박기).
+      world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly),
   );
   if (predator) {
     return clearFleeDir(e, world, e.x - predator.x, e.y - predator.y, maxSpeed, canSwim, canLand, canFly);
@@ -470,6 +479,11 @@ function chooseGoal(
     const d2 = dx * dx + dy * dy;
     return (d2 < vision2 && inFov(x, y)) || d2 < echo2;
   };
+  // 통행 능력 — nearestFood 가 하는 것과 같은 방식으로 게놈에서 뽑는다(chooseGoal 은 이 값을 안 받는다).
+  const canSwim = e.genome.traits.swimming >= SIM.swimThreshold;
+  const canLand = e.genome.traits.swimming < SIM.aquaticOnlyThreshold;
+  const canFly = e.genome.traits.wings >= SIM.flyThreshold;
+
   let prey: Entity | null = null;
   let food: Food | null = null;
   if (canHunt) {
@@ -479,7 +493,11 @@ function chooseGoal(
       senseRange,
       (p) =>
         p.alive && p !== e && p.species.id !== e.species.id &&
-        !areFriends(e.species, p.species) && canSense(p.x, p.y),
+        !areFriends(e.species, p.species) && canSense(p.x, p.y) &&
+        // **닿을 수 있는 먹잇감만.** 먹이(nearestFood)엔 이 검사가 있었는데 먹잇감엔 없어서, 땅 위 종이
+        // 물속 물고기를 노리고 물가에 머리를 박은 채 굶어 죽었다(프로브: 내 종 개체틱의 31%).
+        // 끼임 감지(stuckTicks)로는 못 푼다 — 물가에서 튕기며 진동해 "움직였다"로 판정된다.
+        world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly),
     );
   }
   if (canGraze) food = nearestFood(e, world, senseRange, canSense);
@@ -494,7 +512,10 @@ function chooseGoal(
   //    없앤다. 목표에 다가갈수록 cur2 가 줄어 더 끈질겨진다(합리적 — 거의 다 온 먹이는 안 놓는다).
   if (e.targetPrey) {
     const p = e.targetPrey;
-    if (p.alive && p.species.id !== e.species.id) {
+    // 쫓던 먹잇감이 물로 들어가 버렸으면(또는 애초에 못 닿는 곳이면) 놓아준다 — 안 그러면 히스테리시스가
+    // 그 목표를 붙들어 물가에서 계속 머리를 박는다.
+    const reachable = world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly);
+    if (p.alive && p.species.id !== e.species.id && reachable) {
       const cur2 = dist2(e, p);
       if (cur2 <= keep2 && cand2 >= cur2 * SIM.targetSwitchGain) return { x: p.x, y: p.y };
     }

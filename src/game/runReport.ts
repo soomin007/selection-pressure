@@ -15,6 +15,7 @@ const DEATH_LABELS: Record<DeathCause, string> = {
   age: "노화",
   plague: "역병",
   venom: "중독",
+  wound: "부상",
 };
 
 /** 형질이 높을 때/낮을 때의 한 단어 묘사 (식성 diet 는 명사라 제외). */

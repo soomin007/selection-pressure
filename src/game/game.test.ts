@@ -23,6 +23,20 @@ function startRun(seed: string): Game {
   return g;
 }
 
+/**
+ * 레벨업 드래프트가 열릴 때까지 돌린다. 시드에 따라 그 전에 멸종할 수 있으므로 여러 시드를 시도한다
+ * (밸런스를 만지면 특정 시드의 런 길이가 달라진다 — 시드 하나에 매달리면 테스트가 애먼 곳에서 깨진다).
+ */
+function runToDraft(seedPrefix: string): Game | null {
+  for (let k = 0; k < 12; k++) {
+    const g = startRun(`${seedPrefix}-${k}`);
+    let guard = 0;
+    while (g.phase === "watch" && guard++ < 40000) g.update(34);
+    if (g.phase === "draft") return g;
+  }
+  return null;
+}
+
 describe("대멸종 종류 예고", () => {
   it("같은 시드면 대멸종 종류 순서가 재현된다(결정론)", () => {
     const queueOf = (seed: string): readonly string[] =>
@@ -287,20 +301,18 @@ describe("런 보고서(히스토리)", () => {
 describe("도전 과제 보상 「거인」", () => {
   it("과제를 못 땄으면 드래프트 후보에 절대 안 나온다", () => {
     debugResetAchievements();
-    const g = startRun("titan-locked");
-    // 레벨업 드래프트가 열릴 때까지 돌린다.
-    let guard = 0;
-    while (g.phase !== "draft" && guard++ < 20000) g.update(34);
-    expect(g.phase).toBe("draft");
+    const g = runToDraft("titan-locked");
+    expect(g).not.toBeNull();
+    if (!g) return;
     expect(g.draftCards.some((c) => c.id === "titan")).toBe(false);
   });
 
   it("고르면 종의 몸집이 커진다(스탯과 외형이 함께 바뀐다)", () => {
     debugResetAchievements();
     debugUnlockAchievement("titan_born");
-    const g = startRun("titan-pick");
-    let guard = 0;
-    while (g.phase !== "draft" && guard++ < 20000) g.update(34);
+    const g = runToDraft("titan-pick");
+    expect(g).not.toBeNull();
+    if (!g) return;
 
     const titan = CARD_POOL.find((c) => c.id === "titan");
     expect(titan).toBeDefined();
@@ -321,9 +333,9 @@ describe("도전 과제 보상 「거인」", () => {
   it("시대를 넘어 새 월드를 만들어도 몸집을 유지한다", () => {
     debugResetAchievements();
     debugUnlockAchievement("titan_born");
-    const g = startRun("titan-era");
-    let guard = 0;
-    while (g.phase !== "draft" && guard++ < 20000) g.update(34);
+    const g = runToDraft("titan-era");
+    expect(g).not.toBeNull();
+    if (!g) return;
     const titan = CARD_POOL.find((c) => c.id === "titan");
     if (!titan) return;
     g.draftCards = [titan];

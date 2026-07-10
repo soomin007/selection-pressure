@@ -35,6 +35,7 @@ const CAUSE_LABEL: Record<DeathCause, string> = {
   predation: "잡아먹힘",
   plague: "역병",
   venom: "중독",
+  wound: "부상",
 };
 
 // worldView.ts 의 FOOD_COLORS 와 동기화(먹이 종류별 색: 연두 / 청록 / 노랑풀).

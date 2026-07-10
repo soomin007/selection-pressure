@@ -839,6 +839,91 @@ describe("사냥 판정 — 물기(쿨다운 + 기운 깎기)", () => {
     expect(ticks).toBeGreaterThan(SIM.attackCooldownTicks); // 즉사가 아니라 여러 번 물어서
   });
 
+  it("물려서 약해진 채 쓰러지면 사망 원인은 굶주림이 아니라 부상이다", () => {
+    const pg = defaultGenome();
+    pg.traits.diet = 90;
+    pg.traits.attack = 45; // 즉사는 못 시키고 물기 피해만 넣는 체급
+    const w = new World("wound", 400, 400, pg);
+    const preyGenome = defaultGenome();
+    preyGenome.traits.attack = 60;
+    preyGenome.traits.speed = 1;
+    preyGenome.traits.diet = 10;
+    const preySpecies: Species = {
+      id: 99,
+      name: "먹이",
+      genome: preyGenome,
+      isPlayer: true, // world.deaths 는 내 종만 센다 → 먹잇감을 내 종으로
+      color: 0xffffff,
+      initialCount: 1,
+      foodKinds: [0],
+      friendly: false,
+      faction: 0,
+    };
+    const pred = w.entities.find((e) => e.species.isPlayer);
+    if (!pred) return;
+    // 내 종 개체를 전부 치우고 먹잇감 하나만 남긴다(집계를 깨끗하게).
+    const prey = createEntity(9999, pred.x + 4, pred.y, preySpecies, 100);
+    pred.species = { ...pred.species, isPlayer: false, faction: 0 };
+    w.entities = [pred, prey];
+
+    // 한 번 물린 직후 포식자를 멀리 떼어 놓는다 → 먹잇감은 다친 채 도망쳐 기운이 다한다.
+    for (let i = 0; i < 300 && prey.alive; i++) {
+      if (prey.woundTicks > 0) {
+        pred.x = 10;
+        pred.y = 10;
+        pred.targetPrey = null;
+        prey.energy = Math.min(prey.energy, 2); // 곧 쓰러질 만큼만
+      }
+      w.step();
+    }
+    expect(prey.alive).toBe(false);
+    expect(w.deaths.wound).toBeGreaterThan(0);
+    expect(w.deaths.starve).toBe(0); // 굶주림으로 잘못 집계되지 않는다
+  });
+
+  it("물린 지 오래되면 부상이 아니라 굶주림으로 집계된다(뒤집어씌우지 않는다)", () => {
+    const g = defaultGenome();
+    const w = new World("wound-expire", 400, 400, g);
+    const e = w.entities.find((x) => x.species.isPlayer);
+    if (!e) return;
+    e.woundTicks = 1;
+    w.step(); // woundTicks 1 → 0
+    expect(e.woundTicks).toBe(0);
+  });
+
+  it("닿을 수 없는 먹잇감은 아예 조준하지 않는다(물가 머리박기 방지)", () => {
+    // 땅 위 잡식 종이 물속 물고기를 노리고 물가에 갇히던 버그. 끼임 감지(stuckTicks)로는 안 풀린다 —
+    // 물가에서 튕기며 진동해 "움직였다"로 판정되기 때문. 후보 선정에서 통행 가능성을 봐야 한다.
+    const g = defaultGenome(); // 수영 50 < 문턱 65 → 물에 못 들어감
+    let waterTargetTicks = 0;
+    let entTicks = 0;
+    let maxStreak = 0;
+    const streak = new Map<number, number>();
+    for (const seed of ["env-1", "env-3"]) {
+      const w = new World(seed, 1080, 1920, g);
+      for (let i = 0; i < 1200; i++) {
+        w.step();
+        for (const e of w.entities) {
+          if (!e.species.isPlayer || !e.alive) continue;
+          entTicks += 1;
+          const p = e.targetPrey;
+          const onWater = !!p && p.alive && w.terrain.kindAt(p.x, p.y) === TILE.water;
+          if (onWater) {
+            waterTargetTicks += 1;
+            const n = (streak.get(e.id) ?? 0) + 1;
+            streak.set(e.id, n);
+            if (n > maxStreak) maxStreak = n;
+          } else streak.set(e.id, 0);
+        }
+      }
+    }
+    // 수정 전엔 개체틱의 30% 넘게(수천 틱) 물속 먹잇감을 붙들고 물가에서 진동했다.
+    // 지금 남는 건 **한 틱 지연**뿐 — 땅 위 먹잇감을 조준한 뒤 그 먹잇감이 같은 틱에 물로 들어간 경우다.
+    // 다음 틱에 놓으므로 연속으로 붙들지 않는다(물리적으로도 자연스럽다: "얘가 방금 물에 뛰어들었다").
+    expect(maxStreak).toBeLessThanOrEqual(2);
+    expect(waterTargetTicks / entTicks).toBeLessThan(0.005); // 0.5% 미만(예전 31%)
+  });
+
   it("못 죽인 물기는 연출 이벤트를 낸다(추격이 '아무 일도 안 일어남'으로 보이지 않게)", () => {
     const pg = defaultGenome();
     pg.traits.diet = 90;
