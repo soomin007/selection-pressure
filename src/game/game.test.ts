@@ -4,6 +4,8 @@ import { describe, it, expect } from "vitest";
 import { Game, type RunHistory } from "@/game/game";
 import { eraDifficulty } from "@/game/config";
 import { createBoss } from "@/sim/boss";
+import { CARD_BODY_SCALE, CARD_POOL } from "@/game/cards";
+import { debugResetAchievements, debugUnlockAchievement } from "@/game/achievements";
 
 // 대멸종 이름 4종(game.ts extinctionName 과 일치) — 예고 title 이 보스 예고와 섞이지 않게 거른다.
 const EXTINCTION_NAMES = ["혹독한 추위", "대가뭄", "폭염", "대역병"] as const;
@@ -275,5 +277,73 @@ describe("런 보고서(히스토리)", () => {
     expect(a.events).toEqual(b.events);
     expect(a.samples).toEqual(b.samples);
     expect(a.durationSec).toBe(b.durationSec);
+  });
+});
+
+describe("도전 과제 보상 「거인」", () => {
+  it("과제를 못 땄으면 드래프트 후보에 절대 안 나온다", () => {
+    debugResetAchievements();
+    const g = startRun("titan-locked");
+    // 레벨업 드래프트가 열릴 때까지 돌린다.
+    let guard = 0;
+    while (g.phase !== "draft" && guard++ < 20000) g.update(34);
+    expect(g.phase).toBe("draft");
+    expect(g.draftCards.some((c) => c.id === "titan")).toBe(false);
+  });
+
+  it("고르면 종의 몸집이 커진다(스탯과 외형이 함께 바뀐다)", () => {
+    debugResetAchievements();
+    debugUnlockAchievement("titan_born");
+    const g = startRun("titan-pick");
+    let guard = 0;
+    while (g.phase !== "draft" && guard++ < 20000) g.update(34);
+
+    const titan = CARD_POOL.find((c) => c.id === "titan");
+    expect(titan).toBeDefined();
+    if (!titan) return;
+    const beforeAttack = g.genome.traits.attack;
+    const beforeSpeed = g.genome.traits.speed;
+    expect(g.world.playerSpecies.bodyScale ?? 1).toBe(1);
+
+    g.draftCards = [titan];
+    g.pickCard(0);
+
+    expect(g.world.playerSpecies.bodyScale).toBe(CARD_BODY_SCALE.titan);
+    expect(g.genome.traits.attack).toBeGreaterThan(beforeAttack); // 힘은 세지고
+    expect(g.genome.traits.speed).toBeLessThan(beforeSpeed); // 걸음은 굼떠진다
+    expect(g.pickedCardIds).toContain("titan");
+  });
+
+  it("시대를 넘어 새 월드를 만들어도 몸집을 유지한다", () => {
+    debugResetAchievements();
+    debugUnlockAchievement("titan_born");
+    const g = startRun("titan-era");
+    let guard = 0;
+    while (g.phase !== "draft" && guard++ < 20000) g.update(34);
+    const titan = CARD_POOL.find((c) => c.id === "titan");
+    if (!titan) return;
+    g.draftCards = [titan];
+    g.pickCard(0);
+    g.continueToNextEra();
+    expect(g.world.playerSpecies.bodyScale).toBe(CARD_BODY_SCALE.titan);
+  });
+});
+
+describe("런 통계(도전 과제 판정의 재료)", () => {
+  it("개체 수 최고치를 기록한다", () => {
+    const g = startRun("peak");
+    for (let i = 0; i < 400; i++) g.update(34);
+    expect(g.peakPopulation).toBeGreaterThan(0);
+    expect(g.peakPopulation).toBeGreaterThanOrEqual(g.world.playerPopulation);
+  });
+
+  it("새 런은 통계를 0으로 되돌린다", () => {
+    const g = startRun("reset");
+    for (let i = 0; i < 200; i++) g.update(34);
+    expect(g.peakPopulation).toBeGreaterThan(0);
+    g.beginRun();
+    expect(g.peakPopulation).toBe(0);
+    expect(g.rerollsUsed).toBe(0);
+    expect(g.pickedCardIds).toEqual([]);
   });
 });

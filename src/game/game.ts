@@ -8,9 +8,10 @@
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, MUTABLE_TRAITS, TRAIT_CEILING, type Genome, type Traits, type MutableTrait } from "@/sim/genome";
-import { drawCards, applyCard, boostCard, PRESET_CARDS, type Card } from "@/game/cards";
+import { drawCards, applyCard, boostCard, CARD_BODY_SCALE, PRESET_CARDS, type Card } from "@/game/cards";
+import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
-import { loadMeta, metaLevel, isPresetUnlocked, isCardUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
+import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { buildRunReport } from "@/game/runReport";
@@ -73,6 +74,14 @@ export class Game {
   draftCards: Card[] = [];
   /** 이번 런에서 고른 카드 이름들(시작 식성 포함) — 화면에 "내가 무엇을 골랐나" 상시 표시용. */
   pickedCardNames: string[] = [];
+  /** 이번 판에 고른 카드 id — 도전 과제 판정·보고서에 쓴다(이름은 표시용이라 id 와 따로 둔다). */
+  pickedCardIds: string[] = [];
+  /** 이번 판에 내 무리가 닿은 최대 개체 수(도전 과제 「대군」). */
+  peakPopulation = 0;
+  /** 이번 판에 쓴 다시 뽑기 횟수(도전 과제 「흔들림 없는 선택」). */
+  rerollsUsed = 0;
+  /** 이번 런 종료로 새로 열린 도전 과제 — 종료 화면이 알린다. */
+  newAchievements: Achievement[] = [];
 
   /** 드래프트에 표시할 다가오는 위협 예고. */
   preview = "";
@@ -92,6 +101,8 @@ export class Game {
   private baseSeed = "lobby";
   /** 내 종 시작 색(프리셋에서 정함) — 다음 시대에 새 월드를 만들어도 같은 색을 유지한다. */
   private playerColor: number | undefined;
+  /** 「거인」을 고른 런은 시대를 넘어 새 월드를 만들어도 몸집을 유지한다(게놈이 유지되므로 외형도 유지). */
+  private playerBodyScale: number | undefined;
 
   /** 메타 언락 기준(플레이어 레벨) — 런 시작 시 저장본의 누적 경험치에서 레벨을 읽어 프리셋·카드 풀을 거른다.
    * 런을 거듭해 경험치가 쌓일수록 레벨이 올라 더 많이 열린다. 런 도중엔 안 바뀐다(디버그 제외). */
@@ -135,7 +146,13 @@ export class Game {
   // canContinue = 승리라서 "다음 시대로" 이어갈 수 있는가(패배는 false). progress = 런이 진짜 끝났을 때(멸종·정복)의
   // 메타 진척도(경험치·레벨업·레벨별 해금) — 종료 화면 애니메이션용. 이어가는 중간 시대 승리면 null.
   onResult:
-    | ((result: RunResult, summary: string, canContinue: boolean, progress: RunProgress | null) => void)
+    | ((
+        result: RunResult,
+        summary: string,
+        canContinue: boolean,
+        progress: RunProgress | null,
+        achievements: Achievement[],
+      ) => void)
     | null = null;
   onWorldChanged: ((world: World) => void) | null = null;
 
@@ -189,6 +206,13 @@ export class Game {
     if (card) {
       applyCard(this.genome, card);
       this.pickedCardNames.push(card.name);
+      this.pickedCardIds.push(card.id);
+      // 「거인」처럼 몸 자체가 달라지는 카드는 종의 표시 크기도 바꾼다(sim 무관 — 색과 같은 성격).
+      const bs = CARD_BODY_SCALE[card.id];
+      if (bs !== undefined) {
+        this.playerBodyScale = bs;
+        this.world.playerSpecies.bodyScale = bs;
+      }
     }
     if (this.eraReward) {
       // 시대 보상을 골랐다 — 갓 태어난 이 시대 무리에 즉시 반영하고(성장 이어짐) 첫 채집 단계로.
@@ -276,6 +300,7 @@ export class Game {
       // 배속만큼 한 번에 여러 스텝 진행.
       for (let s = 0; s < this.speed; s++) {
         this.world.step();
+        if (this.world.playerPopulation > this.peakPopulation) this.peakPopulation = this.world.playerPopulation;
         this.stageTicksLeft -= 1;
         this.runSteps += 1;
         // 런 보고서 시계열 — 일정 주기로 개체 수·형질 평균을 남긴다(연대기 그래프의 점들).
@@ -315,7 +340,7 @@ export class Game {
     this.draftCards = drawCards(
       this.draftRng,
       3,
-      (c) => isCardUnlocked(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
+      (c) => cardAvailable(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
       this.level, // 레벨이 오를수록 높은 등급이 더 자주 뜬다(rarityWeightsAtLevel)
     );
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
@@ -331,10 +356,11 @@ export class Game {
   reroll(): void {
     if (this.phase !== "draft" || this.firstChoice || this.rerollsLeft <= 0) return;
     this.rerollsLeft -= 1;
+    this.rerollsUsed += 1;
     const drawn = drawCards(
       this.draftRng,
       3,
-      (c) => isCardUnlocked(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
+      (c) => cardAvailable(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
       this.level, // 다시 뽑아도 같은 레벨 보정을 받는다
     );
     this.draftCards = this.eraReward ? drawn.map((c) => boostCard(c, GAME.eraRewardBoost)) : drawn;
@@ -477,8 +503,13 @@ export class Game {
     this.champions = loadChampions(); // 지난 챔피언들을 이 런 세계에 등장(비동기 생물)
     this.era = 0; // 새 런은 첫 시대부터
     this.playerColor = undefined;
+    this.playerBodyScale = undefined;
     this.genome = defaultGenome();
     this.pickedCardNames = [];
+    this.pickedCardIds = [];
+    this.peakPopulation = 0;
+    this.rerollsUsed = 0;
+    this.newAchievements = [];
     // 새 혈통 — 보고서 기록을 비운다(시대를 넘어갈 때는 이어서 누적, 새 런에서만 리셋).
     this.runSamples = [];
     this.runEvents = [];
@@ -614,8 +645,27 @@ export class Game {
       };
       saveChampion(champ);
     }
+    // 도전 과제 — 중간 시대 승리에서도 판정한다("정점 등극"은 첫 승리에 열려야 한다). finished 는 런이
+    // 진짜 끝났는지(멸종·정복)를 알려 "첫 발자국" 같은 완주 과제만 그때 열리게 한다.
+    const achieveSummary: RunSummary = {
+      finished: runOver,
+      won: result === "win",
+      conquered,
+      era: this.era,
+      level: this.level,
+      peakPopulation: this.peakPopulation,
+      genome: this.genome,
+      rerollsUsed: this.rerollsUsed,
+    };
+    this.newAchievements = evaluateRun(achieveSummary);
     // 승리면 "다음 시대로" 이어갈 수 있다(brotato식 난이도 루프) — 단 마지막 시대(정복)면 더는 없다.
-    this.onResult?.(result, this.buildSummary(result), result === "win" && !this.isFinalEra, progress);
+    this.onResult?.(
+      result,
+      this.buildSummary(result),
+      result === "win" && !this.isFinalEra,
+      progress,
+      this.newAchievements,
+    );
   }
 
   /** 디버그 전용(?dev) — 메타 레벨을 바로 세팅해 해금·리롤을 즉시 이 런에 반영(반복 플레이 없이 테스트). */
@@ -668,6 +718,7 @@ export class Game {
     this.lastFoodEaten = 0;
     // 성장한 종의 색·형질을 새 초기 무리에 반영(프리셋 선택 때와 같은 처리).
     if (this.playerColor !== undefined) this.world.playerSpecies.color = this.playerColor;
+    if (this.playerBodyScale !== undefined) this.world.playerSpecies.bodyScale = this.playerBodyScale;
     for (const e of this.world.entities) {
       if (e.species.isPlayer) e.genome = cloneGenome(this.world.genome);
     }
@@ -688,7 +739,7 @@ export class Game {
     const drawn = drawCards(
       rng,
       3,
-      (c) => isCardUnlocked(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
+      (c) => cardAvailable(c.id, this.metaLvl) && !cardRedundant(c, this.genome.traits),
       this.level, // 시대 보상도 지금까지 키운 레벨의 보정을 받는다
     );
     this.draftCards = drawn.map((c) => boostCard(c, GAME.eraRewardBoost));

@@ -3,9 +3,14 @@
 // 순수 DOM + requestAnimationFrame 애니메이션(캔버스 위 HTML 오버레이). 탭하면 끝까지 건너뛴다.
 
 import { metaLevelInfo, type RunProgress, type UnlockTier } from "@/game/meta";
+import { COSMETICS, type Achievement } from "@/game/achievements";
 
 export interface LevelUpScreen {
-  play: (progress: RunProgress, onDone: () => void) => void;
+  /**
+   * progress = null 이면 경험치·레벨업을 숨기고 도전 과제만 알린다. 중간 시대 승리(런이 안 끝나 메타 경험치가
+   * 안 쌓임)에서도 "정점 등극" 같은 과제는 따야 하므로 그 경우를 따로 다룬다.
+   */
+  play: (progress: RunProgress | null, achievements: Achievement[], onDone: () => void) => void;
   clear: () => void;
 }
 
@@ -78,6 +83,21 @@ export function createLevelUpScreen(): LevelUpScreen {
   unlockList.style.cssText = "display:flex; flex-direction:column; gap:8px;";
   unlockBox.append(unlockHeader, unlockList);
 
+  // "도전 과제 달성" 박스 — 레벨 해금과 다른 축이라 따로 보여준다(금빛 = 솜씨로 얻은 것).
+  const achieveBox = document.createElement("div");
+  achieveBox.style.cssText =
+    "display:none; flex-direction:column; gap:9px; width:min(82vw,330px); margin-top:6px; padding:13px 14px;" +
+    "border:1px solid #6b5620; border-radius:16px;" +
+    "background:linear-gradient(180deg, rgba(70,54,20,0.55), rgba(30,23,10,0.75));" +
+    "box-shadow:0 0 22px rgba(245,195,59,0.16);";
+  const achieveHeader = document.createElement("div");
+  achieveHeader.textContent = "도전 과제 달성";
+  achieveHeader.style.cssText =
+    "color:#ffe08a; font-family:var(--font-mono); font-size:11px; letter-spacing:0.24em; text-align:center; opacity:0.92;";
+  const achieveList = document.createElement("div");
+  achieveList.style.cssText = "display:flex; flex-direction:column; gap:8px;";
+  achieveBox.append(achieveHeader, achieveList);
+
   const continueBtn = document.createElement("button");
   continueBtn.textContent = "계속";
   continueBtn.style.cssText =
@@ -85,7 +105,7 @@ export function createLevelUpScreen(): LevelUpScreen {
     "background:var(--lime); color:#1B2A0A; font-family:var(--font-title); font-size:16px;" +
     "border-bottom:5px solid var(--limeD); cursor:pointer;";
 
-  overlay.append(title, badge, track, gained, unlockBox, continueBtn);
+  overlay.append(title, badge, track, gained, unlockBox, achieveBox, continueBtn);
   document.body.appendChild(overlay);
 
   let raf = 0;
@@ -98,10 +118,54 @@ export function createLevelUpScreen(): LevelUpScreen {
     overlay.style.display = "none";
   };
 
-  const play = (progress: RunProgress, onDone: () => void): void => {
+  const play = (progress: RunProgress | null, achievements: Achievement[], onDone: () => void): void => {
     unlockList.replaceChildren();
     unlockBox.style.display = "none";
+    // 새로 딴 도전 과제 — 경험치바와 무관하게 바로 보여준다(레벨이 안 올라도 딸 수 있다).
+    achieveList.replaceChildren();
+    achieveBox.style.display = achievements.length > 0 ? "flex" : "none";
+    for (const a of achievements) {
+      const item = document.createElement("div");
+      item.className = "lvl-unlock";
+      item.style.cssText =
+        "display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:12px;" +
+        "border:1px solid #6b5620; background:rgba(245,195,59,0.07);";
+      const mark = document.createElement("div");
+      mark.className = "lvl-mark";
+      const texts = document.createElement("div");
+      texts.style.cssText = "display:flex; flex-direction:column; gap:1px; text-align:left; min-width:0;";
+      const name = document.createElement("div");
+      name.textContent = a.name;
+      name.style.cssText = "color:#ffe08a; font-family:var(--font-title); font-size:15px;";
+      const reward = document.createElement("div");
+      reward.textContent =
+        a.reward.kind === "card"
+          ? "형질 「거인」이 드래프트에 나타난다"
+          : `꾸밈 · ${COSMETICS[a.reward.cosmetic].name}`;
+      reward.style.cssText = "color:#c9b98a; font-size:12px; font-weight:500; line-height:1.35;";
+      texts.append(name, reward);
+      item.append(mark, texts);
+      achieveList.appendChild(item);
+    }
     finished = false;
+
+    // 런이 안 끝났으면(중간 시대 승리) 경험치·레벨 부분을 통째로 숨기고 과제만 알린다.
+    const xpParts = [title, badge, track, gained, unlockBox];
+    for (const el of xpParts) el.style.display = progress ? "" : "none";
+    if (!progress) {
+      overlay.onclick = null;
+      continueBtn.style.display = "block";
+      continueBtn.onclick = (e: MouseEvent): void => {
+        e.stopPropagation();
+        clear();
+        onDone();
+      };
+      finished = true;
+      overlay.style.display = "flex";
+      return;
+    }
+    unlockBox.style.display = "none"; // xpParts 에서 "" 로 되돌린 것을 다시 숨김(해금이 있을 때만 켠다)
+
     let lastLevel = progress.beforeLevel;
     const revealed = new Set<number>();
 

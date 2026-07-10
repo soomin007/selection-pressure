@@ -22,9 +22,15 @@ import {
   type CreatureLook,
 } from "@/render/creatureLook";
 import { grassVisionFactor, nightVisionFactor } from "@/sim/behavior";
+import type { CosmeticId } from "@/game/achievements";
 
 export class WorldView {
   readonly container = new Container();
+  /**
+   * 내 종에 걸친 꾸밈(도전 과제 보상). **효과 없음** — 보이는 것만 바꾼다.
+   * main 이 런 시작·로비에서 `equippedCosmetic()` 으로 채운다.
+   */
+  playerCosmetic: CosmeticId | null = null;
   private readonly renderer: Renderer;
   private readonly envG = new Graphics();
   private readonly foodG = new Graphics();
@@ -108,6 +114,48 @@ export class WorldView {
    * 야생은 진화(공유 게놈 변화)하므로 서명을 붙여야 겉모습이 따라 바뀐다 — 안 붙이면 게놈이 변해도
    * 첫 모습 그대로라 진화가 화면에 안 보인다. 거친 버킷이라 미세 드리프트엔 안 바뀌고, 압력 적응처럼
    * 형질이 크게 움직일 때만 새 텍스처(캐시 폭증 방지 + 눈에 띄는 변화만 반영). */
+  /**
+   * 도전 과제 꾸밈을 내 종 개체 한 마리에 그린다. 스프라이트 **아래** 레이어(playerG)라 몸을 안 가린다.
+   * 개체 id 로 위상을 어긋내 무리 전체가 한 박자로 깜빡이지 않게 한다(스트로브 방지).
+   */
+  private drawCosmetic(rx: number, ry: number, id: number): void {
+    const c = this.playerCosmetic;
+    if (c === null) return;
+    const ph = ((this.frame + id * 7) % 96) / 96; // 0→1 반복, 개체별 위상
+    if (c === "rainbow") {
+      // 몸 tint(곱셈)만으론 초록 몸이 탁해질 뿐 색이 안 읽힌다 — 흐르는 색 오라를 함께 깐다.
+      const col = rainbowTint(this.frame, id, 0.1); // 오라는 진한 색으로
+      this.playerG.circle(rx, ry, 16).fill({ color: col, alpha: 0.18 });
+      this.playerG.circle(rx, ry, 12.5).stroke({ color: col, width: 2.4, alpha: 0.8 });
+    } else if (c === "glow") {
+      // 후광 — 밝기가 천천히 숨쉰다. 초록 지형 위에서도 읽히도록 넉넉히 밝게(폰 검토 기준).
+      const b = 0.5 + 0.5 * Math.sin(ph * Math.PI * 2);
+      this.playerG.circle(rx, ry, 19 + 4 * b).fill({ color: 0xfff2b0, alpha: 0.1 + 0.12 * b });
+      this.playerG.circle(rx, ry, 13).fill({ color: 0xffe08a, alpha: 0.18 + 0.22 * b });
+      this.playerG.circle(rx, ry, 12.5).stroke({ color: 0xfff6d0, width: 1.6, alpha: 0.5 + 0.4 * b });
+    } else if (c === "halo") {
+      // 머리 위에 뜬 얇은 금빛 고리(살짝 위아래로 흔들린다).
+      const hy = ry - 15 + Math.sin(ph * Math.PI * 2) * 1.2;
+      this.playerG.ellipse(rx, hy, 7.5, 2.6).stroke({ color: 0xffe08a, width: 1.3, alpha: 0.85 });
+      this.playerG.ellipse(rx, hy, 7.5, 2.6).stroke({ color: 0xfff6d0, width: 0.5, alpha: 0.5 });
+    } else if (c === "stardust") {
+      // 지나간 자리에 남는 반짝이 — 다섯 알이 퍼지며 사그라든다.
+      // playerG 는 스프라이트 **아래** 레이어라, 몸(반지름 ~15) 안쪽에 그리면 통째로 가려진다.
+      // 그래서 몸 바깥(15px~)에서 시작해 퍼져 나가게 한다. 초록 지형에 안 묻히게 흰빛.
+      for (let k = 0; k < 5; k++) {
+        const t = (ph + k / 5) % 1;
+        const r = 2.8 * (1 - t) + 0.7;
+        const d = 15 + t * 14; // 몸 바깥에서 시작
+        const ang = (id % 360) * 0.0175 + t * 1.2 + k * 1.25;
+        const sx = rx - Math.cos(ang) * d;
+        const sy = ry - Math.sin(ang) * d;
+        const a = 1 - t * 0.85;
+        this.playerG.circle(sx, sy, r + 1.6).fill({ color: 0xffe08a, alpha: 0.35 * a });
+        this.playerG.circle(sx, sy, r).fill({ color: 0xfffbe8, alpha: 0.95 * a });
+      }
+    }
+  }
+
   private textureFor(e: Entity): Texture {
     // 개체별 룩 버킷을 키에 더한다 — 같은 종·세대라도 무늬·눈이 다른 텍스처를 버킷 수만큼 갖는다.
     // 버킷이 유한(LOOK_BUCKETS)이라 캐시는 (게놈 서명 × 버킷)으로 상한이 있다.
@@ -249,6 +297,8 @@ export class WorldView {
         this.playerG
           .circle(rx, ry, 12.5)
           .stroke({ color: 0xaaffb0, width: 1.6, alpha: 0.35 + 0.25 * ringPulse });
+        // 도전 과제 꾸밈 — 효과는 전혀 없다. 무지갯빛은 몸 색이라 아래 sp.tint 에서 처리한다.
+        this.drawCosmetic(rx, ry, e.id);
         // 신생아 표식 — 갓 태어난 내 종 개체를 amber 링(nb-pulse: 밖으로 퍼지며 옅어짐)으로 잠깐 강조.
         // 초록 발광 고리와 달리 "퍼지는 핑"이라 움직임으로 구분되고, id 위상 오프셋으로 개체마다 어긋나
         // 펄스해(초기 무리가 같은 나이라도 동기 스트로브가 안 생김) 자연스럽다. age 기반이라 결정론.
@@ -321,9 +371,17 @@ export class WorldView {
       // 무늬·눈은 텍스처(룩 버킷)에서, 크기·톤은 여기 스프라이트에서 — 두 층이 겹쳐 개체가 또렷이 갈린다.
       const ps = personalityScale(e.id);
       const st = personalityStretch(e.id); // >1 길고 홀쭉(몸 방향=x 늘림), <1 짧고 통통
-      sp.scale.set(ps * st, ps / st);
+      // 종 몸집 배율 — 「거인」 카드를 고르면 1보다 크다. 표시 전용(sim 은 개체 크기를 안 쓴다).
+      const bs = e.species.bodyScale ?? 1;
+      sp.scale.set(ps * st * bs, (ps / st) * bs);
       // 독(중독) 걸린 개체는 보라빛으로 — "독이 퍼지는 중"이 한눈에(지속 피해의 시각 피드백).
-      sp.tint = e.poison > 0 ? 0xcc66ff : personalityTint(e.id);
+      // 중독이 무지갯빛보다 우선한다(꾸밈이 위험 신호를 가리면 안 된다).
+      sp.tint =
+        e.poison > 0
+          ? 0xcc66ff
+          : e.species.isPlayer && this.playerCosmetic === "rainbow"
+            ? rainbowTint(this.frame, e.id)
+            : personalityTint(e.id);
       // 회전: 떨림(좌우 진동)의 원인은 회전 "목표"가 매 스텝의 미세 이동 방향이라 노이즈가 크다는 것.
       // → 진행방향 벡터를 저역통과(headK)해 평균 방향만 목표로 삼는다. 방향이 한 스텝씩 홱홱 뒤집혀도
       // 평활된 헤딩은 거의 안 움직여 회전이 안정된다(제자리·이동 중 둘 다). 진짜 전환은 서서히 따라감.
@@ -737,6 +795,45 @@ const ROTATE_MIN_STEP = 0.35;
 // 등가시가 나기 시작하는 공격력 하한(0~1). 이보다 낮은 종(초식·약한 종)은 등이 매끈해 "가시=공격형"이
 // 한눈에 대비된다. 기본 게놈 attack 50(=0.5)이면 가시가 나므로, 확실히 순한 종만 매끈.
 const SPIKE_MIN = 0.28;
+
+/**
+ * 무지갯빛 꾸밈의 색. 개체 id 로 위상을 어긋내 무리가 한 색으로 동기화되지 않게 한다.
+ * `lo` 가 채도를 정한다 — 몸 틴트는 곱셈이라 연하게(0.55, 진하면 원래 종 색이 죽어 무슨 종인지 안 읽힌다),
+ * 몸을 감싸는 오라는 진하게(0.1) 써서 색이 한눈에 읽히게 한다.
+ */
+function rainbowTint(frame: number, id: number, lo = 0.55): number {
+  const h = ((frame * 0.006 + (id % 17) / 17) % 1) * 6;
+  const i = Math.floor(h);
+  const f = h - i;
+  const hi = 1;
+  const q = hi - (hi - lo) * f;
+  const t = lo + (hi - lo) * f;
+  let r = hi;
+  let g = t;
+  let b = lo;
+  if (i === 1) {
+    r = q;
+    g = hi;
+    b = lo;
+  } else if (i === 2) {
+    r = lo;
+    g = hi;
+    b = t;
+  } else if (i === 3) {
+    r = lo;
+    g = q;
+    b = hi;
+  } else if (i === 4) {
+    r = t;
+    g = lo;
+    b = hi;
+  } else if (i >= 5) {
+    r = hi;
+    g = lo;
+    b = q;
+  }
+  return (clamp255(r * 255) << 16) | (clamp255(g * 255) << 8) | clamp255(b * 255);
+}
 
 function clamp255(v: number): number {
   const n = Math.round(v);

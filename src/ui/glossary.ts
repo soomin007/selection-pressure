@@ -12,7 +12,15 @@ import {
   type Card,
   type Rarity,
 } from "@/game/cards";
-import { isCardUnlocked, loadMeta, metaLevel, UNLOCK_TIERS } from "@/game/meta";
+import { loadMeta, metaLevel, UNLOCK_TIERS } from "@/game/meta";
+import {
+  ACHIEVEMENTS,
+  achievementForCard,
+  cardAvailable,
+  COSMETICS,
+  loadAchievements,
+  type Achievement,
+} from "@/game/achievements";
 import { RARITY_STYLE, withAlpha } from "@/ui/rarity";
 import { cardEffectChips, dominantTrait, traitColor } from "@/ui/traitDisplay";
 
@@ -38,6 +46,8 @@ interface Entry {
   oddsTable?: boolean;
   /** 이 등급의 카드 목록(카드 도감). 열 때마다 해금 상태를 새로 읽는다. */
   rarity?: Rarity;
+  /** 도전 과제 목록(달성 여부 + 보상). 열 때마다 저장본을 새로 읽는다. */
+  achievements?: boolean;
 }
 interface Section {
   title: string;
@@ -358,6 +368,20 @@ const SECTIONS: readonly Section[] = [
     ],
   },
   {
+    title: "도전 과제",
+    intro:
+      "플레이어 레벨은 시간을 쓰면 오르고, 도전 과제는 해내야 열립니다. 보상은 대부분 꾸밈이라 세지지 않습니다. 딱 하나, 「거인」만 형질이고 그마저 뚜렷한 대가를 치릅니다.",
+    entries: [
+      {
+        term: "과제 목록",
+        svg: SVG.trophy,
+        desc: "한 판을 마칠 때마다 그 판의 성적으로 판정합니다. 이미 열린 과제는 다시 뜨지 않습니다.",
+        achievements: true,
+        note: "꾸밈은 몸에 하나만 걸칩니다. 로비에서 고를 수 있습니다. 「전설의 이름」은 이름 목록이라 열리면 늘 적용됩니다.",
+      },
+    ],
+  },
+  {
     title: "위협 도감",
     intro: "보스는 버티기 관문이고, 대멸종은 마지막 시험입니다. 각자 약점(키우면 유리한 형질)이 있습니다.",
     entries: [
@@ -445,7 +469,7 @@ const SHOWN_LEVELS: readonly number[] = [1, 3, 5, RARITY_BOOST_FULL_LEVEL];
 /** 지금 열려 있는 카드만. 잠긴 카드는 후보에 안 나오므로 확률 계산에서도 빼야 한다. */
 function unlockedPool(): Card[] {
   const lvl = currentMetaLevel();
-  return CARD_POOL.filter((c) => isCardUnlocked(c.id, lvl));
+  return CARD_POOL.filter((c) => cardAvailable(c.id, lvl));
 }
 
 /** 다섯 등급의 카드 수와 등장 확률. 확률은 `drawCards` 와 같은 가중치로 계산한 정확값이다. */
@@ -543,6 +567,70 @@ function oddsRows(pool: readonly Card[], runLevel: number): HTMLElement {
   return table;
 }
 
+/** 보상 한 줄 — 무엇을 얻는가. 형질 보상은 "형질"이라 못박고, 나머지는 "꾸밈(효과 없음)"이라 적는다. */
+function rewardText(a: Achievement): string {
+  if (a.reward.kind === "card") return `형질 「거인」 — 드래프트에 나타난다`;
+  return `꾸밈 · ${COSMETICS[a.reward.cosmetic].name} — ${COSMETICS[a.reward.cosmetic].desc}`;
+}
+
+/** 도전 과제 목록 — 달성한 것은 또렷하게, 아직인 것은 흐리게. 조건을 읽고 노릴 수 있어야 한다. */
+function buildAchievements(): HTMLElement {
+  const have = loadAchievements();
+  const box = document.createElement("div");
+
+  const label = document.createElement("div");
+  label.textContent = `${have.size} / ${ACHIEVEMENTS.length} 달성`;
+  label.style.cssText =
+    "color:var(--faint); font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; margin:16px 0 6px;";
+  box.appendChild(label);
+
+  const list = document.createElement("div");
+  list.style.cssText =
+    "border:1px solid var(--line); border-radius:var(--r-card); overflow:hidden; background:var(--panelSolid);";
+  ACHIEVEMENTS.forEach((a, idx) => {
+    const done = have.has(a.id);
+    const isCard = a.reward.kind === "card";
+    const row = document.createElement("div");
+    row.style.cssText =
+      "padding:11px 12px;" +
+      (idx > 0 ? "border-top:1px solid var(--line);" : "") +
+      (done ? "background:rgba(143,209,79,0.06);" : "opacity:0.55;");
+
+    const head = document.createElement("div");
+    head.style.cssText = "display:flex; align-items:center; gap:8px;";
+    const mark = document.createElement("span");
+    mark.textContent = done ? "✓" : "·";
+    mark.style.cssText =
+      `width:18px; height:18px; border-radius:50%; flex:none; display:flex; align-items:center;` +
+      `justify-content:center; font-size:11px; font-family:var(--font-mono);` +
+      (done
+        ? "background:var(--lime); color:#1B2A0A;"
+        : "background:rgba(255,255,255,0.08); color:var(--faint);");
+    const name = document.createElement("span");
+    name.textContent = a.name;
+    name.style.cssText = `font-family:var(--font-title); font-size:15px; flex:1; color:${done ? "var(--ink)" : "var(--sub)"};`;
+    head.append(mark, name);
+    row.appendChild(head);
+
+    const desc = document.createElement("div");
+    desc.textContent = a.desc;
+    desc.style.cssText = "color:var(--sub); font-size:12.5px; line-height:1.5; margin-top:4px; word-break:keep-all;";
+    row.appendChild(desc);
+
+    const reward = document.createElement("div");
+    reward.textContent = rewardText(a);
+    const rc = isCard ? "#F5C33B" : "#8FD14F";
+    reward.style.cssText =
+      `margin-top:7px; display:inline-block; font-family:var(--font-mono); font-size:10.5px;` +
+      `border-radius:8px; padding:4px 9px; color:${rc}; background:${withAlpha(rc, 0.12)};`;
+    row.appendChild(reward);
+
+    list.appendChild(row);
+  });
+  box.appendChild(list);
+  return box;
+}
+
 /** 한 등급의 카드 전부. 잠긴 카드는 흐리게 + 열리는 레벨을 적는다(후보에 안 나온다). */
 function buildRarityList(rarity: Rarity): HTMLElement {
   const lvl = currentMetaLevel();
@@ -568,7 +656,7 @@ function buildRarityList(rarity: Rarity): HTMLElement {
   list.style.cssText =
     "border:1px solid var(--line); border-radius:var(--r-card); overflow:hidden; background:var(--panelSolid);";
   cards.forEach((card, idx) => {
-    const locked = !isCardUnlocked(card.id, lvl);
+    const locked = !cardAvailable(card.id, lvl);
     const row = document.createElement("div");
     row.style.cssText =
       "padding:11px 12px;" + (idx > 0 ? "border-top:1px solid var(--line);" : "") + (locked ? "opacity:0.45;" : "");
@@ -583,7 +671,11 @@ function buildRarityList(rarity: Rarity): HTMLElement {
     head.append(dot, name);
     if (locked) {
       const lock = document.createElement("span");
-      lock.textContent = `레벨 ${unlockLevelOf(card.id) ?? "?"}에 열림`;
+      // 카드를 잠근 문지기가 둘이다 — 플레이어 레벨(meta) 과 도전 과제. 어느 쪽인지 정확히 알려준다.
+      const byAchievement = achievementForCard(card.id);
+      lock.textContent = byAchievement
+        ? `「${byAchievement.name}」 달성 시 열림`
+        : `레벨 ${unlockLevelOf(card.id) ?? "?"}에 열림`;
       lock.style.cssText = "font-family:var(--font-mono); font-size:10px; color:var(--faint); flex:none;";
       head.appendChild(lock);
     }
@@ -699,6 +791,7 @@ export function createGlossary(): Glossary {
     // 카드 도감은 열 때마다 새로 계산한다(플레이어 레벨이 오르면 열린 카드와 확률이 바뀐다).
     if (e.oddsTable) detailView.appendChild(buildOddsTable());
     if (e.rarity) detailView.appendChild(buildRarityList(e.rarity));
+    if (e.achievements) detailView.appendChild(buildAchievements());
 
     if (e.rows) {
       const label = document.createElement("div");

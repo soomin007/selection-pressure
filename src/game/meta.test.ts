@@ -27,17 +27,27 @@ describe("메타 언락(플레이어 레벨 기반)", () => {
   });
 
   it("특수 갈래·특화 카드는 메타 레벨에서 열린다", () => {
-    // 바다(레벨 3)
-    expect(isPresetUnlocked("preset_sea", 2)).toBe(false);
-    expect(isPresetUnlocked("preset_sea", 3)).toBe(true);
-    expect(isCardUnlocked("fins", 2)).toBe(false);
-    expect(isCardUnlocked("fins", 3)).toBe(true);
-    // 독 살갗(레벨 9)
-    expect(isPresetUnlocked("preset_venom", 8)).toBe(false);
-    expect(isPresetUnlocked("preset_venom", 9)).toBe(true);
-    // 초음파 카드(레벨 12)
-    expect(isCardUnlocked("echo", 11)).toBe(false);
-    expect(isCardUnlocked("echo", 12)).toBe(true);
+    // 초음파 카드(레벨 3)
+    expect(isCardUnlocked("echo", 2)).toBe(false);
+    expect(isCardUnlocked("echo", 3)).toBe(true);
+    // 바다 갈래(레벨 4) — 카드보다 갈래가 늦게 열린다
+    expect(isPresetUnlocked("preset_sea", 3)).toBe(false);
+    expect(isPresetUnlocked("preset_sea", 4)).toBe(true);
+    // 하늘 카드(레벨 6) → 갈래(레벨 7)
+    expect(isCardUnlocked("wings", 5)).toBe(false);
+    expect(isCardUnlocked("wings", 6)).toBe(true);
+    expect(isPresetUnlocked("preset_sky", 6)).toBe(false);
+    expect(isPresetUnlocked("preset_sky", 7)).toBe(true);
+    // 독 살갗 카드(레벨 12) → 갈래(레벨 13)
+    expect(isCardUnlocked("venom_fang", 11)).toBe(false);
+    expect(isCardUnlocked("venom_fang", 12)).toBe(true);
+    expect(isPresetUnlocked("preset_venom", 12)).toBe(false);
+    expect(isPresetUnlocked("preset_venom", 13)).toBe(true);
+  });
+
+  it("지느러미(바다 관문)는 처음부터 열려 있다 — 첫 판에도 전설 등급이 존재하도록", () => {
+    // 전설은 전부 "능력 계열의 관문"이라, 하나도 안 열려 있으면 첫 판에 전설 등급 자체가 없다.
+    expect(isCardUnlocked("fins", 1)).toBe(true);
   });
 
   it("다시 뽑기는 리롤 티어 레벨(2)부터 열린다", () => {

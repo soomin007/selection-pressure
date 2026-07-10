@@ -12,10 +12,29 @@ const SECOND: readonly string[] = [
   "둥", "박", "송", "찌", "끼", "별", "콩", "담", "울", "총",
 ];
 
-/** 개체 id → 애칭. 결정론적(같은 id = 같은 이름). */
+// 「전설의 이름」 꾸밈(도전 과제 「대군」 보상)이 열리면 이 목록에서 이름이 나온다. 효과는 없다.
+// 애칭보다 길고 예스러운 울림 — "오래된 이름을 물려받는다".
+const MYTHIC_FIRST: readonly string[] = [
+  "아라", "누리", "가람", "하늘", "미르", "다솜", "여울", "노을",
+  "새벽", "바람", "이슬", "구름", "달빛", "별하", "온새", "한별",
+];
+const MYTHIC_SECOND: readonly string[] = [
+  "솔", "결", "빛", "샘", "뫼", "누", "람", "달",
+  "별", "온", "휘", "슬", "찬", "람", "터", "울",
+];
+
+/** 「전설의 이름」이 열렸는가. main 이 런 시작 때 한 번 정해 넣는다(렌더마다 localStorage 를 읽지 않게). */
+let mythic = false;
+export function setMythicNames(on: boolean): void {
+  mythic = on;
+}
+
+/** 개체 id → 애칭. 결정론적(같은 id = 같은 이름). 「전설의 이름」이 열려 있으면 다른 목록에서 고른다. */
 export function creatureName(id: number): string {
   const i = Math.abs(Math.trunc(id));
-  const a = FIRST[i % FIRST.length] ?? "보";
-  const b = SECOND[Math.floor(i / FIRST.length) % SECOND.length] ?? "리";
+  const first = mythic ? MYTHIC_FIRST : FIRST;
+  const second = mythic ? MYTHIC_SECOND : SECOND;
+  const a = first[i % first.length] ?? "보";
+  const b = second[Math.floor(i / first.length) % second.length] ?? "리";
   return a + b;
 }

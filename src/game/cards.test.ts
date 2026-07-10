@@ -14,7 +14,7 @@ import {
   rarityOdds,
   rarityWeightsAtLevel,
 } from "@/game/cards";
-import { defaultGenome } from "@/sim/genome";
+import { defaultGenome, type Traits } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 
 describe("드래프트", () => {
@@ -138,11 +138,61 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
   });
 
   it("풀이 후보 수보다 작으면 있는 만큼만 뽑는 걸 반영한다", () => {
-    const two = CARD_POOL.filter((c) => c.id === "swift" || c.id === "cheetah");
+    const two = CARD_POOL.filter((c) => c.id === "swift" || c.id === "fins");
     const odds = rarityOdds(two, 3);
     // 2장뿐이라 둘 다 뽑힌다 → 두 등급 모두 확률 1
     expect(odds.common.inDraft).toBeCloseTo(1, 10);
     expect(odds.legendary.inDraft).toBeCloseTo(1, 10);
+  });
+});
+
+describe("등급 기준 (cards.ts 주석의 규칙을 코드로 못 박는다)", () => {
+  it("전설은 정확히 다섯 능력 관문 + 「거인」이다", () => {
+    const legendary = CARD_POOL.filter((c) => cardRarity(c) === "legendary")
+      .map((c) => c.id)
+      .sort();
+    expect(legendary).toEqual(["echo", "fins", "long_horn", "titan", "venom_fang", "wings"].sort());
+  });
+
+  it("같은 능력 계열의 두 번째 카드는 전설이 아니다(강화이지 관문이 아니다)", () => {
+    for (const id of ["webbed", "strong_wings", "bat_ear", "venom_gland", "spit"]) {
+      const card = CARD_POOL.find((c) => c.id === id);
+      expect(card).toBeDefined();
+      if (card) expect(cardRarity(card)).not.toBe("legendary");
+    }
+  });
+
+  it("흔함 카드는 생태 형질을 깎지 않는다(대가 없음이 흔함의 정의)", () => {
+    // 대사(metabolism)는 양방향 절충이라 제외 — 낮아도 높아도 이득인 상황이 있다.
+    const costly: (keyof Traits)[] = ["speed", "vision", "attack", "fertility", "herding"];
+    for (const card of CARD_POOL.filter((c) => cardRarity(c) === "common")) {
+      for (const key of costly) {
+        expect(card.effects[key] ?? 0).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it("귀함 이상인 비능력 카드는 모두 무언가를 잃는다(판단을 요구한다)", () => {
+    // 능력형(수영·날개·초음파·독·원거리) 카드는 예외다. 그 대가는 카드 수치가 아니라 sim 이 받는다
+    // (비행은 대사가 더 들고, 물전용은 뭍에 못 오르고, 초음파는 시야를 내준다). 그래서 카드 효과만
+    // 보면 "공짜"로 보인다 — 예: 튼튼한 날개(날개 +30, 걸음 +6).
+    const costly: (keyof Traits)[] = ["speed", "vision", "attack", "fertility", "herding"];
+    const abilityKeys: (keyof Traits)[] = ["swimming", "wings", "echo", "venom", "ranged"];
+    for (const card of CARD_POOL) {
+      const r = cardRarity(card);
+      if (r !== "rare" && r !== "epic" && r !== "legendary") continue;
+      if (abilityKeys.some((k) => (card.effects[k] ?? 0) !== 0)) continue;
+      const loses = costly.some((k) => (card.effects[k] ?? 0) < 0);
+      expect(loses, `${card.id}(${r}) 는 대가가 없다`).toBe(true);
+    }
+  });
+
+  it("등급 분포는 피라미드다(흔할수록 종류가 많다)", () => {
+    const n = (r: string): number => CARD_POOL.filter((c) => cardRarity(c) === r).length;
+    expect(n("common")).toBeGreaterThan(n("uncommon"));
+    expect(n("uncommon")).toBeGreaterThan(n("rare"));
+    expect(n("rare")).toBeGreaterThanOrEqual(n("epic"));
+    expect(n("epic")).toBeGreaterThan(n("legendary"));
   });
 });
 

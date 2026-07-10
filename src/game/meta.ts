@@ -118,13 +118,24 @@ export interface UnlockTier {
   label: string; // 해금 이름(제목)
   detail: string; // 무엇이 열리는지 한 줄 설명(제목 아래 작게)
 }
+/**
+ * 해금 사다리. 전설 카드는 전부 "능력 계열의 관문"(cards.ts 참조)이므로, 이 표가 곧 **전설을 언제 보느냐**를
+ * 정한다. 그래서 지느러미(바다)는 **처음부터 열어 둔다** — 안 그러면 첫 판에 전설 등급이 아예 없어서
+ * 콘페티·금빛 플래시를 볼 길이 없다(수영은 기본 50 이라 문턱이 가장 낮은 능력이기도 하다).
+ * 나머지 네 계열은 한 계열씩 열린다: 초음파 → 하늘 → 원거리 → 독.
+ *
+ * 프리셋(갈래)은 카드보다 한 걸음 늦게 연다 — 카드로 그 능력을 겪어 본 뒤에 "그 종으로 시작하기"가 열린다.
+ */
 export const UNLOCK_TIERS: readonly UnlockTier[] = [
   { atLevel: 2, presetIds: [], cardIds: [], reroll: true, label: "다시 뽑기", detail: "드래프트에서 카드를 새로 뽑는다" },
-  { atLevel: 3, presetIds: ["preset_sea"], cardIds: ["fins", "webbed"], label: "바다 개척자", detail: "바다를 헤엄치는 새 갈래와 카드" },
-  { atLevel: 5, presetIds: ["preset_sky"], cardIds: ["wings", "strong_wings"], label: "하늘 개척자", detail: "산과 바다를 나는 새 갈래와 카드" },
-  { atLevel: 7, presetIds: ["preset_ranged"], cardIds: ["long_horn", "spit"], label: "원거리 사냥꾼", detail: "멀리서 쏘는 새 갈래와 카드" },
-  { atLevel: 9, presetIds: ["preset_venom"], cardIds: ["venom_fang", "venom_gland"], label: "독 살갗", detail: "독을 품는 새 갈래와 카드" },
-  { atLevel: 12, presetIds: [], cardIds: ["echo", "bat_ear"], label: "초음파", detail: "귀로 사방을 더듬는 카드" },
+  { atLevel: 3, presetIds: [], cardIds: ["echo", "bat_ear"], label: "초음파", detail: "눈 대신 귀로 사방을 더듬는다" },
+  { atLevel: 4, presetIds: ["preset_sea"], cardIds: ["webbed"], label: "바다 개척자", detail: "바다에서 시작하는 갈래" },
+  { atLevel: 6, presetIds: [], cardIds: ["wings", "strong_wings"], label: "하늘", detail: "산과 바다를 날아 넘는다" },
+  { atLevel: 7, presetIds: ["preset_sky"], cardIds: [], label: "하늘 개척자", detail: "하늘에서 시작하는 갈래" },
+  { atLevel: 9, presetIds: [], cardIds: ["long_horn", "spit"], label: "원거리", detail: "다가서지 않고 멀리서 쏜다" },
+  { atLevel: 10, presetIds: ["preset_ranged"], cardIds: [], label: "원거리 사냥꾼", detail: "원거리로 시작하는 갈래" },
+  { atLevel: 12, presetIds: [], cardIds: ["venom_fang", "venom_gland"], label: "독 살갗", detail: "삼킨 포식자를 중독시킨다" },
+  { atLevel: 13, presetIds: ["preset_venom"], cardIds: [], label: "독 개척자", detail: "독으로 시작하는 갈래" },
 ];
 
 // 티어로 잠갔다 여는 대상 전체(잠금 후보). 이 집합에 없는 id 는 처음부터 항상 열려 있다.

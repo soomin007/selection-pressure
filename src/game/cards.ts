@@ -445,7 +445,22 @@ export const CARD_POOL: readonly Card[] = [
     desc: "가시를 멀리 쏘고, 살갗의 독으로 삼키려는 포식자도 막는다. 사거리와 방어 독이 함께 는다.",
     effects: { ranged: 26, venom: 22 },
   },
+
+  // 도전 과제로만 열리는 특별 형질. 레벨로는 절대 안 열린다(achievements.ts 가 문지기).
+  // 「거인」은 몸이 실제로 커진다 — 스탯(힘↑ 걸음↓ 새끼↓)과 외형(bodyScale)이 함께 바뀐다.
+  // 외형만 커지고 스탯은 그대로면 "세 보이는데 안 센" 거짓말이 되므로, 둘을 반드시 같이 움직인다.
+  {
+    id: "titan",
+    name: "거인",
+    desc: "몸이 통째로 커진다. 힘은 압도적이지만 걸음이 굼뜨고, 큰 몸을 건사하느라 새끼는 드물게 친다.",
+    effects: { attack: 34, herding: 10, speed: -18, fertility: -14, metabolism: 8 },
+  },
 ];
+
+/** 이 카드를 고르면 내 종의 몸이 이 배율로 커진다(렌더 전용 — sim 은 개체 크기를 안 쓴다). */
+export const CARD_BODY_SCALE: Record<string, number> = {
+  titan: 1.42,
+};
 
 /**
  * 카드 id → 희귀도. 카드 리터럴에 흩어 두지 않고 한곳에 모아, 풀 전체의 분포를 한눈에 보며 튜닝한다.
@@ -459,21 +474,26 @@ export const CARD_POOL: readonly Card[] = [
  *  1. **대가가 있는가.** 없으면 흔함 쪽. 귀함은 전부 뚜렷한 대가를 치른다.
  *  2. **판단을 요구하는가.** 무조건 좋으면 흔함, 무엇을 포기할지 골라야 하면 귀함 이상.
  *  3. **빌드를 기울이는가.** 이 카드 한 장으로 종의 방향(사냥꾼/번식형/무리형)이 정해지면 아주 귀함.
- *  4. **못 하던 걸 하게 되는가.** 새 지형·새 감각·새 전투 수단이 열리면 전설(날개=비행, 초음파=전방위 청각,
- *     독샘=포식자 반격, 독 가시=원거리+방어독).
+ *  4. **못 하던 걸 하게 되는가.** 새 지형·새 감각·새 전투 수단이 열리면 전설. 그래서 전설은 정확히
+ *     **다섯 능력 계열의 관문 카드**다(지느러미=바다, 날개=하늘, 초음파=청각, 독 살갗=반격, 가시 쏘기=원거리).
+ *     같은 계열의 두 번째 카드(물갈퀴·튼튼한 날개·박쥐의 귀·독샘·독 가시)는 "강화"라 전설이 아니다.
+ *     예외는 「거인」 — 몸 자체가 달라지는 도전 과제 전용 카드다.
  *
- * ## 경계가 자의적인 것들 (고칠 때 참고)
- * - `cheetah`(전설): 위 4번을 만족하지 않는다. 디자인 프로토타입이 "치타의 다리 = 전설"로 그려져 있어 맞췄다.
- *   기준대로면 아주 귀함이 옳다.
- * - `venom_fang`(아주 귀함) vs `venom_gland`(전설): 둘 다 독을 켠다. 대가 유무로 갈랐을 뿐이다.
- * - `long_horn`(아주 귀함) vs `spit`(전설): spit 이 더 세지 않다. 두 능력(원거리+독)을 함께 켠다는 이유로 올렸다.
+ * 이 규칙은 `cards.test.ts` 가 강제한다(전설 = 관문 5장 + titan).
+ *
+ * ## 알려진 예외 둘
+ * - **능력형 카드는 대가가 카드에 안 적혀 있다.** 1번 기준(대가 유무)을 카드 수치로만 보면 `strong_wings`
+ *   (날개 +30, 걸음 +6)는 공짜로 보인다. 실제 대가는 sim 이 받는다 — 비행은 대사가 더 들고, 물전용(수영 90+)은
+ *   뭍에 못 오른다. 그래서 등급 판정에서 능력형은 1번을 건너뛰고 4번(못 하던 걸 하는가)으로 곧장 간다.
+ * - `webbed`(드묾)도 수영 50→66 으로 문턱(65)을 혼자 넘는다. 즉 관문이 둘이다. 카드 설계의 흠이지만
+ *   `fins`(+22) 가 대표 관문이고 `webbed` 는 보조(+16, 걸음도 조금)라 등급을 나눴다.
  */
 export const CARD_RARITY: Record<string, Rarity> = {
-  // 흔함 — 대가 없는 단일 소폭 상승, 순한 조합
+  // ── 흔함 (16장) — 대가가 없다. 무조건 좋으니 고민할 게 없다.
   swift: "common",
   keen: "common",
-  thrifty: "common",
-  hotblood: "common",
+  thrifty: "common", // 대사 -14 = 기운 아낌(이득)
+  hotblood: "common", // 대사 +14 = 추위 강함(이득)
   fertile: "common",
   herd: "common",
   pack_hunt: "common",
@@ -487,45 +507,48 @@ export const CARD_RARITY: Record<string, Rarity> = {
   swift_breeder: "common",
   stoic: "common",
 
-  // 드묾 — 소폭 조합 + 작은 대가, 식성 전환, 바다 적응 입문
-  eagle_eye: "uncommon",
-  sprint: "uncommon",
-  hunter_eye: "uncommon",
-  giant: "uncommon",
-  furnace: "uncommon",
-  predator: "uncommon",
-  grazer: "uncommon",
-  ambush: "uncommon",
+  // ── 드묾 (10장) — 작은 대가를 치르거나, 방향을 살짝 틀거나, 능력을 보조한다.
+  eagle_eye: "uncommon", // 무리 -6
+  sprint: "uncommon", // 대사 +7
+  giant: "uncommon", // 걸음 -6
+  furnace: "uncommon", // 대사 +20(더위에 취약)
+  predator: "uncommon", // 식성 전환
+  grazer: "uncommon", // 식성 전환
+  ambush: "uncommon", // 중간 조합
   thick_fur: "uncommon",
-  nest_herd: "uncommon",
-  fins: "uncommon",
-  webbed: "uncommon",
+  nest_herd: "uncommon", // 걸음 -6
+  webbed: "uncommon", // 수영 보조
 
-  // 귀함 — 큰 상승 + 뚜렷한 대가
-  brood: "rare",
-  loner: "rare",
-  savage: "rare",
-  locust: "rare",
-  ascetic: "rare",
-  farsight: "rare",
-  apex_scout: "rare",
+  // ── 귀함 (9장) — 크게 얻고 뚜렷이 잃는다. 무엇을 포기할지 고르게 만든다.
+  hunter_eye: "rare", // 시야 +24 / 번식 -6
+  brood: "rare", // 번식 +22 / 걸음 -7
+  loner: "rare", // 걸음 +20 / 무리 -18
+  savage: "rare", // 공격 +24 / 번식 -6
+  ascetic: "rare", // 대사 -20 / 걸음 -6
+  farsight: "rare", // 시야 +26 / 걸음 -6
+  apex_scout: "rare", // 시야·공격 +16 / 걸음 -7
+  locust: "rare", // 번식 +28 / 공격 -6
+  great_fangs: "rare", // 공격 +26 / 걸음 -8
 
-  // 아주 귀함 — 빌드를 한쪽으로 크게 기울이는 특화
-  great_fangs: "epic",
-  phalanx: "epic",
-  lone_warrior: "epic",
-  glass_cannon: "epic",
-  strong_wings: "epic",
-  echo: "epic",
-  venom_fang: "epic",
-  long_horn: "epic",
+  // ── 아주 귀함 (8장) — 이 한 장으로 종의 방향이 정해진다. 능력형은 그 능력을 극단까지 민다.
+  cheetah: "epic", // 극단 속도
+  glass_cannon: "epic", // 극단 공격
+  lone_warrior: "epic", // 홀로 싸우는 종으로 굳는다
+  phalanx: "epic", // 뭉쳐 맞서는 종으로 굳는다
+  strong_wings: "epic", // 비행을 완성한다
+  bat_ear: "epic", // 눈을 버리고 귀에 온전히 기댄다
+  venom_gland: "epic", // 독을 치명적으로
+  spit: "epic", // 원거리 + 방어독 동시
 
-  // 전설 — 종의 정체성 자체를 바꾸는 한 수
-  cheetah: "legendary",
-  wings: "legendary",
-  bat_ear: "legendary",
-  venom_gland: "legendary",
-  spit: "legendary",
+  // ── 전설 (5장) — 못 하던 걸 하게 된다. 다섯 능력 계열의 **관문** 카드.
+  fins: "legendary", // 바다: 아무도 안 먹는 먹이터가 열린다
+  wings: "legendary", // 하늘: 산·바다를 넘고 고산 먹이에 닿는다
+  echo: "legendary", // 초음파: 눈 대신 귀. 어둠·수풀이 무의미해진다
+  venom_fang: "legendary", // 방어독: 피식자에서 "삼키면 안 되는 것"으로
+  long_horn: "legendary", // 원거리: 근접 사냥에서 벗어난다
+
+  // ── 도전 과제 전용 (등급은 전설) — 몸 자체가 달라진다.
+  titan: "legendary",
 };
 
 /** 카드의 희귀도(미등록 카드는 흔함). 표시(배지·색·연출)와 뽑기 가중치가 같은 값을 쓴다. */

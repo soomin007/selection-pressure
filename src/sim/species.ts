@@ -28,6 +28,12 @@ export interface Species {
   homeBiome?: Biome;
   /** 비동기 생물(S2) — 지난 런의 내 종("예전의 나")이 이 세계에 다시 나타난 것. 렌더에서 왕관으로 표시. */
   champion?: boolean;
+  /**
+   * 몸 크기 배율 — **렌더 전용**(색과 같은 성격의 표시 데이터). sim 은 개체 크기를 전혀 쓰지 않으므로
+   * 이 값은 동역학·밸런스에 영향이 없다. 「거인」 카드를 고르면 1보다 커진다(스탯도 함께 바뀐다 — 외형만
+   * 커지면 "세 보이는데 안 센" 거짓말이 되므로 둘을 같이 움직인다).
+   */
+  bodyScale?: number;
 }
 
 export function isCarnivore(genome: Genome): boolean {

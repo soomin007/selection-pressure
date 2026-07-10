@@ -21,6 +21,8 @@ import { createLobby } from "@/ui/lobby";
 import { createControls } from "@/ui/controls";
 import { createBuildPanel } from "@/ui/buildPanel";
 import { createGlossary } from "@/ui/glossary";
+import { equippedCosmetic, mythicNamesUnlocked } from "@/game/achievements";
+import { setMythicNames } from "@/ui/creatureName";
 import { createCreatureCard } from "@/ui/creatureCard";
 import { creatureName } from "@/ui/creatureName";
 import { describeSpecies } from "@/game/runReport";
@@ -156,13 +158,24 @@ async function boot(): Promise<void> {
     },
     () => reportScreen.show(game.runHistory), // "이 혈통의 기록 보기"
   );
-  const lobby = createLobby(() => {
-    lobby.hide();
-    game.beginRun();
-    refreshBuild();
-    view.refreshSpecies(game.world);
-    controls.setVisible(true);
-  }, () => glossary.show());
+  // 도전 과제로 연 꾸밈을 렌더·이름에 반영한다. 효과는 없다(보이는 것만 바뀐다).
+  const applyCosmetics = (): void => {
+    view.playerCosmetic = equippedCosmetic();
+    setMythicNames(mythicNamesUnlocked());
+  };
+  applyCosmetics();
+  const lobby = createLobby(
+    () => {
+      lobby.hide();
+      applyCosmetics(); // 방금 딴 꾸밈을 이번 판부터 적용
+      game.beginRun();
+      refreshBuild();
+      view.refreshSpecies(game.world);
+      controls.setVisible(true);
+    },
+    () => glossary.show(),
+    applyCosmetics, // 로비에서 꾸밈을 바꾸면 배경 생태계에 즉시 반영
+  );
   const controls = createControls({
     onPauseToggle: () => {
       game.paused = !game.paused;
@@ -211,7 +224,7 @@ async function boot(): Promise<void> {
   const moment = createMomentOverlay();
   // 런 종료 진척도 화면 — 순간 연출 다음, 결과(사망 원인) 화면 직전에 경험치바·레벨업·해금을 보여준다.
   const levelScreen = createLevelUpScreen();
-  game.onResult = (res, summary, canContinue, progress) => {
+  game.onResult = (res, summary, canContinue, progress, achievements) => {
     controls.setVisible(false);
     // 정복 = 마지막 시대 승리(더 이어갈 수 없음), 승리 = 한 시대 넘김(이어감), 멸종 = 패배.
     const kind = res === "lose" ? "lose" : canContinue ? "win" : "conquest";
@@ -223,7 +236,9 @@ async function boot(): Promise<void> {
     };
     moment.play(kind, () => {
       // 런이 진짜 끝났으면(progress 있음) 진척도 화면을 먼저, 그 뒤 결과 화면. 중간 시대 승리(이어감)면 바로 결과.
-      if (progress) levelScreen.play(progress, showResult);
+      // 진척도(런 종료) 또는 새 도전 과제가 있으면 종료 화면을 거친다. 중간 시대 승리는 progress 가 없지만
+      // "정점 등극" 같은 과제는 거기서 열리므로 과제만 있어도 화면을 띄운다.
+      if (progress || achievements.length > 0) levelScreen.play(progress, achievements, showResult);
       else showResult();
     });
   };
@@ -319,7 +334,7 @@ async function boot(): Promise<void> {
       devBtn("진척도+120", (b) => {
         flash(b);
         controls.setVisible(false);
-        levelScreen.play(game.debugGrantMetaXp(120), () => {
+        levelScreen.play(game.debugGrantMetaXp(120), [], () => {
           controls.setVisible(true);
           updateToggle();
         });
