@@ -9,6 +9,7 @@ import {
   CARD_RARITY,
   PRESET_CARDS,
   RARITY_WEIGHT,
+  rarityOdds,
 } from "@/game/cards";
 import { defaultGenome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
@@ -84,6 +85,61 @@ describe("희귀도", () => {
 
   it("미등록 카드는 흔함으로 떨어진다", () => {
     expect(cardRarity({ id: "없는카드", name: "x", desc: "", effects: {} })).toBe("common");
+  });
+});
+
+describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
+  it("대백과가 보여주는 확률이 drawCards 의 실제 빈도와 맞는다", () => {
+    // 표시값이 실제와 어긋나면 그게 곧 거짓말이다. 정확값 계산을 몬테카를로로 교차검증한다.
+    const odds = rarityOdds(CARD_POOL, 3);
+    const rng = new Rng("odds-check");
+    const rounds = 4000;
+    const seen: Record<string, number> = {};
+    for (let i = 0; i < rounds; i++) {
+      const drawn = drawCards(rng, 3);
+      for (const r of new Set(drawn.map(cardRarity))) seen[r] = (seen[r] ?? 0) + 1;
+    }
+    for (const r of ["common", "uncommon", "rare", "epic", "legendary"] as const) {
+      const empirical = (seen[r] ?? 0) / rounds;
+      // 4000회 표본의 표준오차는 ~0.8%p 이하 — 3%p 여유면 우연한 실패는 사실상 없다.
+      expect(Math.abs(empirical - odds[r].inDraft)).toBeLessThan(0.03);
+    }
+  });
+
+  it("등급별 카드 수를 다 더하면 풀 전체가 된다", () => {
+    const odds = rarityOdds(CARD_POOL);
+    const total = Object.values(odds).reduce((s, o) => s + o.count, 0);
+    expect(total).toBe(CARD_POOL.length);
+  });
+
+  it("한 장당 확률의 합은 1", () => {
+    const odds = rarityOdds(CARD_POOL);
+    const sum = Object.values(odds).reduce((s, o) => s + o.perCard, 0);
+    expect(sum).toBeCloseTo(1, 10);
+  });
+
+  it("희귀할수록 뜰 확률이 낮다", () => {
+    const odds = rarityOdds(CARD_POOL);
+    expect(odds.common.inDraft).toBeGreaterThan(odds.uncommon.inDraft);
+    expect(odds.uncommon.inDraft).toBeGreaterThan(odds.rare.inDraft);
+    expect(odds.rare.inDraft).toBeGreaterThan(odds.epic.inDraft);
+    expect(odds.epic.inDraft).toBeGreaterThan(odds.legendary.inDraft);
+  });
+
+  it("풀에 없는 등급은 확률 0 (잠긴 등급을 0장으로 보여준다)", () => {
+    const onlyCommon = CARD_POOL.filter((c) => cardRarity(c) === "common");
+    const odds = rarityOdds(onlyCommon);
+    expect(odds.legendary.count).toBe(0);
+    expect(odds.legendary.inDraft).toBe(0);
+    expect(odds.common.inDraft).toBe(1);
+  });
+
+  it("풀이 후보 수보다 작으면 있는 만큼만 뽑는 걸 반영한다", () => {
+    const two = CARD_POOL.filter((c) => c.id === "swift" || c.id === "cheetah");
+    const odds = rarityOdds(two, 3);
+    // 2장뿐이라 둘 다 뽑힌다 → 두 등급 모두 확률 1
+    expect(odds.common.inDraft).toBeCloseTo(1, 10);
+    expect(odds.legendary.inDraft).toBeCloseTo(1, 10);
   });
 });
 

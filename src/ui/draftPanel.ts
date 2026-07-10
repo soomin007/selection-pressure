@@ -19,7 +19,7 @@ import {
 } from "@/game/cards";
 import { cloneGenome, TRAIT_CEILING, TRAIT_LABELS, type Genome, type Traits } from "@/sim/genome";
 import { makeCreatureTexture } from "@/render/worldView";
-import { ABILITY_KEYS, traitColor } from "@/ui/traitDisplay";
+import { cardEffectChips, dominantTrait, traitColor, type EffectChip } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import {
   DRAFT_TIMING,
@@ -424,7 +424,7 @@ export function createDraftPanel(
       const desc = el("span", "draft-card-desc");
       desc.textContent = card.desc;
       const chips = el("span", "draft-chips");
-      for (const c of effectChips(card)) chips.appendChild(effectChipEl(c));
+      for (const c of cardEffectChips(card)) chips.appendChild(effectChipEl(c));
       body.append(desc, chips);
 
       node.append(row, body);
@@ -506,11 +506,6 @@ function rarityBadge(rarity: Rarity): HTMLElement {
   return badge;
 }
 
-interface EffectChip {
-  text: string;
-  up: boolean;
-}
-
 function effectChipEl(chip: EffectChip): HTMLElement {
   const node = el("span", "draft-chip");
   const color = chip.up ? "#8FD14F" : "#E85C43";
@@ -522,22 +517,6 @@ function effectChipEl(chip: EffectChip): HTMLElement {
   text.textContent = chip.text;
   node.append(arrow, text);
   return node;
-}
-
-/** 카드의 얻음/잃음 — 카드 안에서 항상 한눈에 보이게(§1 설계 원칙). */
-export function effectChips(card: Card): EffectChip[] {
-  const chips: EffectChip[] = [];
-  for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
-    const v = card.effects[key] ?? 0;
-    if (ABILITY_KEYS.has(key)) {
-      // 능력형(수영·날개·초음파·독·원거리)은 수치가 무의미(3단계) → 방향만 표시.
-      chips.push({ text: `${TRAIT_LABELS[key]} ${v >= 0 ? "강화" : "약화"}`, up: v >= 0 });
-    } else {
-      const d = effectiveDelta(key, v);
-      chips.push({ text: `${TRAIT_LABELS[key]} ${d >= 0 ? "+" : ""}${d}`, up: d >= 0 });
-    }
-  }
-  return chips;
 }
 
 /**
@@ -616,21 +595,6 @@ function spawnConfetti(host: HTMLElement, burstDelayMs: number): void {
     bit.style.animation = `confetti-burst ${dur}ms cubic-bezier(.17,.67,.4,1) ${start}ms both`;
     host.appendChild(bit);
   }
-}
-
-/** 카드 효과 중 가장 크게 바뀌는 형질 — 카드 점·히어로 색을 정한다. */
-function dominantTrait(card: Card): keyof Traits {
-  const keys = Object.keys(card.effects) as (keyof Traits)[];
-  let best: keyof Traits = keys[0] ?? "fertility";
-  let bestMag = -1;
-  for (const key of keys) {
-    const mag = Math.abs(card.effects[key] ?? 0);
-    if (mag > bestMag) {
-      bestMag = mag;
-      best = key;
-    }
-  }
-  return best;
 }
 
 const ALL_CARDS: readonly Card[] = [...CARD_POOL, ...PRESET_CARDS];

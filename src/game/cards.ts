@@ -529,6 +529,57 @@ export function drawCards(rng: Rng, n: number, allow?: (c: Card) => boolean): Ca
   return out;
 }
 
+/** 한 희귀도가 얼마나 자주 뜨는가(대백과 표시용). `drawCards` 와 같은 가중치를 써서 계산한다. */
+export interface RarityOdds {
+  /** 이 풀에 있는 이 등급의 카드 수 */
+  count: number;
+  /** 카드 한 장을 뽑을 때 이 등급이 나올 확률 (0~1) */
+  perCard: number;
+  /** 후보 n장(기본 3장) 중 한 장이라도 이 등급일 확률 (0~1) */
+  inDraft: number;
+}
+
+const RARITIES: readonly Rarity[] = ["common", "uncommon", "rare", "epic", "legendary"];
+
+/** counts[skip] 등급을 한 장도 안 뽑고 draws 번 뽑을 확률. 같은 등급 카드는 가중치가 같아 묶어서 셀 수 있다. */
+function probNone(counts: number[], weights: readonly number[], skip: number, draws: number): number {
+  if (draws <= 0) return 1;
+  let total = 0;
+  for (let i = 0; i < counts.length; i++) total += (counts[i] ?? 0) * (weights[i] ?? 0);
+  if (total <= 0) return 1;
+  let p = 0;
+  for (let i = 0; i < counts.length; i++) {
+    const n = counts[i] ?? 0;
+    if (i === skip || n === 0) continue;
+    const pick = (n * (weights[i] ?? 0)) / total;
+    counts[i] = n - 1;
+    p += pick * probNone(counts, weights, skip, draws - 1);
+    counts[i] = n;
+  }
+  return p;
+}
+
+/**
+ * 주어진 풀에서 등급별 등장 확률(정확값). `drawCards` 의 가중치 비복원 추출을 그대로 반영한다.
+ * 풀은 호출자가 정한다 — 대백과는 "지금 열려 있는 카드"만 넘겨 실제 확률을 보여준다.
+ */
+export function rarityOdds(pool: readonly Card[], draws = 3): Record<Rarity, RarityOdds> {
+  const counts = RARITIES.map((r) => pool.filter((c) => cardRarity(c) === r).length);
+  const weights = RARITIES.map((r) => RARITY_WEIGHT[r]);
+  let total = 0;
+  for (let i = 0; i < counts.length; i++) total += (counts[i] ?? 0) * (weights[i] ?? 0);
+  const n = Math.min(draws, pool.length);
+
+  const out = {} as Record<Rarity, RarityOdds>;
+  RARITIES.forEach((r, i) => {
+    const count = counts[i] ?? 0;
+    const perCard = total > 0 ? (count * (weights[i] ?? 0)) / total : 0;
+    const inDraft = count === 0 ? 0 : 1 - probNone(counts.slice(), weights, i, n);
+    out[r] = { count, perCard, inDraft };
+  });
+  return out;
+}
+
 /** 카드 효과를 게놈에 그 자리에서 적용 + 형질별 상한 클램프. (공유 게놈이라 즉시 반영)
  * 증분(effects)은 상한 200 연속 형질이면 CARD_GROWTH_SCALE 로 줄인다(극단까지 천천히). set(프리셋 정체성)은 안 줄임. */
 export function applyCard(genome: Genome, card: Card): void {

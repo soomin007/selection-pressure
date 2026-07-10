@@ -4,6 +4,10 @@
 // 문구 규칙: 쉬운 말, 한글 사이 em dash 금지(마침표·쉼표·줄바꿈으로 대신).
 
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { CARD_POOL, cardRarity, rarityOdds, type Card, type Rarity } from "@/game/cards";
+import { isCardUnlocked, loadMeta, metaLevel, UNLOCK_TIERS } from "@/game/meta";
+import { RARITY_STYLE, withAlpha } from "@/ui/rarity";
+import { cardEffectChips, dominantTrait, traitColor } from "@/ui/traitDisplay";
 
 export interface Glossary {
   show: () => void;
@@ -23,6 +27,10 @@ interface Entry {
   rows?: Row[]; // 실제 게임 수치 표(형질·생물 도감)
   note?: string; // 보조 설명 한 줄
   weak?: string; // 약점(위협 도감)
+  /** 등급별 등장 확률 표(카드 도감 첫 항목). 열 때마다 지금 열린 카드로 새로 계산한다. */
+  oddsTable?: boolean;
+  /** 이 등급의 카드 목록(카드 도감). 열 때마다 해금 상태를 새로 읽는다. */
+  rarity?: Rarity;
 }
 interface Section {
   title: string;
@@ -233,6 +241,46 @@ const SECTIONS: readonly Section[] = [
     ],
   },
   {
+    title: "카드 도감",
+    intro:
+      "카드마다 희귀도가 있습니다. 희귀할수록 후보로 잘 안 뜨고, 드래프트에서도 더 늦게 등장합니다. 아래 확률은 지금 열려 있는 카드만 세어 계산합니다.",
+    entries: [
+      {
+        term: "희귀도와 확률",
+        svg: SVG.card,
+        desc: "카드는 다섯 등급으로 나뉩니다. 흔함은 대가 없이 조금 오르는 카드, 전설은 종의 정체성을 바꾸는 한 수입니다. 등급이 높을수록 뽑기에서 덜 나옵니다.",
+        oddsTable: true,
+        note: "판이 진행되는 동안에는 이미 소용없는 카드(예: 벌써 나는데 또 나오는 날개)가 후보에서 빠지므로, 실제 확률은 위 값과 조금 달라집니다.",
+      },
+      {
+        term: "흔함",
+        rarity: "common",
+        desc: "대가 없이 한 가지가 조금 오릅니다. 안전하게 기틀을 다질 때 고릅니다.",
+      },
+      {
+        term: "드묾",
+        rarity: "uncommon",
+        desc: "두 가지가 함께 오르거나, 작은 대가를 치르고 하나를 더 올립니다.",
+      },
+      {
+        term: "귀함",
+        rarity: "rare",
+        desc: "하나가 크게 오르는 대신 뚜렷한 대가가 따릅니다. 방향을 정하는 카드입니다.",
+      },
+      {
+        term: "아주 귀함",
+        rarity: "epic",
+        desc: "무리를 한쪽으로 크게 기울입니다. 다가오는 위협과 맞으면 판을 가릅니다.",
+      },
+      {
+        term: "전설",
+        rarity: "legendary",
+        desc: "종의 정체성 자체가 바뀝니다. 뜨면 카드가 금빛으로 터집니다.",
+        note: "날개·초음파·독·원거리 전설은 플레이어 레벨이 올라야 열립니다. 잠긴 카드는 후보에 아예 안 나옵니다.",
+      },
+    ],
+  },
+  {
     title: "생물 도감",
     intro: "내 종과 함께 사는 야생 6종입니다. 야생종 수치는 매 판 조금씩 흔들립니다.",
     entries: [
@@ -347,6 +395,157 @@ const SECTIONS: readonly Section[] = [
   },
 ];
 
+// ── 카드 도감 렌더 (열 때마다 지금 해금 상태로 새로 계산한다) ──
+
+const RARITY_ORDER: readonly Rarity[] = ["common", "uncommon", "rare", "epic", "legendary"];
+
+/** 지금 플레이어 레벨(런 밖 영속). 잠긴 카드는 드래프트 후보에서 빠지므로 확률 계산의 풀도 달라진다. */
+function currentMetaLevel(): number {
+  return metaLevel(loadMeta().metaXp);
+}
+
+/** 이 카드가 열리는 플레이어 레벨. 처음부터 열려 있으면 null. */
+function unlockLevelOf(id: string): number | null {
+  for (const t of UNLOCK_TIERS) if (t.cardIds.includes(id)) return t.atLevel;
+  return null;
+}
+
+function pct(v: number): string {
+  const p = v * 100;
+  if (p >= 10) return `${Math.round(p)}%`;
+  if (p >= 1) return `${p.toFixed(1)}%`;
+  return `${p.toFixed(2)}%`;
+}
+
+function chipRow(card: Card): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;";
+  for (const c of cardEffectChips(card)) {
+    const chip = document.createElement("span");
+    const color = c.up ? "#8FD14F" : "#E85C43";
+    chip.textContent = `${c.up ? "▲" : "▼"} ${c.text}`;
+    chip.style.cssText =
+      `display:inline-flex; align-items:center; font-family:var(--font-mono); font-size:10.5px;` +
+      `border-radius:8px; padding:3px 8px; color:${color}; background:${withAlpha(color, 0.13)};`;
+    wrap.appendChild(chip);
+  }
+  return wrap;
+}
+
+/** 다섯 등급의 카드 수와 등장 확률. 확률은 `drawCards` 와 같은 가중치로 계산한 정확값이다. */
+function buildOddsTable(): HTMLElement {
+  const lvl = currentMetaLevel();
+  const pool = CARD_POOL.filter((c) => isCardUnlocked(c.id, lvl));
+  const odds = rarityOdds(pool);
+
+  const box = document.createElement("div");
+  const label = document.createElement("div");
+  label.textContent = `지금 열린 카드 ${pool.length}장 기준 (플레이어 레벨 ${lvl})`;
+  label.style.cssText =
+    "color:var(--faint); font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; margin:16px 0 6px;";
+  box.appendChild(label);
+
+  const table = document.createElement("div");
+  table.style.cssText =
+    "border:1px solid var(--line); border-radius:var(--r-card); overflow:hidden; background:var(--panelSolid);";
+  RARITY_ORDER.forEach((r, idx) => {
+    const style = RARITY_STYLE[r];
+    const o = odds[r];
+    const row = document.createElement("div");
+    row.style.cssText = "padding:10px 12px;" + (idx > 0 ? "border-top:1px solid var(--line);" : "");
+
+    const head = document.createElement("div");
+    head.style.cssText = "display:flex; justify-content:space-between; gap:10px; align-items:baseline;";
+    const left = document.createElement("span");
+    left.style.cssText = "display:inline-flex; align-items:center; gap:7px; flex:0 0 auto;";
+    const dot = document.createElement("span");
+    dot.style.cssText =
+      `width:8px; height:8px; border-radius:2px; background:${style.color}; flex:none;` +
+      (style.glow ? `box-shadow:0 0 6px ${withAlpha(style.color, 0.9)};` : "");
+    const name = document.createElement("span");
+    name.textContent = `${style.label} · ${o.count}장`;
+    name.style.cssText = `color:${style.color}; font-size:13.5px;`;
+    left.append(dot, name);
+    const v = document.createElement("span");
+    v.textContent = `3장 중 ${pct(o.inDraft)}`;
+    v.style.cssText = "color:var(--ink); font-family:var(--font-mono); font-size:13px; text-align:right;";
+    head.append(left, v);
+    row.appendChild(head);
+
+    const track = document.createElement("div");
+    track.style.cssText =
+      "margin-top:7px; height:7px; border-radius:4px; background:rgba(255,255,255,0.06); overflow:hidden;";
+    const fill = document.createElement("div");
+    fill.style.cssText = `height:100%; width:${(o.inDraft * 100).toFixed(1)}%; border-radius:4px; background:${style.color};`;
+    track.appendChild(fill);
+    row.appendChild(track);
+
+    const sub = document.createElement("div");
+    sub.textContent = `카드 한 장이 이 등급일 확률 ${pct(o.perCard)}`;
+    sub.style.cssText = "color:var(--faint); font-family:var(--font-mono); font-size:10.5px; margin-top:5px;";
+    row.appendChild(sub);
+
+    table.appendChild(row);
+  });
+  box.appendChild(table);
+  return box;
+}
+
+/** 한 등급의 카드 전부. 잠긴 카드는 흐리게 + 열리는 레벨을 적는다(후보에 안 나온다). */
+function buildRarityList(rarity: Rarity): HTMLElement {
+  const lvl = currentMetaLevel();
+  const style = RARITY_STYLE[rarity];
+  const cards = CARD_POOL.filter((c) => cardRarity(c) === rarity);
+  const pool = CARD_POOL.filter((c) => isCardUnlocked(c.id, lvl));
+  const o = rarityOdds(pool)[rarity];
+
+  const box = document.createElement("div");
+
+  const summary = document.createElement("div");
+  summary.textContent =
+    o.count === 0
+      ? `이 등급은 아직 한 장도 안 열렸습니다 (전체 ${cards.length}장).`
+      : `열린 ${o.count}장 · 후보 3장에 뜰 확률 ${pct(o.inDraft)}`;
+  summary.style.cssText =
+    `margin:16px 0 8px; padding:10px 12px; border-radius:var(--r-card); font-family:var(--font-mono); font-size:12.5px;` +
+    `color:${style.color}; background:${withAlpha(style.color, 0.1)}; border:1px solid ${withAlpha(style.color, 0.3)};`;
+  box.appendChild(summary);
+
+  const list = document.createElement("div");
+  list.style.cssText =
+    "border:1px solid var(--line); border-radius:var(--r-card); overflow:hidden; background:var(--panelSolid);";
+  cards.forEach((card, idx) => {
+    const locked = !isCardUnlocked(card.id, lvl);
+    const row = document.createElement("div");
+    row.style.cssText =
+      "padding:11px 12px;" + (idx > 0 ? "border-top:1px solid var(--line);" : "") + (locked ? "opacity:0.45;" : "");
+
+    const head = document.createElement("div");
+    head.style.cssText = "display:flex; align-items:center; gap:8px;";
+    const dot = document.createElement("span");
+    dot.style.cssText = `width:9px; height:9px; border-radius:2px; flex:none; background:${traitColor(dominantTrait(card))};`;
+    const name = document.createElement("span");
+    name.textContent = card.name;
+    name.style.cssText = "font-family:var(--font-title); font-size:15px; color:var(--ink); flex:1;";
+    head.append(dot, name);
+    if (locked) {
+      const lock = document.createElement("span");
+      lock.textContent = `레벨 ${unlockLevelOf(card.id) ?? "?"}에 열림`;
+      lock.style.cssText = "font-family:var(--font-mono); font-size:10px; color:var(--faint); flex:none;";
+      head.appendChild(lock);
+    }
+    row.appendChild(head);
+
+    const desc = document.createElement("div");
+    desc.textContent = card.desc;
+    desc.style.cssText = "color:var(--sub); font-size:12.5px; line-height:1.5; margin-top:4px; word-break:keep-all;";
+    row.append(desc, chipRow(card));
+    list.appendChild(row);
+  });
+  box.appendChild(list);
+  return box;
+}
+
 export function createGlossary(): Glossary {
   ensurePanelStyles(); // :root 토큰 보장
   const scrim = document.createElement("div");
@@ -399,8 +598,12 @@ export function createGlossary(): Glossary {
     for (const e of sec.entries) {
       const b = document.createElement("button");
       b.textContent = e.term;
+      // 등급 항목은 그 등급 색으로 — 목록에서 바로 희귀도 서열이 읽힌다.
+      const tint = e.rarity ? RARITY_STYLE[e.rarity] : null;
       b.style.cssText =
-        "border:1px solid var(--line); background:var(--panelSolid); color:var(--ink); border-radius:var(--r-card);" +
+        `border:1px solid ${tint ? withAlpha(tint.color, 0.4) : "var(--line)"};` +
+        `background:${tint ? withAlpha(tint.color, 0.1) : "var(--panelSolid)"};` +
+        `color:${tint ? tint.color : "var(--ink)"}; border-radius:var(--r-card);` +
         "padding:10px 14px; font-family:var(--font-title); font-size:15px; cursor:pointer;";
       b.addEventListener("click", () => showDetail(e));
       grid.appendChild(b);
@@ -439,6 +642,10 @@ export function createGlossary(): Glossary {
     desc.textContent = e.desc;
     desc.style.cssText = "color:var(--sub); font-size:15px; line-height:1.65; word-break:keep-all;";
     detailView.appendChild(desc);
+
+    // 카드 도감은 열 때마다 새로 계산한다(플레이어 레벨이 오르면 열린 카드와 확률이 바뀐다).
+    if (e.oddsTable) detailView.appendChild(buildOddsTable());
+    if (e.rarity) detailView.appendChild(buildRarityList(e.rarity));
 
     if (e.rows) {
       const label = document.createElement("div");
