@@ -15,7 +15,7 @@ interface Particle {
   seed: number; // 0~1, 파편·반짝임 방향/속도 변주용(위치에서 파생 → 결정론)
 }
 
-const LIFE: Record<VisualEventKind, number> = { birth: 720, death: 820, kill: 620 };
+const LIFE: Record<VisualEventKind, number> = { birth: 720, death: 820, kill: 620, bite: 260 };
 const TAU = Math.PI * 2;
 
 // 위치 → [0,1) 결정론 해시(파티클 시드). 같은 자리 사건은 늘 같은 모양(재현성, Math.random 회피).
@@ -77,6 +77,8 @@ function drawParticle(g: Graphics, p: Particle, t: number): void {
     drawKill(g, x, y, t, e, fade, p.seed);
   } else if (p.kind === "birth") {
     drawBirth(g, x, y, e, fade, p.seed);
+  } else if (p.kind === "bite") {
+    drawBite(g, x, y, e, fade, p.seed);
   } else {
     drawDeath(g, x, y, e, fade, p.seed);
   }
@@ -119,6 +121,18 @@ function drawBirth(g: Graphics, x: number, y: number, e: number, fade: number, s
 }
 
 // 자연사 — 조용히 스러짐. 옅은 회색 퍼짐 + 아래로 가라앉는 먼지 몇 점(사냥의 붉은 터짐과 톤이 확실히 대비).
+// 물렸다(즉사 아님) — 짧고 작게 튄다. 잡아먹힘(drawKill)의 축소판이라 "같은 종류의 사건"으로 읽히되,
+// 크기·수명이 확연히 작아 "아직 안 죽었다"가 구분된다. 추격 중 여러 번 뜨므로 화면을 어지럽히면 안 된다.
+function drawBite(g: Graphics, x: number, y: number, e: number, fade: number, seed: number): void {
+  g.circle(x, y, 2 + e * 7).stroke({ color: 0xff6a4a, width: 1.8 * fade + 0.3, alpha: 0.8 * fade });
+  const n = 4;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU + seed * TAU;
+    const d = 3 + e * 8;
+    g.circle(x + Math.cos(a) * d, y + Math.sin(a) * d, 1.4 * fade + 0.3).fill({ color: 0xff4326, alpha: 0.9 * fade });
+  }
+}
+
 function drawDeath(g: Graphics, x: number, y: number, e: number, fade: number, seed: number): void {
   g.circle(x, y, 5 + e * 11).fill({ color: 0x8a909c, alpha: 0.5 * fade });
   g.circle(x, y, 5 + e * 11).stroke({ color: 0xb6bdca, width: 1.2 * fade, alpha: 0.45 * fade });

@@ -67,7 +67,8 @@ export function adaptWildTraits(t: Traits, p: WildPressure): void {
 }
 
 /** 화면 연출용 1회성 사건(전 종, 위치 포함). 렌더가 매 프레임 읽고 비운다. rng 미사용 → 결정론 무관. */
-export type VisualEventKind = "birth" | "death" | "kill";
+/** "bite" = 못 죽인 물기(기운만 깎였다). 즉사는 "kill". */
+export type VisualEventKind = "birth" | "death" | "kill" | "bite";
 export interface VisualEvent {
   kind: VisualEventKind;
   x: number;

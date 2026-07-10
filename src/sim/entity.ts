@@ -27,6 +27,9 @@ export interface Entity {
   // 누적 독 피해 풀(런타임, 직렬화 안 함). 독을 지닌 먹이를 잡아먹으면 그 포식자가 중독돼 쌓이고,
   // 매 틱 에너지를 깎으며 소진된다(방어 독 — 독먹이를 삼키면 되갚음). 독개구리·독뱀 같은 포식 방어.
   poison: number;
+  // 다음 물기까지 남은 틱(런타임, 직렬화 안 함). 사거리에 닿아도 이게 0 이어야 한 번 문다.
+  // 없으면 매 틱 판정이 굴러 접촉 즉시 즉사한다.
+  attackCd: number;
   // 목표를 쫓는데 거의 못 움직인 연속 틱 수(런타임, 직렬화 안 함). 물벽 등에 막혀 도달 불가한 먹이에
   // 억지로 들이대다 갇히는 것을 감지 — 임계를 넘으면 그 목표를 버리고 다른 먹이를 찾는다.
   stuckTicks: number;
@@ -68,6 +71,7 @@ export function createEntity(
     path: [],
     pathGoalTile: -1,
     poison: 0,
+    attackCd: 0,
     stuckTicks: 0,
   };
 }

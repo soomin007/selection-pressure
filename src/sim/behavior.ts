@@ -35,6 +35,48 @@ export function flyDrainMultiplier(wings: number): number {
   return 1 + SIM.flyMetabolismCost * (1 - SIM.flyMetabolismRelief * span01);
 }
 
+/** 한 번의 물기가 어떻게 되는가. 순수 함수라 테스트로 규칙을 못 박는다. */
+export interface BiteOutcome {
+  /** 이빨이 안 박힌다 — 체급 차가 너무 크다. 즉사도 피해도 없다. */
+  ignored: boolean;
+  /** 이 물기가 곧바로 잡아먹을 확률 */
+  killChance: number;
+  /** 못 죽였을 때 깎는 기운 */
+  damage: number;
+}
+
+/**
+ * 공격력 차(공격자 − 먹잇감)로 한 번의 물기 결과를 정한다. 공격력은 무기이자 몸집이라
+ * 공격·방어를 겸한다(따로 방어력 형질을 두지 않는다).
+ *
+ * - 체급이 `biteIgnoreDiff` 넘게 밀리면 **아무 일도 안 일어난다** — "일정 공격력 이하의 공격은 무시".
+ * - 그 위에서는 즉사 확률이 체급 차에 비례하고, 못 죽인 물기는 기운을 깎는다("여러 번 물리다 쓰러진다").
+ */
+export function biteOutcome(attack: number, preyAttack: number): BiteOutcome {
+  const diff01 = (attack - preyAttack) / TRAIT_MAX;
+  if (diff01 <= -SIM.biteIgnoreDiff) return { ignored: true, killChance: 0, damage: 0 };
+  return {
+    ignored: false,
+    killChance: clamp(SIM.killChanceBias + diff01 * SIM.killChanceScale, 0, SIM.killChanceMax),
+    damage: SIM.biteDamage * Math.max(0, 1 + diff01),
+  };
+}
+
+/**
+ * 잡아먹는다 — 즉사 물기든, 여러 번 물려 기운이 다한 것이든 결과는 같다.
+ * 방어 독(venom): 독먹이를 삼키면 포식자가 중독되고 영양도 못 얻는다 — 독개구리·독뱀을 삼킨 대가.
+ * venom 이 강할수록 독은 크게 옮고 사냥 이득은 준다("잡아먹으면 손해"의 포식 방어).
+ */
+function devour(e: Entity, prey: Entity, world: World): void {
+  const preyVenom = prey.genome.traits.venom;
+  prey.alive = false;
+  world.recordDeath(prey.species, "predation");
+  world.emit("kill", prey.x, prey.y); // 연출: 잡아먹힘(빨강 터짐)
+  if (preyVenom > 0) e.poison += SIM.venomOnHit * (preyVenom / TRAIT_MAX);
+  e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX));
+  e.targetPrey = null;
+}
+
 export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const t = e.genome.traits;
   // 형질은 0~100 자연수 저장 → 계수 계산은 0~1 로 정규화(÷TRAIT_MAX)해 해석한다(임계 비교는 0~100 그대로).
@@ -174,28 +216,27 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   }
 
   // --- 섭취 / 사냥 (쫓던 목표가 사정거리면) ---
+  if (e.attackCd > 0) e.attackCd -= 1;
   if (!fleeing && e.targetPrey && e.targetPrey.alive) {
     const prey = e.targetPrey;
     const dx = prey.x - e.x;
     const dy = prey.y - e.y;
     // 원거리 종은 이 넓은 사거리(atkRange, 상단 계산)에서 쏜다 — 붙지 않고 멀리서 명중.
-    if (dx * dx + dy * dy <= atkRange * atkRange) {
-      // 즉사 확률 — 공격력 기반(독은 방어라 사냥 성공과 무관).
-      const preyVenom = prey.genome.traits.venom;
-      const chance = clamp(
-        SIM.killChanceBias + ((t.attack - prey.genome.traits.attack) / TRAIT_MAX) * SIM.killChanceScale,
-        0.05,
-        0.95,
-      );
-      if (world.rng.chance(chance)) {
-        prey.alive = false;
-        world.recordDeath(prey.species, "predation");
-        world.emit("kill", prey.x, prey.y); // 연출: 잡아먹힘(빨강 터짐)
-        // 방어 독(venom): 독먹이를 삼키면(잡으면) 포식자가 중독되고 영양도 못 얻는다 — 독개구리·독뱀을
-        // 삼킨 대가. venom 이 강할수록 독은 크게 옮고 사냥 이득은 준다("잡아먹으면 손해"의 포식 방어).
-        if (preyVenom > 0) e.poison += SIM.venomOnHit * (preyVenom / TRAIT_MAX);
-        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX));
-        e.targetPrey = null;
+    // 물기는 쿨다운마다 한 번. 예전엔 매 틱 굴려 접촉 즉시 즉사였다.
+    if (dx * dx + dy * dy <= atkRange * atkRange && e.attackCd <= 0) {
+      e.attackCd = SIM.attackCooldownTicks;
+      // 독은 방어(삼킨 쪽이 중독)라 사냥 성공과 무관 — 물기 판정은 공격력 차만 본다.
+      const bite = biteOutcome(t.attack, prey.genome.traits.attack);
+      // ignored 면 아무 일도 안 일어난다("일정 공격력 이하의 공격은 무시").
+      if (!bite.ignored) {
+        if (world.rng.chance(bite.killChance)) {
+          devour(e, prey, world);
+        } else {
+          prey.energy -= bite.damage;
+          world.emit("bite", prey.x, prey.y); // 연출: 물렸다(작은 붉은 튐)
+          // 여러 번 물려 기운이 다하면 그 자리에서 잡아먹힌다(사망 원인은 잡아먹힘).
+          if (prey.energy <= 0) devour(e, prey, world);
+        }
       }
     }
   } else if (!fleeing && e.targetFood && e.targetFood.available) {

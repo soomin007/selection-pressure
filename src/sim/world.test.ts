@@ -5,8 +5,8 @@ import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
-import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier } from "@/sim/behavior";
-import { areFriends } from "@/sim/species";
+import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome } from "@/sim/behavior";
+import { areFriends, type Species } from "@/sim/species";
 import { createEntity, type Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
 import type { Food } from "@/sim/food";
@@ -719,5 +719,157 @@ describe("비행 대사 — 날개 크기가 의미를 갖는다", () => {
   it("아무리 커도 비행이 공짜가 되지는 않는다", () => {
     expect(flyDrainMultiplier(100)).toBeGreaterThan(1);
     expect(flyDrainMultiplier(999)).toBe(flyDrainMultiplier(100)); // 상한 밖은 같은 값
+  });
+});
+
+describe("사냥 판정 — 물기(쿨다운 + 기운 깎기)", () => {
+  it("압도하면 거의 한 번에 잡는다(상한 95%)", () => {
+    const b = biteOutcome(100, 0);
+    expect(b.ignored).toBe(false);
+    expect(b.killChance).toBe(SIM.killChanceMax);
+  });
+
+  it("호각이면 즉사 확률은 기준값, 물기 피해는 biteDamage 그대로", () => {
+    const b = biteOutcome(50, 50);
+    expect(b.killChance).toBeCloseTo(SIM.killChanceBias, 10);
+    expect(b.damage).toBeCloseTo(SIM.biteDamage, 10);
+  });
+
+  it("체급이 밀리면 즉사 확률이 떨어지고, 결국 0 이 돼도 기운은 계속 깎는다", () => {
+    // "즉사 확률이 0 이 되는 체급 차"를 파라미터에서 유도한다(상수를 박아 두면 튜닝할 때마다 깨진다).
+    const zeroDiff = SIM.killChanceBias / SIM.killChanceScale; // 이만큼 밀리면 즉사 확률 0
+    expect(zeroDiff).toBeLessThan(SIM.biteIgnoreDiff); // 무시 문턱보다 먼저 온다 = "물긴 무는데 못 죽인다" 구간이 있다
+
+    const mild = biteOutcome(50, 50 + zeroDiff * 100 * 0.5); // 절반쯤 밀림
+    expect(mild.ignored).toBe(false);
+    expect(mild.killChance).toBeGreaterThan(0);
+    expect(mild.killChance).toBeLessThan(SIM.killChanceBias);
+
+    const noKill = biteOutcome(50, 50 + zeroDiff * 100 + 1); // 즉사 확률 0 구간
+    expect(noKill.ignored).toBe(false);
+    expect(noKill.killChance).toBe(0);
+    expect(noKill.damage).toBeGreaterThan(0); // 그래도 기운은 깎는다
+    expect(noKill.damage).toBeLessThan(SIM.biteDamage);
+  });
+
+  it("체급이 크게 밀리면 이빨이 아예 안 박힌다 — 즉사 0, 피해 0", () => {
+    const diff = SIM.biteIgnoreDiff * 100;
+    const just = biteOutcome(50, 50 + diff - 1); // 문턱 바로 위 → 통한다
+    const over = biteOutcome(50, 50 + diff); // 문턱 도달 → 무시
+    expect(just.ignored).toBe(false);
+    expect(over.ignored).toBe(true);
+    expect(over.killChance).toBe(0);
+    expect(over.damage).toBe(0);
+  });
+
+  it("물기 피해는 체급 차에 비례한다(셀수록 깊이 박힌다)", () => {
+    expect(biteOutcome(70, 50).damage).toBeGreaterThan(biteOutcome(50, 50).damage);
+    expect(biteOutcome(50, 50).damage).toBeGreaterThan(biteOutcome(40, 50).damage);
+  });
+
+  it("접촉해도 즉사하지 않는다 — 쿨다운이 초당 30번 물기를 막는다", () => {
+    // 예전엔 사거리에 닿는 매 틱 판정을 굴려 접촉 즉시(≈2틱) 죽었다.
+    expect(SIM.attackCooldownTicks).toBeGreaterThan(1);
+  });
+
+  it("공격력이 크게 앞선 먹잇감은 약한 포식자에게 잡히지 않는다(붙어 있어도)", () => {
+    const pg = defaultGenome();
+    pg.traits.diet = 90; // 순수 육식
+    pg.traits.attack = 40;
+    const w = new World("bite-immune", 400, 400, pg);
+    const preyGenome = defaultGenome();
+    preyGenome.traits.attack = 90; // 차 -50 → 무시 문턱(-35) 밖
+    preyGenome.traits.speed = 1; // 도망 못 감 → 계속 접촉
+    preyGenome.traits.diet = 10;
+    const preySpecies: Species = {
+      id: 99,
+      name: "먹이",
+      genome: preyGenome,
+      isPlayer: false,
+      color: 0xffffff,
+      initialCount: 1,
+      foodKinds: [0],
+      friendly: false,
+      faction: 0,
+    };
+    const pred = w.entities.find((e) => e.species.isPlayer);
+    expect(pred).toBeDefined();
+    if (!pred) return;
+    const prey = createEntity(9999, pred.x + 4, pred.y, preySpecies, 100);
+    w.entities = [pred, prey];
+    for (let i = 0; i < 400; i++) {
+      pred.energy = 100;
+      prey.energy = 100; // 굶주림으로 죽는 건 이 테스트의 관심사가 아니다
+      w.step();
+    }
+    expect(prey.alive).toBe(true); // 400틱(13초) 붙어 있어도 못 잡는다
+  });
+
+  it("여러 번 물면 결국 잡는다(기운이 다하면 잡아먹힘으로 집계)", () => {
+    const pg = defaultGenome();
+    pg.traits.diet = 90;
+    pg.traits.attack = 45; // 즉사 확률 0(차 -5×1.5 + 0.3 = 0.225 … 낮음)이지만 피해는 들어간다
+    const w = new World("bite-attrition", 400, 400, pg);
+    const preyGenome = defaultGenome();
+    preyGenome.traits.attack = 60;
+    preyGenome.traits.speed = 1;
+    preyGenome.traits.diet = 10;
+    const preySpecies: Species = {
+      id: 99,
+      name: "먹이",
+      genome: preyGenome,
+      isPlayer: false,
+      color: 0xffffff,
+      initialCount: 1,
+      foodKinds: [0],
+      friendly: false,
+      faction: 0,
+    };
+    const pred = w.entities.find((e) => e.species.isPlayer);
+    if (!pred) return;
+    const prey = createEntity(9999, pred.x + 4, pred.y, preySpecies, 100);
+    w.entities = [pred, prey];
+    let ticks = 0;
+    for (let i = 0; i < 400 && prey.alive; i++) {
+      pred.energy = 100;
+      w.step();
+      ticks = i + 1;
+    }
+    expect(prey.alive).toBe(false);
+    expect(ticks).toBeGreaterThan(SIM.attackCooldownTicks); // 즉사가 아니라 여러 번 물어서
+  });
+
+  it("못 죽인 물기는 연출 이벤트를 낸다(추격이 '아무 일도 안 일어남'으로 보이지 않게)", () => {
+    const pg = defaultGenome();
+    pg.traits.diet = 90;
+    pg.traits.attack = 45;
+    const w = new World("bite-fx", 400, 400, pg);
+    const preyGenome = defaultGenome();
+    preyGenome.traits.attack = 60;
+    preyGenome.traits.speed = 1;
+    preyGenome.traits.diet = 10;
+    const preySpecies: Species = {
+      id: 99,
+      name: "먹이",
+      genome: preyGenome,
+      isPlayer: false,
+      color: 0xffffff,
+      initialCount: 1,
+      foodKinds: [0],
+      friendly: false,
+      faction: 0,
+    };
+    const pred = w.entities.find((e) => e.species.isPlayer);
+    if (!pred) return;
+    const prey = createEntity(9999, pred.x + 4, pred.y, preySpecies, 100);
+    w.entities = [pred, prey];
+    let bites = 0;
+    for (let i = 0; i < 200 && prey.alive; i++) {
+      pred.energy = 100;
+      w.step();
+      bites += w.events.filter((ev) => ev.kind === "bite").length;
+      w.events.length = 0; // 렌더가 매 프레임 비우는 것과 같게
+    }
+    expect(bites).toBeGreaterThan(0);
   });
 });
