@@ -489,3 +489,17 @@
   (`Get-CimInstance Win32_Process -Filter "name='node.exe'" | ? CommandLine -like '*4199*'` → 그 PID 만 Stop-Process).
   **blanket kill(포트 무관 node 전멸) 금지** — 다른 세션 dev 서버까지 죽인다. 근본 고치려면 smoke.mjs 의 spawn 을
   프로세스 그룹으로 띄워(`detached:true`) `process.kill(-pid)` 하거나 tree-kill 로 자식까지 정리한다.
+  (Windows: `Stop-Process -Id` 는 부모만 죽이고 detach 된 자식 vite 가 남는다 → `taskkill /PID <부모> /T /F` 로 트리째.)
+
+### 수영 카드로 물 전용(90+)이 되면 육지 종이 땅에 갇혀 죽는다 (전환 시 재배치 없음)
+- 증상: 육지에서 살던 내 종이 「지느러미」를 얻으면 뭍에서 냅다 굶어 죽는다(사용자 발견, 2026-07-11).
+- 원인: swimming ≥ aquaticOnlyThreshold(90)면 물 전용(canLand=false)이 돼 육지 타일이 통행 불가가 된다.
+  「지느러미」(+22)가 바다 프리셋(88)이나 「물갈퀴」(+16) 누적에 더해져 90 을 넘기면, 육지에 있던 무리가
+  갑자기 물 전용이 돼 땅에 갇힌다 — 바다로도 못 가고 육지 먹이도 못 먹어 아사. 물 전용 전환 자체는 "바다
+  개척자" 빌드로 의도됐으나, 런 중 카드 전환 시 개체를 바다로 옮기는 처리가 빠져 함정이 됐다.
+- 해결(applyCard): 내 종 swimming 을 aquaticOnlyThreshold-1(수륙양용 상한)로 막는다(사용자 방향: "수륙양용이되
+  바다까지 들어가게만"). 카드로는 물 전용이 안 되고 수륙양용(바다+육지)까지만. 진짜 물 전용은 야생 물고기
+  떼만(카드 없어 상한 안 거침). **TRAIT_CEILING[swimming] 을 낮추는 방법은 안 된다** — clampGenome 을 통과하는
+  야생 물고기(95)까지 잘라 물 전용을 없앤다. 카드 경로(applyCard)에서만 막아야 한다.
+- 재발 방지책: 형질이 "지형 통행 자격"을 바꾸는 문턱(swimming·wings)을 카드로 넘길 때, 그 전환이 개체를 못
+  가는 지형에 가두는지 본다. 통행 자격을 잃게 하는 방향(육지→물전용)은 재배치나 상한이 필요하다.

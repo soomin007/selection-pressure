@@ -345,6 +345,19 @@ describe("카드 적용", () => {
     for (let i = 0; i < 5; i++) applyCard(g, venomCard);
     expect(g.traits.venom).toBe(100); // 100 에서 멈춤
   });
+
+  it("수영 카드를 쌓아도 내 종은 물 전용 문턱을 못 넘는다(수륙양용 상한 — 육지에서 안 죽는다)", () => {
+    const g = defaultGenome();
+    g.traits.swimming = 88; // 바다 프리셋 수준(수륙양용)
+    const fins = CARD_POOL.find((c) => c.id === "fins"); // 지느러미 +22
+    const webbed = CARD_POOL.find((c) => c.id === "webbed"); // 물갈퀴 +16
+    expect(fins && webbed).toBeTruthy();
+    if (!fins || !webbed) return;
+    applyCard(g, fins);
+    applyCard(g, webbed); // 88+22+16 = 126 이지만 물 전용 문턱 아래로 막힌다
+    expect(g.traits.swimming).toBeLessThan(SIM.aquaticOnlyThreshold);
+    expect(g.traits.swimming).toBe(SIM.aquaticOnlyThreshold - 1); // 수륙양용 상한에 붙는다
+  });
 });
 
 describe("시대 보상 카드 강화(boostCard)", () => {

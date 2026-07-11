@@ -684,4 +684,9 @@ export function applyCard(genome: Genome, card: Card): void {
     if (TRAIT_CEILING[key] > 100) delta *= CARD_GROWTH_SCALE; // 상한 200 형질만 증가폭 축소
     genome.traits[key] = clampTraitValue(key, genome.traits[key] + delta);
   }
+  // 내 종은 물 전용(육지 통행 불가)이 되지 않게 수영 상한을 수륙양용 문턱 바로 아래로 막는다. 지느러미·물갈퀴를
+  // 쌓아도 바다까지 헤엄치되 육지에서 안 죽는다(예전엔 90 을 넘으면 갑자기 물 전용이 돼 땅에 갇혀 굶어 죽었다).
+  // 진짜 물 전용(바다 거주 물고기)은 야생 물고기 떼만 — 그들은 카드가 없어 이 상한을 안 거친다(swimming 95 유지).
+  const swimCap = SIM.aquaticOnlyThreshold - 1;
+  if (genome.traits.swimming > swimCap) genome.traits.swimming = swimCap;
 }
