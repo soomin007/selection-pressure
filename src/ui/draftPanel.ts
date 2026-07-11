@@ -168,6 +168,8 @@ export function createDraftPanel(
   let preview = 0;
   let busy = false; // 확정 연출 중 — 중복 입력 차단
   let popupOpen = false;
+  // 데스크톱 레이아웃(카드 3열·좌우 여백)일 때만 클릭=선택 / 팝업 인라인. CSS 의 @media 기준과 맞춘다.
+  const isDesktopLayout = (): boolean => window.matchMedia("(min-width: 860px)").matches;
   let commitTimer = 0;
   let toastTimer = 0;
   const spriteUrls: (string | null)[] = [];
@@ -445,7 +447,15 @@ export function createDraftPanel(
       node.append(row, body);
       node.style.boxShadow = restingShadow(rarity);
       node.style.animation = cardAnimation(rarity, delay, bounce);
-      node.addEventListener("click", () => setPreview(i));
+      // 데스크톱: 클릭이 곧 선택(미리보기는 호버·화살표로 충분). 모바일: 클릭은 미리보기, 확정은 CTA.
+      node.addEventListener("click", () => {
+        if (isDesktopLayout()) {
+          const c = cards[i];
+          if (c) commit(`${c.name} · 무리 전체에 퍼졌어요`, () => cb.onPick(i));
+        } else {
+          setPreview(i);
+        }
+      });
       node.addEventListener("mouseenter", () => setPreview(i));
 
       wrap.appendChild(node);

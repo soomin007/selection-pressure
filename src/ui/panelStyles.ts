@@ -360,6 +360,11 @@ export function ensurePanelStyles(): void {
     .draft-cta { max-width: 520px; font-size: 20px; padding: 17px 16px; }
     .draft-skip { font-size: 14px; }
     .draft-reroll { font-size: 12.5px; padding: 9px 17px; }
+    /* 데스크톱: 내 종 팝업을 중앙 오버레이 대신 화면 오른쪽에 인라인으로 펼친다(좌우 여백 활용, dim 없이). */
+    .draft-dim { display: none !important; }
+    .draft-popup-wrap { top: 64px; bottom: auto; left: auto; right: 0;
+      align-items: flex-start; justify-content: flex-end; padding: 0 22px; }
+    .draft-popup { max-width: 320px; box-shadow: 0 22px 50px -14px rgba(0,0,0,0.62); }
   }
 
   /* §6 등장 연출 키프레임 */
