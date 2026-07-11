@@ -35,6 +35,25 @@ export function flyDrainMultiplier(wings: number): number {
   return 1 + SIM.flyMetabolismCost * (1 - SIM.flyMetabolismRelief * span01);
 }
 
+/**
+ * 식성(diet) 섭취 효율 — 특화할수록 자기 먹이에서 온전히(1.0), 잡식일수록 페널티(제너럴리스트 페널티).
+ *
+ * 곡선은 특화 끝에서 1.0 으로 "평평"하다: 순수 초식(diet ≤ dietHuntMin)은 채집 1.0, 순수 육식
+ * (diet ≥ dietGrazeMax)은 사냥 1.0. 잡식 구간(dietHuntMin~dietGrazeMax)에서만 효율이 떨어진다.
+ * 이렇게 두면 야생 초식종(diet 12~30)·포식자(85)는 효율이 안 변해 통과기준 밸런스가 **잡식 기준선에만**
+ * 걸린다(밸런스 이동 최소화). 문턱(diet 35·70)과도 정렬 — 사냥·채집을 막 시작하는 잡식 끝이 가장 비효율.
+ */
+export function grazeEfficiency(diet: number): number {
+  const span = SIM.dietGrazeMax - SIM.dietHuntMin;
+  const omni01 = clamp((diet - SIM.dietHuntMin) / span, 0, 1); // 0=순수 초식 … 1=채집 상한(잡식 끝)
+  return 1 - SIM.dietSpecializationPenalty * omni01;
+}
+export function huntEfficiency(diet: number): number {
+  const span = SIM.dietGrazeMax - SIM.dietHuntMin;
+  const omni01 = clamp((SIM.dietGrazeMax - diet) / span, 0, 1); // 0=순수 육식 … 1=사냥 하한(잡식 끝)
+  return 1 - SIM.dietSpecializationPenalty * omni01;
+}
+
 /** 한 번의 물기가 어떻게 되는가. 순수 함수라 테스트로 규칙을 못 박는다. */
 export interface BiteOutcome {
   /** 이빨이 안 박힌다 — 체급 차가 너무 크다. 즉사도 피해도 없다. */
@@ -73,7 +92,10 @@ function devour(e: Entity, prey: Entity, world: World): void {
   world.recordDeath(prey.species, "predation");
   world.emit("kill", prey.x, prey.y); // 연출: 잡아먹힘(빨강 터짐)
   if (preyVenom > 0) e.poison += SIM.venomOnHit * (preyVenom / TRAIT_MAX);
-  e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX));
+  // 사냥 수입 = 기본 × 방어독 감쇠 × 식성 효율(육식 특화일수록 온전히, 잡식은 페널티).
+  const huntGain =
+    SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX) * huntEfficiency(e.genome.traits.diet);
+  e.energy = Math.min(SIM.maxEnergy, e.energy + huntGain);
   e.targetPrey = null;
 }
 
@@ -260,7 +282,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
           SIM.foodRegrowTicks * world.foodRegrowMultiplier * SIM.mountainTreasureRegrow,
         );
       } else {
-        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy);
+        // 채집 수입 = 기본 × 식성 효율(초식 특화일수록 온전히, 잡식은 페널티).
+        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy * grazeEfficiency(t.diet));
         food.regrowTimer = Math.round(SIM.foodRegrowTicks * world.foodRegrowMultiplier);
       }
       food.available = false;

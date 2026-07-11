@@ -5,7 +5,7 @@ import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
-import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome } from "@/sim/behavior";
+import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome, grazeEfficiency, huntEfficiency } from "@/sim/behavior";
 import { areFriends, type Species } from "@/sim/species";
 import { createEntity, type Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
@@ -956,5 +956,44 @@ describe("사냥 판정 — 물기(쿨다운 + 기운 깎기)", () => {
       w.events.length = 0; // 렌더가 매 프레임 비우는 것과 같게
     }
     expect(bites).toBeGreaterThan(0);
+  });
+});
+
+describe("식성(diet) 섭취 효율 (제너럴리스트 페널티)", () => {
+  const HUNT = SIM.dietHuntMin; // 35 — 사냥 시작 문턱(= 순수 초식 상한)
+  const GRAZE = SIM.dietGrazeMax; // 70 — 채집 가능 상한(= 순수 육식 하한)
+  const PEN = SIM.dietSpecializationPenalty;
+
+  it("순수 초식(diet ≤ 사냥임계)은 채집 효율이 온전하다(1.0)", () => {
+    // 야생 초식종(diet 12~30) 구간은 효율이 안 변한다 → 통과기준 밸런스가 잡식 기준선에만 걸린다.
+    expect(grazeEfficiency(0)).toBe(1);
+    expect(grazeEfficiency(20)).toBe(1);
+    expect(grazeEfficiency(HUNT)).toBe(1);
+  });
+
+  it("순수 육식(diet ≥ 채집임계)은 사냥 효율이 온전하다(1.0)", () => {
+    // 야생 포식자(diet 85) 구간도 효율 불변.
+    expect(huntEfficiency(GRAZE)).toBe(1);
+    expect(huntEfficiency(85)).toBe(1);
+    expect(huntEfficiency(100)).toBe(1);
+  });
+
+  it("잡식 구간은 채집·사냥 둘 다 페널티 — 문턱 끝에서 최대(1-PEN)", () => {
+    expect(grazeEfficiency(50)).toBeLessThan(1);
+    expect(huntEfficiency(50)).toBeLessThan(1);
+    expect(grazeEfficiency(GRAZE)).toBeCloseTo(1 - PEN); // 채집 상한에서 최저
+    expect(huntEfficiency(HUNT)).toBeCloseTo(1 - PEN); // 사냥 하한에서 최저
+  });
+
+  it("특화할수록 자기 먹이 효율이 높다(초식=채집, 육식=사냥) — 특화 유인", () => {
+    expect(grazeEfficiency(20)).toBeGreaterThan(grazeEfficiency(50));
+    expect(huntEfficiency(85)).toBeGreaterThan(huntEfficiency(50));
+  });
+
+  it("효율은 diet 에 단조롭다(중간이 특화보다 낫지 않다)", () => {
+    expect(grazeEfficiency(30)).toBeGreaterThanOrEqual(grazeEfficiency(50));
+    expect(grazeEfficiency(50)).toBeGreaterThan(grazeEfficiency(65));
+    expect(huntEfficiency(75)).toBeGreaterThanOrEqual(huntEfficiency(50));
+    expect(huntEfficiency(50)).toBeGreaterThan(huntEfficiency(40));
   });
 });
