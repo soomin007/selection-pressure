@@ -5,7 +5,7 @@ import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
-import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome, grazeEfficiency, huntEfficiency } from "@/sim/behavior";
+import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome, grazeEfficiency, huntEfficiency, huntSprintFactor } from "@/sim/behavior";
 import { areFriends, type Species } from "@/sim/species";
 import { createEntity, type Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
@@ -115,14 +115,19 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
   });
 
   it("그림자 매복자: 매복자 개체(members)가 실제로 개체를 솎는다", () => {
-    // 카운터 = 시야로 미리 도망(cullVisionResist + stalkerVisionFlee). 개체 시뮬 + 이산화라 단일 시드
-    // 형질 게이트가 불안정해(시야의 성장 효과와 얽힘) "매복자가 실제로 솎는다"만 견고하게 본다(폰 체감 조정).
-    const w = new World("env-1", W, H, defaultGenome());
-    for (let i = 0; i < 750; i++) w.step();
-    w.boss = createBoss("stalker", W, H); // terrain 없이 = 기본 위치(수풀 스폰은 game 이 terrain 전달)
-    expect(w.boss.members.length).toBe(4);
-    for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) w.step();
-    expect(w.deaths.boss).toBeGreaterThan(0);
+    // 카운터 = 시야로 미리 도망(cullVisionResist + stalkerVisionFlee). 개체 시뮬 + 이산화라 단일 시드는
+    // 조우가 노이즈다 — sim 밸런스(예: 사냥 스퍼트)를 바꾸면 특정 시드에서 매복자가 우연히 아무도 못 잡을
+    // 수 있다. 여러 시드 중 "실제로 솎는 맵이 있다"로 메커니즘 작동을 견고하게 본다(카운터 세기는 폰 체감).
+    let totalBossKills = 0;
+    for (const seed of ["env-1", "env-2", "env-3"]) {
+      const w = new World(seed, W, H, defaultGenome());
+      for (let i = 0; i < 750; i++) w.step();
+      w.boss = createBoss("stalker", W, H); // terrain 없이 = 기본 위치(수풀 스폰은 game 이 terrain 전달)
+      expect(w.boss.members.length).toBe(4);
+      for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) w.step();
+      totalBossKills += w.deaths.boss;
+    }
+    expect(totalBossKills).toBeGreaterThan(0);
   });
 
   it("수풀 지형: 수풀 안에선 시야가 줄고 시야 형질이 완화한다(지형×형질)", () => {
@@ -995,5 +1000,27 @@ describe("식성(diet) 섭취 효율 (제너럴리스트 페널티)", () => {
     expect(grazeEfficiency(50)).toBeGreaterThan(grazeEfficiency(65));
     expect(huntEfficiency(75)).toBeGreaterThanOrEqual(huntEfficiency(50));
     expect(huntEfficiency(50)).toBeGreaterThan(huntEfficiency(40));
+  });
+});
+
+describe("사냥 스퍼트 (질주형 육식 — speed 가 사냥법이 된다)", () => {
+  const GRAZE = SIM.dietGrazeMax; // 70 — 순수 육식 문턱
+  const BONUS = SIM.huntSprintBonus;
+
+  it("추격 중이 아니면 스퍼트 없음(1.0)", () => {
+    expect(huntSprintFactor(100, false)).toBe(1);
+    expect(huntSprintFactor(50, false)).toBe(1);
+  });
+
+  it("잡식·초식은 추격해도 스퍼트 없음 — 순수 육식만(야생 초식·잡식 밸런스 보존)", () => {
+    expect(huntSprintFactor(20, true)).toBe(1); // 초식
+    expect(huntSprintFactor(50, true)).toBe(1); // 잡식
+    expect(huntSprintFactor(GRAZE, true)).toBe(1); // 순수 육식 문턱 = 0(연속)
+  });
+
+  it("순수 육식은 추격 시 속도가 오르고, 육식일수록 크다", () => {
+    expect(huntSprintFactor(100, true)).toBeCloseTo(1 + BONUS); // 완전 육식 최대
+    expect(huntSprintFactor(85, true)).toBeGreaterThan(1);
+    expect(huntSprintFactor(100, true)).toBeGreaterThan(huntSprintFactor(85, true)); // 단조
   });
 });

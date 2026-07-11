@@ -479,3 +479,13 @@
 - 재발 방지책: 순수 육식 자생을 만들려면 사냥 수입 상수(`predationEnergy`·huntEfficiency)가 아니라 사냥 성공
   생태(먹잇감 도망 완화 / 먹잇감 밀도↑ / 플레이어 이주)를 손봐야 한다 — 야생 밸런스 대공사라 리스크 크다.
   수입 상향으로 순수 육식을 살리려는 시도는 **효과 없음이 프로브로 확인됐으니 반복하지 말 것**.
+
+### smoke 스크립트가 Windows 에서 vite preview 서버를 orphan 으로 남긴다 (프로세스 실수)
+- 증상: `node scripts/smoke.mjs` 가 exit 0 으로 끝났는데 포트 4199 preview 서버(node 2개: npx-cli + vite.js)가
+  계속 돈다. 사용자 화면에 "백그라운드 작업이 90분 넘게 돌고 있다"로 보여 불안을 줬다.
+- 원인: smoke.mjs 가 `spawn("npx", ["vite","preview",...])` 로 띄우고 끝에 `preview.kill()` 하는데, Windows
+  에선 npx(부모)만 죽고 실제 vite.js(자식)가 detached orphan 으로 남는다(프로세스 트리째 안 죽는다).
+- 재발 방지책: smoke 를 돌린 뒤 포트 4199 를 물고 있는 node 가 남았는지 확인하고 정리한다
+  (`Get-CimInstance Win32_Process -Filter "name='node.exe'" | ? CommandLine -like '*4199*'` → 그 PID 만 Stop-Process).
+  **blanket kill(포트 무관 node 전멸) 금지** — 다른 세션 dev 서버까지 죽인다. 근본 고치려면 smoke.mjs 의 spawn 을
+  프로세스 그룹으로 띄워(`detached:true`) `process.kill(-pid)` 하거나 tree-kill 로 자식까지 정리한다.

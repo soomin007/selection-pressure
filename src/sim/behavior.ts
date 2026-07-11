@@ -54,6 +54,18 @@ export function huntEfficiency(diet: number): number {
   return 1 - SIM.dietSpecializationPenalty * omni01;
 }
 
+/**
+ * 사냥 스퍼트 배수(질주형 육식) — 순수 육식이 먹잇감을 추격할 때 최대 속도가 오른다(치타·사자의 폭발적
+ * 추격). 순수 육식일수록 크다(문턱 dietGrazeMax 에서 0, 완전 육식 100 에서 최대). 추격 중(hunting)이
+ * 아니거나 잡식/초식이면 1(영향 없음). speed 형질이 "질주형 육식"의 사냥법이 된다 — 도망치는 초식을
+ * speed 50 으론 못 잡아 순수 육식이 첫 사냥 전에 굶던 병목(known_issues)을 푼다.
+ */
+export function huntSprintFactor(diet: number, hunting: boolean): number {
+  if (!hunting) return 1;
+  const carn01 = clamp((diet - SIM.dietGrazeMax) / Math.max(1, TRAIT_MAX - SIM.dietGrazeMax), 0, 1);
+  return 1 + SIM.huntSprintBonus * carn01;
+}
+
 /** 한 번의 물기가 어떻게 되는가. 순수 함수라 테스트로 규칙을 못 박는다. */
 export interface BiteOutcome {
   /** 이빨이 안 박힌다 — 체급 차가 너무 크다. 즉사도 피해도 없다. */
@@ -119,9 +131,14 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     SIM.attackRange +
     (rangedLow / TRAIT_MAX) * SIM.rangedBonus +
     (rangedHigh / TRAIT_MAX) * SIM.rangedBonusHigh;
+  // 사냥 스퍼트(질주형 육식): 순수 육식이 먹잇감을 추격 중이면 속도가 오른다 — 도망치는 초식을 speed 50
+  // 으론 못 잡던 병목을 speed 형질로 푼다(치타의 폭발적 추격). 순수 육식일수록·추격 중일 때만이라 야생
+  // 초식·잡식은 영향 0.
+  const sprintFactor = huntSprintFactor(t.diet, e.targetPrey !== null);
   // 험지(거친 땅)에선 이동이 느려진다 — speed 형질이 높을수록 덜 느려진다(속도가 지형에서 가치). 비행은 무시.
   const maxSpeed =
-    SIM.maxSpeedBase * (0.4 + speed01) * (canFly ? 1 : roughSpeedFactor(world, e.x, e.y, speed01));
+    SIM.maxSpeedBase * (0.4 + speed01) *
+    (canFly ? 1 : roughSpeedFactor(world, e.x, e.y, speed01)) * sprintFactor;
   // 밤엔 시야가 준다(낮=영향 없음). vision 형질이 높을수록 밤에도 잘 본다 → 야행성 틈새(큰 눈).
   // 시야 반경 = visionBase × (시야/100). 하한이 없어 시야 0 이면 아무것도 못 본다(감각 형질의 대가).
   // 비행 종은 높이 날아 시야가 넓다(× (1+flyVisionBonus)).
