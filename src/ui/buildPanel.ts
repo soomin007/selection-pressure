@@ -4,7 +4,7 @@
 import { TRAIT_KEYS, TRAIT_LABELS, TRAIT_CEILING, type Traits } from "@/sim/genome";
 import { ABILITY_KEYS, abilityLevel, traitColor, traitWord } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
-import { huntingBuild } from "@/game/runReport";
+import { huntingBuild, dietNote } from "@/game/runReport";
 
 export interface BuildData {
   headline: string; // "빠른 잡식성" 같은 종 한 줄 요약
@@ -53,6 +53,11 @@ export function createBuildPanel(): BuildPanel {
   const huntLine = document.createElement("div");
   huntLine.style.cssText = "font-size:11px; margin-bottom:7px; word-break:keep-all; display:none;";
 
+  // 식성 효율 줄 — 식성을 바꾸면 뭐가 좋아지는지(특화=효율 최고 / 잡식=둘 다 하되 손해). "잡식이 당연히
+  // 최고"라는 오해를 푼다(사용자 지적). 늘 보인다(식성은 모든 종이 가진 형질).
+  const dietLine = document.createElement("div");
+  dietLine.style.cssText = "font-size:10.5px; color:var(--faint); margin-bottom:7px; word-break:keep-all;";
+
   // 현재 형질값 readout — "내 종이 지금 얼마인지". 카드 누적 결과를 그대로 보여준다.
   const traitsLabel = document.createElement("div");
   traitsLabel.textContent = "현재 형질";
@@ -65,7 +70,7 @@ export function createBuildPanel(): BuildPanel {
   cardsLabel.style.cssText = "color:var(--faint); font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; margin:2px 0 5px;";
 
   const list = document.createElement("div");
-  body.append(headline, huntLine, traitsLabel, traitsBox, cardsLabel, list);
+  body.append(headline, huntLine, dietLine, traitsLabel, traitsBox, cardsLabel, list);
 
   // 레이아웃별 기본값: 데스크톱은 펼침(공간 여유), 모바일은 접힘(클러터 최소화). 탭으로 토글.
   let collapsed = document.body.dataset.layout !== "desktop";
@@ -100,6 +105,8 @@ export function createBuildPanel(): BuildPanel {
         huntLine.style.color = "var(--amber)";
       }
     }
+    // 식성 효율 — "잡식이 최고"라는 오해를 푼다(특화=효율 최고 / 잡식=둘 다 하되 손해).
+    dietLine.textContent = `식성: ${dietNote(data.traits.diet)}`;
 
     // 현재 형질값: 7개를 값+미니 막대로. 식성만 범주(초식/잡식/육식) 텍스트.
     traitsBox.replaceChildren();

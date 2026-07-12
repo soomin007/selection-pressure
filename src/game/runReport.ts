@@ -112,6 +112,17 @@ export function huntingBuild(t: Traits): HuntingBuild | null {
   return null; // 잡식인데 두드러진 사냥 특기 형질도 없음 → 라벨 안 붙임
 }
 
+/**
+ * 식성이 섭취 효율에 무엇을 하는지 한 줄로 — "잡식이 당연히 최고"라는 오해를 푼다(사용자 지적). 특화(초식/
+ * 육식)는 자기 먹이 효율이 최고이고, 잡식은 둘 다 하되 효율에 페널티(제너럴리스트). 화면(설계도)에서 식성
+ * 옆에 보여줘, 식성을 바꾸면 뭐가 좋아지는지 읽히게 한다.
+ */
+export function dietNote(diet: number): string {
+  if (diet < SIM.dietHuntMin) return "풀 효율 최고 · 사냥은 못 함";
+  if (diet > SIM.dietGrazeMax) return "사냥 효율 최고 · 풀은 못 먹음";
+  return "풀·사냥 둘 다 하지만 효율은 조금 손해"; // 잡식 = 제너럴리스트 페널티
+}
+
 /** 대사 → 한온 적응 한 줄 (왜 추위/폭염에 죽었는지 연결). 중간 대사면 빈 문자열. */
 function climateNote(t: Traits): string {
   if (t.metabolism <= 35) return "대사가 낮아 추위에 약하고 더위에 강했습니다.";

@@ -19,40 +19,22 @@ export function abilityWord(level: 0 | 1 | 2): string {
   return level === 0 ? "없음" : level === 1 ? "보통" : "강함";
 }
 
-// 값이 클수록 강한 형질(속도·시야·공격·번식·무리) — 시작 50 은 "보통", 카드로 갈고 닦을수록 세진다.
-// 화면엔 날값(68) 대신 이 단계 단어를 보여준다: 능력형(없음/보통/강함)과 같은 언어로 통일해 "68 이 좋은
-// 건지 모르겠다"를 없앤다(사용자 지적). 시뮬은 여전히 연속값을 쓴다 — 표시만 단계로 뭉친다.
-function valueWord(v: number): string {
-  if (v < 35) return "약함";
-  if (v < 70) return "보통";
-  if (v < 110) return "강함";
-  if (v < 155) return "막강";
-  return "최강";
-}
-
-// 대사(중립) — 많고 적음이 곧 좋고 나쁨이 아니라 성질이라, 강약이 아니라 낮음/보통/높음으로 사실만 알린다.
-// 낮으면 기운을 아끼고 더위·가뭄에 강하고, 높으면 추위에 강하되 기운을 많이 쓴다(환경이 유불리를 정한다).
-function metabWord(v: number): string {
-  if (v < 38) return "낮음";
-  if (v < 63) return "보통";
-  return "높음";
-}
-
 /** 식성 스펙트럼 — 초식/잡식/육식(중립). 문턱은 sim 과 같은 값(dietHuntMin·dietGrazeMax). */
 export function dietWord(v: number): string {
   return v < SIM.dietHuntMin ? "초식" : v > SIM.dietGrazeMax ? "육식" : "잡식";
 }
 
 /**
- * 형질값 → 화면용 단계 단어(숫자 대신). 모든 형질을 한 규칙으로 보여줘 표시를 일관되게 한다:
- * 능력형=없음/보통/강함, 식성=초식/잡식/육식, 대사=낮음/보통/높음, 나머지(값형질)=약함/보통/강함/막강/최강.
- * 설계도·개체 카드·프리셋·드래프트가 전부 이 함수를 써서 어긋나지 않게 한다(한 곳에서 관리).
+ * 형질값 → 화면 표시. 각 형질의 성격에 맞춘 한 규칙으로 통일한다(설계도·개체 카드·프리셋·드래프트 공용):
+ * - 값형질(속도·시야·공격·번식·무리)·대사 = **숫자**(상한 100 이라 "68 = 68%"로 그대로 직관적). 드래프트에서
+ *   카드 효과(+9)를 수치로 비교해 뽑으므로 숫자가 맞다(사용자 방향).
+ * - 능력형(수영·날개·초음파·독·원거리) = 없음/보통/강함(값이 문턱 위에선 무의미 — 65든 89든 동작 같음).
+ * - 식성 = 초식/잡식/육식(스펙트럼).
  */
 export function traitWord(key: keyof Traits, v: number): string {
   if (ABILITY_KEYS.has(key)) return abilityWord(abilityLevel(key, v));
   if (key === "diet") return dietWord(v);
-  if (key === "metabolism") return metabWord(v);
-  return valueWord(v);
+  return String(Math.round(v)); // 값형질·대사 = 숫자
 }
 
 /**

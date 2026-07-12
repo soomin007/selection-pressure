@@ -323,17 +323,17 @@ describe("시작 프리셋", () => {
 });
 
 describe("카드 적용", () => {
-  it("효과가 누적되되 연속 형질은 증가폭이 줄고 상한 200 에서 멈춘다", () => {
+  it("효과가 누적되되 값형질은 증가폭이 줄고 상한 100 에서 멈춘다", () => {
     const g = defaultGenome(); // 모두 50
     const swift = CARD_POOL.find((c) => c.id === "swift");
     expect(swift).toBeDefined();
     if (!swift) return;
-    applyCard(g, swift); // 속도 +15 → 상한 200 형질이라 ×0.6 = +9
+    applyCard(g, swift); // 속도 +15 → 값형질이라 ×0.6 = +9(상한 내려도 증가폭은 그대로)
     expect(g.traits.speed).toBe(59);
 
-    // 같은 카드 여러 번 → 200(연속 형질 상한)에서 멈춤(전엔 100에서 잘렸다)
+    // 같은 카드 여러 번 → 100(상한)에서 멈춤
     for (let i = 0; i < 30; i++) applyCard(g, swift);
-    expect(g.traits.speed).toBe(200);
+    expect(g.traits.speed).toBe(100);
   });
 
   it("능력형 형질(독)은 상한 100 유지 — 증가폭도 안 줄인다", () => {
@@ -465,11 +465,11 @@ describe("무의미 카드 필터(cardRedundant)", () => {
     expect(cardRedundant(card("hotblood"), t)).toBe(false); // 대사도 늘 유효
   });
 
-  it("연속 형질(속도 등)은 상한 200 에 닿아야 무의미", () => {
+  it("값형질(속도 등)은 상한 100 에 닿아야 무의미", () => {
     const t = defaultGenome().traits;
-    t.speed = 150;
+    t.speed = 80;
     expect(cardRedundant(card("swift"), t)).toBe(false); // 아직 상한 아래
-    t.speed = 200;
+    t.speed = 100;
     expect(cardRedundant(card("swift"), t)).toBe(true); // 상한
   });
 });

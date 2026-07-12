@@ -25,6 +25,7 @@ import {
   dominantTrait,
   traitColor,
   traitWord,
+  abilityLevel,
   NEUTRAL_TRAITS,
   type EffectChip,
 } from "@/ui/traitDisplay";
@@ -334,6 +335,32 @@ export function createDraftPanel(
         const d = el("b");
         d.textContent = delta > 0 ? `+${delta}` : String(delta);
         d.style.color = neutral ? chipColor("neutral") : delta > 0 ? "#8FD14F" : "#E85C43";
+        val.append(" ", d);
+      }
+      row.append(label, track, val);
+      rows.appendChild(row);
+    }
+
+    // 능력형·식성 — 지닌 것(또는 이 카드가 건드리는 것)만 보여준다. 날개·수영 같은 중요한 스탯이 아예 안
+    // 뜨던 구멍을 메운다(사용자 지적). 값이 문턱 위에선 무의미해 막대 대신 단어/범주로, 변화는 강화·약화·방향.
+    const ABIL_DIET: readonly (keyof Traits)[] = ["diet", "swimming", "wings", "echo", "venom", "ranged"];
+    for (const key of ABIL_DIET) {
+      const value = c.genome.traits[key];
+      const eff = card.effects[key] ?? 0;
+      const affected = eff !== 0;
+      const has = key === "diet" ? true : abilityLevel(key, value) > 0;
+      if (!has && !affected) continue;
+      const row = el("div", "draft-stat");
+      const label = el("span", "draft-stat-label");
+      label.textContent = TRAIT_LABELS[key];
+      const track = el("div", "draft-stat-track"); // 빈 트랙 — 막대 행과 값 열을 정렬만 맞춘다
+      track.style.background = "transparent";
+      const val = el("span", "draft-stat-val");
+      val.textContent = traitWord(key, value);
+      if (affected) {
+        const d = el("b");
+        d.textContent = key === "diet" ? (eff > 0 ? "더 육식" : "더 초식") : eff > 0 ? "강화" : "약화";
+        d.style.color = NEUTRAL_TRAITS.has(key) ? chipColor("neutral") : eff > 0 ? "#8FD14F" : "#E85C43";
         val.append(" ", d);
       }
       row.append(label, track, val);

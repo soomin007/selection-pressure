@@ -10,10 +10,13 @@ import type { Genome, Traits } from "@/sim/genome";
 import { clampTraitValue, TRAIT_CEILING } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 
-// 상한 200 연속 형질(속도·시야·공격·번식·무리)의 카드 증가폭을 이만큼으로 줄인다 — 극단(200)까지 여러 장을
-// 쌓아야 도달(폰 피드백: 100 에 너무 쉽게 붙어 잘림). 100 이하 구간이 예전보다 천천히 오르되, 100~200 이 열려
-// 잘림이 사라진다. set(프리셋 정체성 값)은 안 줄인다(증분만).
+// 값형질(속도·시야·공격·번식·무리)의 카드 증가폭을 이만큼으로 줄인다 — 한 판 동안 여러 장을 쌓아야 상한
+// (100)에 닿게 해 성장을 천천히 느끼게 한다(카드 +15 → 실제 +9 적용, 50→100 에 ~6픽). 상한을 200→100 으로
+// 내려도 이 스케일을 유지해 실제 증가폭이 안 바뀌므로 밸런스는 불변(바뀌는 건 최대 도달값뿐). 대사·식성·
+// 능력형은 안 줄인다(성격이 다름). set(프리셋 정체성 값)도 안 줄인다(증분만).
 const CARD_GROWTH_SCALE = 0.6;
+// 성장 스케일을 받는 값형질(연속·많을수록 강함). 상한이 전부 100 이라 TRAIT_CEILING 으로는 못 가려 명시한다.
+const GROWTH_TRAITS = new Set<keyof Traits>(["speed", "vision", "attack", "fertility", "herding"]);
 
 /**
  * 카드 희귀도 5단계 (핸드오프 §2). 색·등장 뜸·연출은 UI(`@/ui/rarity`)가 정하고, 여기서는 "얼마나 드물게
@@ -122,7 +125,7 @@ export function cardRedundant(card: Card, t: Traits): boolean {
   if (primary === "wings") return cur >= SIM.flyThreshold; // 관문: 이미 날면 무의미
   if (primary === "swimming") return cur >= SIM.swimThreshold; // 관문: 이미 헤엄치면 무의미(값은 문턱 위서 무효)
   if (primary === "echo" || primary === "venom" || primary === "ranged") return cur >= 100;
-  if (TRAIT_CEILING[primary] > 100) return cur >= TRAIT_CEILING[primary]; // 연속형 200 상한
+  if (GROWTH_TRAITS.has(primary)) return cur >= TRAIT_CEILING[primary]; // 값형질 상한(100)에 닿으면 무의미
   return false;
 }
 
@@ -611,7 +614,7 @@ export function cardRarity(card: Card): Rarity {
 /** 카드가 게놈에 실제로 더하는 값(표시용) — 상한 200 연속 형질은 CARD_GROWTH_SCALE 로 줄어드므로, 카드에
  * 뜨는 수치를 실제 적용값과 맞추려면 이걸 쓴다(전엔 원값 +15 를 보여줬으나 실제론 +9 만 붙었다 — 폰 피드백). */
 export function effectiveDelta(key: keyof Traits, raw: number): number {
-  return Math.round(TRAIT_CEILING[key] > 100 ? raw * CARD_GROWTH_SCALE : raw);
+  return Math.round(GROWTH_TRAITS.has(key) ? raw * CARD_GROWTH_SCALE : raw);
 }
 
 /** 카드 효과를 boost 배로 키운 사본(시대 보상용). 표시값(effectiveDelta)과 실제 적용(applyCard)이 같은
@@ -731,7 +734,7 @@ export function applyCard(genome: Genome, card: Card): void {
   }
   for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
     let delta = card.effects[key] ?? 0;
-    if (TRAIT_CEILING[key] > 100) delta *= CARD_GROWTH_SCALE; // 상한 200 형질만 증가폭 축소
+    if (GROWTH_TRAITS.has(key)) delta *= CARD_GROWTH_SCALE; // 값형질만 증가폭 축소(성장을 천천히)
     genome.traits[key] = clampTraitValue(key, genome.traits[key] + delta);
   }
   // 내 종은 물 전용(육지 통행 불가)이 되지 않게 수영 상한을 수륙양용 문턱 바로 아래로 막는다. 지느러미·물갈퀴를

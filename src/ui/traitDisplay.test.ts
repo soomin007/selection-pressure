@@ -51,35 +51,19 @@ describe("칩 색 규칙 — 좋고 나쁨이 없는 형질은 중립색", () =>
   });
 });
 
-describe("형질 단계 단어(traitWord) — 날값 대신 단계로 통일", () => {
-  it("값형질(속도 등): 시작 50 은 보통, 자랄수록 강해진다(약함→최강)", () => {
-    expect(traitWord("speed", 20)).toBe("약함");
-    expect(traitWord("speed", 50)).toBe("보통"); // 모든 종 시작값
-    expect(traitWord("speed", 90)).toBe("강함");
-    expect(traitWord("speed", 130)).toBe("막강");
-    expect(traitWord("speed", 180)).toBe("최강");
-    // 다섯 형질이 같은 규칙을 쓴다
+describe("형질 표시(traitWord) — 값형질·대사는 숫자, 능력형·식성은 단어", () => {
+  it("값형질(속도 등)·대사는 날숫자로 보여준다(상한 100 이라 직관적)", () => {
+    expect(traitWord("speed", 68)).toBe("68");
+    expect(traitWord("speed", 50)).toBe("50");
+    expect(traitWord("metabolism", 30)).toBe("30");
+    // 다섯 값형질이 같은 규칙(숫자)
     for (const k of ["speed", "vision", "attack", "fertility", "herding"] as const) {
-      expect(traitWord(k, 50)).toBe("보통");
-      expect(traitWord(k, 180)).toBe("최강");
+      expect(traitWord(k, 72)).toBe("72");
     }
   });
 
-  it("값형질 단계는 값에 단조롭다(중간이 극단보다 세지 않다)", () => {
-    const order = ["약함", "보통", "강함", "막강", "최강"];
-    const rank = (v: number): number => order.indexOf(traitWord("attack", v));
-    let prev = -1;
-    for (const v of [10, 34, 35, 69, 70, 109, 110, 154, 155, 200]) {
-      const r = rank(v);
-      expect(r).toBeGreaterThanOrEqual(prev); // 단조 비감소
-      prev = r;
-    }
-  });
-
-  it("대사(중립): 낮음/보통/높음 — 강약이 아니라 성질", () => {
-    expect(traitWord("metabolism", 20)).toBe("낮음");
-    expect(traitWord("metabolism", 50)).toBe("보통");
-    expect(traitWord("metabolism", 85)).toBe("높음");
+  it("소수 값도 반올림해 자연수로 보여준다", () => {
+    expect(traitWord("attack", 66.6)).toBe("67");
   });
 
   it("식성: 초식/잡식/육식 — sim 문턱과 같은 경계", () => {
