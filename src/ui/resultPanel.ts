@@ -50,7 +50,7 @@ export function createResultPanel(
     "padding-top:16px; border-top:1px solid var(--line);";
   const cosmetics = createCosmeticPicker(onCosmeticChange);
   const ladderBtn = document.createElement("button");
-  ladderBtn.textContent = "해금 사다리 보기";
+  ladderBtn.textContent = "진화 갈래 보기";
   ladderBtn.style.cssText =
     "padding:6px 4px 3px; border:0; background:transparent; color:var(--ink);" +
     "font-family:var(--font-body); font-size:13px; cursor:pointer; border-bottom:1.5px solid var(--amber);";

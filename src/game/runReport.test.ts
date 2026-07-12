@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   describeSpecies,
+  huntingBuild,
   formatDeaths,
   buildRunReport,
   parseDeathLine,
   DEATH_LINE_PREFIX,
 } from "@/game/runReport";
+import { SIM } from "@/sim/params";
 import { defaultGenome, type Genome } from "@/sim/genome";
 import { emptyDeathTally, type DeathTally } from "@/sim/world";
 
@@ -96,5 +98,39 @@ describe("parseDeathLine — 결과 화면 막대용 역파싱", () => {
     expect(parseDeathLine(`${DEATH_LINE_PREFIX}잡아먹힘 12`)).toEqual([
       { label: "잡아먹힘", count: 12 },
     ]);
+  });
+});
+
+describe("육식 사냥형(huntingBuild)", () => {
+  it("순수 초식은 사냥형이 아니다(빠른 초식도 null)", () => {
+    expect(huntingBuild(tune({ diet: 20 }).traits)).toBeNull();
+    expect(huntingBuild(tune({ diet: 20, speed: 95 }).traits)).toBeNull(); // 빠른 초식 = 잘 도망칠 뿐
+  });
+
+  it("순수 육식은 두드러진 보조 형질로 사냥형이 갈린다(켜짐)", () => {
+    expect(huntingBuild(tune({ diet: 90, speed: 90 }).traits)).toEqual({ label: "질주형 사냥꾼", active: true });
+    expect(huntingBuild(tune({ diet: 90, herding: 90 }).traits)).toEqual({ label: "무리 사냥꾼", active: true });
+    expect(huntingBuild(tune({ diet: 90, ranged: 90 }).traits)).toEqual({ label: "원거리 사냥꾼", active: true });
+    expect(huntingBuild(tune({ diet: 90, attack: 90 }).traits)).toEqual({ label: "완력 사냥꾼", active: true });
+  });
+
+  it("특기 형질 없는 순수 육식은 대식 포식자(포만·큰 사냥으로 산다)", () => {
+    expect(huntingBuild(tune({ diet: 90 }).traits)).toEqual({ label: "대식 포식자", active: true });
+  });
+
+  it("잡식이라도 사냥 소질 형질이 있으면 라벨을 붙이되 꺼짐(diet<70 함정 알림)", () => {
+    // 잡식(diet 50) + 빠름 → 질주형 소질은 있으나 사냥 특기(스퍼트)는 육식(70+)에서만 켜진다.
+    const b = huntingBuild(tune({ diet: 50, speed: 90 }).traits);
+    expect(b).toEqual({ label: "질주형 사냥꾼", active: false });
+  });
+
+  it("잡식인데 두드러진 사냥 특기 형질도 없으면 라벨 없음(잡음 방지)", () => {
+    expect(huntingBuild(tune({ diet: 50 }).traits)).toBeNull();
+  });
+
+  it("문턱은 SIM 값을 따른다(무리=packShareThreshold, 원거리=rangedThreshold)", () => {
+    // 무리 55(=packShareThreshold) 딱은 소질 아님(초과분 0), 56 이면 소질.
+    expect(huntingBuild(tune({ diet: 90, herding: SIM.packShareThreshold }).traits)?.label).toBe("대식 포식자");
+    expect(huntingBuild(tune({ diet: 90, herding: SIM.packShareThreshold + 1 }).traits)?.label).toBe("무리 사냥꾼");
   });
 });

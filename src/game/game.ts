@@ -7,8 +7,8 @@
 
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
-import { defaultGenome, cloneGenome, MUTABLE_TRAITS, TRAIT_CEILING, type Genome, type Traits, type MutableTrait } from "@/sim/genome";
-import { drawCards, applyCard, boostCard, cardPrereqMet, CARD_BODY_SCALE, PRESET_CARDS, type Card } from "@/game/cards";
+import { defaultGenome, cloneGenome, MUTABLE_TRAITS, type Genome, type MutableTrait } from "@/sim/genome";
+import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, CARD_BODY_SCALE, PRESET_CARDS, type Card } from "@/game/cards";
 import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
@@ -345,6 +345,7 @@ export class Game {
         cardPrereqMet(c, this.genome.traits) &&
         !cardRedundant(c, this.genome.traits),
       this.level, // 레벨이 오를수록 높은 등급이 더 자주 뜬다(rarityWeightsAtLevel)
+      this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
     );
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
     this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (무리 전체에 퍼지고, 새끼는 부모를 닮아 조금씩 달라집니다)`;
@@ -368,6 +369,7 @@ export class Game {
         cardPrereqMet(c, this.genome.traits) &&
         !cardRedundant(c, this.genome.traits),
       this.level, // 다시 뽑아도 같은 레벨 보정을 받는다
+      this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
     );
     this.draftCards = this.eraReward ? drawn.map((c) => boostCard(c, GAME.eraRewardBoost)) : drawn;
     this.onDraft?.(this.draftCards, this.preview);
@@ -376,6 +378,13 @@ export class Game {
   /** UI 표시용 — 지금 드래프트에서 "다시 뽑기"를 누를 수 있는가(열려 있고 횟수 남음, 프리셋 아님). */
   get canReroll(): boolean {
     return this.phase === "draft" && !this.firstChoice && this.rerollsLeft > 0;
+  }
+
+  /** 지금까지 고른 카드의 id→횟수 — drawCards 소프트 디듑에 넘겨 이미 고른 카드를 뜸하게 뽑는다. */
+  private pickedCounts(): Map<string, number> {
+    const m = new Map<string, number>();
+    for (const id of this.pickedCardIds) m.set(id, (m.get(id) ?? 0) + 1);
+    return m;
   }
 
   /** 디버그 표시용 — 지금 이 런에 반영된 메타 플레이어 레벨. */
@@ -750,6 +759,7 @@ export class Game {
         cardPrereqMet(c, this.genome.traits) &&
         !cardRedundant(c, this.genome.traits),
       this.level, // 시대 보상도 지금까지 키운 레벨의 보정을 받는다
+      this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
     );
     this.draftCards = drawn.map((c) => boostCard(c, GAME.eraRewardBoost));
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
@@ -851,37 +861,6 @@ function championName(g: Genome, conquered: boolean): string {
   return `${epithet}의 ${conquered ? "정복자" : "생존자"}`;
 }
 
-/**
- * 이 카드가 지금 종에게 무의미한가(드래프트에서 뺄지) — 가장 크게 올리는 형질(주 효과)이 이미 최대치라
- * 더 올려도 이득이 없으면 true. 예: 날개가 이미 비행 임계 이상이면 날개 카드는 순손해라 안 띄운다.
- * 날개(비행 임계)·수영(물전용 임계)은 임계 넘으면 무의미, 능력형(초음파·독·원거리)은 상한 100, 연속형은 200.
- * diet·대사는 방향/절충이라 늘 유효(제외 안 함).
- */
-function cardRedundant(card: Card, t: Traits): boolean {
-  // 강화 카드(전제 조건이 붙은 카드)는 그 능력이 **상한에 닿았을 때만** 무의미하다.
-  // 관문 카드와 규칙이 반대다 — 관문은 능력이 켜지면 쓸모없어지고, 강화는 켜져야 비로소 쓸모가 생긴다.
-  // (전제 미달은 cardPrereqMet 이 걸러 낸다.)
-  if (card.requiresTrait) {
-    const key = card.requiresTrait.key;
-    return t[key] >= TRAIT_CEILING[key];
-  }
-  let primary: keyof Traits | null = null;
-  let best = 0;
-  for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
-    const v = card.effects[key] ?? 0;
-    if (v > best) {
-      best = v;
-      primary = key;
-    }
-  }
-  if (!primary) return false;
-  const cur = t[primary];
-  if (primary === "wings") return cur >= SIM.flyThreshold; // 관문: 이미 날면 이 카드는 무의미
-  if (primary === "swimming") return cur >= SIM.aquaticOnlyThreshold; // 물 전용이 최대
-  if (primary === "echo" || primary === "venom" || primary === "ranged") return cur >= 100;
-  if (TRAIT_CEILING[primary] > 100) return cur >= TRAIT_CEILING[primary]; // 연속형 200 상한
-  return false;
-}
 
 /** 단계 종류별 길이(초) — 타임라인 진행·마커 계산용. */
 function stageDuration(kind: StageKind): number {

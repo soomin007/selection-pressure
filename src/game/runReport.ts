@@ -4,6 +4,7 @@
 
 import type { Genome, Traits } from "@/sim/genome";
 import type { DeathCause, DeathTally } from "@/sim/world";
+import { SIM } from "@/sim/params";
 
 /** 사망 원인 한글 라벨. */
 const DEATH_LABELS: Record<DeathCause, string> = {
@@ -79,6 +80,36 @@ export function describeSpecies(genome: Genome): string {
   }
   const noun = dietNoun(t.diet);
   return adjs.length > 0 ? `${adjs.join(" ")} ${noun}` : `균형 잡힌 ${noun}`;
+}
+
+/**
+ * 육식 사냥형(빌드) 판별 — 순수 육식(diet ≥ dietGrazeMax)일 때 켜지는 사냥법이 무엇인지 이름 붙인다.
+ * 잡식이 여러 테크(수영·날개…)로 갈리듯 육식도 어떤 보조 형질을 얹었나로 갈린다(속도=질주·무리=먹이나눔·
+ * 원거리=사수·공격=완력). 이걸 화면에 보여줘 "내가 무슨 사냥형인지" 알게 한다(사용자 지적: 구분이 안 보임).
+ *
+ * `active`: diet ≥ dietGrazeMax(70) 라야 사냥 특기(스퍼트·포만·먹이나눔)가 **실제로 켜진다.** diet 가 그 밑
+ * (잡식)이면 특기가 꺼져 있다 — "사냥 소질은 있지만 육식으로 더 기울어야 켜진다"를 알린다(식성 겹침 함정).
+ * 순수 초식(diet < dietHuntMin)은 사냥형이 아니다(빠른 초식은 그냥 잘 도망치는 것) → null.
+ */
+export interface HuntingBuild {
+  label: string;
+  active: boolean; // diet ≥ 70(육식)이라 사냥 특기가 켜져 있는가
+}
+export function huntingBuild(t: Traits): HuntingBuild | null {
+  if (t.diet < SIM.dietHuntMin) return null; // 순수 초식은 사냥형 아님
+  // 사냥 특기 후보 — 각 형질의 "특화 정도"(문턱 초과분). 가장 큰 것으로 유형을 정한다.
+  const cands: { label: string; spec: number }[] = [
+    { label: "질주형 사냥꾼", spec: t.speed - 62 }, // 빠른 추격(사냥 스퍼트)
+    { label: "무리 사냥꾼", spec: t.herding - SIM.packShareThreshold }, // 먹이 나눔(herding > 55)
+    { label: "원거리 사냥꾼", spec: t.ranged - SIM.rangedThreshold }, // 카이팅(ranged > 55)
+    { label: "완력 사냥꾼", spec: t.attack - 62 }, // 힘으로 제압
+  ];
+  cands.sort((a, b) => b.spec - a.spec);
+  const top = cands[0] as { label: string; spec: number };
+  const carnivore = t.diet >= SIM.dietGrazeMax;
+  if (top.spec > 0) return { label: top.label, active: carnivore };
+  if (carnivore) return { label: "대식 포식자", active: true }; // 특기 없이 순수 육식 = 포만·큰 사냥으로 산다
+  return null; // 잡식인데 두드러진 사냥 특기 형질도 없음 → 라벨 안 붙임
 }
 
 /** 대사 → 한온 적응 한 줄 (왜 추위/폭염에 죽었는지 연결). 중간 대사면 빈 문자열. */

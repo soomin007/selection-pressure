@@ -4,9 +4,9 @@ import { describe, it, expect } from "vitest";
 import { Game, type RunHistory } from "@/game/game";
 import { eraDifficulty } from "@/game/config";
 import { createBoss } from "@/sim/boss";
-import { CARD_BODY_SCALE, CARD_POOL, cardPrereqMet, drawCards, type Card } from "@/game/cards";
+import { CARD_BODY_SCALE, CARD_POOL, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
 import { Rng } from "@/sim/rng";
-import { defaultGenome, type Traits } from "@/sim/genome";
+import { defaultGenome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 import { debugSetMetaLevel } from "@/game/meta";
 import { debugResetAchievements, debugUnlockAchievement } from "@/game/achievements";
@@ -384,7 +384,7 @@ describe("날개 강화 카드의 전제 조건(드래프트 후보 필터)", ()
     let strong = 0;
     let gateway = 0;
     for (let i = 0; i < 3000; i++) {
-      const drawn = drawCards(rng, 3, (c) => cardPrereqMet(c, flyer.traits) && !isRedundant(c, flyer.traits), 7);
+      const drawn = drawCards(rng, 3, (c) => cardPrereqMet(c, flyer.traits) && !cardRedundant(c, flyer.traits), 7);
       if (drawn.some((c) => c.id === "strong_wings")) strong += 1;
       if (drawn.some((c) => c.id === "wings")) gateway += 1;
     }
@@ -393,8 +393,3 @@ describe("날개 강화 카드의 전제 조건(드래프트 후보 필터)", ()
   });
 });
 
-/** game.ts 의 cardRedundant 와 같은 규칙(테스트에서 필터를 재현). */
-function isRedundant(card: Card, t: Traits): boolean {
-  if (card.requiresTrait) return t[card.requiresTrait.key] >= 100;
-  return card.id === "wings" && t.wings >= SIM.flyThreshold;
-}

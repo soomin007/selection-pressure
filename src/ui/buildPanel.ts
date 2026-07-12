@@ -4,6 +4,7 @@
 import { TRAIT_KEYS, TRAIT_LABELS, TRAIT_CEILING, type Traits } from "@/sim/genome";
 import { ABILITY_KEYS, abilityLevel, abilityWord, traitColor } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { huntingBuild } from "@/game/runReport";
 
 export interface BuildData {
   headline: string; // "빠른 잡식성" 같은 종 한 줄 요약
@@ -52,6 +53,11 @@ export function createBuildPanel(): BuildPanel {
   headline.style.cssText =
     "color:var(--lime); font-family:var(--font-title); font-size:12.5px; margin-bottom:7px; word-break:keep-all;";
 
+  // 사냥형(육식 빌드) 줄 — 순수 육식이면 무슨 사냥법인지, 잡식이면 "육식이면 켜진다"를 알린다. 사냥형이
+  // 아니면 숨긴다. (사용자 지적: 육식 성향 구분이 안 보임 + diet<70 이면 사냥 특기가 조용히 꺼지는 함정.)
+  const huntLine = document.createElement("div");
+  huntLine.style.cssText = "font-size:11px; margin-bottom:7px; word-break:keep-all; display:none;";
+
   // 현재 형질값 readout — "내 종이 지금 얼마인지". 카드 누적 결과를 그대로 보여준다.
   const traitsLabel = document.createElement("div");
   traitsLabel.textContent = "현재 형질";
@@ -64,7 +70,7 @@ export function createBuildPanel(): BuildPanel {
   cardsLabel.style.cssText = "color:var(--faint); font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; margin:2px 0 5px;";
 
   const list = document.createElement("div");
-  body.append(headline, traitsLabel, traitsBox, cardsLabel, list);
+  body.append(headline, huntLine, traitsLabel, traitsBox, cardsLabel, list);
 
   // 레이아웃별 기본값: 데스크톱은 펼침(공간 여유), 모바일은 접힘(클러터 최소화). 탭으로 토글.
   let collapsed = document.body.dataset.layout !== "desktop";
@@ -84,6 +90,21 @@ export function createBuildPanel(): BuildPanel {
 
   const setData = (data: BuildData): void => {
     headline.textContent = data.headline;
+
+    // 사냥형 라벨 — 켜졌으면 초록으로 유형, 잡식이라 꺼졌으면 호박빛으로 "육식이면 켜짐" 안내.
+    const hunt = huntingBuild(data.traits);
+    if (!hunt) {
+      huntLine.style.display = "none";
+    } else {
+      huntLine.style.display = "block";
+      if (hunt.active) {
+        huntLine.textContent = `사냥형 · ${hunt.label}`;
+        huntLine.style.color = "var(--lime)";
+      } else {
+        huntLine.textContent = `${hunt.label} 소질 · 육식으로 기울면 특기가 켜집니다`;
+        huntLine.style.color = "var(--amber)";
+      }
+    }
 
     // 현재 형질값: 7개를 값+미니 막대로. 식성만 범주(초식/잡식/육식) 텍스트.
     traitsBox.replaceChildren();

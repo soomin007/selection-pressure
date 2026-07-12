@@ -46,7 +46,7 @@ export function createLobby(
     b.addEventListener("click", cb);
     return b;
   };
-  secondaryRow.append(linkBtn("대백과", onGlossary), linkBtn("해금", onLadder));
+  secondaryRow.append(linkBtn("대백과", onGlossary), linkBtn("진화 갈래", onLadder));
 
   const hint = document.createElement("div");
   hint.className = "lobby-hint";

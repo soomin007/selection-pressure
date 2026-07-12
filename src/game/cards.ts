@@ -90,6 +90,42 @@ export function cardPrereqMet(card: Card, traits: Traits): boolean {
   return traits[card.requiresTrait.key] >= card.requiresTrait.min;
 }
 
+/**
+ * 이 카드가 지금 종에게 무의미한가(드래프트에서 뺄지) — 가장 크게 올리는 형질(주 효과)이 이미 "쓸모의
+ * 상한"에 닿아 더 골라도 이득이 없으면 true. 손해/헛 카드가 드래프트에 반복해 뜨는 걸 막는다.
+ *
+ * 관문형(문턱만 넘으면 되는 능력)은 **문턱을 넘는 순간** 무의미해진다 — 값이 더 올라도 하는 일이 같다.
+ * 날개=비행 문턱, 수영=바다 먹이 문턱(swimThreshold). ⚠ 수영은 예전에 물전용 문턱(90)을 봤는데, 카드로
+ * 수영은 89 까지만 오르게 막혀 있어(applyCard) 90 에 영영 못 닿아 필터가 안 걸렸다 — 게다가 수영값은
+ * swimThreshold(65) 위에선 크기가 아무 효과도 없다(전부 임계 비교뿐). 그래서 날개와 똑같이 "문턱 넘으면
+ * 그만"으로 고친다(물갈퀴·지느러미가 이미 헤엄치는 종에게 또 뜨던 버그).
+ * 능력형(초음파·독·원거리)은 상한 100, 연속형은 상한(200). diet·대사는 방향/절충이라 늘 유효(제외 안 함).
+ * (전제 미달 강화 카드는 cardPrereqMet 이 걸러 낸다.)
+ */
+export function cardRedundant(card: Card, t: Traits): boolean {
+  // 강화 카드(전제 조건이 붙은 카드)는 그 능력이 **상한에 닿았을 때만** 무의미하다.
+  if (card.requiresTrait) {
+    const key = card.requiresTrait.key;
+    return t[key] >= TRAIT_CEILING[key];
+  }
+  let primary: keyof Traits | null = null;
+  let best = 0;
+  for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
+    const v = card.effects[key] ?? 0;
+    if (v > best) {
+      best = v;
+      primary = key;
+    }
+  }
+  if (!primary) return false;
+  const cur = t[primary];
+  if (primary === "wings") return cur >= SIM.flyThreshold; // 관문: 이미 날면 무의미
+  if (primary === "swimming") return cur >= SIM.swimThreshold; // 관문: 이미 헤엄치면 무의미(값은 문턱 위서 무효)
+  if (primary === "echo" || primary === "venom" || primary === "ranged") return cur >= 100;
+  if (TRAIT_CEILING[primary] > 100) return cur >= TRAIT_CEILING[primary]; // 연속형 200 상한
+  return false;
+}
+
 // 런 첫 드래프트 — 시작 프리셋(빌드 방향)을 정한다. 식성(set diet) + 특화 형질 두엇.
 // 식성만 고르던 것을 "어떤 종으로 시작할지"로 넓혀 첫 판의 방향을 또렷하게 한다(드래프트로 계속 발전).
 // 시작 프리셋 — 정체성 형질을 크게 벌려 "이 종이 뭘 잘하는지"가 수치·외형에서 뚜렷이 드러난다.
@@ -589,24 +625,38 @@ export function boostCard(card: Card, boost: number): Card {
   return { ...card, effects };
 }
 
+// 이미 고른 카드의 등장 가중치를 한 번 고를 때마다 이 배수로 줄인다(소프트 디듑). 매번 "보던 것만" 뜨는
+// 반복을 깨서 새 카드를 섞는다 — 스택은 여전히 가능하되(0 이 안 됨) 눈에 띄게 뜸해진다. count 번 고른 카드는
+// PICK_DECAY^count 배. 결정론: pickedCounts 는 그동안의 선택에서 결정론적으로 나온다(시드 무관).
+const PICK_DECAY = 0.5;
+
 /**
  * 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). allow 로 카드(메타 언락·프리셋 적합)를 걸러낸다.
  * 희귀도 가중치를 반영한 비복원 추출 — 흔한 카드가 자주, 전설이 드물게 뜬다. 카드에 붙는 희귀도 배지가
  * 실제 등장 빈도와 일치한다. `level`(런 레벨=세대)이 오르면 높은 등급이 더 자주 나온다.
+ * `pickedCounts`(id→고른 횟수)를 주면 이미 고른 카드를 뜸하게 뽑는다(반복 완화, PICK_DECAY).
  */
-export function drawCards(rng: Rng, n: number, allow?: (c: Card) => boolean, level = 1): Card[] {
+export function drawCards(
+  rng: Rng,
+  n: number,
+  allow?: (c: Card) => boolean,
+  level = 1,
+  pickedCounts?: ReadonlyMap<string, number>,
+): Card[] {
   const pool = (allow ? CARD_POOL.filter(allow) : CARD_POOL).slice();
   const weights = rarityWeightsAtLevel(level);
+  const weightOf = (c: Card): number =>
+    weights[cardRarity(c)] * PICK_DECAY ** (pickedCounts?.get(c.id) ?? 0);
   const count = Math.min(n, pool.length);
   const out: Card[] = [];
   for (let k = 0; k < count; k++) {
     let total = 0;
-    for (const c of pool) total += weights[cardRarity(c)];
+    for (const c of pool) total += weightOf(c);
     // 룰렛 휠 — rng.unit() 한 번으로 한 장. 부동소수 오차로 끝까지 못 고르면 마지막 장을 집는다.
     let r = rng.unit() * total;
     let idx = pool.length - 1;
     for (let i = 0; i < pool.length; i++) {
-      r -= weights[cardRarity(pool[i] as Card)];
+      r -= weightOf(pool[i] as Card);
       if (r <= 0) {
         idx = i;
         break;

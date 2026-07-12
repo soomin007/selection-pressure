@@ -14,6 +14,7 @@ import {
   rarityOdds,
   rarityWeightsAtLevel,
   cardPrereqMet,
+  cardRedundant,
 } from "@/game/cards";
 import { defaultGenome, type Traits } from "@/sim/genome";
 import { SIM } from "@/sim/params";
@@ -425,5 +426,75 @@ describe("날개 계열 — 관문과 강화가 실제로 다르다", () => {
       expect(gateways).not.toContain(card.id);
     }
     expect(CARD_POOL.find((c) => c.id === "wings")?.requiresTrait).toBeUndefined();
+  });
+});
+
+describe("무의미 카드 필터(cardRedundant)", () => {
+  const withSwim = (v: number): Traits => {
+    const t = defaultGenome().traits;
+    t.swimming = v;
+    return t;
+  };
+  const card = (id: string): (typeof CARD_POOL)[number] => {
+    const c = CARD_POOL.find((x) => x.id === id);
+    if (!c) throw new Error(id);
+    return c;
+  };
+
+  it("수영 문턱을 넘으면 지느러미·물갈퀴는 무의미해진다(이미 헤엄치는데 또 뜨던 버그)", () => {
+    // 예전엔 물전용 문턱(90)을 봤는데, 카드로 수영은 89 까지만 오르게 막혀 있어(applyCard) 90 에 영영
+    // 못 닿아 필터가 안 걸렸다 — 게다가 수영값은 문턱(65) 위에선 아무 효과도 없다(전부 임계 비교뿐).
+    expect(cardRedundant(card("fins"), withSwim(SIM.swimThreshold - 1))).toBe(false); // 아직 못 헤엄침 → 유효
+    expect(cardRedundant(card("fins"), withSwim(SIM.swimThreshold))).toBe(true); // 이미 헤엄침 → 무의미
+    expect(cardRedundant(card("webbed"), withSwim(SIM.aquaticOnlyThreshold - 1))).toBe(true); // 카드 상한(89)서도 무의미
+  });
+
+  it("날개는 비행 문턱을 넘으면 무의미(수영과 같은 관문 규칙)", () => {
+    const t = defaultGenome().traits;
+    t.wings = SIM.flyThreshold - 1;
+    expect(cardRedundant(card("wings"), t)).toBe(false);
+    t.wings = SIM.flyThreshold;
+    expect(cardRedundant(card("wings"), t)).toBe(true);
+  });
+
+  it("식성·대사 카드는 방향/절충이라 늘 유효(제외 안 함)", () => {
+    const t = defaultGenome().traits;
+    t.diet = 95;
+    expect(cardRedundant(card("predator"), t)).toBe(false); // 이미 육식이어도 diet 는 늘 유효
+    t.metabolism = 95;
+    expect(cardRedundant(card("hotblood"), t)).toBe(false); // 대사도 늘 유효
+  });
+
+  it("연속 형질(속도 등)은 상한 200 에 닿아야 무의미", () => {
+    const t = defaultGenome().traits;
+    t.speed = 150;
+    expect(cardRedundant(card("swift"), t)).toBe(false); // 아직 상한 아래
+    t.speed = 200;
+    expect(cardRedundant(card("swift"), t)).toBe(true); // 상한
+  });
+});
+
+describe("반복 완화(소프트 디듑)", () => {
+  const commons = ["swift", "keen", "fertile", "herd", "fangs", "pack_hunt"];
+  const allow = (c: { id: string }): boolean => commons.includes(c.id);
+
+  it("이미 여러 장 고른 카드는 뚜렷이 덜 뜬다(안 고른 같은 등급 카드보다)", () => {
+    const picked = new Map([["swift", 3]]); // swift 를 세 번 골랐다
+    let swiftSeen = 0;
+    let keenSeen = 0;
+    const rng = new Rng("dedup");
+    for (let i = 0; i < 4000; i++) {
+      const id = (drawCards(rng, 1, allow, 1, picked)[0] as { id: string }).id;
+      if (id === "swift") swiftSeen += 1;
+      else if (id === "keen") keenSeen += 1;
+    }
+    expect(swiftSeen).toBeGreaterThan(0); // 0 이 아니다 — 스택은 여전히 가능(뜸할 뿐)
+    expect(swiftSeen * 2).toBeLessThan(keenSeen); // 고른 swift 가 안 고른 keen 보다 뚜렷이 덜
+  });
+
+  it("pickedCounts 가 없거나 비면 기존과 동일(결정론·기존 동작 보존)", () => {
+    const a = drawCards(new Rng("s"), 3, undefined, 1).map((c) => c.id);
+    const b = drawCards(new Rng("s"), 3, undefined, 1, new Map()).map((c) => c.id);
+    expect(a).toEqual(b);
   });
 });

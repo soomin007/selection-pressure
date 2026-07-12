@@ -40,7 +40,7 @@ export function createUnlockLadder(onClose: () => void): UnlockLadder {
     "overflow-y:auto; user-select:none;";
 
   const title = document.createElement("div");
-  title.textContent = "해금 사다리";
+  title.textContent = "진화 갈래";
   title.style.cssText =
     "color:#ffe08a; font-family:'Black Han Sans',sans-serif; font-size:26px; letter-spacing:0.02em; margin-top:6px;";
 
