@@ -57,10 +57,11 @@ async function boot(): Promise<void> {
   if (!mount) throw new Error("#app 마운트 지점을 찾을 수 없습니다.");
   mount.appendChild(app.canvas);
 
-  // 월드는 비율 맞춰 스케일·중앙배치(레터박스). HUD 는 스케일 밖(화면 픽셀)이라 글자가 선명.
+  // 월드는 비율 맞춰 스케일·중앙배치. HUD 는 스케일 밖(화면 픽셀)이라 글자가 선명. logical(=layout)을 참조로
+  // 넘겨 fit() 이 매번 최신 논리 크기를 읽는다 — 아래 relayout 이 화면 비율에 맞춰 갱신하면 레터박스가 안 남는다.
   const root = new Container();
   app.stage.addChild(root);
-  setupViewport(app, root, layout.width, layout.height);
+  const viewport = setupViewport(app, root, layout);
 
   const view = new WorldView(app.renderer);
   const effects = new Effects();
@@ -68,10 +69,25 @@ async function boot(): Promise<void> {
   const hud = createHudPanel(); // 상단 HUD — 캔버스 위 DOM 오버레이(정보 카드·타임라인·범례)
   const highlights = new Highlights();
   root.addChild(view.container);
-  // 월드를 논리 사각형으로 클리핑 — 가장자리 생물이 레터박스 밖으로 삐져나오지 않게.
+  // 월드를 논리 사각형으로 클리핑 — 가장자리 생물이 화면 밖으로 삐져나오지 않게.
   const worldMask = new Graphics().rect(0, 0, layout.width, layout.height).fill(0xffffff);
   root.addChild(worldMask);
   view.container.mask = worldMask;
+
+  // 화면 리사이즈(모바일 주소창 접힘/펴짐 등) 때 논리 크기를 현재 화면 비율에 맞춰 갱신한다 → 레터박스(검은 띠)
+  // 없이 꽉 채운다. 월드(game.*)는 부팅 크기 그대로 두고 뷰포트(layout.*)만 반응한다 — 카메라(setCamera)가 매
+  // 프레임 뷰포트 크기를 인자로 받으므로, 논리 높이만 바꾸면 카메라가 화면 비율에 맞는 창을 보여준다(월드 재생성 X).
+  // (부팅 때 한 번만 잡던 게 원인: 주소창이 사라지며 화면이 길어지면 낡은 비율이라 위아래 띠가 생겼다.)
+  const relayout = (): void => {
+    const sw = app.screen.width;
+    const sh = app.screen.height;
+    if (sw <= 0 || sh <= 0) return;
+    if (layout.isDesktop) layout.width = Math.max(1, Math.round(layout.height * (sw / sh)));
+    else layout.height = Math.max(1, Math.round(layout.width * (sh / sw)));
+    worldMask.clear().rect(0, 0, layout.width, layout.height).fill(0xffffff);
+    viewport.fit();
+  };
+  app.renderer.on("resize", relayout);
   app.stage.addChild(highlights.container);
   const minimap = new Minimap(); // 큰 맵 조망 — 화면 픽셀 좌표(카메라 변환 밖, 모서리 고정)
   app.stage.addChild(minimap.container);
