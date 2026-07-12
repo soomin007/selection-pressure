@@ -24,6 +24,7 @@ import {
   chipColor,
   dominantTrait,
   traitColor,
+  traitWord,
   NEUTRAL_TRAITS,
   type EffectChip,
 } from "@/ui/traitDisplay";
@@ -328,7 +329,7 @@ export function createDraftPanel(
       }
 
       const val = el("span", "draft-stat-val");
-      val.textContent = String(value);
+      val.textContent = traitWord(key, value); // 날값 대신 단계 단어(델타 +N 은 아래에서 따로 보여준다)
       if (delta !== 0) {
         const d = el("b");
         d.textContent = delta > 0 ? `+${delta}` : String(delta);

@@ -2,7 +2,7 @@
 // 종 한 줄 요약 + 현재 형질값(7개) + 고른 카드 목록. 캔버스 위 HTML 오버레이(인라인 스타일, 터치 통과).
 
 import { TRAIT_KEYS, TRAIT_LABELS, TRAIT_CEILING, type Traits } from "@/sim/genome";
-import { ABILITY_KEYS, abilityLevel, abilityWord, traitColor } from "@/ui/traitDisplay";
+import { ABILITY_KEYS, abilityLevel, traitColor, traitWord } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { huntingBuild } from "@/game/runReport";
 
@@ -10,11 +10,6 @@ export interface BuildData {
   headline: string; // "빠른 잡식성" 같은 종 한 줄 요약
   traits: Traits; // 현재 게놈의 형질값(카드 누적 결과) — "내 종이 지금 얼마인지"
   cards: string[]; // 이번 런에서 고른 카드 이름들
-}
-
-/** 식성값을 쉬운 범주로. (형질 도감과 같은 경계) */
-function dietWord(v: number): string {
-  return v < 35 ? "초식" : v > 70 ? "육식" : "잡식";
 }
 
 export interface BuildPanel {
@@ -120,8 +115,8 @@ export function createBuildPanel(): BuildPanel {
       name.textContent = TRAIT_LABELS[key];
       name.style.cssText = "color:var(--sub);";
       const val = document.createElement("span");
-      // 능력형=3단계 단어, 식성=초식/잡식/육식, 나머지=숫자(상한 200 형질은 100 초과도 그대로).
-      val.textContent = isAbility ? abilityWord(lvl) : key === "diet" ? dietWord(v) : String(Math.round(v));
+      // 모든 형질을 단계 단어로 통일 — 날값(속도 68) 대신 약함/보통/강함/막강/최강(능력형·식성·대사는 각 규칙).
+      val.textContent = traitWord(key, v);
       val.style.cssText = "color:var(--ink); font-family:var(--font-mono); font-variant-numeric:tabular-nums;";
       top.append(name, val);
       row.appendChild(top);

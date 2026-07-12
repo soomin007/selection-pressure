@@ -3,7 +3,7 @@
 // 캔버스 위 HTML 오버레이(buildPanel 과 같은 방식). 본문은 터치 통과, 닫기 버튼만 누를 수 있다.
 
 import { TRAIT_KEYS, TRAIT_LABELS, type Traits, type Genome } from "@/sim/genome";
-import { traitColor } from "@/ui/traitDisplay";
+import { traitColor, traitWord } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { makeCreatureTexture } from "@/render/worldView";
 import type { Renderer } from "pixi.js";
@@ -34,11 +34,6 @@ export interface CreatureCardCallbacks {
   onPrev: () => void; // ‹ 같은 무리의 이전 개체로
   onNext: () => void; // › 같은 무리의 다음 개체로
   onFavorite: () => void; // ★ 이 개체를 즐겨찾기(단골)로 고정/해제
-}
-
-/** 식성값 → 쉬운 범주(형질 도감·빌드 패널과 같은 경계). */
-function dietWord(v: number): string {
-  return v < 0.35 ? "초식" : v > 0.7 ? "육식" : "잡식";
 }
 
 /** 기운 정도를 한 단어로(즉각적 시각 피드백 — 색과 함께). 쉬운 상태어 하나. */
@@ -210,7 +205,7 @@ export function createCreatureCard(renderer: Renderer, cb: CreatureCardCallbacks
     for (const key of TRAIT_KEYS) {
       const v = data.traits[key];
       const valEl = traitVals.get(key);
-      if (valEl) valEl.textContent = key === "diet" ? dietWord(v) : String(Math.round(v)); // 0~100 자연수
+      if (valEl) valEl.textContent = traitWord(key, v); // 날값 대신 단계 단어(모든 형질 통일)
       const fillEl = traitFills.get(key);
       if (fillEl) fillEl.style.width = Math.round(Math.max(0, Math.min(100, v))) + "%"; // 형질 0~100
     }

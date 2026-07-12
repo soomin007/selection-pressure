@@ -6,7 +6,7 @@ import { defaultGenome, clampGenome, TRAIT_KEYS, TRAIT_LABELS, type Genome } fro
 import { applyCard, type Card } from "@/game/cards";
 import { describeSpecies } from "@/game/runReport";
 import { makeCreatureTexture } from "@/render/worldView";
-import { ABILITY_KEYS, abilityLevel, abilityWord, traitColor } from "@/ui/traitDisplay";
+import { ABILITY_KEYS, abilityLevel, traitColor, traitWord } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import type { Renderer } from "pixi.js";
 
@@ -268,8 +268,8 @@ export function createPresetPanel(
       label.textContent = TRAIT_LABELS[key];
       label.style.cssText = `font-size:11px; color:${strong ? "var(--ink)" : "var(--sub)"};`;
       const val = document.createElement("span");
-      // 능력형=3단계 단어, 식성=초식/잡식/육식, 나머지=숫자.
-      val.textContent = isAbility ? abilityWord(lvl) : key === "diet" ? dietWord(v).slice(0, 2) : String(Math.round(v));
+      // 모든 형질을 단계 단어로 통일(날값 대신) — 설계도·개체 카드와 같은 규칙.
+      val.textContent = traitWord(key, v);
       val.style.cssText =
         `font-family:var(--font-mono); font-size:11px; font-variant-numeric:tabular-nums; color:${strong ? "var(--ink)" : "var(--sub)"};`;
       top.append(label, val);
