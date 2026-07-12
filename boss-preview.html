@@ -11,14 +11,14 @@
     </style>
   </head>
   <body>
-    <div class="hint">보스 5종 · 각 행: 오른쪽(→) / 아래(↓) / 왼위(↖) 회전 — 회전 안전·통일감 시각 검증용(dev 전용, 미배포)</div>
+    <div class="hint">보스 8종(땅 5 · 하늘 2 · 물 1) · 각 행: 오른쪽(→) / 아래(↓) / 왼위(↖) 회전 — 회전 안전·통일감 시각 검증용(dev 전용, 미배포)</div>
     <div id="app"></div>
     <script type="module">
       import { Application, Graphics, Text } from "pixi.js";
       import { drawBossShape } from "/src/render/worldView.ts";
 
       const W = 820;
-      const H = 660;
+      const H = 1010;
       const app = new Application();
       await app.init({ width: W, height: H, background: 0x36432a, antialias: true, resolution: 2, autoDensity: true });
       document.getElementById("app").appendChild(app.canvas);
@@ -28,11 +28,14 @@
 
       // HORDE_COLORS(worldView) 와 같은 색으로 — 실제 게임에서 그려지는 그대로.
       const bosses = [
-        { type: "chaser", color: 0xff4028, label: "chaser 빠른 추격자" },
-        { type: "swarm", color: 0xff7a2a, label: "swarm 사나운 무리" },
-        { type: "raider", color: 0xff2e5a, label: "raider 약탈자" },
-        { type: "isolation", color: 0x33c0d8, label: "isolation 외톨이 사냥꾼" },
-        { type: "stalker", color: 0xc060d0, label: "stalker 그림자 매복자" },
+        { type: "chaser", color: 0xff4028, label: "[땅] chaser 질주하는 추격자" },
+        { type: "swarm", color: 0xff7a2a, label: "[땅] swarm 사나운 무리" },
+        { type: "raider", color: 0xff2e5a, label: "[땅] raider 약탈자 무리" },
+        { type: "isolation", color: 0x33c0d8, label: "[땅] isolation 외톨이 사냥꾼" },
+        { type: "stalker", color: 0xc060d0, label: "[땅] stalker 그림자 매복자" },
+        { type: "raptor", color: 0xb5642a, label: "[하늘] raptor 하늘의 사냥꾼" },
+        { type: "hornet", color: 0xffc814, label: "[하늘] hornet 성난 말벌 떼" },
+        { type: "shark", color: 0xb0bcc8, label: "[물] shark 굶주린 상어" },
       ];
       // 회전 안전성 확인용 세 방향(오른쪽·아래·왼위).
       const headings = [

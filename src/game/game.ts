@@ -13,7 +13,7 @@ import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
-import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, BOSS_TYPES, type BossType } from "@/sim/boss";
+import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, bossEligible, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { buildRunReport } from "@/game/runReport";
 
 export type Phase = "lobby" | "draft" | "watch" | "result";
@@ -465,7 +465,7 @@ export class Game {
     if (this.secondsLeft > GAME.threatPreviewLead) return null;
     const next = SCHEDULE[this.stageIndex + 1];
     if (next === "boss") {
-      const bt = this.bossQueue[0];
+      const bt = this.peekBossType(); // 실제로 나올 보스(무의미 보스는 건너뛴 결과) — 예고가 진실이어야 한다
       if (bt) return { title: `곧 ${bossName(bt)}!`, sub: bossCounter(bt) };
       return { title: "곧 위협이 닥칩니다", sub: "" };
     }
@@ -563,6 +563,34 @@ export class Game {
   }
 
   /**
+   * 이번 관문에 실제로 나올 보스 — 큐 앞에서부터 **내 종이 실제로 걸리는** 첫 보스를 찾는다.
+   * 층위(하늘/땅/물)가 안 겹치는 보스는 나와봐야 아무 일도 안 일어나 "그냥 통과"가 된다(나는 종에게
+   * 땅의 치타, 육상 종에게 물속 상어). 그런 보스는 건너뛰고 내 종이 실제로 쫓기는 보스를 붙인다.
+   * 큐에는 항상 독 안개(전 층위)가 있어 반드시 하나는 찾는다.
+   * 예고(peek)와 실제(take)가 같은 판정을 써야 "곧 X!" 예고가 거짓말이 되지 않는다.
+   */
+  private eligibleBossIndex(): number {
+    return this.bossQueue.findIndex((bt) =>
+      bossEligible(bt, this.genome.traits, this.world.terrain, this.width, this.height),
+    );
+  }
+
+  /** 다음에 나올 보스(예고용 — rng·상태 불변 순수 조회). */
+  private peekBossType(): BossType | undefined {
+    const i = this.eligibleBossIndex();
+    return i < 0 ? undefined : this.bossQueue[i];
+  }
+
+  /** 다음 보스를 큐에서 꺼낸다(한 런에 같은 보스는 두 번 안 나온다). */
+  private takeBossType(): BossType {
+    const i = this.eligibleBossIndex();
+    if (i < 0) return "poison"; // 큐가 다 소진되면 전역 시련(층위 무관 — 누구에게나 통한다)
+    const bt = this.bossQueue[i] as BossType;
+    this.bossQueue.splice(i, 1);
+    return bt;
+  }
+
+  /**
    * 단계 시작 — 위협(보스/대멸종)을 직접 정한다. 하이브리드: 단계 전환에는 드래프트가 붙지 않고(형질은
    * 레벨업으로만), 위협만 흐른다. 예고(preview)는 stageLabel 과 함께 main 이 하이라이트로 띄운다.
    */
@@ -572,7 +600,7 @@ export class Game {
     const kind = this.currentKind();
     const diff = eraDifficulty(this.era); // 시대별 위협 강도 배율(era 0 = 1.0)
     if (kind === "boss") {
-      const bt = this.bossQueue.shift() ?? this.stageRng.pick(BOSS_TYPES);
+      const bt = this.takeBossType();
       this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff);
       // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;

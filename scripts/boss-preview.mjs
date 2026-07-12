@@ -35,7 +35,7 @@ let exitCode = 1;
 try {
   await waitFor(URL, 20000);
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 860, height: 720 }, deviceScaleFactor: 2 });
+  const page = await browser.newPage({ viewport: { width: 860, height: 1070 }, deviceScaleFactor: 2 });
   const errs = [];
   page.on("pageerror", (e) => errs.push("JS: " + e.message));
 

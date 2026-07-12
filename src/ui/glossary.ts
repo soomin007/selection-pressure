@@ -101,6 +101,12 @@ const SVG = {
     '<svg viewBox="0 0 140 90"><circle cx="34" cy="40" r="6" fill="#9a7ad6"/><circle cx="48" cy="46" r="6" fill="#9a7ad6"/><circle cx="40" cy="53" r="6" fill="#9a7ad6"/><circle cx="100" cy="46" r="8" fill="#9a7ad6"/><polygon points="120,46 108,40 108,52" fill="#ff5535"/></svg>',
   stalker:
     '<svg viewBox="0 0 140 90"><path d="M16 72 Q28 40 48 54 Q56 34 74 52 Q88 36 104 56 Q120 48 124 72 Z" fill="#2f5a36"/><circle cx="58" cy="52" r="4.5" fill="#ffd27a"/><circle cx="84" cy="54" r="4.5" fill="#ffd27a"/><circle cx="58" cy="52" r="2" fill="#1a1008"/><circle cx="84" cy="54" r="2" fill="#1a1008"/></svg>',
+  raptor:
+    '<svg viewBox="0 0 140 90"><ellipse cx="86" cy="74" rx="20" ry="6" fill="#0a1408" opacity="0.3"/><path d="M70 34 Q42 24 18 42 Q46 42 62 50 Z" fill="#e0a020" stroke="#5a3a04" stroke-width="2"/><path d="M70 34 Q98 24 122 42 Q94 42 78 50 Z" fill="#e0a020" stroke="#5a3a04" stroke-width="2"/><ellipse cx="70" cy="44" rx="9" ry="19" fill="#c08018" stroke="#5a3a04" stroke-width="2"/><polygon points="70,18 64,32 76,32" fill="#ffd86a" stroke="#5a3a04" stroke-width="1.5"/></svg>',
+  hornet:
+    '<svg viewBox="0 0 140 90"><ellipse cx="62" cy="28" rx="20" ry="9" fill="#ffffff" opacity="0.4" stroke="#241a06" stroke-width="1"/><ellipse cx="62" cy="62" rx="20" ry="9" fill="#ffffff" opacity="0.4" stroke="#241a06" stroke-width="1"/><line x1="18" y1="45" x2="34" y2="45" stroke="#241a06" stroke-width="4" stroke-linecap="round"/><ellipse cx="56" cy="45" rx="24" ry="15" fill="#ffc814" stroke="#241a06" stroke-width="2"/><rect x="42" y="33" width="7" height="24" fill="#241a06"/><rect x="58" y="33" width="7" height="24" fill="#241a06"/><circle cx="88" cy="45" r="11" fill="#241a06"/><circle cx="106" cy="45" r="9" fill="#ffc814" stroke="#241a06" stroke-width="2"/></svg>',
+  shark:
+    '<svg viewBox="0 0 140 90"><rect x="10" y="14" width="120" height="62" rx="8" fill="#2a6a8a" opacity="0.35"/><polygon points="22,45 42,30 39,45 42,60" fill="#8a97a4" stroke="#3a4652" stroke-width="1.5"/><polygon points="66,36 84,36 75,20" fill="#8a97a4" stroke="#3a4652" stroke-width="1.5"/><ellipse cx="76" cy="45" rx="34" ry="11" fill="#b0bcc8" stroke="#3a4652" stroke-width="2"/><polygon points="112,45 96,38 96,52" fill="#2a323c"/><circle cx="92" cy="41" r="2.6" fill="#1a2028"/></svg>',
   cold:
     '<svg viewBox="0 0 140 90"><rect x="10" y="14" width="120" height="62" rx="8" fill="#3a6cff" opacity="0.4"/><g stroke="#d6e6ff" stroke-width="2.5" stroke-linecap="round"><line x1="70" y1="26" x2="70" y2="64"/><line x1="51" y1="45" x2="89" y2="45"/><line x1="57" y1="32" x2="83" y2="58"/><line x1="83" y1="32" x2="57" y2="58"/></g></svg>',
   heat:
@@ -228,12 +234,13 @@ const SECTIONS: readonly Section[] = [
       {
         term: "날개",
         svg: SVG.wings,
-        desc: "날아서 산과 바다를 넘고 산 위의 고산 먹이를 먹습니다. 지상 종은 산을 못 넘어 못 먹는 무경쟁 틈새입니다. 높이 날아 시야도 넓지만, 계속 날갯짓하느라 배가 빨리 고픕니다.",
+        desc: "날아서 산과 바다를 넘고 산 위의 고산 먹이를 먹습니다. 지상 종은 산을 못 넘어 못 먹는 무경쟁 틈새입니다. 높이 날아 시야도 넓지만, 계속 날갯짓하느라 배가 빨리 고픕니다. 그리고 늘 공중에 떠 있어서 땅에서 사냥하는 보스는 손도 못 댑니다.",
         rows: [
           { k: "65 미만 (기본 0)", v: "못 낢 (산·바다에 막힘)", base: true },
           { k: "65 이상", v: "산·물을 날아 넘고 고산 먹이 (무경쟁 틈새)" },
+          { k: "65 이상", v: "땅 보스가 못 잡음 — 대신 하늘 보스가 노린다" },
         ],
-        note: "하늘 개척자 프리셋이나 날개·튼튼한 날개 카드로 켭니다. 수영(바다)의 하늘 대칭입니다.",
+        note: "하늘 개척자 프리셋이나 날개·튼튼한 날개 카드로 켭니다. 수영(바다)의 하늘 대칭입니다. 땅 보스를 피하는 대신 하늘의 사냥꾼·말벌 떼가 찾아옵니다 — 공짜가 아닙니다.",
       },
       {
         term: "독침",
@@ -383,14 +390,21 @@ const SECTIONS: readonly Section[] = [
   },
   {
     title: "위협 도감",
-    intro: "보스는 버티기 관문이고, 대멸종은 마지막 시험입니다. 각자 약점(키우면 유리한 형질)이 있습니다.",
+    intro:
+      "보스는 버티기 관문이고, 대멸종은 마지막 시험입니다. 각자 약점(키우면 유리한 형질)이 있습니다.\n" +
+      "보스마다 사냥하는 자리가 다릅니다. 땅 짐승은 땅 위만 노려서, 날개를 키워 하늘로 오르면 손도 못 댑니다. " +
+      "대신 하늘에는 하늘의 사냥꾼이 있고, 물에는 상어가 있습니다. 어디로 도망칠 수 있는지가 곧 무기입니다. " +
+      "독 안개만은 온 땅을 덮어 하늘로도 물로도 피할 수 없습니다.",
     entries: [
-      { term: "빠른 추격자", svg: SVG.chaser, desc: "아주 빠르게 쫓아와 닿으면 잡아먹습니다.", weak: "속도" },
-      { term: "사나운 무리", svg: SVG.swarm, desc: "쉴 새 없이 개체를 하나씩 솎아냅니다.", weak: "번식력과 많은 수" },
-      { term: "독 안개", svg: SVG.poison, desc: "사방의 공기에 독이 퍼져 에너지를 빨아갑니다. 피할 수 없습니다.", weak: "낮은 대사" },
-      { term: "약탈자", svg: SVG.raider, desc: "사방에서 달려들어 약한 개체부터 쓰러뜨립니다.", weak: "공격력" },
-      { term: "외톨이 사냥꾼", svg: SVG.isolation, desc: "무리에서 떨어진 외톨이를 노려 잡아갑니다.", weak: "무리 성향" },
-      { term: "그림자 매복자", svg: SVG.stalker, desc: "수풀에 숨어 있다 덮칩니다. 미리 알아채지 못한 개체부터 당합니다.", weak: "시야 (넓을수록 일찍 보고 피함)" },
+      { term: "질주하는 추격자 (땅)", svg: SVG.chaser, desc: "아주 빠르게 쫓아와 닿으면 잡아먹습니다. 땅 위만 달려서, 날거나 물에 든 개체는 못 건드립니다.", weak: "속도" },
+      { term: "사나운 무리 (땅)", svg: SVG.swarm, desc: "떼로 몰려들어 닿는 개체를 물어뜯습니다. 땅 위만 기어옵니다.", weak: "번식력과 많은 수" },
+      { term: "약탈자 무리 (땅)", svg: SVG.raider, desc: "뿔 달린 짐승 떼가 달려들어 약한 개체부터 들이받습니다. 땅 위만 달립니다.", weak: "공격력" },
+      { term: "외톨이 사냥꾼 (땅)", svg: SVG.isolation, desc: "늑대가 무리에서 떨어진 외톨이를 노려 잡아갑니다. 땅 위만 달립니다.", weak: "무리 성향" },
+      { term: "그림자 매복자 (땅)", svg: SVG.stalker, desc: "표범이 수풀에 숨어 있다 덮칩니다. 수풀 안에서는 시야가 안 통해 미리 못 알아챕니다.", weak: "시야 (넓을수록 일찍 보고 피함)" },
+      { term: "하늘의 사냥꾼 (하늘)", svg: SVG.raptor, desc: "큰 새가 하늘을 돌다 내리꽂혀 낚아챕니다. 땅에서는 수풀에 숨으면 하늘에서 안 보입니다. 물속만은 못 건드립니다.", weak: "시야 (그리고 땅에서는 수풀 엄폐)" },
+      { term: "성난 말벌 떼 (하늘)", svg: SVG.hornet, desc: "말벌 떼가 하늘에서 몰려와 쏘아댑니다. 맞서 싸울 수 없어 빠르게 벗어나야 합니다.", weak: "속도" },
+      { term: "굶주린 상어 (물)", svg: SVG.shark, desc: "물속을 도는 상어가 헤엄치는 개체를 삼킵니다. 뭍은 건드리지 못해, 물 밖으로 나가면 안전합니다.", weak: "시야 (일찍 보고 뭍으로 달아남)" },
+      { term: "독 안개 (전역)", svg: SVG.poison, desc: "사방의 공기에 독이 퍼져 에너지를 빨아갑니다. 하늘로도 물로도 피할 수 없습니다.", weak: "낮은 대사" },
       { term: "혹독한 추위", svg: SVG.cold, desc: "혹독한 추위가 닥쳐 얼어 죽습니다.", weak: "높은 대사 (뜨거운 피)" },
       { term: "폭염", svg: SVG.heat, desc: "불볕더위에 타 죽습니다.", weak: "낮은 대사" },
       { term: "대가뭄", svg: SVG.famine, desc: "먹이가 다시 자라지 않습니다.", weak: "낮은 대사와 많은 수" },
@@ -736,7 +750,9 @@ export function createGlossary(): Glossary {
     if (sec.intro) {
       const intro = document.createElement("div");
       intro.textContent = sec.intro;
-      intro.style.cssText = "color:var(--sub); font-size:12.5px; line-height:1.5; margin:0 2px 8px;";
+      // pre-line: 인트로에 넣은 줄바꿈(\n)이 실제 줄바꿈으로 보인다(textContent 는 기본적으로 공백으로 뭉갠다).
+      intro.style.cssText =
+        "color:var(--sub); font-size:12.5px; line-height:1.5; margin:0 2px 8px; white-space:pre-line;";
       listView.appendChild(intro);
     }
     const grid = document.createElement("div");

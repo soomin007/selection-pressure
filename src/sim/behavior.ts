@@ -14,6 +14,7 @@ import type { Traits } from "@/sim/genome";
 import { TRAIT_MAX, cloneGenome, mutateGenome } from "@/sim/genome";
 import { createEntity } from "@/sim/entity";
 import { areFriends } from "@/sim/species";
+import { bossCanHunt } from "@/sim/boss";
 import { SIM } from "@/sim/params";
 
 interface Vec {
@@ -445,7 +446,11 @@ function computeFlee(
   canFly: boolean,
 ): Vec | null {
   const boss = world.boss;
-  if (boss && boss.members.length > 0) {
+  // **나를 잡을 수 있는 보스만 무섭다** — 층위(하늘/땅/물)가 안 겹치면 쫓아와도 못 문다(boss.huntLayers).
+  // 나는 종은 땅 보스를 보고도 달아나지 않고 하던 일을 한다(회피가 곧 보상). 야생 포식자 쪽에 이미 있는
+  // "닿을 수 있는 포식자만 무섭다"와 같은 원칙 — 못 닿는 위협에서 도망치면 채집 시간만 버린다.
+  const bossThreatens = boss !== null && bossCanHunt(boss, e, world);
+  if (boss && bossThreatens && boss.members.length > 0) {
     // 개체형 떼 시련 — 가장 가까운 떼 개체로부터 도망친다(사방에서 오니 완전 회피는 어렵다).
     // 그림자 매복자(cullVisionResist>0)는 시야가 넓을수록 더 멀리서 알아채 미리 피한다(시야 카운터).
     let best2 = Infinity;
@@ -464,7 +469,7 @@ function computeFlee(
     const visionPad = boss.cullVisionResist > 0 ? SIM.stalkerVisionFlee * (t.vision / TRAIT_MAX) : 0;
     const fr = boss.killRadius + SIM.fleeRadiusPad + visionPad;
     if (best2 < fr * fr) return clearFleeDir(e, world, bx, by, maxSpeed, canSwim, canLand, canFly);
-  } else if (boss && boss.killRadius > 0) {
+  } else if (boss && bossThreatens && boss.killRadius > 0) {
     const bdx = e.x - boss.x;
     const bdy = e.y - boss.y;
     const bd2 = bdx * bdx + bdy * bdy;

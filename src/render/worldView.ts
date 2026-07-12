@@ -6,7 +6,7 @@
 import { Container, Graphics, Sprite, Texture, type Renderer } from "pixi.js";
 import type { World } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
-import type { BossType } from "@/sim/boss";
+import type { BossType, Layer } from "@/sim/boss";
 import { TILE, type TileKind } from "@/sim/terrain";
 import type { Biome } from "@/sim/environment";
 import { TRAIT_KEYS, TRAIT_MAX, type Genome } from "@/sim/genome";
@@ -242,6 +242,18 @@ export class WorldView {
       }
       const rx = dp.x;
       const ry = dp.y;
+
+      // 나는 개체(날개≥문턱)는 **공중에 떠 있다** — 아래로 어긋난 그림자로 그걸 보인다. 이게 없으면
+      // 땅 보스가 코앞에서 지나가는데 왜 안 잡히는지 화면에서 알 수 없다(시각=로직 1:1, known_issues).
+      // 날갯짓에 맞춰 미세하게 오르내려 "떠 있음"이 살아 있다. playerG 는 스프라이트 아래 레이어다.
+      if (e.genome.traits.wings >= SIM.flyThreshold) {
+        const bob = Math.sin((this.frame + e.id * 11) * 0.09) * 1.6;
+        const sx = rx + 10;
+        const sy = ry + 14 + bob;
+        // 어두운 지형(숲·물) 위에서도 읽히게 밝은 테두리를 두른다 — 어두운 타원만으론 배경에 묻힌다.
+        this.playerG.ellipse(sx, sy, 10, 4.2).fill({ color: 0x05100a, alpha: 0.5 });
+        this.playerG.ellipse(sx, sy, 10, 4.2).stroke({ color: 0xdff0d0, width: 1, alpha: 0.28 });
+      }
 
       // 내 종 강조: 스프라이트 아래 은은한 고리(폰에서 "내 무리"가 한눈에).
       if (e.species.isPlayer) {
@@ -488,14 +500,17 @@ export class WorldView {
       // 무리를 감싸는 위협 오라(맥동) — 어디를 덮치는 무리인지 한눈에.
       this.bossG.circle(cx, cy, maxR + 22).fill({ color: hc.aura, alpha: 0.1 + pulse * 0.06 });
       this.bossG.circle(cx, cy, maxR + 22).stroke({ color: hc.ring, width: 2, alpha: 0.3 });
-      // 각 떼 개체를 종류별 위압적 생물로(사나운 무리·약탈자·외톨이·매복자).
-      for (const p of pts)
+      // 각 떼 개체를 종류별 위압적 생물로(사나운 무리·약탈자·외톨이·매복자·말벌 떼).
+      for (const p of pts) {
+        this.drawLayerCue(boss.roam, p.x, p.y, 10);
         this.drawBossCreature(p.x, p.y, p.hx, p.hy, 10, boss.type, hc.dot, boss.killRadius, pulse);
+      }
     } else if (boss && boss.killRadius > 0) {
       const bx = boss.prevX + (boss.x - boss.prevX) * interp;
       const by = boss.prevY + (boss.y - boss.prevY) * interp;
       const hc = HORDE_COLORS[boss.type] ?? HORDE_DEFAULT;
-      // 단일 추격자(chaser) — 크게 그려 "빠르게 돌진하는 한 마리 맹수"를 강조.
+      // 단일 추격자(치타·큰수리·상어) — 크게 그려 "한 마리 맹수가 돌진한다"를 강조.
+      this.drawLayerCue(boss.roam, bx, by, 20);
       this.drawBossCreature(bx, by, boss.x - boss.prevX, boss.y - boss.prevY, 20, boss.type, hc.dot, boss.killRadius, pulse);
     }
 
@@ -550,6 +565,27 @@ export class WorldView {
     pulse: number,
   ): void {
     drawBossShape(this.bossG, x, y, hx, hy, size, type, color, killRadius, pulse);
+  }
+
+  /**
+   * 보스가 **어느 층에서** 사냥하는지의 단서. 화면만 보고 "왜 저게 날 못 잡지?"를 알 수 있어야 한다
+   * (시각=로직 1:1, known_issues). 하늘 보스는 아래로 어긋난 그림자(높이 떠 있다 → 물속은 못 건드린다),
+   * 물 보스는 퍼지는 파문(물속을 가른다 → 뭍은 못 건드린다). 땅 보스는 땅에 붙어 있어 단서가 필요 없다.
+   */
+  private drawLayerCue(roam: Layer, x: number, y: number, size: number): void {
+    if (roam === "air") {
+      this.bossG
+        .ellipse(x + size * 0.62, y + size * 0.88, size * 0.62, size * 0.3)
+        .fill({ color: 0x0a1408, alpha: 0.3 });
+    } else if (roam === "water") {
+      const t = (this.frame % 66) / 66;
+      for (const k of [0, 0.5]) {
+        const p = (t + k) % 1;
+        this.bossG
+          .ellipse(x, y, size * (1.1 + p * 1.6), size * (0.5 + p * 0.8))
+          .stroke({ color: 0xd8f0ff, width: 1.6, alpha: 0.34 * (1 - p) });
+      }
+    }
   }
 }
 
@@ -738,6 +774,83 @@ export function drawBossShape(
       g.circle(...P(-0.5, 0), s * 0.34).fill({ color: back }); // 배 하이라이트
       eye(0.5, -0.22, s * 0.15);
       eye(0.5, 0.22, s * 0.15);
+    } else if (type === "raptor") {
+      // 하늘의 사냥꾼(큰수리) — 활짝 편 큰 날개 + 갈고리 부리 + 앞으로 뻗은 발톱. 위에서 본 맹금.
+      // 날개가 몸보다 훨씬 커야 "난다"가 한눈에 읽혀 땅 보스들과 실루엣이 확실히 갈린다.
+      for (const sgn of [-1, 1]) {
+        g.moveTo(...P(0.5, sgn * 0.24)) // 뒤로 스윕한 큰 날개
+          .quadraticCurveTo(...P(0.4, sgn * 1.5), ...P(-0.75, sgn * 2.1))
+          .quadraticCurveTo(...P(-0.5, sgn * 1.1), ...P(-0.7, sgn * 0.3))
+          .closePath()
+          .fill({ color: limb })
+          .stroke({ color: line, width: 1.6 });
+        for (const k of [0, 1, 2]) // 날개 끝 칼깃 셋(펼친 손가락)
+          g.moveTo(...P(-0.6 + k * 0.08, sgn * (1.85 - k * 0.2)))
+            .lineTo(...P(-1.05 - k * 0.12, sgn * (2.15 - k * 0.34)))
+            .stroke({ color: line, width: 1.2, cap: "round" });
+      }
+      leg(0.85, 0.3, 1.5, 0.6, s * 0.11); // 앞으로 뻗은 발톱(낚아채러)
+      leg(0.85, -0.3, 1.5, -0.6, s * 0.11);
+      pol([[-0.95, -0.14], [-0.95, 0.14], [-1.9, 0.52], [-1.98, 0], [-1.9, -0.52]]) // 부채꼴 꼬리
+        .fill({ color: limb }).stroke({ color: line, width: 1.4 });
+      g.moveTo(...P(1.5, 0)) // 유선형 몸
+        .quadraticCurveTo(...P(1.1, -0.42), ...P(0.2, -0.48))
+        .quadraticCurveTo(...P(-0.7, -0.42), ...P(-1.05, 0))
+        .quadraticCurveTo(...P(-0.7, 0.42), ...P(0.2, 0.48))
+        .quadraticCurveTo(...P(1.1, 0.42), ...P(1.5, 0))
+        .closePath().fill({ color }).stroke({ color: line, width: OW });
+      g.moveTo(...P(1.0, 0)) // 등 하이라이트
+        .quadraticCurveTo(...P(0.0, -0.2), ...P(-0.85, -0.02))
+        .quadraticCurveTo(...P(0.0, 0.18), ...P(1.0, 0)).closePath().fill({ color: back });
+      pol([[1.32, -0.17], [1.32, 0.17], [2.05, 0.03]]) // 갈고리 부리(노란 맹금 부리)
+        .fill({ color: 0xffd86a }).stroke({ color: line, width: 1.2 });
+      g.circle(...P(1.97, 0.07), s * 0.07).fill({ color: line }); // 부리 끝 갈고리
+      eye(1.0, -0.25, s * 0.19);
+      eye(1.0, 0.25, s * 0.19);
+    } else if (type === "hornet") {
+      // 성난 말벌 — 투명한 날개 + 가는 허리 + 노랑·검정 줄무늬 배 + 뒤로 뻗은 침. 하늘에서 몰려와 쏜다.
+      const stripe = 0x241a06; // 검은 줄무늬(말벌의 표식 — 노랑 몸에서 바로 읽힌다)
+      for (const sgn of [-1, 1]) {
+        g.ellipse(...P(0.0, sgn * 0.6), s * 0.6, s * 0.28).fill({ color: 0xffffff, alpha: 0.36 }); // 투명 날개
+        g.ellipse(...P(0.0, sgn * 0.6), s * 0.6, s * 0.28).stroke({ color: line, width: 0.7, alpha: 0.5 });
+        leg(0.25, sgn * 0.28, 0.55, sgn * 0.72, s * 0.07); // 가는 다리
+        leg(-0.3, sgn * 0.3, -0.6, sgn * 0.74, s * 0.07);
+      }
+      g.moveTo(...P(-1.42, 0)).lineTo(...P(-2.15, 0)) // 뒤로 뻗은 침
+        .stroke({ color: line, width: s * 0.1, cap: "round" });
+      g.ellipse(...P(-0.72, 0), s * 0.72, s * 0.5).fill({ color }).stroke({ color: line, width: OW }); // 줄무늬 배
+      for (const bx of [-1.05, -0.62, -0.2]) // 검은 띠 셋
+        pol([[bx, -0.36], [bx + 0.15, -0.36], [bx + 0.15, 0.36], [bx, 0.36]]).fill({ color: stripe });
+      g.circle(...P(0.28, 0), s * 0.42).fill({ color: stripe }).stroke({ color: line, width: 1.6 }); // 검은 가슴(가는 허리)
+      g.circle(...P(0.92, 0), s * 0.38).fill({ color }).stroke({ color: line, width: OW }); // 머리
+      for (const sgn of [-1, 1]) // 더듬이
+        g.moveTo(...P(1.15, sgn * 0.16)).quadraticCurveTo(...P(1.6, sgn * 0.5), ...P(1.95, sgn * 0.42))
+          .stroke({ color: line, width: 1.2, cap: "round" });
+      eye(1.02, -0.24, s * 0.15);
+      eye(1.02, 0.24, s * 0.15);
+    } else if (type === "shark") {
+      // 굶주린 상어 — 길쭉한 유선형 몸 + 초승달 꼬리 + 가슴지느러미 + 등지느러미 능선. 물속만 돈다.
+      pol([[-1.7, 0], [-2.55, -0.72], [-2.15, 0], [-2.55, 0.72]]) // 초승달 꼬리
+        .fill({ color: limb }).stroke({ color: line, width: 1.4 });
+      for (const sgn of [-1, 1]) // 가슴지느러미(넓게 뻗은 낫)
+        pol([[0.4, sgn * 0.36], [-0.05, sgn * 1.3], [-0.4, sgn * 0.44]])
+          .fill({ color: limb }).stroke({ color: line, width: 1.3 });
+      g.moveTo(...P(2.0, 0)) // 길쭉한 몸(뾰족한 코)
+        .quadraticCurveTo(...P(1.3, -0.36), ...P(0.2, -0.46))
+        .quadraticCurveTo(...P(-1.0, -0.42), ...P(-1.7, -0.12))
+        .quadraticCurveTo(...P(-1.85, 0), ...P(-1.7, 0.12))
+        .quadraticCurveTo(...P(-1.0, 0.42), ...P(0.2, 0.46))
+        .quadraticCurveTo(...P(1.3, 0.36), ...P(2.0, 0))
+        .closePath().fill({ color }).stroke({ color: line, width: OW });
+      g.moveTo(...P(1.55, 0.06)) // 흰 배(상어의 아랫면)
+        .quadraticCurveTo(...P(0.2, 0.34), ...P(-1.3, 0.14))
+        .quadraticCurveTo(...P(0.2, 0.18), ...P(1.55, 0.06)).closePath().fill({ color: back });
+      pol([[0.8, 0], [0.0, -0.17], [-0.55, 0], [0.0, 0.17]]) // 등지느러미 능선(척추 위로 솟은 칼)
+        .fill({ color: limb }).stroke({ color: line, width: 1.2 });
+      pol([[2.05, 0], [1.32, -0.3], [1.32, 0.3]]).fill({ color: maw }).stroke({ color: line, width: 0.9 }); // 벌린 아가리
+      frontFangs(1.48, 0.24, 1.98);
+      eye(1.18, -0.3, s * 0.15);
+      eye(1.18, 0.3, s * 0.15);
     } else {
       g.circle(x, y, s).fill({ color }).stroke({ color: line, width: OW });
       eye(0.3, -0.2, s * 0.3);
@@ -766,11 +879,16 @@ interface HordeColor {
 }
 const HORDE_DEFAULT: HordeColor = { dot: 0xff5535, aura: 0x9a1a0e, ring: 0xd8321a };
 const HORDE_COLORS: Partial<Record<BossType, HordeColor>> = {
-  chaser: { dot: 0xff4028, aura: 0x8a1206, ring: 0xe03418 }, // 새빨강(빠른 추격자 — 단일 돌진)
+  chaser: { dot: 0xff4028, aura: 0x8a1206, ring: 0xe03418 }, // 새빨강(질주하는 추격자 — 단일 돌진)
   swarm: { dot: 0xff7a2a, aura: 0x7a2a08, ring: 0xd8641a }, // 성난 주황(사나운 무리)
   raider: { dot: 0xff2e5a, aura: 0x7a0a24, ring: 0xd81a44 }, // 핏빛 진홍(약탈)
   isolation: { dot: 0x33c0d8, aura: 0x0a3a4a, ring: 0x1f92b0 }, // 청록(외톨이 사냥꾼)
   stalker: { dot: 0xc060d0, aura: 0x3a0a3a, ring: 0x8a2a9a }, // 자주(그림자 매복)
+  // 짙은 구릿빛 갈색(맹금). 밝은 황금(0xe0a020)은 하늘 개척자 프리셋의 내 종 색(0xf0c840)과 겹쳐
+  // "내 종인지 보스인지" 헷갈렸다 — 훨씬 짙고 붉게 내려 갈라놓는다(사나운 무리의 밝은 주황과도 구분).
+  raptor: { dot: 0xb5642a, aura: 0x3a1a04, ring: 0xe08828 },
+  hornet: { dot: 0xffc814, aura: 0x5a4400, ring: 0xd8a000 }, // 경고 노랑(말벌 — 줄무늬는 실루엣에서)
+  shark: { dot: 0xb0bcc8, aura: 0x1a3a5a, ring: 0xe0405a }, // 강철 회청 몸 + 핏빛 고리(청록 바다에서 튄다)
 };
 
 // 먹이 종류별 색 — 모두 식물처럼 자연스럽되 구분되게(연두 / 청록 / 노랑풀 / 바이옴 전용=주황 열매).
