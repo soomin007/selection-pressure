@@ -2,6 +2,7 @@
 // 사망 원인 문단은 텍스트 대신 비례 막대로 그린다 — "무엇이 내 종을 죽였나"가 폰에서 한눈에 읽히게(§7).
 
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { createCosmeticPicker } from "@/ui/cosmeticPicker";
 import { parseDeathLine, type DeathRow } from "@/game/runReport";
 
 // 사망 원인별 색 — 3a 의미 색 팔레트와 맞춘다(추위=물빛/폭염=사냥빛/굶음=호박/잡아먹힘·보스/노화=중립).
@@ -22,10 +23,13 @@ export interface ResultPanel {
 
 // onNewRun = 완전히 새 종으로 다시 시작. onContinue = 승리 후 "다음 시대로"(성장 유지, 위협 강화).
 // onReport = "이 혈통의 기록" 보고서 화면 열기(연대기 + 형질 추이).
+// onCosmeticChange = 꾸밈을 바꾼 직후(다음 런/배경 렌더에 즉시 반영). onLadder = 해금 사다리 열기.
 export function createResultPanel(
   onNewRun: () => void,
   onContinue: () => void,
   onReport: () => void,
+  onCosmeticChange: () => void,
+  onLadder: () => void,
 ): ResultPanel {
   ensurePanelStyles();
 
@@ -38,6 +42,20 @@ export function createResultPanel(
 
   const summary = document.createElement("div");
   summary.className = "ui-result-summary";
+
+  // 다음 판 준비 — 새 런 시작 전에 꾸밈을 바로 바꾸고(로비 우회 제거, 사용자 지적) 해금도 확인한다.
+  const prep = document.createElement("div");
+  prep.style.cssText =
+    "display:flex; flex-direction:column; align-items:center; gap:10px; margin-top:18px;" +
+    "padding-top:16px; border-top:1px solid var(--line);";
+  const cosmetics = createCosmeticPicker(onCosmeticChange);
+  const ladderBtn = document.createElement("button");
+  ladderBtn.textContent = "해금 사다리 보기";
+  ladderBtn.style.cssText =
+    "padding:6px 4px 3px; border:0; background:transparent; color:var(--ink);" +
+    "font-family:var(--font-body); font-size:13px; cursor:pointer; border-bottom:1.5px solid var(--amber);";
+  ladderBtn.addEventListener("click", onLadder);
+  prep.append(cosmetics.el, ladderBtn);
 
   // 승리 후에만 뜨는 주 버튼 — 성장을 이어 더 험한 다음 시대로. 입체 키 버튼(한눈에 "이걸 눌러라").
   const continueBtn = document.createElement("button");
@@ -64,11 +82,13 @@ export function createResultPanel(
   root.appendChild(heading);
   root.appendChild(summary);
   root.appendChild(reportBtn);
+  root.appendChild(prep);
   root.appendChild(continueBtn);
   root.appendChild(newRunBtn);
   document.body.appendChild(root);
 
   const show = (win: boolean, text: string, canContinue: boolean): void => {
+    cosmetics.refresh(); // 그동안 딴 꾸밈이 바로 보이게(하나도 없으면 스스로 숨는다)
     heading.textContent = win ? "승리" : "멸종";
     heading.style.color = win ? "var(--lime)" : "var(--red)";
     // 본문은 빈 줄(\n\n)로 나뉜 문단들. 사망 원인 문단은 막대로, 나머지는 텍스트로 그린다.

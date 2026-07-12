@@ -18,6 +18,7 @@ import { createRunReportScreen } from "@/ui/runReportScreen";
 import { createMomentOverlay } from "@/ui/momentOverlay";
 import { createLevelUpScreen } from "@/ui/levelUpScreen";
 import { createLobby } from "@/ui/lobby";
+import { createUnlockLadder } from "@/ui/unlockLadder";
 import { createControls } from "@/ui/controls";
 import { createBuildPanel } from "@/ui/buildPanel";
 import { createGlossary } from "@/ui/glossary";
@@ -138,32 +139,39 @@ async function boot(): Promise<void> {
   });
   // 런 보고서(연대기 + 형질 추이) — 결과 화면 위에 뜨는 별도 화면. 닫으면 결과 화면으로 돌아간다.
   const reportScreen = createRunReportScreen(() => reportScreen.hide());
+  // 도전 과제로 연 꾸밈을 렌더·이름에 반영한다. 효과는 없다(보이는 것만 바뀐다).
+  // (결과 패널·로비가 콜백으로 받으므로 그 생성보다 먼저 선언한다 — 아래에서 참조 시 TDZ 방지, known_issues.)
+  const applyCosmetics = (): void => {
+    view.playerCosmetic = equippedCosmetic();
+    setMythicNames(mythicNamesUnlocked());
+  };
+  applyCosmetics();
+  // 해금 사다리 — 로비·결과 화면에서 여는 열람 오버레이(레벨별로 무엇이 열리는지 한자리에서 본다).
+  const unlockLadder = createUnlockLadder(() => unlockLadder.hide());
   const result = createResultPanel(
     () => {
-      // 새 종으로 다시 시작(완전 리셋).
+      // 새 종으로 다시 시작(완전 리셋). 그동안 바꾼 꾸밈을 이번 판부터 적용.
       reportScreen.hide();
       result.hide();
+      applyCosmetics();
       game.beginRun();
       refreshBuild();
       view.refreshSpecies(game.world);
       controls.setVisible(true);
     },
     () => {
-      // 승리 후 "다음 시대로" — 성장 유지, 위협 강화. 새 월드는 continueToNextEra 가 만든다.
+      // 승리 후 "다음 시대로" — 성장 유지, 위협 강화. 새 월드는 continueToNextEra 가 만든다. 꾸밈도 반영(시각만).
       reportScreen.hide();
       result.hide();
+      applyCosmetics();
       game.continueToNextEra();
       refreshBuild();
       controls.setVisible(true);
     },
     () => reportScreen.show(game.runHistory), // "이 혈통의 기록 보기"
+    applyCosmetics, // 결과 화면에서 꾸밈을 바꾸면 즉시 반영(다음 런에 그대로 적용)
+    () => unlockLadder.show(), // 해금 사다리 열기
   );
-  // 도전 과제로 연 꾸밈을 렌더·이름에 반영한다. 효과는 없다(보이는 것만 바뀐다).
-  const applyCosmetics = (): void => {
-    view.playerCosmetic = equippedCosmetic();
-    setMythicNames(mythicNamesUnlocked());
-  };
-  applyCosmetics();
   const lobby = createLobby(
     () => {
       lobby.hide();
@@ -175,6 +183,7 @@ async function boot(): Promise<void> {
     },
     () => glossary.show(),
     applyCosmetics, // 로비에서 꾸밈을 바꾸면 배경 생태계에 즉시 반영
+    () => unlockLadder.show(), // 로비에서 해금 사다리 열기
   );
   const controls = createControls({
     onPauseToggle: () => {
