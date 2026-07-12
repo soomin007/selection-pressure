@@ -55,6 +55,15 @@ export function huntEfficiency(diet: number): number {
 }
 
 /**
+ * 순수 육식도(0~1) — 문턱(dietGrazeMax=70)에서 0, 완전 육식(100)에서 1. 잡식/초식(diet ≤ 70)은 0.
+ * "순수 육식일수록 세지는" 형질(스퍼트·큰 사냥·긴 포만)이 공유하는 스케일이라, 잡식·야생 초식은 이 값이
+ * 0 이라 전부 영향 0(통과기준 밸런스 보존). 야생 포식자(diet 85)만 ≈0.5 로 절반 세기를 받는다.
+ */
+export function carnivory01(diet: number): number {
+  return clamp((diet - SIM.dietGrazeMax) / Math.max(1, TRAIT_MAX - SIM.dietGrazeMax), 0, 1);
+}
+
+/**
  * 사냥 스퍼트 배수(질주형 육식) — 순수 육식이 먹잇감을 추격할 때 최대 속도가 오른다(치타·사자의 폭발적
  * 추격). 순수 육식일수록 크다(문턱 dietGrazeMax 에서 0, 완전 육식 100 에서 최대). 추격 중(hunting)이
  * 아니거나 잡식/초식이면 1(영향 없음). speed 형질이 "질주형 육식"의 사냥법이 된다 — 도망치는 초식을
@@ -62,8 +71,26 @@ export function huntEfficiency(diet: number): number {
  */
 export function huntSprintFactor(diet: number, hunting: boolean): number {
   if (!hunting) return 1;
-  const carn01 = clamp((diet - SIM.dietGrazeMax) / Math.max(1, TRAIT_MAX - SIM.dietGrazeMax), 0, 1);
-  return 1 + SIM.huntSprintBonus * carn01;
+  return 1 + SIM.huntSprintBonus * carnivory01(diet);
+}
+
+/**
+ * "큰 사냥" 배수 — 순수 육식의 한 번의 사냥이 주는 에너지를 키운다(문턱 70=1, 완전 육식 100=최대).
+ * 잡식·초식(carnivory01=0)은 1(영향 없음). maxEnergyFor 의 높아진 상한과 짝을 이뤄, 드문 사냥으로도
+ * 창고를 채워 오래 버티게 한다(긴 포만). 이게 없으면 높아진 상한이 드문 사냥으로 안 채워져 무의미하다.
+ */
+export function gorgeFactor(diet: number): number {
+  return 1 + SIM.carnGorgeBonus * carnivory01(diet);
+}
+
+/**
+ * 식성별 에너지 상한 — 순수 육식은 큰 사냥의 영양을 maxEnergy 위로 비축한다("긴 포만"). 문턱 70=maxEnergy
+ * (잡식·초식은 상한 100 그대로), 완전 육식 100=maxEnergy + carnGorgeReserve. 비축분은 별도 로직 없이
+ * 그냥 대사로 천천히 줄어 다음 사냥까지의 생존 시간이 된다 — 드물게 성공해도 크게 먹고 오래 버티는 대형
+ * 포식자. 잡식(diet 50)은 carnivory01=0 이라 100 그대로 → 통과기준(잡식 기준선) 밸런스 불변.
+ */
+export function maxEnergyFor(diet: number): number {
+  return SIM.maxEnergy + SIM.carnGorgeReserve * carnivory01(diet);
 }
 
 /** 한 번의 물기가 어떻게 되는가. 순수 함수라 테스트로 규칙을 못 박는다. */
@@ -104,10 +131,13 @@ function devour(e: Entity, prey: Entity, world: World): void {
   world.recordDeath(prey.species, "predation");
   world.emit("kill", prey.x, prey.y); // 연출: 잡아먹힘(빨강 터짐)
   if (preyVenom > 0) e.poison += SIM.venomOnHit * (preyVenom / TRAIT_MAX);
-  // 사냥 수입 = 기본 × 방어독 감쇠 × 식성 효율(육식 특화일수록 온전히, 잡식은 페널티).
+  const diet = e.genome.traits.diet;
+  // 사냥 수입 = 기본 × 방어독 감쇠 × 식성 효율(육식 특화일수록 온전히, 잡식은 페널티) × 큰 사냥(순수 육식은
+  // 크게 먹는다). 순수 육식은 상한(maxEnergyFor)이 100 위로 올라 이 큰 사냥을 비축한다(긴 포만) — 잡식은
+  // gorgeFactor 1·상한 100 이라 기존과 동일.
   const huntGain =
-    SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX) * huntEfficiency(e.genome.traits.diet);
-  e.energy = Math.min(SIM.maxEnergy, e.energy + huntGain);
+    SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX) * huntEfficiency(diet) * gorgeFactor(diet);
+  e.energy = Math.min(maxEnergyFor(diet), e.energy + huntGain);
   e.targetPrey = null;
 }
 

@@ -5,7 +5,7 @@ import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
-import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome, grazeEfficiency, huntEfficiency, huntSprintFactor } from "@/sim/behavior";
+import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome, grazeEfficiency, huntEfficiency, huntSprintFactor, carnivory01, gorgeFactor, maxEnergyFor } from "@/sim/behavior";
 import { areFriends, type Species } from "@/sim/species";
 import { createEntity, type Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
@@ -1022,5 +1022,34 @@ describe("사냥 스퍼트 (질주형 육식 — speed 가 사냥법이 된다)"
     expect(huntSprintFactor(100, true)).toBeCloseTo(1 + BONUS); // 완전 육식 최대
     expect(huntSprintFactor(85, true)).toBeGreaterThan(1);
     expect(huntSprintFactor(100, true)).toBeGreaterThan(huntSprintFactor(85, true)); // 단조
+  });
+});
+
+describe("큰 사냥·긴 포만 (순수 육식 — 드물게 성공해도 크게 먹고 오래 버틴다)", () => {
+  const GRAZE = SIM.dietGrazeMax; // 70 — 순수 육식 문턱
+
+  it("순수 육식도(carnivory01): 잡식·초식은 0, 문턱에서 0, 완전 육식 100에서 1", () => {
+    expect(carnivory01(50)).toBe(0); // 잡식 — 무영향(통과기준 보존)
+    expect(carnivory01(20)).toBe(0); // 초식
+    expect(carnivory01(GRAZE)).toBe(0); // 문턱 = 0(연속)
+    expect(carnivory01(100)).toBe(1); // 완전 육식 = 최대
+    expect(carnivory01(85)).toBeCloseTo(0.5); // 야생 포식자 = 절반 세기
+    expect(carnivory01(100)).toBeGreaterThan(carnivory01(85)); // 단조
+  });
+
+  it("큰 사냥(gorgeFactor): 잡식·문턱은 1, 완전 육식은 1+carnGorgeBonus, 육식일수록 크다", () => {
+    expect(gorgeFactor(50)).toBe(1); // 잡식 — 사냥 수입 불변
+    expect(gorgeFactor(GRAZE)).toBe(1); // 문턱 = 1(연속)
+    expect(gorgeFactor(100)).toBeCloseTo(1 + SIM.carnGorgeBonus); // 완전 육식 최대
+    expect(gorgeFactor(85)).toBeGreaterThan(1);
+    expect(gorgeFactor(100)).toBeGreaterThan(gorgeFactor(85)); // 단조
+  });
+
+  it("긴 포만(maxEnergyFor): 잡식·문턱은 상한 100 그대로, 완전 육식만 위로 비축", () => {
+    expect(maxEnergyFor(50)).toBe(SIM.maxEnergy); // 잡식 — 상한 불변(통과기준 보존)
+    expect(maxEnergyFor(GRAZE)).toBe(SIM.maxEnergy); // 문턱 = 100(연속)
+    expect(maxEnergyFor(100)).toBeCloseTo(SIM.maxEnergy + SIM.carnGorgeReserve); // 완전 육식 최대 창고
+    expect(maxEnergyFor(85)).toBeGreaterThan(SIM.maxEnergy);
+    expect(maxEnergyFor(100)).toBeGreaterThan(maxEnergyFor(85)); // 단조
   });
 });
