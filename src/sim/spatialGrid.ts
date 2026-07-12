@@ -59,6 +59,27 @@ export class SpatialGrid {
     return found;
   }
 
+  /** 반경 maxR 안의 모든 개체에 fn 을 적용한다(무리사냥 먹이 나눔: 먹잇감 주위 같은 종 무리에게 몫 지급 등). */
+  forEachMatching(x: number, y: number, maxR: number, fn: (e: Entity) => void): void {
+    const cr = Math.ceil(maxR / this.cellSize);
+    const cx = this.clamp(Math.floor(x / this.cellSize), this.cols);
+    const cy = this.clamp(Math.floor(y / this.cellSize), this.rows);
+    const r2 = maxR * maxR;
+    for (let gy = cy - cr; gy <= cy + cr; gy++) {
+      if (gy < 0 || gy >= this.rows) continue;
+      for (let gx = cx - cr; gx <= cx + cr; gx++) {
+        if (gx < 0 || gx >= this.cols) continue;
+        const cell = this.cells[gy * this.cols + gx];
+        if (!cell) continue;
+        for (const e of cell) {
+          const dx = e.x - x;
+          const dy = e.y - y;
+          if (dx * dx + dy * dy <= r2) fn(e);
+        }
+      }
+    }
+  }
+
   /** 주변 3×3 칸의 개체 수와 무게중심 (무리 cohesion/huddle 용). 자기 자신 포함. */
   neighborhood(x: number, y: number): { count: number; comX: number; comY: number } {
     const cx = this.clamp(Math.floor(x / this.cellSize), this.cols);

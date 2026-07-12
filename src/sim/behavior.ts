@@ -84,6 +84,27 @@ export function gorgeFactor(diet: number): number {
 }
 
 /**
+ * 무리사냥 먹이 나눔(늑대 무리가 사냥감을 함께 먹는다) — 순수 육식이 사냥에 성공하면 주위 같은 종 무리가
+ * 그 카커스(huntGain)에서 몫을 나눠 받는다. 이 packmate 가 받는 에너지다. herding·carnivory01 로 스케일 →
+ * "무리사냥 빌드"(순수 육식 + 높은 herding + 뭉친 무리)에서만 크게 켜진다. 이 나눔이 herding 을 육식의
+ * 생존 레버로 만든다: 뭉친 팩은 소수의 사냥으로도 다 같이 먹어 자생한다(질주=speed·포만과 나란한 세 번째
+ * 사냥법). 잡식·초식(carnivory01=0)은 0(무영향 — 통과기준 보존).
+ *
+ * herding 은 임계 기반(ranged 형질과 같은 패턴)으로 스케일한다 — packShareThreshold 이하는 나눔 0,
+ * 넘어서면 선형으로 오른다. 나눔이 "긴밀하게 뭉친 팩"(높은 herding 을 찍은 무리 빌드)에만 켜지게 해서,
+ * 야생 포식자(diet 85·herding 40)를 완전히 배제한다. 제곱·세제곱 스케일로는 야생 pop 이 늘면 뭉쳐 나눠
+ * 먹는 되먹임으로 폭주해 잡식 승률을 떨어뜨렸다(game.test 회귀). 임계로 야생을 딱 끊어 잡식 밸런스를
+ * 보존한다 — 순수 육식 + 고 herding 은 플레이어 무리 빌드뿐이다(다른 야생 고 herding 종은 다 초식이라
+ * carnivory01=0 으로 애초에 제외).
+ */
+export function packHerdFactor(herding: number): number {
+  return clamp((herding - SIM.packShareThreshold) / Math.max(1, TRAIT_MAX - SIM.packShareThreshold), 0, 1);
+}
+export function packShareGain(huntGain: number, diet: number, herding: number): number {
+  return huntGain * SIM.packSharePerMember * packHerdFactor(herding) * carnivory01(diet);
+}
+
+/**
  * 식성별 에너지 상한 — 순수 육식은 큰 사냥의 영양을 maxEnergy 위로 비축한다("긴 포만"). 문턱 70=maxEnergy
  * (잡식·초식은 상한 100 그대로), 완전 육식 100=maxEnergy + carnGorgeReserve. 비축분은 별도 로직 없이
  * 그냥 대사로 천천히 줄어 다음 사냥까지의 생존 시간이 된다 — 드물게 성공해도 크게 먹고 오래 버티는 대형
@@ -138,6 +159,18 @@ function devour(e: Entity, prey: Entity, world: World): void {
   const huntGain =
     SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX) * huntEfficiency(diet) * gorgeFactor(diet);
   e.energy = Math.min(maxEnergyFor(diet), e.energy + huntGain);
+  // 무리사냥 먹이 나눔: 사냥감을 같은 종 무리가 함께 먹는다(늑대). 사냥감 주위 같은 종 순수 육식 무리에게
+  // 카커스 몫을 지급 — 뭉친 팩은 소수의 사냥으로 다 같이 먹어 자생한다(herding 이 육식 생존 레버). 순수
+  // 육식 킬에서만(carnivory01>0) 순회 비용을 치른다. 밀도가 열쇠라 흩어진 야생 포식자(4마리)는 팩을 못 이뤄
+  // 나눔이 거의 없다(자연 격리). 나눔 몫은 packmate 자신의 herding·식성으로 스케일(무리 성향이 클수록 많이).
+  if (carnivory01(diet) > 0) {
+    world.grid.forEachMatching(prey.x, prey.y, SIM.packShareRadius, (m) => {
+      if (!m.alive || m === e || m.species.id !== e.species.id) return;
+      const md = m.genome.traits.diet;
+      const share = packShareGain(huntGain, md, m.genome.traits.herding);
+      if (share > 0) m.energy = Math.min(maxEnergyFor(md), m.energy + share);
+    });
+  }
   e.targetPrey = null;
 }
 
