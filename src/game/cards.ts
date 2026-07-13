@@ -178,16 +178,27 @@ export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_omni",
     name: "균형 잡식",
-    desc: "풀도 뜯고 사냥도 한다. 시야가 조금 넓어 어느 환경에서든 무난하게 자리 잡는다.",
-    set: { diet: 50 },
-    effects: { vision: 8 },
+    desc: "풀도 뜯고 사냥도 한다. 뛰어난 재주는 없지만 발도 눈도 새끼도 모자라지 않아, 어느 환경에서든 무난하게 자리 잡는다.",
+    // 예전엔 식성만 정하고 나머지를 전부 기본값(50)으로 뒀다 — 그래서 **기본 프리셋이 가장 약했다**
+    // (프로브: 대륙 도달 1.3/6. 사냥꾼은 5.9). "무난함"은 아무것도 안 올린다는 뜻이 아니라 두루
+    // 모자람이 없다는 뜻이다. 특기가 없는 대신 약점도 없게 고루 올린다.
+    set: { diet: 50, speed: 66, vision: 66, attack: 64, fertility: 62, herding: 58 },
+    effects: {},
     color: 0x6cc24a, // 초록
   },
   {
     id: "preset_herd",
     name: "다산 초식 무리",
-    desc: "풀을 뜯는다. 무리로 뭉쳐 다니며 빠르게 새끼를 쳐, 하나가 스러져도 수로 메운다. 대신 걸음은 느리다.",
-    set: { diet: 16, fertility: 78, herding: 76, speed: 40 },
+    desc: "풀을 뜯는다. 무리로 뭉쳐 다니며 빠르게 새끼를 쳐, 하나가 스러져도 수로 메운다. 대신 힘은 약하다.",
+    // ⚠ 여덟 프리셋 중 꼴찌였고(대륙 도달 0.5/6), **수치로는 안 고쳐진다**. 걸음·번식·대사·공격력·무리
+    // 성향을 차례로 올려 봤지만 전부 1.0~1.3 에서 안 움직였다. 원인은 수치가 아니라 **메커니즘의 부재**다:
+    //   · 사냥 수입 없음(식성 16 < 사냥 문턱 35) — 유일하게 사냥을 아예 못 하는 프리셋
+    //   · 독 없음 — 같은 순수 초식인 「독 살갗」(3.0)은 독 때문에 잡아먹히지 않는다
+    //   · 도망칠 속도 없음 — 그건 사냥꾼의 정체성
+    // 즉 여덟 중 **아무 방어 수단이 없는 유일한 프리셋**이다. 진짜 해법은 "무리 방어"(같은 종 이웃이
+    // 많으면 사냥당할 확률이 떨어진다) — 무리 성향에 처음으로 진짜 값을 주는 메커니즘이다. 그건 sim
+    // 변경이라 프로브 동반 별도 작업으로 뺐다(backlog). 지금은 수치만 정체성에 맞게 정리해 둔다.
+    set: { diet: 16, fertility: 88, herding: 78, speed: 62, vision: 62, attack: 44, metabolism: 32 },
     effects: {},
     color: 0xb4e04a, // 라임(밝은 연두)
   },
@@ -195,15 +206,18 @@ export const PRESET_CARDS: readonly Card[] = [
     id: "preset_hunter",
     name: "날쌘 육식 사냥꾼",
     desc: "사냥으로 산다. 빠르고 사나워 먹잇감을 좀처럼 놓치지 않는다. 대신 새끼는 더디게 친다.",
-    set: { diet: 68, speed: 80, attack: 74, fertility: 34 },
+    // 네 세계 모두에서 1~2위였다(도달 4.6~5.9). 사냥은 먹잇감이 야생 100마리라 사실상 무한한데,
+    // 채집은 먹이가 유한하고 경쟁자가 넷이다 — 그 구조 위에서 속도 80·공격 74 는 과했다. 온건히 깎는다.
+    set: { diet: 68, speed: 68, attack: 64, fertility: 36 },
     effects: {},
     color: 0xff7a3a, // 주황
   },
   {
     id: "preset_scout",
     name: "느긋한 정찰자",
-    desc: "풀과 사냥을 겸한다. 멀리 내다보고 기운을 아껴 척박한 땅에서도 오래 버틴다. 대신 걸음은 느리다.",
-    set: { diet: 40, vision: 82, metabolism: 28, speed: 42 },
+    desc: "풀과 사냥을 겸한다. 멀리 내다보고 기운을 아껴 척박한 땅에서도 오래 버틴다. 대신 힘이 약하고 새끼는 드물다.",
+    // 시야 82(최고)인데도 도달 1.1 — 걸음 42 라 멀리 본 먹이에 닿기 전에 남이 먼저 먹었다.
+    set: { diet: 40, vision: 84, metabolism: 30, speed: 62, attack: 56, fertility: 48 },
     effects: {},
     color: 0x3fc9c0, // 청록
   },
@@ -229,7 +243,8 @@ export const PRESET_CARDS: readonly Card[] = [
     id: "preset_venom",
     name: "독 살갗",
     desc: "살갗에 독을 품어, 삼킨 포식자를 중독시킨다. 무리로 뭉쳐 다니는, 좀처럼 잡아먹히지 않는 초식 종.",
-    set: { diet: 26, venom: 84, herding: 66, fertility: 62 },
+    // 독으로 안 잡아먹히기는 하는데, 스스로 먹고 사는 힘(발·눈)이 없어 굶었다(도달 1.8).
+    set: { diet: 26, venom: 84, herding: 68, fertility: 70, speed: 60, vision: 60, metabolism: 40 },
     effects: {},
     color: 0x9c27b0, // 독 보라 — 기존 프리셋 색과 구분
   },
@@ -237,7 +252,8 @@ export const PRESET_CARDS: readonly Card[] = [
     id: "preset_ranged",
     name: "원거리 사냥꾼",
     desc: "다가서지 않고 멀리서 가시를 쏜다. 넓은 시야로, 상대가 반격하거나 달아나기 전에 먼저 맞힌다.",
-    set: { diet: 60, ranged: 82, vision: 72, speed: 46 },
+    // 사거리 82 인데 걸음 46 이라 먹잇감을 사거리 안에 넣기도 전에 굶었다(도달 1.5).
+    set: { diet: 60, ranged: 82, vision: 74, speed: 62, attack: 62 },
     effects: {},
     color: 0x4aa0a0, // 청록빛 — 기존 프리셋 색과 구분
   },
