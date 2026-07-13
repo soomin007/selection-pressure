@@ -101,6 +101,15 @@ const SVG = {
     '<svg viewBox="0 0 140 90"><circle cx="34" cy="40" r="6" fill="#9a7ad6"/><circle cx="48" cy="46" r="6" fill="#9a7ad6"/><circle cx="40" cy="53" r="6" fill="#9a7ad6"/><circle cx="100" cy="46" r="8" fill="#9a7ad6"/><polygon points="120,46 108,40 108,52" fill="#ff5535"/></svg>',
   stalker:
     '<svg viewBox="0 0 140 90"><path d="M16 72 Q28 40 48 54 Q56 34 74 52 Q88 36 104 56 Q120 48 124 72 Z" fill="#2f5a36"/><circle cx="58" cy="52" r="4.5" fill="#ffd27a"/><circle cx="84" cy="54" r="4.5" fill="#ffd27a"/><circle cx="58" cy="52" r="2" fill="#1a1008"/><circle cx="84" cy="54" r="2" fill="#1a1008"/></svg>',
+  // 세계 도감 — 바다(파랑)·땅(초록)·산(회색) 비율을 그림으로 한눈에 보인다.
+  mapContinent:
+    '<svg viewBox="0 0 140 90"><rect x="6" y="8" width="128" height="74" rx="6" fill="#4a8f4a"/><ellipse cx="34" cy="30" rx="14" ry="9" fill="#2a6a8a"/><ellipse cx="102" cy="60" rx="17" ry="10" fill="#2a6a8a"/><ellipse cx="70" cy="24" rx="8" ry="5" fill="#2a6a8a"/><polygon points="60,58 70,42 80,58" fill="#8a97a4"/></svg>',
+  mapPangaea:
+    '<svg viewBox="0 0 140 90"><rect x="6" y="8" width="128" height="74" rx="6" fill="#2a6a8a"/><ellipse cx="70" cy="45" rx="52" ry="30" fill="#4a8f4a"/><polygon points="44,52 56,28 68,52" fill="#8a97a4"/><polygon points="66,54 80,26 94,54" fill="#8a97a4"/><polygon points="70,26 76,34 64,34" fill="#e0e6ea"/></svg>',
+  mapArchipelago:
+    '<svg viewBox="0 0 140 90"><rect x="6" y="8" width="128" height="74" rx="6" fill="#2a6a8a"/><ellipse cx="34" cy="28" rx="15" ry="10" fill="#4a8f4a"/><ellipse cx="96" cy="24" rx="12" ry="8" fill="#4a8f4a"/><ellipse cx="56" cy="60" rx="14" ry="9" fill="#4a8f4a"/><ellipse cx="106" cy="62" rx="16" ry="10" fill="#4a8f4a"/><ellipse cx="24" cy="62" rx="8" ry="6" fill="#4a8f4a"/><ellipse cx="72" cy="36" rx="6" ry="4" fill="#4a8f4a"/></svg>',
+  mapOcean:
+    '<svg viewBox="0 0 140 90"><rect x="6" y="8" width="128" height="74" rx="6" fill="#1e5a7e"/><ellipse cx="44" cy="34" rx="13" ry="8" fill="#4a8f4a"/><ellipse cx="98" cy="58" rx="11" ry="7" fill="#4a8f4a"/><ellipse cx="24" cy="66" rx="6" ry="4" fill="#4a8f4a"/><g stroke="#7fc0e8" stroke-width="2" stroke-linecap="round" opacity="0.6"><path d="M62 22 q7 -5 14 0 q7 5 14 0" fill="none"/><path d="M20 46 q7 -5 14 0 q7 5 14 0" fill="none"/><path d="M76 72 q7 -5 14 0 q7 5 14 0" fill="none"/></g></svg>',
   raptor:
     '<svg viewBox="0 0 140 90"><ellipse cx="86" cy="74" rx="20" ry="6" fill="#0a1408" opacity="0.3"/><path d="M70 34 Q42 24 18 42 Q46 42 62 50 Z" fill="#e0a020" stroke="#5a3a04" stroke-width="2"/><path d="M70 34 Q98 24 122 42 Q94 42 78 50 Z" fill="#e0a020" stroke="#5a3a04" stroke-width="2"/><ellipse cx="70" cy="44" rx="9" ry="19" fill="#c08018" stroke="#5a3a04" stroke-width="2"/><polygon points="70,18 64,32 76,32" fill="#ffd86a" stroke="#5a3a04" stroke-width="1.5"/></svg>',
   hornet:
@@ -301,6 +310,56 @@ const SECTIONS: readonly Section[] = [
         rarity: "legendary",
         desc: "종의 정체성 자체가 바뀝니다. 뜨면 카드가 금빛으로 터집니다.",
         note: "날개·초음파·독·원거리 전설은 플레이어 레벨이 올라야 열립니다. 잠긴 카드는 후보에 아예 안 나옵니다.",
+      },
+    ],
+  },
+  {
+    title: "세계 도감",
+    intro:
+      "판마다 세계의 종류가 달라집니다. 세계는 무작위로 정해지고, 그 뒤에 시작 종을 고릅니다.\n" +
+      "시작 화면 맨 위에 이번 세계가 뜨니, 그걸 보고 여기서 살아남을 종을 고르세요. " +
+      "물이 많은 세계는 헤엄칠 갈래를 연 뒤에야 나옵니다.",
+    entries: [
+      {
+        term: "대륙",
+        svg: SVG.mapContinent,
+        desc: "땅이 넓고 바다는 호수처럼 흩어져 있습니다. 걷는 종이 살기 좋은 기본 세계입니다.",
+        rows: [
+          { k: "바다", v: "약 15~20%", base: true },
+          { k: "유리", v: "걷는 종 (속도·시야·사냥)" },
+          { k: "열림", v: "처음부터" },
+        ],
+      },
+      {
+        term: "판게아",
+        svg: SVG.mapPangaea,
+        desc: "하나로 이어진 넓은 땅을 바다가 둘러쌉니다. 가운데를 가르는 산맥 위에 먹이가 많아, 날개가 그 먹이를 독차지합니다.",
+        rows: [
+          { k: "바다", v: "약 15%" },
+          { k: "산", v: "많음 (산 위 먹이도 많음)" },
+          { k: "유리", v: "날개 · 걷는 종" },
+          { k: "열림", v: "레벨 3" },
+        ],
+      },
+      {
+        term: "군도",
+        svg: SVG.mapArchipelago,
+        desc: "잘게 쪼개진 섬과 얕은 바다입니다. 헤엄치거나 날지 못하면 한 섬에 갇혀 먹이가 떨어집니다.",
+        rows: [
+          { k: "바다", v: "약 45~50%" },
+          { k: "유리", v: "수영 · 날개" },
+          { k: "열림", v: "레벨 4 (바다 개척자와 함께)" },
+        ],
+      },
+      {
+        term: "대양",
+        svg: SVG.mapOcean,
+        desc: "지구처럼 바다가 대부분입니다. 뭍은 좁아 붐비고, 바다가 진짜 삶터입니다. 헤엄치지 못하는 종에게는 가장 혹독합니다.",
+        rows: [
+          { k: "바다", v: "약 70%" },
+          { k: "유리", v: "수영 (그 외에는 몹시 힘듦)" },
+          { k: "열림", v: "레벨 6" },
+        ],
       },
     ],
   },

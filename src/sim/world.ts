@@ -10,6 +10,7 @@ import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
 import { Environment } from "@/sim/environment";
 import { Terrain, TILE, type TileKind } from "@/sim/terrain";
+import { mapKind, type MapType } from "@/sim/mapType";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
 import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
@@ -93,6 +94,8 @@ export class World {
   readonly environment: Environment;
   /** 지형(바다/육지/산). 현재는 시각 전용 — 이동/먹이/시야 결합은 다음 슬라이스(독립 rng 라 sim 동역학 무관). */
   readonly terrain: Terrain;
+  /** 이번 판의 세계 종류(대륙·판게아·군도·대양). 지형 파라미터와 먹이 배수를 정한다. */
+  readonly mapType: MapType;
   readonly grid: SpatialGrid;
   /** 먹이 공간 격자 — 가까운 먹이 질의를 빠르게(큰 맵 성능). 먹이 위치 불변이라 생성 시 1회 빌드. */
   readonly foodGrid: FoodGrid;
@@ -127,21 +130,26 @@ export class World {
     genome: Genome,
     areaScale = 1,
     champions: ChampionSeed[] = [],
+    mapType: MapType = "continent",
   ) {
     this.width = width;
     this.height = height;
     this.areaScale = areaScale;
+    // 기본값 "대륙" = 지금까지의 유일한 맵(지형 파라미터·먹이 배수 전부 기존값) → 기존 밸런스·테스트 보존.
+    this.mapType = mapType;
     this.rng = new Rng(seed);
     this.mutRng = new Rng(String(seed) + "-mut"); // 개체 변이 전용 독립 스트림(메인 rng 불변)
     this.genome = genome;
     // 환경(바이옴)도 지형처럼 "독립된 rng"로 생성 → 앞으로 환경을 손봐도 메인 sim 동역학 스트림과 무관.
     this.environment = Environment.generate(new Rng(String(seed) + "-env"), width, height, SIM.cellSize);
     // 지형은 메인 rng 와 "독립된 rng"로 생성 → 기존 sim 동역학(결정론·밸런스)을 1비트도 안 건드린다.
+    // 맵 종류가 지형 파라미터를 덮어쓴다(대륙 = 빈 덮어쓰기 = 기존과 동일).
     this.terrain = Terrain.generate(
       new Rng(String(seed) + "-terrain"),
       width,
       height,
       SIM.terrainCellSize,
+      mapKind(mapType).terrain,
     );
     this.grid = new SpatialGrid(width, height, SIM.gridCellSize);
     this.wildEvoRng = new Rng(String(seed) + "-wildevo");
@@ -360,27 +368,34 @@ export class World {
   private spawnFood(): void {
     // 육지 타일에만 식물 먹이. 지형 "타일" 단위로 정밀 배치(환경 칸 단위면 물 위에 떨어진다).
     // 비옥할수록 많이. this.rng 사용(스폰 전이라 생물 스폰 rng 와 이어짐 — 소비 횟수는 환경칸판과 동일).
-    this.spawnFoodOnTiles(this.rng, Math.round(SIM.foodPatches * this.areaScale), false, (kind, fertility) =>
+    // 먹이 수는 "고정"이라, 땅이 좁은 맵(군도·대양)에선 같은 먹이가 좁은 땅에 몰려 밀도가 되레 치솟는다
+    // → 맵 종류의 landFoodScale 로 함께 줄여 밀도를 지킨다(대륙 = 1.0 = 기존과 동일).
+    const count = Math.round(SIM.foodPatches * this.areaScale * mapKind(this.mapType).landFoodScale);
+    this.spawnFoodOnTiles(this.rng, count, false, (kind, fertility) =>
       kind === TILE.land ? 0.15 + fertility : 0,
     );
   }
 
   /** 바다 타일에 바다 먹이(수영 형질로만 먹는 무경쟁 틈새). 독립 rng → step 동역학 불변. */
   private spawnSeaFood(rng: Rng): void {
-    const count = Math.round(SIM.seaFoodPatches * this.areaScale);
+    // 바다가 넓은 맵일수록 바다 먹이도 늘린다 — 안 그러면 넓어진 바다가 텅 비어 헤엄이 벌이 된다.
+    const count = Math.round(SIM.seaFoodPatches * this.areaScale * mapKind(this.mapType).seaFoodScale);
     this.spawnFoodOnTiles(rng, count, true, (kind) => (kind === TILE.water ? 1 : 0));
   }
 
   /** 산 타일에 고산 먹이(날개 형질로만 먹는 무경쟁 틈새 — 바다 먹이의 하늘 대칭). 독립 rng → 동역학 불변. */
   private spawnMountainFood(rng: Rng): void {
-    const count = Math.round(SIM.mountainFoodPatches * this.areaScale);
+    // 산이 많은 세계(판게아)는 산 위 먹이도 많아야 날개가 값을 한다 — 안 그러면 넘을 산만 늘어난다.
+    const count = Math.round(
+      SIM.mountainFoodPatches * this.areaScale * mapKind(this.mapType).mountainFoodScale,
+    );
     this.spawnFoodOnTiles(rng, count, false, (kind) => (kind === TILE.mountain ? 1 : 0), true);
   }
 
   /** 바다 타일에 깊은 바다 먹이(물 전용 종=진짜 물고기만 먹는 전용 틈새). 얕은 바다 먹이와 같은 물 타일에
    * 놓이되 deep 플래그로 양용 종을 배제 — 물고기 학교가 바다 풀뜯이와 경쟁 없이 유지된다. 독립 rng. */
   private spawnDeepFood(rng: Rng): void {
-    const count = Math.round(SIM.deepFoodPatches * this.areaScale);
+    const count = Math.round(SIM.deepFoodPatches * this.areaScale * mapKind(this.mapType).seaFoodScale);
     this.spawnFoodOnTiles(rng, count, true, (kind) => (kind === TILE.water ? 1 : 0), false, true);
   }
 

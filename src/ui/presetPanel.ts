@@ -10,8 +10,15 @@ import { ABILITY_KEYS, abilityLevel, traitColor, traitWord } from "@/ui/traitDis
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import type { Renderer } from "pixi.js";
 
+/** 이번 판의 세계 요약 — 시작 종을 고르기 **전에** 보여준다(무엇이 기다리는지 알고 고르게). */
+export interface WorldBriefing {
+  name: string;
+  sea: number;
+  desc: string;
+}
+
 export interface PresetPanel {
-  show: (cards: Card[], preview: string) => void;
+  show: (cards: Card[], preview: string, world?: WorldBriefing) => void;
   hide: () => void;
 }
 
@@ -64,12 +71,25 @@ export function createPresetPanel(
 
   // === 1단계: 갈래 선택 화면 ===
   const catView = document.createElement("div");
+  // **이번 세계를 맨 위에.** 세계가 먼저 정해지고 거기 맞는 종을 고르는 게 이 게임이다 — 무엇이
+  // 기다리는지 모르고 고르면 선택이 아니라 운이 된다(군도인데 걷는 종을 고르면 섬에 갇힌다).
+  const worldCard = document.createElement("div");
+  worldCard.style.cssText =
+    "margin-bottom:14px; padding:10px 12px; border-radius:12px; text-align:left;" +
+    "background:rgba(90,160,240,0.10); border:1px solid rgba(90,160,240,0.35);";
+  const worldTitle = document.createElement("div");
+  worldTitle.style.cssText =
+    "font-family:var(--font-title); font-size:15px; color:#9ecbff; margin-bottom:3px;";
+  const worldDesc = document.createElement("div");
+  worldDesc.style.cssText = "font-size:12px; line-height:1.45; color:var(--sub);";
+  worldCard.append(worldTitle, worldDesc);
+
   const catHeading = document.createElement("div");
   catHeading.textContent = "어떤 갈래로 시작할까요?";
   catHeading.style.cssText = "font-family:var(--font-title); font-size:18px; color:var(--ink); margin-bottom:14px;";
   const catList = document.createElement("div");
   catList.style.cssText = "display:flex; flex-direction:column; gap:10px;";
-  catView.append(catHeading, catList);
+  catView.append(worldCard, catHeading, catList);
 
   // === 2단계: 세부 종 선택 화면 ===
   const detailView = document.createElement("div");
@@ -286,8 +306,15 @@ export function createPresetPanel(
     }
   }
 
-  const show = (cs: Card[], _preview: string): void => {
+  const show = (cs: Card[], _preview: string, world?: WorldBriefing): void => {
     cards = cs;
+    if (world) {
+      worldTitle.textContent = `이번 세계 — ${world.name} · 바다 ${world.sea}%`;
+      worldDesc.textContent = world.desc;
+      worldCard.style.display = "";
+    } else {
+      worldCard.style.display = "none";
+    }
     buildArts();
     showCategories();
     root.style.display = "flex";

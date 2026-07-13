@@ -29,6 +29,27 @@ export interface TerrainOptions {
   mountainLevel: number;
   /** 표고 노이즈 블러 횟수 — 많을수록 큰 대륙/바다 덩어리. */
   blurPasses: number;
+  /**
+   * 가장자리 침강 — 0이면 없음(맵 전체가 고르게 무작위). 0보다 크면 맵 테두리로 갈수록 표고를 낮춰
+   * **바깥이 바다로 둘러싸인 하나의 큰 땅덩어리**가 된다(판게아). 1에 가까울수록 육지가 가운데로 뭉친다.
+   */
+  edgeFalloff: number;
+  /**
+   * 지형 **목표 비율**(합이 1 미만이면 나머지가 트인 육지). 주면 위의 표고 임계값(waterLevel 등)을 무시하고,
+   * 이 비율이 정확히 나오도록 임계값을 표고 분포에서 역산한다(분위수).
+   *
+   * 왜 필요한가: 임계값(예: "표고 0.32 아래는 바다")을 고정하면 **시드마다 바다가 4%~38% 로 널뛴다** —
+   * 표고 분포 모양이 시드마다 달라서다. 그러면 "대륙"이라는 종류가 아무 뜻이 없다(같은 이름인데 어떤
+   * 판은 호수뿐이고 어떤 판은 반쯤 물바다). 비율로 지정하면 판마다 "군도는 늘 바다 절반"이 보장된다.
+   *
+   * 안 주면 기존 임계값 방식 그대로 — 대륙(기본 맵)은 밸런스 기준선이라 이 값을 안 준다.
+   */
+  fractions?: {
+    sea: number;
+    grass: number;
+    rough: number;
+    mountain: number;
+  };
 }
 
 const DEFAULTS: TerrainOptions = {
@@ -37,6 +58,7 @@ const DEFAULTS: TerrainOptions = {
   roughLevel: 0.7,
   mountainLevel: 0.76,
   blurPasses: 4,
+  edgeFalloff: 0,
 };
 
 export class Terrain {
@@ -78,6 +100,20 @@ export class Terrain {
     for (let i = 0; i < f.length; i++) f[i] = rng.unit();
     for (let p = 0; p < opt.blurPasses; p++) f = blur(f, cols, rows);
 
+    // 가장자리 침강(판게아) — 테두리로 갈수록 표고를 낮춰 "바다에 둘러싸인 하나의 큰 땅"을 만든다.
+    // 정규화 전에 곱해야 한다(정규화가 뒤에서 다시 0~1 로 펴므로, 여기서 눌린 테두리가 최저=바다가 된다).
+    if (opt.edgeFalloff > 0) {
+      for (let i = 0; i < f.length; i++) {
+        const cx = i % cols;
+        const cy = Math.floor(i / cols);
+        // 중심 0, 테두리 1 (정사각 거리 — 네 변이 고르게 잠긴다. 유클리드면 모서리만 깊게 파인다).
+        const nx = Math.abs((cx + 0.5) / cols - 0.5) * 2;
+        const ny = Math.abs((cy + 0.5) / rows - 0.5) * 2;
+        const d = Math.max(nx, ny);
+        f[i] = (f[i] ?? 0.5) * (1 - opt.edgeFalloff * d * d);
+      }
+    }
+
     let lo = Infinity;
     let hi = -Infinity;
     for (const v of f) {
@@ -87,19 +123,39 @@ export class Terrain {
     const span = hi - lo || 1;
 
     const elevation = new Array<number>(cols * rows);
+    for (let i = 0; i < f.length; i++) elevation[i] = clamp01(((f[i] ?? 0.5) - lo) / span);
+
+    // 목표 비율이 주어지면 임계값을 표고 분포에서 역산한다(분위수) → 시드가 달라도 비율이 일정.
+    let waterLevel = opt.waterLevel;
+    let grassLevel = opt.grassLevel;
+    let roughLevel = opt.roughLevel;
+    let mountainLevel = opt.mountainLevel;
+    const fr = opt.fractions;
+    if (fr) {
+      const sorted = elevation.slice().sort((a, b) => a - b);
+      const q = (p: number): number => {
+        const idx = Math.min(sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))));
+        return sorted[idx] ?? 0.5;
+      };
+      // 낮은 쪽부터: 바다 → 수풀 → 트인 육지 → 험지 → 산.
+      waterLevel = q(fr.sea);
+      grassLevel = q(fr.sea + fr.grass);
+      roughLevel = q(1 - fr.rough - fr.mountain);
+      mountainLevel = q(1 - fr.mountain);
+    }
+
     const tiles = new Array<TileKind>(cols * rows);
-    for (let i = 0; i < f.length; i++) {
-      const e = clamp01(((f[i] ?? 0.5) - lo) / span);
-      elevation[i] = e;
+    for (let i = 0; i < elevation.length; i++) {
+      const e = elevation[i] ?? 0.5;
       // 낮을수록 바다 → 물가 저지대 수풀 → 트인 육지 → 산 아래 험지 → 높으면 산.
       tiles[i] =
-        e < opt.waterLevel
+        e < waterLevel
           ? TILE.water
-          : e > opt.mountainLevel
+          : e > mountainLevel
             ? TILE.mountain
-            : e < opt.grassLevel
+            : e < grassLevel
               ? TILE.grass
-              : e > opt.roughLevel
+              : e > roughLevel
                 ? TILE.rough
                 : TILE.land;
     }

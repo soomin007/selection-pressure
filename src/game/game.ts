@@ -14,6 +14,8 @@ import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, bossEligible, BOSS_TYPES, type BossType } from "@/sim/boss";
+import { pickMapType, mapKind, type MapKind, type MapType } from "@/sim/mapType";
+import { TILE } from "@/sim/terrain";
 import { buildRunReport } from "@/game/runReport";
 
 export type Phase = "lobby" | "draft" | "watch" | "result";
@@ -133,6 +135,12 @@ export class Game {
   /** 이번 런/로비의 시드. 맵·드래프트·보스가 모두 여기서 파생 → 같은 시드면 완전 재현. */
   private currentSeed = "lobby";
 
+  /**
+   * 이번 런의 세계 종류. 런 시작에 **전용 rng 로 한 번** 뽑고 시대가 바뀌어도 유지한다 — 한 혈통은
+   * 한 세계에서 산다. 시대마다 세계가 바뀌면 이미 정한 빌드(바다 종 등)가 갈 곳을 잃어 손쓸 수 없이 진다.
+   * 로비 기본값은 "대륙"(배경 맵) — 기존 밸런스 기준선.
+   */
+  private currentMapType: MapType = "continent";
   private draftRng: Rng;
   private stageRng: Rng;
   // 대멸종 종류 전용 독립 스트림. stageRng(보스 순서)를 1비트도 안 건드려, 기존 보스 순서·시드 재현이
@@ -507,7 +515,14 @@ export class Game {
     f /= n;
     const temp = c > 0.58 ? "추운 땅" : c < 0.42 ? "따뜻한 땅" : "온화한 땅";
     const fert = f > 0.55 ? "비옥함" : f < 0.4 ? "척박함" : "보통";
-    return `${temp} · 먹이 ${fert}`;
+    // 세계 종류를 맨 앞에 — 관전 중에도 "여긴 군도다"가 늘 보여야 형질 선택이 이해된다.
+    return `${this.mapKindNow.name} · ${temp} · 먹이 ${fert}`;
+  }
+
+  /** 시작 종을 고르기 전에 보여줄 이번 세계 요약 — "군도 · 바다 57% · 잘게 쪼개진 섬…". */
+  worldBriefing(): { name: string; sea: number; desc: string } {
+    const k = this.mapKindNow;
+    return { name: k.name, sea: this.seaPercent, desc: k.desc };
   }
 
   private setupRun(): void {
@@ -539,6 +554,9 @@ export class Game {
     this.draftRng = new Rng(`${this.currentSeed}-draft`);
     this.stageRng = new Rng(`${this.currentSeed}-stage`);
     this.extRng = new Rng(`${this.currentSeed}-ext`);
+    // 이번 세계를 뽑는다 — 전용 rng(-map)라 보스·드래프트 스트림을 1비트도 안 건드린다. 아직 안 열린
+    // 세계는 후보에서 빠진다(레벨 1 이면 대륙 하나 → 기존과 동일한 세계 = 밸런스 기준선 보존).
+    this.currentMapType = pickMapType(new Rng(`${this.currentSeed}-map`), this.metaLvl);
     this.bossQueue = shuffle(BOSS_TYPES, this.stageRng); // 한 런의 보스는 서로 다른 종류
     this.extinctionQueue = shuffle(EXTINCTION_TYPES, this.extRng); // 대멸종 종류도 미리 정해 예고 가능
     this.world = this.makeWorld();
@@ -546,7 +564,35 @@ export class Game {
   }
 
   private makeWorld(): World {
-    return new World(`${this.currentSeed}-env`, this.width, this.height, this.genome, this.areaScale, this.champions);
+    return new World(
+      `${this.currentSeed}-env`,
+      this.width,
+      this.height,
+      this.genome,
+      this.areaScale,
+      this.champions,
+      this.currentMapType,
+    );
+  }
+
+  /** 이번 런의 세계 종류(대륙·판게아·군도·대양). 로비가 "이번 세계"로 보여준다. */
+  get mapType(): MapType {
+    return this.currentMapType;
+  }
+
+  get mapKindNow(): MapKind {
+    return mapKind(this.currentMapType);
+  }
+
+  /**
+   * 이번 세계의 바다 비율(%) — 로비 예고에 숫자로 띄운다. "군도 · 바다 57%" 처럼 보이면 시작 종을
+   * 고르는 판단 근거가 된다(맵 종류 이름만으론 얼마나 물바다인지 안 와닿는다). rng 미사용.
+   */
+  get seaPercent(): number {
+    const t = this.world.terrain;
+    let water = 0;
+    for (const k of t.tiles) if (k === TILE.water) water++;
+    return Math.round((100 * water) / Math.max(1, t.tiles.length));
   }
 
   private currentKind(): StageKind {
@@ -559,7 +605,10 @@ export class Game {
     this.rerollsLeft = 0; // 시작 프리셋 선택엔 리롤 없음(한 종으로 시작을 정하는 자리)
     // 메타 언락: 열린 프리셋만 보여준다(잠긴 특수 갈래는 런을 거듭해 해금). 항상 최소한 기본 갈래는 열려 있다.
     this.draftCards = PRESET_CARDS.filter((c) => isPresetUnlocked(c.id, this.metaLvl));
-    this.preview = "어떤 종으로 시작할까요? 시작 프리셋을 고르세요. (먹이를 먹어 레벨업하며 형질을 더합니다)";
+    // **이번 세계를 먼저 알린다.** 세계가 정해진 뒤에 종을 고르는 게 이 게임이다 — 무엇이 기다리는지
+    // 모르고 고르면 그건 선택이 아니라 운이다(군도인데 걷는 종을 고르면 섬에 갇힌다).
+    const w = this.worldBriefing();
+    this.preview = `이번 세계 — ${w.name} · 바다 ${w.sea}%. ${w.desc} 여기서 살아갈 종을 고르세요.`;
   }
 
   /**

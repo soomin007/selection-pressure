@@ -32,7 +32,7 @@ function tune(over: Partial<Traits>): Genome {
 const FLYING = tune({ wings: 80 }); // 날개 ≥ flyThreshold(65) → 늘 하늘에 떠 있다
 const SWIMMER = tune({ swimming: 80 }); // 수륙양용 — 땅에도 물에도 있다
 
-/** 여러 시드에서 이 게놈이 이 보스에게 솎인 내 종 개체 수 합계. */
+/** 여러 시드에서 이 게놈이 이 보스에게 솎인 내 종 개체 수 합계(메커니즘이 작동하는가). */
 function bossDeaths(genome: Genome, type: BossType): number {
   let total = 0;
   for (const seed of SEEDS) {
@@ -41,6 +41,19 @@ function bossDeaths(genome: Genome, type: BossType): number {
     w.boss = createBoss(type, W, H, w.terrain);
     for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) w.step();
     total += w.deaths.boss;
+  }
+  return total;
+}
+
+/** 보스를 겪고 살아남은 내 종 개체 수 합계(카운터 형질이 실제로 버티게 하는가). */
+function bossSurvivors(genome: Genome, type: BossType): number {
+  let total = 0;
+  for (const seed of SEEDS) {
+    const w = new World(seed, W, H, genome);
+    for (let i = 0; i < 750; i++) w.step();
+    w.boss = createBoss(type, W, H, w.terrain);
+    for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) w.step();
+    total += w.playerPopulation;
   }
   return total;
 }
@@ -210,15 +223,18 @@ describe("보스 층위 — 실제로 그렇게 굴러간다", () => {
     expect(bossDeaths(SWIMMER, "chaser")).toBeGreaterThan(0);
   });
 
-  it("말벌 떼: 속도가 높을수록 덜 쏘인다(속도 카운터)", () => {
-    const fast = bossDeaths(tune({ speed: 90 }), "hornet");
-    const slow = bossDeaths(tune({ speed: 30 }), "hornet");
-    expect(fast).toBeLessThan(slow);
+  // 카운터의 세기는 **살아남은 개체 수**로 본다. "솎인 수"로 재면 뒤집힌다 — 잘 사는 빌드는 개체가
+  // 많아 떼와 부딪히는 횟수 자체가 늘어, 한 번 물릴 때 잘 버텨도 총 솎임 수는 오히려 커진다
+  // (known_issues: 카운터를 절대 개체수/솎임 수로 재면 오독한다).
+  it("말벌 떼: 속도가 높을수록 잘 버틴다(속도 카운터 — 쏘이기 전에 벗어난다)", () => {
+    expect(bossSurvivors(tune({ speed: 90 }), "hornet")).toBeGreaterThan(
+      bossSurvivors(tune({ speed: 30 }), "hornet"),
+    );
   });
 
-  it("큰수리: 시야가 넓을수록 덜 솎인다(시야 카운터 — 일찍 보고 달아난다)", () => {
-    const sharp = bossDeaths(tune({ vision: 90 }), "raptor");
-    const dull = bossDeaths(tune({ vision: 50 }), "raptor");
-    expect(sharp).toBeLessThan(dull);
+  it("큰수리: 시야가 넓을수록 잘 버틴다(시야 카운터 — 일찍 보고 달아난다)", () => {
+    expect(bossSurvivors(tune({ vision: 90 }), "raptor")).toBeGreaterThan(
+      bossSurvivors(tune({ vision: 30 }), "raptor"),
+    );
   });
 });

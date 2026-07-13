@@ -233,7 +233,9 @@ async function boot(): Promise<void> {
   game.onDraft = (cards, preview) => {
     // 시작 프리셋 선택은 캐릭터 선택 창, 레벨업 형질은 일반 카드 창.
     // 드래프트 화면은 게임 객체를 모른다 — 그릴 때 필요한 종 상태만 넘긴다(레벨 = 세대).
-    if (game.isChoosingPreset) presetPanel.show(cards, preview);
+    // 시작 종을 고르는 화면엔 "이번 세계"(대륙·판게아·군도·대양 + 바다 비율)를 함께 띄운다 —
+    // 세계를 보고 종을 고르는 게 이 게임이라, 모르고 고르면 선택이 아니라 운이 된다.
+    if (game.isChoosingPreset) presetPanel.show(cards, preview, game.worldBriefing());
     else
       draft.show(cards, {
         level: game.level,
