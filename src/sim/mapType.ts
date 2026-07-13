@@ -70,7 +70,7 @@ export const MAP_KINDS: Record<MapType, MapKind> = {
     },
     landFoodScale: 1,
     seaFoodScale: 1,
-    mountainFoodScale: 2.2, // 산맥의 세계 — 산 위 먹이가 많아 날개가 진짜 값을 한다
+    mountainFoodScale: 2.8, // 산맥의 세계 — 고산 독수리와 나눠 먹고도 날개가 값을 하려면 넉넉해야 한다
     unlockLevel: 3, // 육지 위주라 헤엄 없이도 살 만하다
   },
   archipelago: {
@@ -82,7 +82,7 @@ export const MAP_KINDS: Record<MapType, MapKind> = {
       blurPasses: 2, // 잘게 흩어진 섬(블러가 적어야 덩어리가 안 커진다)
     },
     landFoodScale: 0.8,
-    seaFoodScale: 1.8,
+    seaFoodScale: 2.2, // 바다뱀·거북이 몫을 나누므로 파이도 키운다(안 그러면 틈새가 사라진다)
     mountainFoodScale: 0.3, // 섬이라 산이 거의 없다
     unlockLevel: 4, // 바다 개척자 해금(레벨 4)과 함께 — 헤엄칠 갈래가 있어야 공정하다
   },
@@ -97,7 +97,7 @@ export const MAP_KINDS: Record<MapType, MapKind> = {
     // 땅이 좁아도 해안은 비옥하다 — 밀도(0.45)보다 넉넉히 줘야 육상 갈래가 "좁지만 살 수는 있는" 선에
     // 남는다. 0.4 로 밀도만 맞추면 캐리 용량이 통과기준(3마리) 아래로 떨어져 사실상 즉사 맵이 된다.
     landFoodScale: 0.75,
-    seaFoodScale: 2.6,
+    seaFoodScale: 4.2, // 범고래·거북·크릴·물고기가 함께 사니 파이도 크게(바다가 이 세계의 삶터다)
     mountainFoodScale: 0.2, // 산이 거의 없다
     unlockLevel: 6, // 가장 극단이라 가장 늦게
   },

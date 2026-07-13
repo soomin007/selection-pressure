@@ -13,7 +13,7 @@ import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { mapKind, type MapType } from "@/sim/mapType";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
-import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
+import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeMapSpecies, mapSpeciesHabitat, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
 import type { Biome } from "@/sim/environment";
 import { stepEntity } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
@@ -170,7 +170,11 @@ export class World {
     const championSpecies = champions
       .slice(0, SIM.championMaxPerRun)
       .map((c, i) => makeChampionSpecies(900 + i, c.genome, c.name, c.color));
-    this.species = [this.playerSpecies, kin, ...wild, ...biomeSpecies, ...championSpecies];
+    // 맵 전용 야생종(대륙 들소 / 판게아 독수리·늑대 / 군도·대양의 바다뱀·범고래·거북·크릴) —
+    // 바이옴 특화종과 같이 "독립 rng"로 생성(메인 스트림 보존). 물이 많은 세계에 **바다 포식자**를
+    // 들이는 게 핵심이다 — 지금까지 바다엔 위험이 하나도 없어 헤엄치는 종이 공짜로 먹고 살았다.
+    const mapSpecies = makeMapSpecies(new Rng(String(seed) + "-mapspecies"), mapType);
+    this.species = [this.playerSpecies, kin, ...wild, ...biomeSpecies, ...mapSpecies, ...championSpecies];
     this.spawnFood();
     this.spawnEntities();
     // 친척은 spawnEntities(메인 rng) 대신 "독립 rng"로 내 종 근처에 스폰 → 메인 소비 순서 보존(밸런스 불변).
@@ -185,6 +189,8 @@ export class World {
     this.spawnWildHerdPadding(new Rng(String(seed) + "-herdpad"));
     // 바이옴 특화종을 각자 고향 바이옴에 스폰(독립 rng). 그 바이옴이 이 맵에 없으면 그 종은 안 나온다.
     this.spawnBiomeAnimals(new Rng(String(seed) + "-biomepos"));
+    // 맵 전용 종을 제 삶터(바다·산·땅)에 스폰(독립 rng) — 바다 종을 육지에 두면 갇혀서 그냥 죽는다.
+    this.spawnMapAnimals(new Rng(String(seed) + "-mappos"), mapSpecies);
     // 챔피언(비동기 생물)도 독립 rng 로 소수만, 친척처럼 맵의 독립 영역에 — 메인 스트림·밸런스 불변.
     this.spawnChampions(new Rng(String(seed) + "-champpos"));
     this.grid.rebuild(this.entities);
@@ -711,6 +717,49 @@ export class World {
         const x = Math.max(0, Math.min(this.width, baseX + rng.range(-spread, spread)));
         const y = Math.max(0, Math.min(this.height, baseY + rng.range(-spread, spread)));
         const spot = terr.nearestPassable(x, y, false, true, false); // 육지 거주(수영·비행 아님)
+        this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
+      }
+    }
+  }
+
+  /**
+   * 맵 전용 야생종을 제 삶터에 스폰한다(독립 rng → 메인 스트림·기존 밸런스 불변).
+   *   바다 종(바다뱀·범고래·거북·크릴) → **충분히 큰 바다**(물고기 스폰과 같은 규칙). 웅덩이에 넣으면
+   *     갇혀 뱅뱅 돌다 굶어 죽어 아무 일도 안 일어난다.
+   *   산 종(고산 독수리) → 산 근처(날 수 있으니 통행은 자유롭지만 사냥터가 산이라 거기서 시작).
+   *   땅 종(들소) → 야생종처럼 한 보금자리에 모여서.
+   * 그 삶터가 이 맵에 없으면(예: 바다가 거의 없는데 바다 종) 그 종은 이번 판에 안 나온다.
+   */
+  private spawnMapAnimals(rng: Rng, mapSpecies: Species[]): void {
+    const terr = this.terrain;
+    const spread = 72 * Math.sqrt(this.areaScale);
+    for (const sp of mapSpecies) {
+      const habitat = mapSpeciesHabitat(this.mapType, sp.name);
+      const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
+      const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
+      const canFly = sp.genome.traits.wings >= SIM.flyThreshold;
+
+      // 보금자리 후보 타일 — 삶터에 맞는 타일만.
+      const want: TileKind | null =
+        habitat === "sea" ? TILE.water : habitat === "mountain" ? TILE.mountain : null;
+      const cells: number[] = [];
+      for (let i = 0; i < terr.tiles.length; i++) {
+        const k = terr.tiles[i] ?? TILE.land;
+        if (want === null) {
+          if (k !== TILE.water && k !== TILE.mountain) cells.push(i);
+        } else if (k === want) cells.push(i);
+      }
+      if (cells.length === 0) continue; // 이 맵엔 그 삶터가 없다 → 이 종은 안 나온다
+
+      const home = cells[Math.floor(rng.unit() * cells.length)] ?? cells[0] ?? 0;
+      const baseX = (home % terr.cols + 0.5) * terr.cellSize;
+      const baseY = (Math.floor(home / terr.cols) + 0.5) * terr.cellSize;
+      for (let i = 0; i < sp.initialCount; i++) {
+        const x = Math.max(0, Math.min(this.width, baseX + rng.range(-spread, spread)));
+        const y = Math.max(0, Math.min(this.height, baseY + rng.range(-spread, spread)));
+        // 물 전용 종은 "충분히 큰 바다"로 스냅(작은 웅덩이에 갇히면 폐사) — 물고기 떼와 같은 규칙.
+        const minRegion = canSwim && !canLand ? SIM.minWaterRegion : 1;
+        const spot = terr.nearestLargePassable(x, y, canSwim, canLand, canFly, minRegion);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }

@@ -247,12 +247,17 @@ export class WorldView {
       // 땅 보스가 코앞에서 지나가는데 왜 안 잡히는지 화면에서 알 수 없다(시각=로직 1:1, known_issues).
       // 날갯짓에 맞춰 미세하게 오르내려 "떠 있음"이 살아 있다. playerG 는 스프라이트 아래 레이어다.
       if (e.genome.traits.wings >= SIM.flyThreshold) {
-        const bob = Math.sin((this.frame + e.id * 11) * 0.09) * 1.6;
-        const sx = rx + 10;
-        const sy = ry + 14 + bob;
-        // 어두운 지형(숲·물) 위에서도 읽히게 밝은 테두리를 두른다 — 어두운 타원만으론 배경에 묻힌다.
-        this.playerG.ellipse(sx, sy, 10, 4.2).fill({ color: 0x05100a, alpha: 0.5 });
-        this.playerG.ellipse(sx, sy, 10, 4.2).stroke({ color: 0xdff0d0, width: 1, alpha: 0.28 });
+        // 부드러운 드롭 섀도 — 바깥에서 안으로 진해지는 동심 타원 셋(가짜 블러). 예전엔 밝은 테두리를
+        // 두른 딱딱한 타원이었는데, 그림자가 아니라 화면 오류처럼 보였다(사용자). 그림자는 테두리가
+        // 없고 가장자리가 흐려야 그림자로 읽힌다. 몸 바로 아래·조금 오른쪽에 작게 깔아 "떠 있음"만 준다.
+        // playerG 는 스프라이트 **아래** 레이어라, 몸(반지름 ~15) 안쪽에 그리면 통째로 가려진다
+        // (known_issues). 몸 바깥 오른쪽 아래로 충분히 밀어야 "높이 떠 있어 그림자가 저만치 진다"가 된다.
+        const bob = Math.sin((this.frame + e.id * 11) * 0.07) * 1.0;
+        const sx = rx + 15;
+        const sy = ry + 18 + bob;
+        this.playerG.ellipse(sx, sy, 11, 4.6).fill({ color: 0x000000, alpha: 0.1 });
+        this.playerG.ellipse(sx, sy, 8.5, 3.6).fill({ color: 0x000000, alpha: 0.16 });
+        this.playerG.ellipse(sx, sy, 6, 2.6).fill({ color: 0x000000, alpha: 0.24 });
       }
 
       // 내 종 강조: 스프라이트 아래 은은한 고리(폰에서 "내 무리"가 한눈에).

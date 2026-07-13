@@ -302,6 +302,149 @@ const BIOME_ARCHETYPES: readonly BiomeArchetype[] = [
   },
 ];
 
+// ───────────────────────────── 맵 종류별 야생종 ─────────────────────────────
+//
+// 세계마다 사는 것이 달라야 세계가 다르다. 그리고 더 중요한 이유가 있다 — **지금 바다에는 포식자가
+// 하나도 없다.** 야생 포식자(diet 85)는 수영이 기본 50 이라 물에 못 들어가고, 바다에 사는 둘(바다
+// 풀뜯이·물고기 떼)은 초식이다. 그래서 바다는 "먹이만 있고 위험이 전혀 없는 곳"이었고, 그게 바다
+// 개척자가 어느 맵에서든 압도적이던 진짜 이유다(프로브: 군도에서 도달 5.8/6).
+//
+// 그래서 물이 많은 세계에는 **바다 포식자**를 넣는다. 물 전용(수영 ≥ aquaticOnlyThreshold)이라 뭍에는
+// 못 올라온다 — 헤엄치는 종은 물에서 쫓기되 뭍으로 도망칠 수 있다(읽히는 규칙).
+//
+// ⚠ WILD_ARCHETYPES 에 직접 넣으면 generateWildSpecies 의 rng 스트림이 늘어 기존 밸런스가 통째로
+// 이동한다(known_issues). 그래서 바이옴 특화종과 똑같이 **독립 rng**로 만들고 스폰한다.
+interface MapArchetype extends Archetype {
+  /** 물에 사는 종인가 — true 면 큰 바다에 스폰한다(육지 스폰이면 물 전용 종이 갇혀 죽는다). */
+  aquatic?: boolean;
+  /** 산 위에 사는 종인가(비행) — true 면 산 근처에 스폰한다. */
+  mountainous?: boolean;
+}
+
+export const MAP_ARCHETYPES: Record<string, readonly MapArchetype[]> = {
+  // 대륙에는 아직 맵 전용 종을 안 둔다 — 여긴 **밸런스 기준선**이고 이미 야생 6종 + 바이옴 특화 3종이
+  // 산다(네 세계 중 가장 붐빈다). 들소 무리를 넣어 봤더니 육지 먹이를 나눠 먹어 대륙이 실제로 빡빡해졌고,
+  // **보스 통과기준 테스트가 깨졌다**(잘 성장한 무리가 사나운 무리를 못 넘김). 시작 프리셋이 이미 약한
+  // 상태라 대륙을 더 조이는 건 방향이 반대다. 프리셋 밸런스를 잡은 뒤에 대륙 고유종을 넣는다.
+  continent: [],
+  pangaea: [
+    {
+      // 고산 독수리 — 산맥 위를 도는 큰 새. 고산 먹이를 두고 날개 종과 다툰다(판게아는 산맥의 세계).
+      name: "고산 독수리",
+      color: 0xe8d8b0, // 눈 덮인 산 위에서 도드라지는 밝은 상아빛
+      // 셋이면 충분하다 — 다섯이면 산 위 먹이를 거의 다 먹어치워 날개 종이 되레 못 산다(프로브: 4.3→2.1).
+      // 경쟁자는 "몫을 나누는" 정도여야지 "틈새를 없애는" 정도면 그 갈래가 죽는다.
+      initialCount: 3,
+      foodKinds: [],
+      traits: { diet: 22, fertility: 30, speed: 62, vision: 76, metabolism: 55, attack: 40, herding: 20, wings: 74 },
+      mountainous: true,
+    },
+    // (늑대 무리는 뺐다 — 육지 포식 압력을 더하니 판게아가 "육식만 사는 맵"이 됐다. 프로브: 다산 초식 0.0)
+  ],
+  archipelago: [
+    {
+      // 바다뱀 — 섬 사이 얕은 바다의 포식자. 물 전용이라 뭍에는 못 올라온다(물에서만 무섭다).
+      name: "바다뱀",
+      color: 0x2fbf6a, // 독오른 초록 — 청록 바다에서 확 튄다
+      // 둘이면 충분하다. 셋·다섯이면 바다가 되레 육지보다 험해져 **바다 종이 바다 세계에서 제일 못 사는**
+      // 뒤집힌 결과가 나온다(프로브: 군도 도달 5.8 → 2.8). 바다는 "위험하지만 그래도 헤엄치는 자의 땅"
+      // 이어야 한다 — 포식자는 공짜 밥상을 없애는 정도지, 삶터를 빼앗는 정도면 안 된다.
+      initialCount: 2,
+      foodKinds: [],
+      traits: { diet: 88, fertility: 26, speed: 66, vision: 58, metabolism: 50, attack: 58, herding: 20, swimming: 94 },
+      aquatic: true,
+    },
+    {
+      // 바다거북 무리 — 느리고 오래 사는 바다 초식. 수륙양용(수영 80)이라 **얕은 바다 먹이만** 먹고 뭍에도
+      // 오른다(진짜 바다거북처럼). 수영 92(물 전용)로 뒀더니 얕은 바다 + 깊은 바다를 **둘 다** 먹어,
+      // 얕은 것만 먹는 바다 개척자(수영 88)를 일방적으로 눌렀다 — 바다 종이 바다 세계에서 제일 못 사는
+      // 뒤집힌 결과의 진범이었다(프로브: 포식자를 약화해도 안 풀렸다).
+      name: "바다거북 무리",
+      color: 0xd8a860, // 등딱지 황갈색
+      initialCount: 5,
+      foodKinds: [],
+      traits: { diet: 14, fertility: 36, speed: 28, vision: 44, metabolism: 38, attack: 48, herding: 38, swimming: 80 },
+      aquatic: true,
+    },
+  ],
+  ocean: [
+    {
+      // 범고래 무리 — 대양의 정점. 떼로 사냥한다. 물 전용이라 뭍은 안전하다.
+      name: "범고래 무리",
+      color: 0x1a2430, // 검푸른 등 — 깊은 바다에서도 실루엣이 선다
+      // 한 무리면 충분하다. 둘이면 물이 72% 인 세계에서 헤엄치는 종이 도망칠 뭍이 없어 내내 쫓기다
+      // 못 먹고 굶는다(공황 아사 — 큰수리 도망 반경 때와 같은 패턴. 프로브: 대양 도달 6.4 → 2.3).
+      // 대양은 "바다 종의 삶터"여야 한다. 범고래는 공짜 밥상을 없애는 정도까지만.
+      initialCount: 1,
+      foodKinds: [],
+      traits: { diet: 92, fertility: 20, speed: 68, vision: 68, metabolism: 55, attack: 56, herding: 50, swimming: 94 },
+      aquatic: true,
+    },
+    {
+      // 바다거북 무리 — 대양에도 산다(군도와 같은 종). 수륙양용이라 얕은 바다 먹이만 먹는다.
+      name: "바다거북 무리",
+      color: 0xd8a860,
+      initialCount: 5,
+      foodKinds: [],
+      traits: { diet: 14, fertility: 36, speed: 28, vision: 44, metabolism: 38, attack: 48, herding: 38, swimming: 80 },
+      aquatic: true,
+    },
+    {
+      // 크릴 떼 — 대양 먹이사슬의 바닥. 다산으로 불어나 범고래를 먹여 살린다(포식자만 넣으면 굶어 죽는다).
+      name: "크릴 떼",
+      // 크릴이 있어야 범고래가 크릴을 먹는다 — 없으면 내 종만 노린다(포식자만 넣으면 학살이 된다).
+      // 다만 물 전용(수영 95)이라 얕은·깊은 바다 먹이를 **둘 다** 먹는다. 번식 88 · 16마리로 뒀더니
+      // 폭증해 바다 먹이를 쓸어 담아, 얕은 것만 먹는 바다 개척자가 굶었다(프로브: 대양 도달 2.3).
+      // 범고래의 밥이 될 만큼만 두고 번식을 낮춘다.
+      color: 0xff9ec8, // 연분홍 — 깊은 남청 바다에서 무리가 반짝인다
+      initialCount: 9,
+      foodKinds: [],
+      traits: { diet: 12, fertility: 58, speed: 26, vision: 26, metabolism: 44, attack: 6, herding: 74, swimming: 95 },
+      aquatic: true,
+    },
+  ],
+};
+
+/**
+ * 이 세계에 사는 맵 전용 야생종들. **독립 rng**로 만든다 → 메인 스트림(기존 밸런스) 불변.
+ * id 는 다른 종들과 안 겹치게 높은 대역(700+)을 쓴다.
+ */
+export function makeMapSpecies(rng: Rng, mapType: string): Species[] {
+  const arch = MAP_ARCHETYPES[mapType] ?? [];
+  const out: Species[] = [];
+  let id = 700;
+  for (const a of arch) {
+    const g = defaultGenome();
+    for (const key of TRAIT_KEYS) {
+      if (key === "swimming" || key === "wings" || key === "echo" || key === "venom" || key === "ranged") {
+        g.traits[key] = a.traits[key] ?? (key === "swimming" ? 50 : 0);
+        continue;
+      }
+      g.traits[key] = clampTrait((a.traits[key] ?? 50) + rng.range(-6, 6));
+    }
+    out.push({
+      id: id++,
+      name: a.name,
+      genome: clampGenome(g),
+      isPlayer: false,
+      color: a.color,
+      initialCount: a.initialCount,
+      foodKinds: a.foodKinds.slice(),
+      friendly: false,
+      faction: a.faction ?? 0,
+    });
+  }
+  return out;
+}
+
+/** 이 맵 전용 종이 물에 사는가 / 산에 사는가 — world 가 스폰 자리를 정하는 데 쓴다(이름으로 조회). */
+export function mapSpeciesHabitat(mapType: string, name: string): "sea" | "mountain" | "land" {
+  const a = (MAP_ARCHETYPES[mapType] ?? []).find((x) => x.name === name);
+  if (a?.aquatic) return "sea";
+  if (a?.mountainous) return "mountain";
+  return "land";
+}
+
 /**
  * 바이옴 특화종들을 만든다(독립 rng 로 약간 흔들되 스트림은 호출부와 무관). id 는 기존 종들 뒤 고유값.
  * 실제 스폰(고향 바이옴 위치)은 world 가 맡는다 — 그 바이옴이 맵에 없으면 그 종은 이번 맵에 안 나온다.
