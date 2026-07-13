@@ -143,6 +143,37 @@ export function biteOutcome(attack: number, preyAttack: number): BiteOutcome {
 }
 
 /**
+ * 무리 방어 규칙(순수 함수 — 테스트로 규칙을 못 박는다). 무리 성향이 임계를 넘고 곁에 같은 종이
+ * 충분히 있으면 방패가 선다. 둘 다 있어야 한다: 형질만 높고 흩어져 있으면 방패가 없고(뭉쳐야 방어다),
+ * 우연히 모였어도 무리 성향이 낮으면 없다(형질을 찍어야 방어다).
+ */
+export function herdShieldedBy(herding: number, neighbors: number): boolean {
+  return herding > SIM.herdShieldThreshold && neighbors >= SIM.herdShieldNeighbors;
+}
+
+/**
+ * 무리 방어 — 이 개체가 "뭉친 무리 안"이라 포식자가 표적으로 삼지 않는가(사자가 물소 떼를 안 덮친다).
+ *
+ * 이진 판정인 게 의도다 — 확률을 깎는 방식은 소용이 없었다(프로브). 잡히는 개체는 이미 무리에서
+ * 떨어진 낙오자라 "이웃 수" 보정이 애초에 안 걸렸기 때문이다. 표적 선택에서 통째로 빼야 무리가 산다.
+ * 무리에서 떨어지는 순간 방패가 사라지므로 완전 면역이 아니다 — 포식자는 늘 가장자리를 노린다.
+ *
+ * 무리 성향이 임계 이하면 이웃을 세지도 않는다(순회 비용 0 — 야생종이 전부 여기서 빠진다).
+ * rng 미사용·격자 순회 순서 고정 → 결정론 보존.
+ */
+function herdShielded(p: Entity, world: World): boolean {
+  const herding = p.genome.traits.herding;
+  if (herding <= SIM.herdShieldThreshold) return false;
+  const neighbors = world.grid.countMatching(
+    p.x,
+    p.y,
+    SIM.herdShieldRadius,
+    (m) => m.alive && m !== p && m.species.id === p.species.id,
+  );
+  return herdShieldedBy(herding, neighbors);
+}
+
+/**
  * 잡아먹는다 — 즉사 물기든, 여러 번 물려 기운이 다한 것이든 결과는 같다.
  * 방어 독(venom): 독먹이를 삼키면 포식자가 중독되고 영양도 못 얻는다 — 독개구리·독뱀을 삼킨 대가.
  * venom 이 강할수록 독은 크게 옮고 사냥 이득은 준다("잡아먹으면 손해"의 포식 방어).
@@ -605,7 +636,12 @@ function chooseGoal(
         // **닿을 수 있는 먹잇감만.** 먹이(nearestFood)엔 이 검사가 있었는데 먹잇감엔 없어서, 땅 위 종이
         // 물속 물고기를 노리고 물가에 머리를 박은 채 굶어 죽었다(프로브: 내 종 개체틱의 31%).
         // 끼임 감지(stuckTicks)로는 못 푼다 — 물가에서 튕기며 진동해 "움직였다"로 판정된다.
-        world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly),
+        world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly) &&
+        // **뭉친 무리는 아예 안 건드린다**(무리 방어). 사자가 물소 떼 한가운데를 덮치지 않고 가장자리·
+        // 낙오자를 노리는 것과 같다. 물기 확률을 깎는 방식으로도 해 봤으나 소용없었다 — 애초에 잡히는
+        // 개체는 이미 무리에서 떨어져 나온 낙오자라 "이웃 수" 보정이 걸리지 않았다(프로브: 저항을 걸어도
+        // 잡아먹힘 29→22 에 그쳐 도달 단계가 안 변함). 표적 선택 단계에서 막아야 무리가 실제로 산다.
+        !herdShielded(p, world),
     );
   }
   if (canGraze) food = nearestFood(e, world, senseRange, canSense);
@@ -621,9 +657,10 @@ function chooseGoal(
   if (e.targetPrey) {
     const p = e.targetPrey;
     // 쫓던 먹잇감이 물로 들어가 버렸으면(또는 애초에 못 닿는 곳이면) 놓아준다 — 안 그러면 히스테리시스가
-    // 그 목표를 붙들어 물가에서 계속 머리를 박는다.
+    // 그 목표를 붙들어 물가에서 계속 머리를 박는다. 쫓던 먹잇감이 **무리로 돌아가 버려도** 놓아준다
+    // (무리 방어) — 안 그러면 표적 제외를 뚫고 무리 한가운데까지 쫓아 들어간다.
     const reachable = world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly);
-    if (p.alive && p.species.id !== e.species.id && reachable) {
+    if (p.alive && p.species.id !== e.species.id && reachable && !herdShielded(p, world)) {
       const cur2 = dist2(e, p);
       if (cur2 <= keep2 && cand2 >= cur2 * SIM.targetSwitchGain) return { x: p.x, y: p.y };
     }

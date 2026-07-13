@@ -80,6 +80,20 @@ export class SpatialGrid {
     }
   }
 
+  /**
+   * 반경 maxR 안에서 pred 를 만족하는 개체 수(무리 방어: 곁에 선 같은 종이 몇인가).
+   * neighborhood 와 달리 **종을 가려 셀 수 있다** — 무리 방어는 같은 종이 곁에 있어야 성립하고
+   * (늑대가 소 떼에 섞여 있다고 소가 안전해지진 않는다), 3×3 칸이 아니라 반경으로 재야
+   * 격자 칸 경계에서 값이 튀지 않는다.
+   */
+  countMatching(x: number, y: number, maxR: number, pred: (e: Entity) => boolean): number {
+    let n = 0;
+    this.forEachMatching(x, y, maxR, (e) => {
+      if (pred(e)) n += 1;
+    });
+    return n;
+  }
+
   /** 주변 3×3 칸의 개체 수와 무게중심 (무리 cohesion/huddle 용). 자기 자신 포함. */
   neighborhood(x: number, y: number): { count: number; comX: number; comY: number } {
     const cx = this.clamp(Math.floor(x / this.cellSize), this.cols);
