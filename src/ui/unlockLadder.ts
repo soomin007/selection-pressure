@@ -3,6 +3,7 @@
 // 확인한다(사용자 요청). 대백과처럼 로비·결과 화면에서 여는 별도 오버레이. 순수 DOM, 효과 없음(열람만).
 
 import { UNLOCK_TIERS, metaLevelInfo, loadMeta } from "@/game/meta";
+import { registerKeyLayer, keyChip } from "@/ui/keys";
 
 export interface UnlockLadder {
   show: () => void;
@@ -70,6 +71,7 @@ export function createUnlockLadder(onClose: () => void): UnlockLadder {
 
   const closeBtn = document.createElement("button");
   closeBtn.textContent = "닫기";
+  closeBtn.appendChild(keyChip("Esc"));
   closeBtn.style.cssText =
     "margin:20px 0 6px; padding:11px 40px; border:1px solid var(--line); border-radius:var(--r-btn);" +
     "background:rgba(255,255,255,0.05); color:var(--ink); font-family:var(--font-body); font-size:14px; cursor:pointer;";
@@ -141,6 +143,27 @@ export function createUnlockLadder(onClose: () => void): UnlockLadder {
       list.appendChild(row);
     }
   };
+
+  // 키보드 — Esc/Enter 닫기, ↑↓ 목록 훑기. 우선순위 42 = 이 오버레이의 z-index(결과·로비 위).
+  registerKeyLayer(
+    42,
+    () => overlay.style.display === "flex",
+    (e) => {
+      switch (e.code) {
+        case "Escape":
+        case "Enter":
+        case "NumpadEnter":
+          if (!e.repeat) onClose();
+          return true;
+        case "ArrowDown":
+        case "ArrowUp":
+          overlay.scrollBy({ top: e.code === "ArrowDown" ? 90 : -90, behavior: "smooth" });
+          return true;
+        default:
+          return false;
+      }
+    },
+  );
 
   return {
     show: () => {

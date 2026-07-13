@@ -150,6 +150,17 @@ export function ensurePanelStyles(): void {
   body[data-layout="desktop"] .ui-card { flex: 1 1 0; min-width: 0; }
   body[data-layout="desktop"] .ui-result { width: min(520px, 90%); }
 
+  /* 키 안내 칩 — 버튼 옆의 <kbd> 모양 표식. 키보드가 없는 모바일에선 통째로 숨긴다.
+     배경은 반투명 검정 + 밝은 테두리라 lime 키 버튼(어두운 글자) 위에서도, 어두운 패널 위에서도 읽힌다. */
+  .ui-kbd { display: none; }
+  body[data-layout="desktop"] .ui-kbd {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 14px; height: 16px; padding: 0 5px; box-sizing: border-box; margin-left: 6px;
+    border-radius: 4px; border: 1px solid rgba(255,255,255,0.22); background: rgba(0,0,0,0.22);
+    font-family: var(--font-mono); font-size: 9.5px; line-height: 1; color: inherit; opacity: 0.85;
+    vertical-align: 1px;
+  }
+
   /* 모션 접근성 — 부유·상승 연출을 멈추고 상태 전환만 유지(핸드오프 §11) */
   @media (prefers-reduced-motion: reduce) {
     .ui-root { animation: none; }
@@ -269,6 +280,14 @@ export function ensurePanelStyles(): void {
   /* §7 콘페티 — 전설 카드 안에서 전방향으로 터진다 */
   .draft-confetti { position: absolute; z-index: 2; pointer-events: none; }
 
+  /* 카드 모서리의 번호 키(1·2·3) 표식 + 푸터의 키 안내 줄 — 데스크톱 전용(.ui-kbd 규칙이 모바일에서 숨긴다) */
+  .draft-kbd-corner { position: absolute; top: 10px; left: 12px; z-index: 2; }
+  body[data-layout="desktop"] .draft-kbd-corner { margin-left: 0; }
+  .draft-keys-hint { display: none; }
+  body[data-layout="desktop"] .draft-keys-hint { display: block; text-align: center; margin-top: 11px;
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--faint);
+    text-shadow: 0 1px 6px rgba(0,0,0,0.6); }
+
   /* CTA + 푸터 */
   .draft-ft { grid-area: ft; }
   .draft-cta { display: block; width: 100%; box-sizing: border-box; margin: 14px auto 0; border: 0;
@@ -301,9 +320,11 @@ export function ensurePanelStyles(): void {
     bottom: calc(10px + env(safe-area-inset-bottom)); padding: 0 10px;
     display: none; justify-content: center; }
   .draft-popup-wrap.on { display: flex; }
+  /* color 필수: 팝업 래퍼는 body 직속이라 .draft-root 의 color 를 상속받지 못한다 — 안 주면
+     이름·스탯 값·고른 형질 칩이 body 기본 검정 글씨가 되어 어두운 바탕에서 안 보인다. */
   .draft-popup { width: 100%; max-width: 410px; box-sizing: border-box; background: rgba(30,23,16,0.97);
     border: 1px solid var(--line); border-radius: 22px; padding: 20px 20px 18px;
-    animation: draft-sheet-rise 0.35s ease-out; }
+    color: var(--ink); animation: draft-sheet-rise 0.35s ease-out; }
   .draft-popup-head { display: flex; justify-content: space-between; align-items: center; }
   .draft-popup-id { display: flex; align-items: center; gap: 11px; min-width: 0; }
   .draft-popup-thumb { width: 46px; height: 42px; border-radius: 13px; flex: none;

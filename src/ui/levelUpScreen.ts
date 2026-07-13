@@ -4,6 +4,7 @@
 
 import { metaLevelInfo, type RunProgress, type UnlockTier } from "@/game/meta";
 import { COSMETICS, type Achievement } from "@/game/achievements";
+import { registerKeyLayer, keyChip } from "@/ui/keys";
 
 export interface LevelUpScreen {
   /**
@@ -100,6 +101,7 @@ export function createLevelUpScreen(): LevelUpScreen {
 
   const continueBtn = document.createElement("button");
   continueBtn.textContent = "계속";
+  continueBtn.appendChild(keyChip("Enter"));
   continueBtn.style.cssText =
     "display:none; margin-top:10px; padding:12px 34px; border:0; border-radius:var(--r-btn);" +
     "background:var(--lime); color:#1B2A0A; font-family:var(--font-title); font-size:16px;" +
@@ -110,6 +112,26 @@ export function createLevelUpScreen(): LevelUpScreen {
 
   let raf = 0;
   let finished = true;
+
+  // 키보드 — 애니메이션 중이면 끝까지 건너뛰고(화면 탭과 동일), 끝났으면 "계속"(다음 화면으로).
+  registerKeyLayer(
+    40,
+    () => overlay.style.display === "flex",
+    (e) => {
+      switch (e.code) {
+        case "Enter":
+        case "NumpadEnter":
+        case "Space":
+        case "Escape":
+          if (e.repeat) return true;
+          if (continueBtn.style.display !== "none") continueBtn.click();
+          else overlay.click();
+          return true;
+        default:
+          return false;
+      }
+    },
+  );
 
   const clear = (): void => {
     if (raf) cancelAnimationFrame(raf);

@@ -2,6 +2,7 @@
 // 사망 원인 문단은 텍스트 대신 비례 막대로 그린다 — "무엇이 내 종을 죽였나"가 폰에서 한눈에 읽히게(§7).
 
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { registerKeyLayer, keyChip } from "@/ui/keys";
 import { createCosmeticPicker } from "@/ui/cosmeticPicker";
 import { parseDeathLine, type DeathRow } from "@/game/runReport";
 
@@ -51,6 +52,7 @@ export function createResultPanel(
   const cosmetics = createCosmeticPicker(onCosmeticChange);
   const ladderBtn = document.createElement("button");
   ladderBtn.textContent = "진화 갈래 보기";
+  ladderBtn.appendChild(keyChip("L"));
   ladderBtn.style.cssText =
     "padding:6px 4px 3px; border:0; background:transparent; color:var(--ink);" +
     "font-family:var(--font-body); font-size:13px; cursor:pointer; border-bottom:1.5px solid var(--amber);";
@@ -60,6 +62,7 @@ export function createResultPanel(
   // 승리 후에만 뜨는 주 버튼 — 성장을 이어 더 험한 다음 시대로. 입체 키 버튼(한눈에 "이걸 눌러라").
   const continueBtn = document.createElement("button");
   continueBtn.textContent = "다음 시대로 →";
+  continueBtn.appendChild(keyChip("Enter"));
   continueBtn.className = "ui-btn-primary";
   continueBtn.style.marginTop = "18px";
   continueBtn.style.display = "none";
@@ -68,6 +71,7 @@ export function createResultPanel(
   // 이 혈통의 기록(보고서) 열기 — 승패와 무관하게 늘 있는 자취. 은은한 보조 버튼(주 행동은 아래 두 개).
   const reportBtn = document.createElement("button");
   reportBtn.textContent = "이 혈통의 기록 보기";
+  reportBtn.appendChild(keyChip("R"));
   reportBtn.style.cssText =
     "display:block; width:100%; margin:14px 0 0; padding:11px; border:1px solid var(--line);" +
     "border-radius:var(--r-btn); background:rgba(255,255,255,0.04); color:var(--sub);" +
@@ -107,13 +111,15 @@ export function createResultPanel(
       // 보조 버튼 — 은은한 텍스트 버튼 + 위 여백으로 주 버튼(다음 시대로)과 확실히 떨어뜨린다.
       newRunBtn.className = "";
       newRunBtn.textContent = "여기서 마치고 새 혈통으로";
+      newRunBtn.appendChild(keyChip("N"));
       newRunBtn.style.cssText =
         "display:block; width:100%; margin:12px 0 0; padding:11px; border:0;" +
         "background:transparent; color:var(--faint); font-family:var(--font-body); font-size:13px; cursor:pointer;";
     } else {
-      // 패배 — 새 런이 유일한 주 버튼(입체 키).
+      // 패배 — 새 런이 유일한 주 버튼(입체 키). Enter 가 주 행동이라 칩도 Enter.
       newRunBtn.className = "ui-btn-primary";
       newRunBtn.textContent = "새 혈통으로 시작";
+      newRunBtn.appendChild(keyChip("Enter"));
       newRunBtn.style.cssText = "";
       newRunBtn.style.marginTop = "18px";
     }
@@ -123,6 +129,34 @@ export function createResultPanel(
   const hide = (): void => {
     root.style.display = "none";
   };
+
+  // 키보드 조작 — 우선순위 20 = .ui-root 의 z-index. 보고서(41)·진화 갈래(42)가 열리면 그쪽이 먼저 받는다.
+  registerKeyLayer(
+    20,
+    () => root.style.display !== "none",
+    (e) => {
+      if (e.repeat) return false;
+      switch (e.code) {
+        case "Enter":
+        case "NumpadEnter":
+          // 주 행동 — 이어갈 수 있는 승리면 다음 시대로, 아니면 새 혈통으로.
+          if (continueBtn.style.display !== "none") continueBtn.click();
+          else newRunBtn.click();
+          return true;
+        case "KeyN":
+          newRunBtn.click();
+          return true;
+        case "KeyR":
+          reportBtn.click();
+          return true;
+        case "KeyL":
+          ladderBtn.click();
+          return true;
+        default:
+          return false;
+      }
+    },
+  );
 
   return { show, hide };
 }

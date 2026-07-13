@@ -30,6 +30,7 @@ import {
   type EffectChip,
 } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { registerKeyLayer, keyChip } from "@/ui/keys";
 import {
   DRAFT_TIMING,
   RARITY_STYLE,
@@ -106,7 +107,8 @@ export function createDraftPanel(
   const mineThumb = el("span", "draft-mine-thumb");
   const mineLabel = el("span", "draft-mine-label");
   mineLabel.textContent = "내 종";
-  mineBtn.append(mineThumb, mineLabel);
+  mineBtn.append(mineThumb, mineLabel, keyChip("M"));
+  mineBtn.title = "내 종 정보 열기/닫기 (M)";
   hd.append(levelText, title, mineBtn);
   shell.appendChild(hd);
 
@@ -114,8 +116,10 @@ export function createDraftPanel(
   const hero = el("div", "draft-hero");
   const prevBtn = el("button", "draft-arrow prev");
   prevBtn.textContent = "‹";
+  prevBtn.title = "이전 카드 (←)";
   const nextBtn = el("button", "draft-arrow next");
   nextBtn.textContent = "›";
+  nextBtn.title = "다음 카드 (→)";
   // 배율 래퍼와 등장 연출 래퍼를 나눈다 — 한 엘리먼트에 transform 배율과 transform 키프레임을 함께 두면
   // 키프레임이 배율을 통째로 덮어쓴다(§8 함정 2와 같은 종류).
   const heroScale = el("div", "draft-hero-scale");
@@ -142,13 +146,21 @@ export function createDraftPanel(
   // ── CTA + 푸터 (연출 없이 즉시 표시되는 건너뛰기·다시 뽑기, CTA 만 히어로와 함께 등장) ──
   const ft = el("div", "draft-ft");
   const cta = el("button", "draft-cta");
+  // CTA 글자는 라벨 span 에만 쓴다 — cta.textContent 로 갈아 끼우면 키 칩(Enter)까지 지워진다.
+  const ctaLabel = el("span");
+  cta.append(ctaLabel, keyChip("Enter"));
   const ftRow = el("div", "draft-ft-row");
   const skipBtn = el("button", "draft-skip");
   skipBtn.textContent = "건너뛰고 새끼 치기";
+  skipBtn.appendChild(keyChip("S"));
   const rerollBtn = el("button", "draft-reroll");
   rerollBtn.textContent = "↻ 다시 뽑기";
+  rerollBtn.appendChild(keyChip("R"));
   ftRow.append(skipBtn, rerollBtn);
-  ft.append(cta, ftRow);
+  // 키 안내 줄 — 데스크톱에서만 보인다(모바일은 CSS 가 숨김).
+  const keysHint = el("div", "draft-keys-hint");
+  keysHint.textContent = "← → 카드 살펴보기 · Enter 퍼뜨리기 · S 건너뛰기 · R 다시 뽑기 · M 내 종";
+  ft.append(cta, ftRow, keysHint);
   shell.appendChild(ft);
 
   // ── 토스트 (래퍼가 중앙정렬, 안쪽 알약만 애니메이션 — §8 함정: transform 충돌) ──
@@ -263,7 +275,7 @@ export function createDraftPanel(
       node.style.boxShadow = k === preview ? selectionRing(r) : restingShadow(r);
     });
 
-    cta.textContent = `${card.name} 퍼뜨리기`;
+    ctaLabel.textContent = `${card.name} 퍼뜨리기`;
     fitHero(); // 카드 이름 길이에 따라 배지 폭이 달라진다
     if (popupOpen) renderPopup();
   };
@@ -410,24 +422,80 @@ export function createDraftPanel(
     popupWrap.classList.remove("on");
   };
 
-  mineBtn.addEventListener("click", openPopup);
+  // 클릭과 키보드가 같은 길을 지나도록 행동을 함수로 뽑아 둔다.
+  const pickCard = (i: number): void => {
+    const card = cards[i];
+    if (!card) return;
+    commit(`${card.name} · 무리 전체에 퍼졌어요`, () => cb.onPick(i));
+  };
+  const skipDraft = (): void => {
+    commit("형질 대신 새끼를 몇 마리 쳤어요", () => cb.onSkip());
+  };
+  const reroll = (): void => {
+    if (busy || ctx?.canReroll !== true) return;
+    showToast("카드를 다시 뽑아요");
+    cb.onReroll(); // game.reroll → onDraft → show() 로 카드가 새로 그려진다
+  };
+  const togglePopup = (): void => {
+    if (popupOpen) closePopup();
+    else openPopup();
+  };
+
+  mineBtn.addEventListener("click", togglePopup);
   dim.addEventListener("click", closePopup);
   prevBtn.addEventListener("click", () => setPreview(preview - 1));
   nextBtn.addEventListener("click", () => setPreview(preview + 1));
-  cta.addEventListener("click", () => {
-    const card = cards[preview];
-    if (!card) return;
-    const idx = preview;
-    commit(`${card.name} · 무리 전체에 퍼졌어요`, () => cb.onPick(idx));
-  });
-  skipBtn.addEventListener("click", () => {
-    commit("형질 대신 새끼를 몇 마리 쳤어요", () => cb.onSkip());
-  });
-  rerollBtn.addEventListener("click", () => {
-    if (busy) return;
-    showToast("카드를 다시 뽑아요");
-    cb.onReroll(); // game.reroll → onDraft → show() 로 카드가 새로 그려진다
-  });
+  cta.addEventListener("click", () => pickCard(preview));
+  skipBtn.addEventListener("click", skipDraft);
+  rerollBtn.addEventListener("click", reroll);
+
+  // 키보드 조작 — 우선순위 15 = .draft-root 의 z-index. 드래프트가 떠 있는 동안 이 레이어가 키를 받는다.
+  registerKeyLayer(
+    15,
+    () => root.classList.contains("open"),
+    (e) => {
+      if (busy) return true; // 확정 연출 중 — 버튼과 마찬가지로 키 입력도 잠근다
+      switch (e.code) {
+        case "ArrowLeft":
+          setPreview(preview - 1);
+          return true;
+        case "ArrowRight":
+          setPreview(preview + 1);
+          return true;
+        case "Digit1":
+        case "Digit2":
+        case "Digit3":
+        case "Numpad1":
+        case "Numpad2":
+        case "Numpad3": {
+          const i = Number(e.code.slice(-1)) - 1;
+          if (i < cards.length) setPreview(i);
+          return true;
+        }
+        // Enter 만 확정 — Space 는 관전 중 "멈춤" 습관이 있어, 드래프트가 막 뜬 순간 눌러서
+        // 카드를 잘못 확정하는 사고를 부른다.
+        case "Enter":
+        case "NumpadEnter":
+          if (!e.repeat) pickCard(preview);
+          return true;
+        case "KeyS":
+          if (!e.repeat) skipDraft();
+          return true;
+        case "KeyR":
+          if (!e.repeat) reroll();
+          return true;
+        case "KeyM":
+          if (!e.repeat) togglePopup();
+          return true;
+        case "Escape":
+          if (!popupOpen) return false;
+          closePopup();
+          return true;
+        default:
+          return false;
+      }
+    },
+  );
 
   const show = (nextCards: Card[], nextCtx: DraftContext): void => {
     window.clearTimeout(commitTimer);
@@ -485,14 +553,16 @@ export function createDraftPanel(
       node.style.animation = cardAnimation(rarity, delay, bounce);
       // 데스크톱: 클릭이 곧 선택(미리보기는 호버·화살표로 충분). 모바일: 클릭은 미리보기, 확정은 CTA.
       node.addEventListener("click", () => {
-        if (isDesktopLayout()) {
-          const c = cards[i];
-          if (c) commit(`${c.name} · 무리 전체에 퍼졌어요`, () => cb.onPick(i));
-        } else {
-          setPreview(i);
-        }
+        if (isDesktopLayout()) pickCard(i);
+        else setPreview(i);
       });
       node.addEventListener("mouseenter", () => setPreview(i));
+      // 카드 모서리의 번호 키 표식(1·2·3) — 데스크톱에서만 보인다.
+      if (i < 3) {
+        const num = keyChip(String(i + 1));
+        num.classList.add("draft-kbd-corner");
+        node.appendChild(num);
+      }
 
       wrap.appendChild(node);
       if (style.glow) spawnConfetti(wrap, delay + Math.round(bounce * 0.45));
@@ -517,6 +587,9 @@ export function createDraftPanel(
     document.body.classList.add("draft-open");
     // display:none 상태에선 크기를 못 재므로 보이게 한 다음 맞춘다.
     fitHero();
+    // 데스크톱: 내 종 정보(오른쪽 인라인 패널)를 기본으로 펼쳐 둔다 — 가리는 게 없는 여백 자리라,
+    // 지금 스탯과 보고 있는 카드의 변화를 항상 나란히 두고 고를 수 있다. 모바일은 바텀 시트(가림)라 닫아 둔다.
+    if (isDesktopLayout()) openPopup();
   };
 
   const hide = (): void => {

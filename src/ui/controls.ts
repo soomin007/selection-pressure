@@ -2,6 +2,7 @@
 // 로비·결과 화면에서는 숨긴다.
 
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { keyChip } from "@/ui/keys";
 
 export interface ControlsCallbacks {
   onPauseToggle: () => void;
@@ -28,11 +29,13 @@ export function createControls(cb: ControlsCallbacks): Controls {
   const speedBtn = document.createElement("button");
   speedBtn.className = "ctrl-btn";
   speedBtn.textContent = "1x";
+  speedBtn.title = "배속 바꾸기 (1·2·3)";
   speedBtn.addEventListener("click", cb.onSpeedCycle);
 
   const pauseBtn = document.createElement("button");
   pauseBtn.className = "ctrl-btn";
   pauseBtn.textContent = "⏸";
+  pauseBtn.title = "멈춤/이어하기 (Space)";
   pauseBtn.addEventListener("click", cb.onPauseToggle);
 
   bar.appendChild(speedBtn);
@@ -48,10 +51,11 @@ export function createControls(cb: ControlsCallbacks): Controls {
   menuTitle.className = "pause-title";
   menuTitle.textContent = "멈춤";
 
-  const resume = button("이어하기", "pause-btn primary", cb.onResume);
-  const restart = button("처음부터", "pause-btn", cb.onRestart);
-  const glossary = button("대백과", "pause-btn", cb.onGlossary);
-  const lobby = button("로비로", "pause-btn", cb.onLobby);
+  // 키 자체는 main.ts 의 관전·멈춤 키 레이어가 처리한다 — 여기 칩은 안내 표식.
+  const resume = button("이어하기", "pause-btn primary", cb.onResume, "Space");
+  const restart = button("처음부터", "pause-btn", cb.onRestart, "R");
+  const glossary = button("대백과", "pause-btn", cb.onGlossary, "G");
+  const lobby = button("로비로", "pause-btn", cb.onLobby, "Q");
 
   menu.appendChild(menuTitle);
   menu.appendChild(resume);
@@ -75,10 +79,11 @@ export function createControls(cb: ControlsCallbacks): Controls {
   };
 }
 
-function button(label: string, className: string, onClick: () => void): HTMLButtonElement {
+function button(label: string, className: string, onClick: () => void, key?: string): HTMLButtonElement {
   const b = document.createElement("button");
   b.className = className;
   b.textContent = label;
+  if (key !== undefined) b.appendChild(keyChip(key));
   b.addEventListener("click", onClick);
   return b;
 }

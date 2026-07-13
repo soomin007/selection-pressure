@@ -2,6 +2,7 @@
 // 도전 과제로 연 꾸밈을 여기서 하나 고른다(효과 없음 — 보이는 것만 바뀐다). 해금 사다리도 여기서 연다.
 
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { registerKeyLayer, keyChip } from "@/ui/keys";
 import { createCosmeticPicker } from "@/ui/cosmeticPicker";
 
 export interface Lobby {
@@ -31,6 +32,7 @@ export function createLobby(
   const start = document.createElement("button");
   start.className = "lobby-start";
   start.textContent = "게임 시작";
+  start.appendChild(keyChip("Enter"));
   start.addEventListener("click", onStart);
 
   // 보조 버튼 줄 — 대백과 + 해금 사다리(투명 배경 + 호박빛 밑줄, 핸드오프 §4 보조 버튼).
@@ -46,7 +48,34 @@ export function createLobby(
     b.addEventListener("click", cb);
     return b;
   };
-  secondaryRow.append(linkBtn("대백과", onGlossary), linkBtn("진화 갈래", onLadder));
+  const glossaryBtn = linkBtn("대백과", onGlossary);
+  glossaryBtn.appendChild(keyChip("G"));
+  const ladderBtn = linkBtn("진화 갈래", onLadder);
+  ladderBtn.appendChild(keyChip("L"));
+  secondaryRow.append(glossaryBtn, ladderBtn);
+
+  // 키보드 조작 — 로비가 보일 때만. 대백과·진화 갈래 오버레이가 열리면 그쪽(높은 우선순위)이 키를 가져간다.
+  registerKeyLayer(
+    5,
+    () => root.style.display !== "none",
+    (e) => {
+      if (e.repeat) return false;
+      switch (e.code) {
+        case "Enter":
+        case "NumpadEnter":
+          onStart();
+          return true;
+        case "KeyG":
+          onGlossary();
+          return true;
+        case "KeyL":
+          onLadder();
+          return true;
+        default:
+          return false;
+      }
+    },
+  );
 
   const hint = document.createElement("div");
   hint.className = "lobby-hint";

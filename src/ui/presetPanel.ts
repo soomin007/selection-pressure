@@ -8,6 +8,7 @@ import { describeSpecies } from "@/game/runReport";
 import { makeCreatureTexture } from "@/render/worldView";
 import { ABILITY_KEYS, abilityLevel, traitColor, traitWord } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { registerKeyLayer, keyChip } from "@/ui/keys";
 import type { Renderer } from "pixi.js";
 
 /** 이번 판의 세계 요약 — 시작 종을 고르기 **전에** 보여준다(무엇이 기다리는지 알고 고르게). */
@@ -97,6 +98,7 @@ export function createPresetPanel(
 
   const backBtn = document.createElement("button");
   backBtn.textContent = "‹ 갈래 다시 고르기";
+  backBtn.appendChild(keyChip("Esc"));
   backBtn.style.cssText =
     "align-self:flex-start; margin-bottom:6px; padding:6px 12px; border:0; border-radius:999px;" +
     "background:rgba(255,255,255,0.06); color:var(--sub); font-family:var(--font-body); font-size:12px; cursor:pointer;";
@@ -117,7 +119,9 @@ export function createPresetPanel(
     return b;
   };
   const prevBtn = mkArrow("‹", () => step(-1));
+  prevBtn.title = "이전 종 (←)";
   const nextBtn = mkArrow("›", () => step(1));
+  nextBtn.title = "다음 종 (→)";
   const artBox = document.createElement("div");
   artBox.style.cssText =
     "flex:1; height:150px; display:flex; align-items:center; justify-content:center;" +
@@ -151,6 +155,7 @@ export function createPresetPanel(
     "width:100%; margin-top:16px; padding:13px; border:0; border-radius:var(--r-btn);" +
     "background:var(--lime); color:#1B2A0A; font-family:var(--font-title); font-size:16px; cursor:pointer;" +
     "border-bottom:5px solid var(--limeD);";
+  selectBtn.appendChild(keyChip("Enter"));
   selectBtn.addEventListener("click", () => {
     const gi = memberIndices[catPos];
     if (gi !== undefined) onPick(gi);
@@ -191,6 +196,7 @@ export function createPresetPanel(
     detailView.style.display = "none";
     catView.style.display = "block";
     catList.replaceChildren();
+    let shown = 0; // 화면에 실제로 놓인 갈래 수 — 숫자 키(1·2·3…)와 자리가 일치해야 한다
     for (const cat of CATEGORIES) {
       const members = cat.ids.map(indexOfId).filter((i) => i >= 0);
       if (members.length === 0) continue;
@@ -199,6 +205,9 @@ export function createPresetPanel(
         "display:flex; align-items:center; gap:12px; width:100%; box-sizing:border-box; padding:12px 14px 12px 12px;" +
         `border:1px solid var(--line); border-left:4px solid ${hexColor(cat.color)}; border-radius:var(--r-card);` +
         "background:var(--panelSolid); color:var(--ink); cursor:pointer; text-align:left; transition:transform 0.07s ease;";
+      const num = keyChip(String(++shown));
+      num.style.marginLeft = "0"; // flex gap 이 간격을 맡는다
+      btn.appendChild(num);
       btn.addEventListener("pointerdown", () => (btn.style.transform = "translateY(2px)"));
       btn.addEventListener("pointerup", () => (btn.style.transform = ""));
       btn.addEventListener("pointerleave", () => (btn.style.transform = ""));
@@ -305,6 +314,40 @@ export function createPresetPanel(
       traitsEl.appendChild(cell);
     }
   }
+
+  // 키보드 조작 — 우선순위 20 = 이 오버레이의 z-index. 갈래 화면은 숫자 키, 세부 화면은 화살표·Enter.
+  registerKeyLayer(
+    20,
+    () => root.style.display === "flex",
+    (e) => {
+      if (detailView.style.display !== "none") {
+        switch (e.code) {
+          case "ArrowLeft":
+            step(-1);
+            return true;
+          case "ArrowRight":
+            step(1);
+            return true;
+          case "Enter":
+          case "NumpadEnter":
+            if (!e.repeat) selectBtn.click();
+            return true;
+          case "Escape":
+          case "Backspace":
+            showCategories();
+            return true;
+          default:
+            return false;
+        }
+      }
+      if (/^(Digit|Numpad)[1-9]$/.test(e.code)) {
+        const btn = catList.children[Number(e.code.slice(-1)) - 1];
+        if (btn instanceof HTMLElement) btn.click();
+        return true;
+      }
+      return false;
+    },
+  );
 
   const show = (cs: Card[], _preview: string, world?: WorldBriefing): void => {
     cards = cs;

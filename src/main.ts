@@ -20,6 +20,7 @@ import { createLevelUpScreen } from "@/ui/levelUpScreen";
 import { createLobby } from "@/ui/lobby";
 import { createUnlockLadder } from "@/ui/unlockLadder";
 import { createControls } from "@/ui/controls";
+import { registerKeyLayer, keyChip } from "@/ui/keys";
 import { createBuildPanel } from "@/ui/buildPanel";
 import { createGlossary } from "@/ui/glossary";
 import { equippedCosmetic, mythicNamesUnlocked } from "@/game/achievements";
@@ -126,6 +127,21 @@ async function boot(): Promise<void> {
   refreshBuild();
 
   const glossary = createGlossary(); // 용어 사전(로비·일시정지에서 열기)
+  // 대백과(z-index 40)가 열려 있는 동안 아래 화면(로비의 Enter 등)이 키를 받지 않게 막는다.
+  // glossary 는 열림 상태를 노출하지 않으므로 DOM 으로 우회한다 — createGlossary 는 마지막에
+  // 스크림(전체 덮개)을 body 에 붙이므로, 호출 직후 body 의 마지막 자식이 그 스크림이다.
+  const glossaryScrim = document.body.lastElementChild as HTMLElement;
+  registerKeyLayer(
+    40,
+    () => glossaryScrim.style.display === "flex",
+    (e) => {
+      if (e.code === "Escape" || e.code === "Enter" || e.code === "NumpadEnter") {
+        glossary.hide();
+        return true;
+      }
+      return false;
+    },
+  );
 
   const draft = createDraftPanel(app.renderer, app.canvas, {
     onPick: (i) => {
@@ -201,34 +217,36 @@ async function boot(): Promise<void> {
     applyCosmetics, // 로비에서 꾸밈을 바꾸면 배경 생태계에 즉시 반영
     () => unlockLadder.show(), // 로비에서 해금 사다리 열기
   );
-  const controls = createControls({
-    onPauseToggle: () => {
+  // 버튼(controls)과 키보드(아래 관전 키 레이어)가 같은 콜백을 쓰도록 이름을 붙여 둔다.
+  const controlsCb = {
+    onPauseToggle: (): void => {
       game.paused = !game.paused;
       controls.setPaused(game.paused);
     },
-    onSpeedCycle: () => {
+    onSpeedCycle: (): void => {
       game.speed = game.speed >= 3 ? 1 : game.speed + 1;
       controls.setSpeed(game.speed);
     },
-    onResume: () => {
+    onResume: (): void => {
       game.paused = false;
       controls.setPaused(false);
     },
-    onRestart: () => {
+    onRestart: (): void => {
       game.paused = false;
       controls.setPaused(false);
       game.beginRun();
       view.refreshSpecies(game.world);
     },
-    onLobby: () => {
+    onLobby: (): void => {
       game.paused = false;
       controls.setPaused(false);
       controls.setVisible(false);
       game.toLobby();
       lobby.show();
     },
-    onGlossary: () => glossary.show(),
-  });
+    onGlossary: (): void => glossary.show(),
+  };
+  const controls = createControls(controlsCb);
 
   game.onDraft = (cards, preview) => {
     // 시작 프리셋 선택은 캐릭터 선택 창, 레벨업 형질은 일반 카드 창.
@@ -505,7 +523,8 @@ async function boot(): Promise<void> {
   // 한 마리 관찰 — 내 종 한 개체를 바로 따라간다(반복 탭 = 다음 개체). 눈에 띄는 초록으로.
   const focusBtn = document.createElement("button");
   focusBtn.textContent = "◎ 한 마리 관찰";
-  focusBtn.title = "내 종 한 마리를 가까이 따라갑니다 (다시 누르면 다음 개체)";
+  focusBtn.appendChild(keyChip("F"));
+  focusBtn.title = "내 종 한 마리를 가까이 따라갑니다 (다시 누르면 다음 개체) (F)";
   // 주요(입체 키) 버튼 — 3a 스펙상 "한 마리 관찰"은 화면당 하나의 lime 키 버튼.
   focusBtn.style.cssText =
     "height:44px; padding:0 16px; border:0; border-radius:var(--r-btn); background:var(--lime);" +
@@ -515,6 +534,7 @@ async function boot(): Promise<void> {
   const mkZoom = (label: string, dz: number): HTMLButtonElement => {
     const b = document.createElement("button");
     b.textContent = label;
+    b.title = dz > 1 ? "확대 (+)" : "축소 (−)";
     // 계측(알약) 버튼 — 줌 +/−.
     b.style.cssText =
       "width:44px; height:44px; border:1px solid var(--line); border-radius:999px;" +
@@ -530,6 +550,80 @@ async function boot(): Promise<void> {
   zoomRow.append(mkZoom("+", 1.25), mkZoom("−", 1 / 1.25));
   zoomBar.append(focusBtn, zoomRow);
   document.body.appendChild(zoomBar);
+
+  // 키보드 조작(관전·멈춤 메뉴) — 우선순위 0(바닥). 드래프트·결과·오버레이가 열리면 그쪽 레이어가 먼저 받는다.
+  registerKeyLayer(
+    0,
+    () => game.phase === "watch",
+    (e) => {
+      // 멈춤 메뉴가 떠 있는 동안 — 메뉴 버튼과 같은 동작만 받고, 나머지 게임 키는 잠근다.
+      if (game.paused) {
+        if (e.repeat) return true;
+        switch (e.code) {
+          case "Space":
+          case "Escape":
+          case "Enter":
+          case "NumpadEnter":
+            controlsCb.onResume();
+            return true;
+          case "KeyR":
+            controlsCb.onRestart();
+            return true;
+          case "KeyG":
+            controlsCb.onGlossary();
+            return true;
+          case "KeyQ":
+            controlsCb.onLobby();
+            return true;
+          default:
+            return true;
+        }
+      }
+      switch (e.code) {
+        case "Space":
+          if (!e.repeat) controlsCb.onPauseToggle();
+          return true;
+        case "Digit1":
+        case "Digit2":
+        case "Digit3":
+        case "Numpad1":
+        case "Numpad2":
+        case "Numpad3":
+          game.speed = Number(e.code.slice(-1));
+          controls.setSpeed(game.speed);
+          return true;
+        case "KeyF":
+          focusMyCreature();
+          return true;
+        case "ArrowLeft":
+        case "ArrowRight":
+          // 개체를 보고 있으면 무리 안 이전/다음으로, 아니면 내 종 한 마리부터 관찰 시작.
+          if (selectedId === null) focusMyCreature();
+          else cycleSelection(e.code === "ArrowLeft" ? -1 : 1);
+          return true;
+        case "KeyB":
+          // 지금 보는 개체를 단골(★)로 고정/해제 — 개체 카드의 별 버튼과 동일.
+          if (!e.repeat && currentSelected)
+            favoriteId = favoriteId === currentSelected.id ? null : currentSelected.id;
+          return true;
+        case "Equal":
+        case "NumpadAdd":
+          userZoom = clampUserZoom(userZoom * 1.25);
+          return true;
+        case "Minus":
+        case "NumpadSubtract":
+          userZoom = clampUserZoom(userZoom / 1.25);
+          return true;
+        case "Escape":
+          // 보던 개체가 있으면 선택 해제, 없으면 멈춤 메뉴 열기.
+          if (selectedId !== null) selectedId = null;
+          else controlsCb.onPauseToggle();
+          return true;
+        default:
+          return false;
+      }
+    },
+  );
 
   app.ticker.add((ticker) => {
     game.update(ticker.deltaMS);

@@ -6,6 +6,7 @@
 import type { RunHistory, RunSample, RunEvent, RunEventKind } from "@/game/game";
 import { MUTABLE_TRAITS, TRAIT_LABELS, type MutableTrait } from "@/sim/genome";
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { registerKeyLayer, keyChip } from "@/ui/keys";
 
 export interface RunReportScreen {
   show: (history: RunHistory) => void;
@@ -59,6 +60,7 @@ export function createRunReportScreen(onClose: () => void): RunReportScreen {
     title.style.cssText = "font-family:var(--font-title); font-size:20px; color:var(--ink);";
     const close = document.createElement("button");
     close.textContent = "닫기";
+    close.appendChild(keyChip("Esc"));
     close.style.cssText =
       "flex:none; padding:8px 18px; border:1px solid var(--line); border-radius:999px;" +
       "background:rgba(255,255,255,0.05); color:var(--sub); font-family:var(--font-body); font-size:14px; cursor:pointer;";
@@ -91,6 +93,34 @@ export function createRunReportScreen(onClose: () => void): RunReportScreen {
   const hide = (): void => {
     overlay.style.display = "none";
   };
+
+  // 키보드 — Esc/Enter 닫기, ↑↓·PgUp/PgDn 스크롤. 우선순위 41 = 이 오버레이의 z-index(결과 화면 위).
+  registerKeyLayer(
+    41,
+    () => overlay.style.display === "block",
+    (e) => {
+      switch (e.code) {
+        case "Escape":
+        case "Enter":
+        case "NumpadEnter":
+          if (!e.repeat) onClose();
+          return true;
+        case "ArrowDown":
+        case "ArrowUp":
+          overlay.scrollBy({ top: e.code === "ArrowDown" ? 90 : -90, behavior: "smooth" });
+          return true;
+        case "PageDown":
+        case "PageUp":
+          overlay.scrollBy({
+            top: (e.code === "PageDown" ? 1 : -1) * overlay.clientHeight * 0.85,
+            behavior: "smooth",
+          });
+          return true;
+        default:
+          return false;
+      }
+    },
+  );
 
   return { show, hide };
 }
