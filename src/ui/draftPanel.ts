@@ -463,7 +463,15 @@ export function createDraftPanel(
       dot.style.background = traitColor(dominantTrait(card));
       const name = el("span", "draft-card-name");
       name.textContent = card.name;
-      row.append(dot, name, rarityBadge(rarity));
+      row.append(dot, name);
+      // 내 갈래 **전용** 카드임을 알린다 — 이 카드는 이 종으로 시작했기에만 볼 수 있다.
+      // 공통 카드와 섞여 있으면 "왜 이 카드가 매번 뜨지?"가 안 읽힌다(3장 중 1장은 늘 전용 카드다).
+      if (card.lineage !== undefined) {
+        const own = el("span", "draft-lineage-badge");
+        own.textContent = "내 갈래";
+        row.appendChild(own);
+      }
+      row.appendChild(rarityBadge(rarity));
 
       const body = el("div", "draft-card-body");
       const desc = el("span", "draft-card-desc");

@@ -250,6 +250,10 @@ export function ensurePanelStyles(): void {
   .draft-card-name { font-family: var(--font-title); font-size: 16px; flex: 1; min-width: 0; }
   .draft-badge { display: inline-flex; align-items: center; gap: 5px; flex: none;
     font-family: var(--font-mono); font-size: 9.5px; border-radius: 999px; padding: 3px 9px; }
+  /* 갈래 전용 카드 — 이 종으로 시작했기에만 보이는 카드(3장 중 1장). 공통 카드와 한눈에 갈린다. */
+  .draft-lineage-badge { flex: none; font-family: var(--font-mono); font-size: 9.5px;
+    border-radius: 999px; padding: 3px 8px; margin-right: 4px; white-space: nowrap;
+    color: #ffd98a; background: rgba(255,196,90,0.14); border: 1px solid rgba(255,196,90,0.45); }
   .draft-badge > i { width: 5px; height: 5px; border-radius: 1px; display: block; flex: none; }
   .draft-card-body { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start;
     gap: 7px 10px; margin-top: 7px; }

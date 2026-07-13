@@ -8,6 +8,7 @@ import {
   CARD_POOL,
   cardRarity,
   rarityOdds,
+  cardPoolFor,
   RARITY_BOOST_FULL_LEVEL,
   type Card,
   type Rarity,
@@ -276,7 +277,10 @@ const SECTIONS: readonly Section[] = [
   {
     title: "카드 도감",
     intro:
-      "카드마다 희귀도가 있습니다. 희귀할수록 후보로 잘 안 뜨고, 드래프트에서도 더 늦게 등장합니다. 무리가 세대를 거듭할수록 높은 등급이 더 자주 찾아옵니다.",
+      "카드는 두 갈래입니다. **공통 카드**는 어느 종이든 뽑고, **갈래 전용 카드**는 그 종으로 시작해야만 나옵니다.\n" +
+      "드래프트 3장 중 1장은 늘 내 갈래의 전용 카드입니다(「내 갈래」 배지). 다른 갈래의 전용 카드는 이번 판에 아예 보이지 않으니, 시작 종을 고르는 것이 곧 이번 판에 갈 수 있는 길을 고르는 일입니다.\n" +
+      "다만 지느러미·날개·초음파·독 살갗·가시 쏘기 같은 능력을 여는 카드는 공통입니다. 걷던 종이 날개를 얻는 진화는 어느 갈래에서든 일어날 수 있습니다.\n" +
+      "아래 확률은 공통 카드 기준입니다. 카드마다 희귀도가 있어, 희귀할수록 후보로 잘 안 뜨고 드래프트에서도 더 늦게 등장합니다. 무리가 세대를 거듭할수록 높은 등급이 더 자주 찾아옵니다.",
     entries: [
       {
         term: "희귀도와 확률",
@@ -541,9 +545,14 @@ function chipRow(card: Card): HTMLElement {
 const SHOWN_LEVELS: readonly number[] = [1, 3, 5, RARITY_BOOST_FULL_LEVEL];
 
 /** 지금 열려 있는 카드만. 잠긴 카드는 후보에 안 나오므로 확률 계산에서도 빼야 한다. */
+/**
+ * 대백과의 확률 표가 보는 풀 — **공통 카드만**(열린 것). 갈래 전용 카드는 시작 종을 고른 뒤에야
+ * 후보가 되므로, 여기 섞으면 표시 확률이 실제와 어긋난다(안 뽑히는 카드까지 세는 셈).
+ * 갈래 전용 카드는 "갈래 전용 카드" 항목에서 따로 설명한다.
+ */
 function unlockedPool(): Card[] {
   const lvl = currentMetaLevel();
-  return CARD_POOL.filter((c) => cardAvailable(c.id, lvl));
+  return cardPoolFor().filter((c) => cardAvailable(c.id, lvl));
 }
 
 /** 다섯 등급의 카드 수와 등장 확률. 확률은 `drawCards` 와 같은 가중치로 계산한 정확값이다. */

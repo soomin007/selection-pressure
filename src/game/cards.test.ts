@@ -12,9 +12,13 @@ import {
   RARITY_BOOST_MAX,
   RARITY_BOOST_FULL_LEVEL,
   rarityOdds,
+  cardPoolFor,
+  lineageCards,
+  type Lineage,
   rarityWeightsAtLevel,
   cardPrereqMet,
   cardRedundant,
+  type Card,
 } from "@/game/cards";
 import { defaultGenome, type Traits } from "@/sim/genome";
 import { SIM } from "@/sim/params";
@@ -96,7 +100,8 @@ describe("희귀도", () => {
 describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
   it.each([1, 4, 7, 20])("레벨 %i 에서 대백과 표시 확률이 drawCards 의 실제 빈도와 맞는다", (level) => {
     // 표시값이 실제와 어긋나면 그게 곧 거짓말이다. 정확값 계산을 몬테카를로로 교차검증한다.
-    const odds = rarityOdds(CARD_POOL, 3, level);
+    // 갈래를 안 넘기면 drawCards 는 공통 카드만 본다 — 표시 확률도 같은 풀로 계산해야 맞는다.
+    const odds = rarityOdds(cardPoolFor(), 3, level);
     const rng = new Rng(`odds-check-${level}`);
     const rounds = 4000;
     const seen: Record<string, number> = {};
@@ -124,7 +129,9 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
   });
 
   it("희귀할수록 뜰 확률이 낮다", () => {
-    const odds = rarityOdds(CARD_POOL);
+    // 실제로 뽑는 풀(공통)로 본다 — CARD_POOL 전체는 여덟 갈래의 전용 카드가 다 섞여 있어
+    // 아무도 그렇게 뽑지 않는다(갈래 전용은 자기 갈래에서만 후보가 된다).
+    const odds = rarityOdds(cardPoolFor());
     expect(odds.common.inDraft).toBeGreaterThan(odds.uncommon.inDraft);
     expect(odds.uncommon.inDraft).toBeGreaterThan(odds.rare.inDraft);
     expect(odds.rare.inDraft).toBeGreaterThan(odds.epic.inDraft);
@@ -147,6 +154,8 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
     expect(odds.legendary.inDraft).toBeCloseTo(1, 10);
   });
 });
+
+const LINEAGES: Lineage[] = ["omni", "herd", "scout", "hunter", "ranged", "sea", "sky", "venom"];
 
 describe("등급 기준 (cards.ts 주석의 규칙을 코드로 못 박는다)", () => {
   it("전설은 정확히 다섯 능력 관문 + 「거인」이다", () => {
@@ -190,11 +199,68 @@ describe("등급 기준 (cards.ts 주석의 규칙을 코드로 못 박는다)",
   });
 
   it("등급 분포는 피라미드다(흔할수록 종류가 많다)", () => {
-    const n = (r: string): number => CARD_POOL.filter((c) => cardRarity(c) === r).length;
-    expect(n("common")).toBeGreaterThan(n("uncommon"));
-    expect(n("uncommon")).toBeGreaterThan(n("rare"));
-    expect(n("rare")).toBeGreaterThanOrEqual(n("epic"));
-    expect(n("epic")).toBeGreaterThan(n("legendary"));
+    // **플레이어가 실제로 뽑는 풀**로 본다 — 공통 풀(갈래 없음)과 갈래별 풀(공통 + 그 갈래 전용).
+    // CARD_POOL 전체로 세면 여덟 갈래의 전용 카드가 전부 합산돼, 아무도 못 보는 분포를 검사하게 된다.
+    const check = (pool: readonly Card[], label: string): void => {
+      const n = (r: string): number => pool.filter((c) => cardRarity(c) === r).length;
+      expect(n("common"), `${label}: 흔함 > 드묾`).toBeGreaterThan(n("uncommon"));
+      expect(n("uncommon"), `${label}: 드묾 > 귀함`).toBeGreaterThan(n("rare"));
+      expect(n("rare"), `${label}: 귀함 ≥ 아주 귀함`).toBeGreaterThanOrEqual(n("epic"));
+      expect(n("epic"), `${label}: 아주 귀함 > 전설`).toBeGreaterThan(n("legendary"));
+    };
+    check(cardPoolFor(), "공통 풀");
+    for (const l of LINEAGES) check(cardPoolFor(l), `${l} 갈래 풀`);
+  });
+});
+
+describe("갈래 전용 카드 (슬레이 더 스파이어식 직업 풀)", () => {
+  it("여덟 갈래 모두 전용 카드를 갖는다", () => {
+    for (const l of LINEAGES) {
+      const own = lineageCards(l);
+      expect(own.length, `${l} 갈래에 전용 카드가 없다`).toBeGreaterThanOrEqual(3);
+      for (const c of own) expect(c.lineage).toBe(l);
+    }
+  });
+
+  it("전용 카드에 전설은 없다 — 전설은 '못 하던 걸 하게 되는' 공통 관문의 자리다", () => {
+    for (const l of LINEAGES)
+      for (const c of lineageCards(l)) expect(cardRarity(c)).not.toBe("legendary");
+  });
+
+  it("남의 갈래 전용 카드는 아예 안 나온다", () => {
+    const pool = cardPoolFor("hunter");
+    expect(pool.some((c) => c.lineage === "hunter")).toBe(true);
+    expect(pool.some((c) => c.lineage !== undefined && c.lineage !== "hunter")).toBe(false);
+    // 갈래를 안 정하면(시작 종 선택 전) 공통 카드만 본다.
+    expect(cardPoolFor().every((c) => c.lineage === undefined)).toBe(true);
+  });
+
+  it("드래프트 3장 중 1장은 반드시 내 갈래 전용 카드다", () => {
+    for (const l of LINEAGES) {
+      const rng = new Rng(`lineage-${l}`);
+      for (let i = 0; i < 40; i++) {
+        const drawn = drawCards(rng, 3, undefined, 3, undefined, l);
+        expect(drawn.length).toBe(3);
+        expect(drawn.filter((c) => c.lineage === l).length, `${l}: 전용 카드가 안 나왔다`).toBeGreaterThanOrEqual(1);
+        // 남의 갈래 카드는 절대 섞이지 않는다.
+        expect(drawn.some((c) => c.lineage !== undefined && c.lineage !== l)).toBe(false);
+      }
+    }
+  });
+
+  it("능력 관문(지느러미·날개·초음파·독 살갗·가시 쏘기)은 공통이다 — 걷던 종도 날 수 있어야 한다", () => {
+    for (const id of ["fins", "wings", "echo", "venom_fang", "long_horn"]) {
+      const card = CARD_POOL.find((c) => c.id === id);
+      expect(card, `${id} 카드가 없다`).toBeDefined();
+      expect(card?.lineage, `${id} 이 갈래에 잠겼다 — 진화의 자유가 막힌다`).toBeUndefined();
+    }
+  });
+
+  it("갈래 전용 카드가 다 떨어져도 3장은 채운다(공통으로 메운다)", () => {
+    // 이 갈래의 전용 카드를 전부 막으면 → 남는 건 공통뿐. 그래도 후보 3장은 나와야 한다.
+    const drawn = drawCards(new Rng("dry"), 3, (c) => c.lineage === undefined, 3, undefined, "sky");
+    expect(drawn.length).toBe(3);
+    expect(drawn.every((c) => c.lineage === undefined)).toBe(true);
   });
 });
 
@@ -231,9 +297,9 @@ describe("레벨 보정 (세대가 오를수록 높은 등급이 자주 뜬다)"
   });
 
   it("레벨이 오를수록 전설이 잘 뜨고 흔함은 덜 뜬다", () => {
-    const low = rarityOdds(CARD_POOL, 3, 1);
-    const mid = rarityOdds(CARD_POOL, 3, 4);
-    const high = rarityOdds(CARD_POOL, 3, RARITY_BOOST_FULL_LEVEL);
+    const low = rarityOdds(cardPoolFor(), 3, 1);
+    const mid = rarityOdds(cardPoolFor(), 3, 4);
+    const high = rarityOdds(cardPoolFor(), 3, RARITY_BOOST_FULL_LEVEL);
     expect(mid.legendary.inDraft).toBeGreaterThan(low.legendary.inDraft);
     expect(high.legendary.inDraft).toBeGreaterThan(mid.legendary.inDraft);
     expect(high.common.inDraft).toBeLessThan(low.common.inDraft);
@@ -241,7 +307,7 @@ describe("레벨 보정 (세대가 오를수록 높은 등급이 자주 뜬다)"
 
   it("보정을 받아도 등급 서열은 안 뒤집힌다(전설이 흔함보다 잦아지지 않는다)", () => {
     for (const level of [1, 3, 5, 7, 30]) {
-      const o = rarityOdds(CARD_POOL, 3, level);
+      const o = rarityOdds(cardPoolFor(), 3, level);
       expect(o.legendary.perCard).toBeLessThan(o.epic.perCard);
       expect(o.epic.perCard).toBeLessThan(o.rare.perCard);
       expect(o.rare.perCard).toBeLessThan(o.uncommon.perCard);

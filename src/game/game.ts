@@ -8,7 +8,7 @@
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, MUTABLE_TRAITS, type Genome, type MutableTrait } from "@/sim/genome";
-import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, CARD_BODY_SCALE, PRESET_CARDS, type Card } from "@/game/cards";
+import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, CARD_BODY_SCALE, PRESET_CARDS, PRESET_LINEAGE, LINEAGE_NAME, type Card, type Lineage } from "@/game/cards";
 import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
@@ -93,6 +93,11 @@ export class Game {
   private stageIndex = 0;
   private stageTicksLeft = 0;
   private firstChoice = true; // 런 첫 드래프트 = 시작 프리셋 선택
+  /**
+   * 이 런의 갈래(계통). 시작 프리셋이 정한다. 드래프트 3장 중 1장은 늘 이 갈래의 전용 카드이고,
+   * 다른 갈래의 전용 카드는 이번 판에 아예 안 나온다(슬레이 더 스파이어식 직업 카드).
+   */
+  private lineage: Lineage | null = null;
   private eraReward = false; // 지금 드래프트가 "시대 보상"(다음 시대 진입 직전 강화 카드)인가
   private bossQueue: BossType[] = []; // 한 런의 보스들(서로 다른 종류)
   private extinctionQueue: ExtinctionType[] = []; // 한 런의 대멸종 종류들 — 미리 정해 예고 가능(보스와 대칭)
@@ -183,6 +188,16 @@ export class Game {
     return this.currentSeed;
   }
 
+  /** 이 런의 갈래 이름(「날쌘 육식 사냥꾼」 등). 아직 시작 종을 안 골랐으면 null. */
+  get lineageName(): string | null {
+    return this.lineage ? LINEAGE_NAME[this.lineage] : null;
+  }
+
+  /** 이 카드가 내 갈래 **전용** 카드인가 — 드래프트에서 배지로 알린다(공통 카드와 구분). */
+  isLineageCard(card: Card): boolean {
+    return card.lineage !== undefined && card.lineage === this.lineage;
+  }
+
   /** 부트 시 1회 — 로비 화면. 배경 월드만 보여준다. */
   start(): void {
     this.phase = "lobby";
@@ -235,6 +250,9 @@ export class Game {
     if (this.firstChoice) {
       // 시작 프리셋을 골랐으니 곧장 첫 채집 단계로.
       this.firstChoice = false;
+      // **이 런의 갈래(계통)가 여기서 정해진다.** 앞으로 드래프트 3장 중 1장은 늘 이 갈래의 전용
+      // 카드다(공통 풀 + 내 갈래 풀). 다른 갈래의 전용 카드는 이번 판에 영영 안 보인다.
+      this.lineage = card ? (PRESET_LINEAGE[card.id] ?? null) : null;
       // 프리셋이 정한 시작 색으로 내 종을 물들인다(종마다 뚜렷이 달라 외형만으로 구분).
       // 다음 시대에 새 월드를 만들어도 같은 색을 유지하도록 저장해 둔다.
       if (card && card.color !== undefined) {
@@ -354,6 +372,7 @@ export class Game {
         !cardRedundant(c, this.genome.traits),
       this.level, // 레벨이 오를수록 높은 등급이 더 자주 뜬다(rarityWeightsAtLevel)
       this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
+      this.lineage ?? undefined, // 3장 중 1장은 내 갈래 전용 카드
     );
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
     this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (무리 전체에 퍼지고, 새끼는 부모를 닮아 조금씩 달라집니다)`;
@@ -378,6 +397,7 @@ export class Game {
         !cardRedundant(c, this.genome.traits),
       this.level, // 다시 뽑아도 같은 레벨 보정을 받는다
       this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
+      this.lineage ?? undefined, // 다시 뽑아도 내 갈래 카드 한 장은 보장
     );
     this.draftCards = this.eraReward ? drawn.map((c) => boostCard(c, GAME.eraRewardBoost)) : drawn;
     this.onDraft?.(this.draftCards, this.preview);
@@ -547,6 +567,7 @@ export class Game {
     this.stageIndex = 0;
     this.result = null;
     this.firstChoice = true;
+    this.lineage = null; // 새 혈통 — 갈래는 시작 프리셋을 고를 때 다시 정해진다
     this.level = 1;
     this.xp = 0;
     this.xpToNext = GAME.xpBase;

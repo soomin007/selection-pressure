@@ -71,12 +71,52 @@ export function rarityWeightsAtLevel(level: number): Record<Rarity, number> {
   return out;
 }
 
+/**
+ * 갈래(계통) — 시작 프리셋이 정하는 "직업". 슬레이 더 스파이어/하스스톤처럼 카드가 두 풀로 나뉜다.
+ *   · **공통 풀**  — lineage 가 없는 카드. 어느 종이든 뽑는다(속도·시야·번식 같은 기본기 + 능력 관문).
+ *   · **전용 풀**  — lineage 가 붙은 카드. **그 갈래로 시작한 종에게만** 나온다(그 종의 정체성 심화).
+ *
+ * 능력 관문 카드(지느러미·날개·초음파·독 살갗·가시 쏘기)는 일부러 **공통**으로 뒀다 — 걷던 종이 날개를
+ * 얻는 진화가 이 게임의 핵심 재미인데, 그걸 갈래로 잠그면 "하늘 개척자로 시작해야만 난다"가 된다.
+ * 전용 풀은 "그 갈래만 갈 수 있는 더 깊은 곳"이지 "그 갈래만 할 수 있는 일"이 아니다.
+ */
+export type Lineage = "omni" | "herd" | "scout" | "hunter" | "ranged" | "sea" | "sky" | "venom";
+
+/** 시작 프리셋 id → 갈래. 프리셋을 고르는 순간 이 런의 갈래가 정해진다. */
+export const PRESET_LINEAGE: Record<string, Lineage> = {
+  preset_omni: "omni",
+  preset_herd: "herd",
+  preset_scout: "scout",
+  preset_hunter: "hunter",
+  preset_ranged: "ranged",
+  preset_sea: "sea",
+  preset_sky: "sky",
+  preset_venom: "venom",
+};
+
+/** 갈래 이름(화면 표시) — 드래프트에서 "내 갈래 카드"임을 배지로 보여준다. */
+export const LINEAGE_NAME: Record<Lineage, string> = {
+  omni: "균형 잡식",
+  herd: "다산 초식 무리",
+  scout: "느긋한 정찰자",
+  hunter: "날쌘 육식 사냥꾼",
+  ranged: "원거리 사냥꾼",
+  sea: "바다 개척자",
+  sky: "하늘 개척자",
+  venom: "독 살갗",
+};
+
 export interface Card {
   id: string;
   name: string;
   desc: string;
   effects: Partial<Record<keyof Traits, number>>;
   set?: Partial<Record<keyof Traits, number>>;
+  /**
+   * 이 카드가 속한 갈래. 있으면 **그 갈래로 시작한 종에게만** 후보로 나온다(전용 카드).
+   * 없으면 공통 카드 — 누구나 뽑는다.
+   */
+  lineage?: Lineage;
   /** 시작 프리셋의 내 종 시작 색(프리셋 전용) — 종마다 뚜렷이 달라 외형만으로 구분된다. */
   color?: number;
   /**
@@ -510,6 +550,59 @@ export const CARD_POOL: readonly Card[] = [
     desc: "몸이 통째로 커진다. 힘은 압도적이지만 걸음이 굼뜨고, 큰 몸을 건사하느라 새끼는 드물게 친다.",
     effects: { attack: 34, herding: 10, speed: -18, fertility: -14, metabolism: 8 },
   },
+
+  // ────────────────────────── 갈래 전용 카드 (lineage) ──────────────────────────
+  // 시작 프리셋이 정한 갈래로만 나온다. 드래프트 3장 중 1장은 늘 여기서 뽑히므로(drawCards),
+  // "내 종만의 길"이 매 판 또렷하게 이어진다. 공통 카드보다 값이 커도 되는 이유는 갈래를 고른
+  // 대가(다른 갈래의 전용 카드를 영영 못 본다)를 이미 치렀기 때문이다.
+
+  // ── 균형 잡식: 치우치지 않아 무엇에든 견딘다. 기본기가 고르게 오른다(가장 약한 프리셋이라 넉넉히).
+  { id: "omni_gut", name: "무엇이든 먹는다", desc: "가리지 않고 먹어 새끼를 더 치고, 먹이도 더 잘 찾는다.", effects: { fertility: 16, vision: 12 }, lineage: "omni" },
+  { id: "omni_hardy", name: "끈질긴 혈통", desc: "어떤 땅에서도 버틴다. 새끼가 늘고 몸도 단단해지지만, 몸이 무거워 걸음이 느려진다.", effects: { fertility: 20, attack: 12, metabolism: 6, speed: -8 }, lineage: "omni" },
+  { id: "omni_anywhere", name: "어디서나 산다", desc: "기본기가 두루 오른다. 뛰어난 것은 없지만 모자란 것도 없다. 다만 싸움에는 약해진다.", effects: { speed: 14, vision: 14, herding: 12, fertility: 10, attack: -10 }, lineage: "omni" },
+  { id: "omni_apex", name: "만능의 정점", desc: "무엇 하나 빠지지 않는 종이 된다. 힘도 눈도 발도 오르지만, 큰 몸을 건사하느라 새끼는 드물게 친다.", effects: { speed: 16, vision: 18, attack: 16, herding: 12, fertility: -12, metabolism: 8 }, lineage: "omni" },
+
+  // ── 다산 초식 무리: 수로 밀어붙인다. 번식·무리가 정체성.
+  { id: "herd_boom", name: "폭발적 번식", desc: "새끼를 쉴 새 없이 친다. 그만큼 기운을 많이 쓴다.", effects: { fertility: 26, metabolism: 8, attack: -6 }, lineage: "herd" },
+  { id: "herd_wall", name: "촘촘한 대열", desc: "빈틈없이 붙어 다녀 외톨이가 생기지 않는다. 대신 굼뜨다.", effects: { herding: 22, vision: 8, speed: -5 }, lineage: "herd" },
+  { id: "herd_nursery", name: "젖먹이 무리", desc: "무리가 새끼를 함께 돌본다. 수가 불어나며 결속도 단단해진다.", effects: { fertility: 18, herding: 18, speed: -6 }, lineage: "herd" },
+  { id: "herd_swarm", name: "밀물 같은 무리", desc: "솎여도 메우고 또 메운다. 수가 곧 방패다.", effects: { fertility: 24, herding: 16, vision: 8, attack: -8 }, lineage: "herd" },
+
+  // ── 느긋한 정찰자: 멀리 보고 아껴 쓴다. 시야·저대사가 정체성.
+  { id: "scout_far", name: "멀리 보는 눈", desc: "누구보다 멀리 본다. 위협도 먹이도 먼저 알아채지만, 멀리 살피느라 무리에서 떨어져 다닌다.", effects: { vision: 26, metabolism: -6, herding: -10 }, lineage: "scout" },
+  { id: "scout_thrift", name: "아끼는 몸", desc: "기운을 거의 쓰지 않아 굶주림에 오래 버틴다.", effects: { metabolism: -18, fertility: 8 }, lineage: "scout" },
+  { id: "scout_watch", name: "지평선의 감시자", desc: "무리 전체가 사방을 살핀다. 아무도 몰래 다가오지 못하지만, 살피느라 걸음이 더뎌진다.", effects: { vision: 22, herding: 14, speed: -8 }, lineage: "scout" },
+  { id: "scout_sage", name: "오래 사는 현자", desc: "느리게 살아 오래 버틴다. 눈은 더없이 밝아진다.", effects: { vision: 26, metabolism: -14, fertility: 10, speed: -6 }, lineage: "scout" },
+
+  // ── 날쌘 육식 사냥꾼: 잡아야 산다. 속도·공격이 정체성.
+  { id: "hunter_throat", name: "목을 무는 법", desc: "급소를 문다. 한 번의 사냥이 훨씬 잘 먹힌다.", effects: { attack: 22, speed: 8, fertility: -6 }, lineage: "hunter" },
+  { id: "hunter_relent", name: "지치지 않는 추격", desc: "끝까지 쫓는다. 대신 늘 배가 고프다.", effects: { speed: 18, metabolism: 10 }, lineage: "hunter" },
+  { id: "hunter_lone", name: "단독 사냥꾼", desc: "혼자 사냥한다. 무리를 버린 대신 발과 이빨을 얻는다.", effects: { attack: 18, speed: 14, herding: -16 }, lineage: "hunter" },
+  { id: "hunter_apex", name: "정점의 포식자", desc: "이 땅에서 가장 무서운 것이 된다. 쫓기던 것들이 이제 쫓긴다.", effects: { attack: 26, speed: 16, vision: 12, fertility: -10 }, lineage: "hunter" },
+
+  // ── 원거리 사냥꾼: 다가서지 않고 친다. 사거리·시야가 정체성.
+  { id: "ranged_reach", name: "더 멀리 쏘기", desc: "더 먼 곳까지 닿는다. 다가설 필요가 없다.", effects: { ranged: 18, vision: 10 }, lineage: "ranged" },
+  { id: "ranged_aim", name: "조준하는 눈", desc: "겨눈 것을 놓치지 않는다. 멀리 보고 정확히 친다.", effects: { vision: 20, ranged: 12, speed: -4 }, lineage: "ranged" },
+  { id: "ranged_volley", name: "연달아 쏘기", desc: "쉼 없이 쏘아댄다. 가까이 붙기 전에 쓰러뜨린다.", effects: { ranged: 22, attack: 10, herding: -6 }, lineage: "ranged" },
+  { id: "ranged_sniper", name: "보이지 않는 사수", desc: "상대가 알아채기도 전에 끝낸다. 사거리와 눈이 함께 극에 달한다.", effects: { ranged: 24, vision: 22, attack: 8, fertility: -8 }, lineage: "ranged" },
+
+  // ── 바다 개척자: 물이 삶터다. 헤엄과 바다 사냥이 정체성(수영값은 문턱 위에선 안 오르므로 다른 형질로).
+  { id: "sea_current", name: "해류를 타다", desc: "물살을 읽어 힘 안 들이고 나아간다.", effects: { speed: 18, metabolism: -8 }, lineage: "sea" },
+  { id: "sea_hunt", name: "먼바다 사냥", desc: "탁 트인 바다에서 사냥한다. 눈과 이빨이 함께 자란다.", effects: { attack: 16, vision: 14, herding: -6 }, lineage: "sea" },
+  { id: "sea_school", name: "물고기 떼처럼", desc: "한 덩어리로 헤엄쳐 포식자를 혼란시킨다. 뭉쳐 도망칠 뿐 맞서 싸우지는 않는다.", effects: { herding: 22, speed: 12, fertility: 10, attack: -12 }, lineage: "sea" },
+  { id: "sea_leviathan", name: "바다의 주인", desc: "이 바다에 맞설 것이 없다. 몸도 힘도 바다에 맞게 커진다.", effects: { attack: 22, speed: 16, vision: 14, metabolism: -6, fertility: -8 }, lineage: "sea" },
+
+  // ── 하늘 개척자: 하늘이 삶터다. 날개·시야가 정체성.
+  { id: "sky_updraft", name: "상승 기류", desc: "바람을 타 힘 안 들이고 오래 난다.", effects: { wings: 12, metabolism: -10 }, lineage: "sky" },
+  { id: "sky_stoop", name: "매의 강하", desc: "하늘에서 내리꽂아 덮친다.", effects: { speed: 16, attack: 14, fertility: -6 }, lineage: "sky" },
+  { id: "sky_soar", name: "높이 나는 눈", desc: "더 높이 날아 온 땅을 굽어본다.", effects: { wings: 10, vision: 22 }, lineage: "sky" },
+  { id: "sky_lord", name: "하늘의 지배자", desc: "하늘에 맞설 것이 없다. 날개도 눈도 극에 달한다.", effects: { wings: 16, vision: 20, speed: 12, metabolism: -8 }, lineage: "sky" },
+
+  // ── 독 살갗: 삼킨 자가 죽는다. 독이 정체성.
+  { id: "venom_thick", name: "짙은 독", desc: "독이 더 독해진다. 무는 자가 먼저 쓰러진다.", effects: { venom: 20 }, lineage: "venom" },
+  { id: "venom_armor", name: "독가시 갑옷", desc: "온몸이 독가시다. 건드리는 것마다 중독된다.", effects: { venom: 14, attack: 12, speed: -6 }, lineage: "venom" },
+  { id: "venom_bright", name: "경고하는 빛깔", desc: "화려한 빛깔이 \"먹으면 죽는다\"고 알린다. 아무도 다가오지 않는다.", effects: { venom: 16, herding: 12, fertility: 10 }, lineage: "venom" },
+  { id: "venom_untouchable", name: "누구도 삼키지 못한다", desc: "이 종을 먹고 살아남은 것은 없다. 독이 극에 달한다.", effects: { venom: 26, attack: 14, herding: 10, speed: -8 }, lineage: "venom" },
 ];
 
 /** 이 카드를 고르면 내 종의 몸이 이 배율로 커진다(렌더 전용 — sim 은 개체 크기를 안 쓴다). */
@@ -604,6 +697,43 @@ export const CARD_RARITY: Record<string, Rarity> = {
 
   // ── 도전 과제 전용 (등급은 전설) — 몸 자체가 달라진다.
   titan: "legendary",
+
+  // ── 갈래 전용 (32장) — 그 갈래로 시작한 종에게만 나온다. 갈래마다 **드묾 2 · 귀함 1 · 아주 귀함 1**:
+  // "기본기 → 정체성 심화 → 그 길의 정점" 순으로 한 판의 성장 곡선이 된다. 이 분포여야 갈래 풀
+  // (공통 + 전용)도 피라미드를 지킨다(cards.test 가 갈래별로 검사한다). 전설은 없다 — 전설은
+  // "못 하던 걸 하게 되는" 공통 관문의 자리라, 갈래 전용이 그 자리를 뺏으면 안 된다.
+  omni_gut: "uncommon",
+  omni_hardy: "uncommon",
+  omni_anywhere: "rare",
+  omni_apex: "epic",
+  herd_boom: "rare",
+  herd_wall: "uncommon",
+  herd_nursery: "uncommon",
+  herd_swarm: "epic",
+  scout_far: "rare",
+  scout_thrift: "uncommon",
+  scout_watch: "uncommon",
+  scout_sage: "epic",
+  hunter_throat: "uncommon",
+  hunter_relent: "uncommon",
+  hunter_lone: "rare",
+  hunter_apex: "epic",
+  ranged_reach: "uncommon",
+  ranged_aim: "uncommon",
+  ranged_volley: "rare",
+  ranged_sniper: "epic",
+  sea_current: "uncommon",
+  sea_hunt: "uncommon",
+  sea_school: "rare",
+  sea_leviathan: "epic",
+  sky_updraft: "uncommon",
+  sky_stoop: "uncommon",
+  sky_soar: "rare",
+  sky_lord: "epic",
+  venom_thick: "uncommon",
+  venom_armor: "uncommon",
+  venom_bright: "rare",
+  venom_untouchable: "epic",
 };
 
 /** 카드의 희귀도(미등록 카드는 흔함). 표시(배지·색·연출)와 뽑기 가중치가 같은 값을 쓴다. */
@@ -639,20 +769,38 @@ const PICK_DECAY = 0.5;
  * 실제 등장 빈도와 일치한다. `level`(런 레벨=세대)이 오르면 높은 등급이 더 자주 나온다.
  * `pickedCounts`(id→고른 횟수)를 주면 이미 고른 카드를 뜸하게 뽑는다(반복 완화, PICK_DECAY).
  */
+/**
+ * 지금 실제로 뽑힐 수 있는 카드들 — **공통 카드 + 내 갈래 전용 카드**. 남의 갈래 카드는 빠진다.
+ * 등장 확률 표(대백과)도 반드시 이 풀로 계산해야 한다 — 안 뽑히는 카드까지 세면 표시가 거짓말이 된다.
+ */
+export function cardPoolFor(lineage?: Lineage): Card[] {
+  return CARD_POOL.filter((c) => c.lineage === undefined || c.lineage === lineage);
+}
+
+/** 갈래 전용 카드(어느 갈래든) — 대백과에서 "이 카드는 그 갈래로 시작해야 나온다"를 알리는 데 쓴다. */
+export function lineageCards(lineage: Lineage): Card[] {
+  return CARD_POOL.filter((c) => c.lineage === lineage);
+}
+
 export function drawCards(
   rng: Rng,
   n: number,
   allow?: (c: Card) => boolean,
   level = 1,
   pickedCounts?: ReadonlyMap<string, number>,
+  lineage?: Lineage,
 ): Card[] {
-  const pool = (allow ? CARD_POOL.filter(allow) : CARD_POOL).slice();
+  // 후보 = 공통 카드 + **내 갈래** 전용 카드. 남의 갈래 전용 카드는 아예 안 보인다.
+  const eligible = CARD_POOL.filter(
+    (c) => (allow ? allow(c) : true) && (c.lineage === undefined || c.lineage === lineage),
+  );
   const weights = rarityWeightsAtLevel(level);
   const weightOf = (c: Card): number =>
     weights[cardRarity(c)] * PICK_DECAY ** (pickedCounts?.get(c.id) ?? 0);
-  const count = Math.min(n, pool.length);
-  const out: Card[] = [];
-  for (let k = 0; k < count; k++) {
+
+  /** 가중치 룰렛으로 pool 에서 한 장 뽑아 꺼낸다(뽑힌 카드는 pool 에서 빠진다). */
+  const take = (pool: Card[]): Card | null => {
+    if (pool.length === 0) return null;
     let total = 0;
     for (const c of pool) total += weightOf(c);
     // 룰렛 휠 — rng.unit() 한 번으로 한 장. 부동소수 오차로 끝까지 못 고르면 마지막 장을 집는다.
@@ -665,8 +813,39 @@ export function drawCards(
         break;
       }
     }
-    out.push(pool[idx] as Card);
+    const picked = pool[idx] as Card;
     pool.splice(idx, 1);
+    return picked;
+  };
+
+  const out: Card[] = [];
+  const rest = eligible.slice();
+
+  // **3장 중 1장은 반드시 내 갈래 전용 카드.** 이게 없으면 전용 카드가 40장 넘는 공통 풀에 묻혀
+  // 몇 판을 해도 구경조차 못 한다 — "내 종만의 길"이 매 판 이어지려면 자리를 보장해야 한다.
+  // 갈래가 없거나(옛 세이브) 전용 카드가 다 떨어지면 그냥 공통에서 채운다.
+  if (lineage) {
+    const own = rest.filter((c) => c.lineage === lineage);
+    const pickedOwn = take(own);
+    if (pickedOwn) {
+      out.push(pickedOwn);
+      rest.splice(rest.indexOf(pickedOwn), 1);
+    }
+  }
+
+  while (out.length < n) {
+    const c = take(rest);
+    if (!c) break;
+    out.push(c);
+  }
+
+  // 자리를 섞는다 — 안 섞으면 갈래 전용 카드가 **늘 첫 장**이라 위치만 보고 알아버린다(고르는 재미가
+  // 준다). 배지로 알리되 자리는 무작위여야 세 장을 실제로 견주게 된다. rng 는 같은 스트림(결정론 유지).
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng.unit() * (i + 1));
+    const a = out[i] as Card;
+    out[i] = out[j] as Card;
+    out[j] = a;
   }
   return out;
 }
