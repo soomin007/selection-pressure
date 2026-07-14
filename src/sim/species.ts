@@ -28,12 +28,8 @@ export interface Species {
   homeBiome?: Biome;
   /** 비동기 생물(S2) — 지난 런의 내 종("예전의 나")이 이 세계에 다시 나타난 것. 렌더에서 왕관으로 표시. */
   champion?: boolean;
-  /**
-   * 몸 크기 배율 — **렌더 전용**(색과 같은 성격의 표시 데이터). sim 은 개체 크기를 전혀 쓰지 않으므로
-   * 이 값은 동역학·밸런스에 영향이 없다. 「거인」 카드를 고르면 1보다 커진다(스탯도 함께 바뀐다 — 외형만
-   * 커지면 "세 보이는데 안 센" 거짓말이 되므로 둘을 같이 움직인다).
-   */
-  bodyScale?: number;
+  // (v7: 종 단위 `bodyScale`(렌더 전용 몸 크기 배율)은 제거됐다 — 몸집(size) **형질**이 그 일을 하고,
+  //  개체별 게놈 값이라 같은 종 안에서도 큰 놈·작은 놈이 갈린다. 외형과 시뮬이 한 값에서 나온다.)
 }
 
 export function isCarnivore(genome: Genome): boolean {
@@ -155,7 +151,7 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
     color: 0x4a86e0, // 선명한 파랑(물고기떼 하늘색과 구분)
     initialCount: 12,
     foodKinds: [0],
-    traits: { diet: 15, fertility: 50, speed: 40, vision: 40, metabolism: 45, attack: 30, herding: 60 },
+    traits: { diet: 15, fertility: 50, speed: 40, vision: 40, metabolism: 45, attack: 30, herding: 60, size: 50 },
     faction: 2, // 초원 연합(들풀 무리·잡식 청소부와 같은 편 — 서로 안 싸움)
   },
   {
@@ -164,7 +160,7 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
     color: 0x9a7ad6,
     initialCount: 12,
     foodKinds: [1],
-    traits: { diet: 22, fertility: 48, speed: 46, vision: 45, metabolism: 50, attack: 28, herding: 60 },
+    traits: { diet: 22, fertility: 48, speed: 46, vision: 45, metabolism: 50, attack: 28, herding: 60, size: 46 },
     faction: 2, // 초원 연합
   },
   {
@@ -173,7 +169,7 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
     color: 0xd6c24a,
     initialCount: 16,
     foodKinds: [2],
-    traits: { diet: 12, fertility: 78, speed: 32, vision: 30, metabolism: 42, attack: 12, herding: 72 },
+    traits: { diet: 12, fertility: 78, speed: 32, vision: 30, metabolism: 42, attack: 12, herding: 72, size: 30 },
   },
   {
     // 느린 거북 — 0·2번 먹이. 저대사 장수형(K전략): 느리고 적게 낳지만 에너지를 거의 안 써 오래 버틴다.
@@ -181,7 +177,7 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
     color: 0x9aa0ab, // 돌회색(초록 계열 내 종·친척과 확실히 구분 — 등딱지 느낌)
     initialCount: 9,
     foodKinds: [0, 2],
-    traits: { diet: 26, fertility: 36, speed: 22, vision: 34, metabolism: 28, attack: 52, herding: 30 },
+    traits: { diet: 26, fertility: 36, speed: 22, vision: 34, metabolism: 28, attack: 52, herding: 30, size: 68 },
   },
   {
     // 잡식 청소부 — 모든 먹이 + 약한 사냥. 먹이 유연성으로 틈새 생존.
@@ -189,7 +185,7 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
     color: 0xc88a4a,
     initialCount: 8,
     foodKinds: [0, 1, 2],
-    traits: { diet: 50, fertility: 46, speed: 50, vision: 50, metabolism: 50, attack: 40, herding: 32 },
+    traits: { diet: 50, fertility: 46, speed: 50, vision: 50, metabolism: 50, attack: 40, herding: 32, size: 50 },
     faction: 2, // 초원 연합(사냥 성향이 있어 동맹 초식을 안 잡는 게 눈에 띈다)
   },
   {
@@ -198,7 +194,10 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
     color: 0xe23b2e, // 선명한 빨강(위험 강조 + 잡식 청소부 주황과 구분)
     initialCount: 4,
     foodKinds: [],
-    traits: { diet: 85, fertility: 30, speed: 66, vision: 60, metabolism: 50, attack: 70, herding: 40 },
+    // ⚠ 몸집은 **기준선 50 을 유지한다.** 64 로 키웠더니 sizeBiteWeight(1.4) 때문에 내 종을 무는
+    // 즉사 확률이 0.64 → 0.93 으로 뛰어 대멸종 필터·개체 진화 테스트가 통째로 깨졌다(내 종 몰살).
+    // "큰 맹수"는 그럴듯하지만 포식자의 체급은 이 게임 밸런스의 기준점이다 — 여기만은 건드리지 않는다.
+    traits: { diet: 85, fertility: 30, speed: 66, vision: 60, metabolism: 50, attack: 70, herding: 40, size: 50 },
   },
   {
     // 바다 풀뜯이 — 수륙양용(수영 0.75: 물+육지 다 다님). 바다 먹이를 전문으로 먹되 육지도 오간다.

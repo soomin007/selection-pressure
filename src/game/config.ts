@@ -34,9 +34,17 @@ export const GAME = {
   eraRewardBoost: 2, // 보상 카드 효과 = 정상 카드 ×2 (표시값·실제값 함께 커진다 — boostCard 로 사본 생성)
 } as const;
 
-/** 시대(era)별 위협 강도 배율. era 0 = 1.0(기존과 동일). 보스·대멸종 강도에 곱한다. */
+/**
+ * 시대(era)별 위협 강도 배율. era 0 = 1.0(기존과 동일 → 통과기준 테스트 보존).
+ *
+ * **복리(지수)다.** 예전엔 선형(1 + era×0.22)이라 시대를 거듭할수록 난이도 상승이 성장에 뒤처졌다
+ * (사용자: "난이도는 선형이 아니라 지수적으로 상승해야 해"). 카드 성장은 곱셈처럼 쌓이는데 위협만
+ * 덧셈으로 오르면 후반이 시시해진다.
+ *   선형: 1.22 · 1.44 · 1.66 · 1.88 · 2.10
+ *   복리: 1.22 · 1.49 · 1.82 · 2.22 · 2.72  ← 지금
+ */
 export function eraDifficulty(era: number): number {
-  return 1 + Math.max(0, era) * GAME.eraDifficultyStep;
+  return Math.pow(1 + GAME.eraDifficultyStep, Math.max(0, era));
 }
 
 // 한 런의 라운드 계획. 각 단계 앞에는 드래프트가 붙는다.

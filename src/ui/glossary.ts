@@ -136,7 +136,7 @@ const SVG = {
 const SECTIONS: readonly Section[] = [
   {
     title: "형질 도감",
-    intro: "형질은 한 종을 이루는 저울입니다. 상한은 100입니다.\n값 형질(속도·시야·공격력·번식력·몸집·대사)은 50에서 시작해 카드로 키우며, 0~100 숫자로 봅니다.\n능력 형질(무리 성향·은신·수영·날개·초음파·독침·원거리)은 처음엔 없고, 카드로 열어야 생깁니다. 없음·보통·강함 세 단계로 봅니다.",
+    intro: "형질은 한 종을 이루는 저울입니다. 상한은 100입니다.\n값 형질(속도·시야·공격력·번식력·몸집·대사)은 50에서 시작해 카드로 키우며, 0~100 숫자로 봅니다.\n능력 형질(무리 성향·은신·수영·날개·초음파·독침·원거리)은 처음엔 없고, 카드로 열어야 생깁니다. 없음·보통·강함 세 단계로 봅니다.\n높이 오를수록 더 올리기 어려워집니다. 대신 100에 닿으면 그 형질의 약점이 사라집니다(정점).",
     entries: [
       {
         term: "수치 읽는 법",
@@ -210,6 +210,19 @@ const SECTIONS: readonly Section[] = [
         note: "막대는 사냥 성공 확률입니다.",
       },
       {
+        term: "정점 (100)",
+        svg: SVG.scale,
+        desc: "값 형질이 100에 닿으면 그 형질의 약점이 사라집니다. 수치가 더 오르는 게 아니라, 규칙에서 벗어납니다.",
+        rows: [
+          { k: "속도 100", v: "험한 땅도 걸음을 늦추지 못합니다", bar: 1 },
+          { k: "시야 100", v: "어둠도 수풀도 눈을 가리지 못합니다", bar: 1 },
+          { k: "공격력 100", v: "어떤 가죽도 이빨을 막지 못합니다", bar: 1 },
+          { k: "번식력 100", v: "적은 기운으로도 새끼를 칩니다", bar: 1 },
+          { k: "몸집 100", v: "이미 웬만한 이빨이 안 박힙니다", bar: 1 },
+        ],
+        note: "50을 넘으면 카드로 올리기가 점점 어려워집니다(같은 카드라도 덜 오릅니다). 100은 값비싼 목표이고, 그만큼 닿으면 보답이 있습니다.",
+      },
+      {
         term: "몸집",
         svg: SVG.scale,
         desc: "몸의 크기입니다. 크면 좀처럼 잡아먹히지 않지만, 걸음이 무겁고 많이 먹으며 새끼를 적게 칩니다. 작으면 정확히 반대입니다. 화면에서 생물 크기로 바로 보입니다.",
@@ -230,6 +243,17 @@ const SECTIONS: readonly Section[] = [
           { k: "강함 + 곁에 2마리", v: "포식자가 안 건드립니다", bar: 1 },
         ],
         note: "뭉쳐 있어야 방패가 섭니다. 홀로 먹이를 찾아 나선 개체는 잡아먹힙니다. 포식자는 늘 가장자리와 낙오자를 노립니다. 「무리 본능」 카드 한 장으로 열립니다.",
+      },
+      {
+        term: "초음파 (능력)",
+        svg: SVG.echo,
+        desc: "눈이 멀고 귀가 열립니다. 앞을 보는 대신 사방을 듣습니다. 어둠도 수풀도 등 뒤도 막지 못합니다.",
+        rows: [
+          { k: "없음 (기본)", v: "눈으로 앞을 봅니다", bar: 0 },
+          { k: "초음파를 얻으면", v: "시야가 0이 됩니다(눈이 먼다)", bar: 0 },
+          { k: "강함", v: "사방을 멀리까지 듣습니다", bar: 1 },
+        ],
+        note: "「초음파」 카드는 시야를 통째로 가져갑니다. 초음파가 시야보다 순수하게 낫기 때문입니다(전방위 + 어둠·수풀 무시). 둘 다 가지면 시야가 무의미해지므로, 하나를 고르게 했습니다. 대가는 분명합니다. 눈으로 미리 알아채야 하는 위협(그림자 매복자·큰수리) 앞에서 무력해집니다.",
       },
       {
         term: "은신 (능력)",
@@ -952,11 +976,38 @@ export function createGlossary(): Glossary {
       const head = sectionHeads[i];
       // 상세를 보던 중이면 목록으로 먼저 돌아온다(목차는 목록의 좌표계를 쓴다).
       if (detailView.style.display !== "none") showList(true);
-      if (head) body.scrollTop = head.offsetTop - 8;
+      if (head) smoothScrollTo(head.offsetTop - 8);
       closeToc();
     });
     tocMenu.appendChild(item);
   });
+
+  /**
+   * 목차 점프를 **빠르게 굴러가는 느낌**으로 (사용자 요청: "바로 팍 움직이지 말고").
+   * 순간이동하면 어디로 갔는지 감이 안 잡힌다 — 굴러가는 게 보여야 위치 감각이 남는다.
+   * 거리에 따라 260~420ms 로 잡고(멀수록 살짝 길게) easeOutCubic 으로 끝에서 부드럽게 선다.
+   * 브라우저 기본 `behavior:"smooth"` 를 안 쓰는 이유: 속도를 못 정해 길 땐 답답하게 느리다.
+   */
+  let scrollRaf = 0;
+  function smoothScrollTo(target: number): void {
+    if (scrollRaf) cancelAnimationFrame(scrollRaf);
+    const start = body.scrollTop;
+    const max = body.scrollHeight - body.clientHeight;
+    const end = Math.max(0, Math.min(max, target));
+    const dist = end - start;
+    if (Math.abs(dist) < 2) return;
+    const dur = Math.min(420, 260 + Math.abs(dist) * 0.08);
+    let t0 = 0;
+    const step = (now: number): void => {
+      if (!t0) t0 = now;
+      const p = Math.min(1, (now - t0) / dur);
+      const eased = 1 - Math.pow(1 - p, 3); // easeOutCubic — 빠르게 출발해 부드럽게 선다
+      body.scrollTop = start + dist * eased;
+      if (p < 1) scrollRaf = requestAnimationFrame(step);
+      else scrollRaf = 0;
+    };
+    scrollRaf = requestAnimationFrame(step);
+  }
 
   function closeToc(): void {
     tocMenu.style.display = "none";

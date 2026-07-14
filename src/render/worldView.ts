@@ -388,9 +388,9 @@ export class WorldView {
       // 무늬·눈은 텍스처(룩 버킷)에서, 크기·톤은 여기 스프라이트에서 — 두 층이 겹쳐 개체가 또렷이 갈린다.
       const ps = personalityScale(e.id);
       const st = personalityStretch(e.id); // >1 길고 홀쭉(몸 방향=x 늘림), <1 짧고 통통
-      // 종 몸집 배율 — 「거인」 카드를 고르면 1보다 크다. 표시 전용(sim 은 개체 크기를 안 쓴다).
-      const bs = e.species.bodyScale ?? 1;
-      sp.scale.set(ps * st * bs, (ps / st) * bs);
+      // (v7: 몸집은 텍스처(makeCreatureTexture 의 sizeScale)가 이미 반영한다 — 개체별 게놈 값이라
+      //  같은 종 안에서도 큰 놈·작은 놈이 갈린다. 종 단위 bodyScale 배율은 제거됐다.)
+      sp.scale.set(ps * st, ps / st);
       // 독(중독) 걸린 개체는 보라빛으로 — "독이 퍼지는 중"이 한눈에(지속 피해의 시각 피드백).
       // 중독이 무지갯빛보다 우선한다(꾸밈이 위험 신호를 가리면 안 된다).
       sp.tint =

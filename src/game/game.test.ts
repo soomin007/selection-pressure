@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { Game, type RunHistory } from "@/game/game";
 import { eraDifficulty } from "@/game/config";
 import { createBoss } from "@/sim/boss";
-import { CARD_BODY_SCALE, CARD_POOL, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
+import { CARD_POOL, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
 import { Rng } from "@/sim/rng";
 import { defaultGenome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
@@ -76,10 +76,15 @@ describe("대멸종 종류 예고", () => {
 });
 
 describe("난이도 루프(승리 후 진행)", () => {
-  it("era 0 은 배율 1.0(기존과 동일), 이후 계단으로 오른다", () => {
+  it("era 0 은 배율 1.0(기존과 동일), 이후 **복리**로 오른다", () => {
     expect(eraDifficulty(0)).toBe(1);
     expect(eraDifficulty(1)).toBeCloseTo(1.22);
-    expect(eraDifficulty(2)).toBeCloseTo(1.44);
+    // 지수(복리)다 — 선형이면 1.44 겠지만 1.22² = 1.4884 다. 카드 성장이 곱셈처럼 쌓이는데 위협만
+    // 덧셈으로 오르면 후반이 시시해진다(사용자: "난이도는 선형이 아니라 지수적으로 상승해야 해").
+    expect(eraDifficulty(2)).toBeCloseTo(1.4884);
+    expect(eraDifficulty(5)).toBeCloseTo(Math.pow(1.22, 5));
+    // 뒤 시대일수록 계단이 가팔라진다(복리의 정의).
+    expect(eraDifficulty(5) - eraDifficulty(4)).toBeGreaterThan(eraDifficulty(2) - eraDifficulty(1));
     // 음수 방어(0으로 clamp).
     expect(eraDifficulty(-3)).toBe(1);
   });
@@ -320,12 +325,14 @@ describe("도전 과제 보상 「거인」", () => {
     if (!titan) return;
     const beforeAttack = g.genome.traits.attack;
     const beforeSpeed = g.genome.traits.speed;
-    expect(g.world.playerSpecies.bodyScale ?? 1).toBe(1);
+    const beforeSize = g.genome.traits.size;
 
     g.draftCards = [titan];
     g.pickCard(0);
 
-    expect(g.world.playerSpecies.bodyScale).toBe(CARD_BODY_SCALE.titan);
+    // v7: 「거인」은 **몸집 형질**을 키운다(예전엔 렌더 전용 bodyScale 배율이었다 — 이제 외형과
+    // 시뮬이 한 값에서 나온다). 몸집이 커지면 느려지고 많이 먹고 새끼를 덜 치는 대가도 자동으로 따라온다.
+    expect(g.genome.traits.size).toBeGreaterThan(beforeSize); // 몸이 실제로 커진다
     expect(g.genome.traits.attack).toBeGreaterThan(beforeAttack); // 힘은 세지고
     expect(g.genome.traits.speed).toBeLessThan(beforeSpeed); // 걸음은 굼떠진다
     expect(g.pickedCardIds).toContain("titan");
@@ -341,8 +348,11 @@ describe("도전 과제 보상 「거인」", () => {
     if (!titan) return;
     g.draftCards = [titan];
     g.pickCard(0);
+    const grown = g.genome.traits.size;
     g.continueToNextEra();
-    expect(g.world.playerSpecies.bodyScale).toBe(CARD_BODY_SCALE.titan);
+    // 시대를 넘어 새 월드를 만들어도 커진 몸집이 유지된다(게놈이 이어지므로).
+    expect(g.genome.traits.size).toBe(grown);
+    expect(g.world.genome.traits.size).toBe(grown);
   });
 });
 

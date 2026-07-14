@@ -5,7 +5,7 @@ import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
-import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome, grazeEfficiency, huntEfficiency, huntSprintFactor, carnivory01, gorgeFactor, maxEnergyFor, packShareGain, packHerdFactor, herdShieldedBy, sizeDev, sizeSpeedFactor, sizeDrainFactor, sizeFertilityFactor, effectiveCamo, camoVisionFactor } from "@/sim/behavior";
+import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome, grazeEfficiency, huntEfficiency, huntSprintFactor, carnivory01, gorgeFactor, maxEnergyFor, packShareGain, packHerdFactor, herdShieldedBy, isApex, sizeDev, sizeSpeedFactor, sizeDrainFactor, sizeFertilityFactor, effectiveCamo, camoVisionFactor } from "@/sim/behavior";
 import { areFriends, type Species } from "@/sim/species";
 import { createEntity, type Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
@@ -1132,6 +1132,48 @@ describe("몸집 (v7 — attack 이 겸하던 '체급'을 떼어낸 축)", () =>
     expect(biteOutcome(60, 50, 90, MID).killChance).toBeGreaterThan(biteOutcome(60, 50, MID, MID).killChance);
     // 같은 몸집이라도 공격력이 높으면 더 잘 죽인다.
     expect(biteOutcome(80, 50, MID, MID).killChance).toBeGreaterThan(biteOutcome(60, 50, MID, MID).killChance);
+  });
+});
+
+describe("정점 (형질 100 — 상한에 닿으면 그 형질의 약점이 사라진다)", () => {
+  it("정점은 상한(100)에서만 켜진다", () => {
+    expect(isApex(100)).toBe(true);
+    expect(isApex(99)).toBe(false);
+    expect(isApex(50)).toBe(false);
+  });
+
+  it("정점 공격력(100) — 어떤 가죽도 이빨을 막지 못한다(체급 무시 규칙이 안 걸린다)", () => {
+    // 보통 공격력이면 압도적 체급 앞에서 이빨이 안 박힌다.
+    expect(biteOutcome(60, 50, 50, 100).ignored).toBe(true);
+    // 정점이면 물 수는 있다 — 다만 확률·피해는 여전히 체급 차를 따른다(공짜가 아니다).
+    const apex = biteOutcome(100, 50, 50, 100);
+    expect(apex.ignored).toBe(false);
+    expect(apex.killChance).toBeLessThan(biteOutcome(100, 50, 50, 50).killChance);
+  });
+
+  it("정점 시야(100) — 어둠도 수풀도 눈을 가리지 못한다", () => {
+    // 규칙 자체는 nightVision/grassVision 이 그대로지만, stepEntity 가 정점이면 이 배율을 안 곱한다.
+    // 여기서는 "정점 아래에선 감쇠가 실재한다"를 못 박아 둔다(정점의 값어치가 곧 이 감쇠의 크기다).
+    expect(nightVisionFactor(0, 0.5)).toBeLessThan(1); // 자정엔 시야가 준다
+    expect(isApex(100)).toBe(true);
+  });
+
+  it("정점 번식력(100) — 적은 기운으로도 새끼를 쳐 무리가 더 불어난다", () => {
+    // 방향으로 검증한다(소수 개체 시뮬은 절대 수치가 노이즈에 흔들린다 — known_issues).
+    // 99 와 100 은 형질값이 1 차이일 뿐인데 결과가 갈려야 한다 — 그게 "정점"의 뜻이다.
+    let apexPop = 0;
+    let nearPop = 0;
+    for (const seed of ["apex-0", "apex-1", "apex-2", "apex-3", "apex-4", "apex-5"]) {
+      const a = new World(seed, W, H, tune({ fertility: 100, metabolism: 40, vision: 60 }));
+      const b = new World(seed, W, H, tune({ fertility: 99, metabolism: 40, vision: 60 }));
+      for (let i = 0; i < 1500; i++) {
+        a.step();
+        b.step();
+      }
+      apexPop += a.playerPopulation;
+      nearPop += b.playerPopulation;
+    }
+    expect(apexPop).toBeGreaterThan(nearPop);
   });
 });
 

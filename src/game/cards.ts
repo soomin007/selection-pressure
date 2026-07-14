@@ -14,7 +14,10 @@ import { SIM } from "@/sim/params";
 // (100)에 닿게 해 성장을 천천히 느끼게 한다(카드 +15 → 실제 +9 적용, 50→100 에 ~6픽). 상한을 200→100 으로
 // 내려도 이 스케일을 유지해 실제 증가폭이 안 바뀌므로 밸런스는 불변(바뀌는 건 최대 도달값뿐). 대사·식성·
 // 능력형은 안 줄인다(성격이 다름). set(프리셋 정체성 값)도 안 줄인다(증분만).
-const CARD_GROWTH_SCALE = 0.6;
+// 0.6 → 0.75: 상한 근접 감쇠(growthFalloff)가 들어오면서 후반 성장이 느려졌는데 난이도는 그대로라
+// 프리셋이 전반적으로 약해졌다(균형 잡식 도달 5.0 → 4.2). 초반(50 근처) 증가폭을 키워 총량을 되살린다.
+// 곡선이 바뀐 것이다: **초반엔 쑥쑥, 상한 근처에선 더디게.** 총 성장은 비슷하되 "100 을 금방 찍는" 일은 없다.
+const CARD_GROWTH_SCALE = 0.75;
 // 성장 스케일을 받는 값형질(연속·많을수록 강함). 상한이 전부 100 이라 TRAIT_CEILING 으로는 못 가려 명시한다.
 // v7: herding 이 능력 형질로 강등돼 빠졌다(능력형은 스케일을 안 받는다 — 문턱을 넘겨야 켜지므로 값을
 // 깎으면 관문 카드가 관문 구실을 못 한다).
@@ -353,10 +356,14 @@ export const CARD_POOL: readonly Card[] = [
     effects: { speed: 20, herding: -18 },
   },
   {
+    // ⚠ v6 까지 이 카드는 **몸집이 안 커졌다**(대사·걸음만 바뀜) — 이름이 거짓말이었다(사용자 지적:
+    // "'느긋한 거인'은 크기 형질도 없는데 왜 거인이야?"). v7 에 몸집 축이 생겼으니 실제로 커진다.
+    // 「커다란 몸」과의 차이: 이쪽은 **크면서도 기운을 아끼는** 몸이다(코끼리·거북). 큰 몸은 원래
+    // 많이 먹는데(sizeDrainFactor) 저대사가 그걸 상쇄해, 느리지만 오래 버티는 종이 된다.
     id: "giant",
     name: "느긋한 거인",
-    desc: "기운을 거의 쓰지 않지만 걸음이 굼뜨다.",
-    effects: { metabolism: -18, speed: -6 },
+    desc: "몸이 커지는데도 기운은 거의 쓰지 않는다. 크고 느긋해 좀처럼 잡아먹히지 않지만, 걸음이 굼뜨다.",
+    effects: { size: 20, metabolism: -16, speed: -8 },
   },
   {
     id: "furnace",
@@ -557,18 +564,24 @@ export const CARD_POOL: readonly Card[] = [
     requiresTrait: { key: "wings", min: SIM.flyThreshold },
   },
 
-  // 초음파 감각 — 눈 대신 귀. 시야를 잃는 대신 전방위(어둠·수풀 무관) 근거리 탐지(눈 vs 귀 트레이드오프).
+  // 초음파 감각 — **눈을 통째로 버리고** 귀를 얻는다.
+  // ⚠ 예전엔 vision -24 만 깎아서, 초음파를 켜도 눈이 그대로 남았다. 그런데 초음파는 전방위 + 어둠·수풀
+  // 무시라 시야보다 **순수하게 우월**하다 — 둘 다 가지면 시야 형질이 무의미해진다(사용자 지적:
+  // "초음파가 있으면 시야가 아예 필요 없는 거 아닌가?"). 그래서 관문 카드가 눈을 **0 으로** 만든다.
+  // 이제 진짜 트레이드오프다: 박쥐는 눈이 퇴화했다. 대신 어둠·수풀·등 뒤가 전부 무의미해진다.
+  // 대가는 분명하다 — 시야를 카운터로 쓰는 위협(그림자 매복자·큰수리)에 맨몸이 된다.
   {
     id: "echo",
     name: "초음파",
-    desc: "눈 대신 귀로 사방을 더듬는다. 시야가 줄지만 어둠과 수풀에서도 가까운 것을 알아챈다.",
-    effects: { echo: 42, vision: -24 },
+    desc: "눈이 멀고 귀가 열린다. 앞을 보는 대신 사방을 듣는다. 어둠도 수풀도 등 뒤도 막지 못하지만, 눈으로 미리 알아채야 하는 위협 앞에서는 무력하다.",
+    effects: { echo: 70, vision: -100 },
   },
   {
     id: "bat_ear",
     name: "박쥐의 귀",
-    desc: "온전히 귀에 기댄다. 눈은 거의 멀지만, 그만큼 사방을 아주 멀리까지 훤히 듣는다.",
-    effects: { echo: 48, vision: -30 },
+    desc: "귀가 극에 달한다. 사방을 아주 멀리까지 훤히 듣는다. 이미 초음파로 사는 종만 얻을 수 있다.",
+    effects: { echo: 30 },
+    requiresTrait: { key: "echo", min: 1 }, // 이미 귀로 사는 종의 강화(관문이 아니다)
   },
 
   // 전투 형질 (P5) — 독침(방어 독: 잡아먹으면 포식자 중독)·원거리(사거리). 기본 0 이라 큰 값(카드로 켜야 바뀐다).
@@ -598,13 +611,15 @@ export const CARD_POOL: readonly Card[] = [
   },
 
   // 도전 과제로만 열리는 특별 형질. 레벨로는 절대 안 열린다(achievements.ts 가 문지기).
-  // 「거인」은 몸이 실제로 커진다 — 스탯(힘↑ 걸음↓ 새끼↓)과 외형(bodyScale)이 함께 바뀐다.
-  // 외형만 커지고 스탯은 그대로면 "세 보이는데 안 센" 거짓말이 되므로, 둘을 반드시 같이 움직인다.
+  // v7: 예전엔 몸집 축이 없어서 **외형만 키우는 별도 배율**(CARD_BODY_SCALE 1.42)로 흉내 냈다.
+  // 이제 진짜 몸집 형질이 있으니 그것으로 통합한다 — 외형·시뮬이 한 값에서 나온다(중복 제거).
+  // 대가도 몸집이 알아서 준다(느림·대식·저번식) → 카드에 적던 speed/fertility 페널티를 덜어냈다.
+  // herding +10 도 뺐다: v7 에서 무리 성향은 능력 형질이라 10 으로는 아무 일도 안 일어난다(문턱 85).
   {
     id: "titan",
     name: "거인",
-    desc: "몸이 통째로 커진다. 힘은 압도적이지만 걸음이 굼뜨고, 큰 몸을 건사하느라 새끼는 드물게 친다.",
-    effects: { attack: 34, herding: 10, speed: -18, fertility: -14, metabolism: 8 },
+    desc: "몸이 통째로 커진다. 어지간한 이빨은 박히지도 않는다. 다만 걸음이 굼뜨고, 큰 몸을 건사하느라 많이 먹으며 새끼는 드물게 친다.",
+    effects: { size: 42, attack: 24, speed: -8, metabolism: 4 },
   },
 
   // ────────────────────────── 갈래 전용 카드 (lineage) ──────────────────────────
@@ -661,10 +676,8 @@ export const CARD_POOL: readonly Card[] = [
   { id: "venom_untouchable", name: "누구도 삼키지 못한다", desc: "이 종을 먹고 살아남은 것은 없다. 독이 극에 달한다.", effects: { venom: 26, attack: 14, herding: 10, speed: -8 }, lineage: "venom" },
 ];
 
-/** 이 카드를 고르면 내 종의 몸이 이 배율로 커진다(렌더 전용 — sim 은 개체 크기를 안 쓴다). */
-export const CARD_BODY_SCALE: Record<string, number> = {
-  titan: 1.42,
-};
+// (v7: CARD_BODY_SCALE 제거 — "외형만 키우는 별도 배율"은 몸집(size) 형질이 생기기 전의 임시방편이었다.
+//  이제 몸집 하나에서 외형과 시뮬이 함께 나온다. 두 축을 따로 두면 언젠가 어긋난다.)
 
 /**
  * 카드 id → 희귀도. 카드 리터럴에 흩어 두지 않고 한곳에 모아, 풀 전체의 분포를 한눈에 보며 튜닝한다.
@@ -802,10 +815,41 @@ export function cardRarity(card: Card): Rarity {
   return CARD_RARITY[card.id] ?? "common";
 }
 
-/** 카드가 게놈에 실제로 더하는 값(표시용) — 상한 200 연속 형질은 CARD_GROWTH_SCALE 로 줄어드므로, 카드에
- * 뜨는 수치를 실제 적용값과 맞추려면 이걸 쓴다(전엔 원값 +15 를 보여줬으나 실제론 +9 만 붙었다 — 폰 피드백). */
-export function effectiveDelta(key: keyof Traits, raw: number): number {
-  return Math.round(GROWTH_TRAITS.has(key) ? raw * CARD_GROWTH_SCALE : raw);
+/**
+ * 상한 근접 감쇠 — **형질이 높을수록 카드로 올리기 어렵다**(수확 체감).
+ *
+ * 왜: 형질이 금방 100 을 찍어 성장이 끝나 버렸다(사용자: "또 다시 형질이 100을 너무 금방 찍는데?").
+ * 카드 몇 장이면 상한이라 뒤쪽 드래프트가 시시해진다.
+ *
+ * **50 이하에선 감쇠가 정확히 1(없음)** 이다 — 모든 종이 50 에서 시작하므로 초반 성장·기존 밸런스가
+ * 그대로 보존된다. 50 위에서만 남은 여유에 비례해 증가폭이 준다:
+ *   현재 50 → ×1.00 · 65 → ×0.84 · 80 → ×0.63 · 90 → ×0.45 · 97 → ×0.24
+ * 100 에 점근하되 닿기는 어렵다 — "극단은 값비싸다"가 성장 곡선이 된다.
+ * 값을 **내리는**(음수) 효과에는 안 걸린다(내리는 건 원래대로).
+ */
+const FALLOFF_FROM = 50; // 이 값 이하에선 감쇠 없음
+const FALLOFF_POWER = 0.5;
+
+/** 감쇠가 걸리는 값 형질(많을수록 강함). 능력형(문턱을 넘겨야 켜짐)·대사·식성(중립/스펙트럼)은 제외. */
+const FALLOFF_TRAITS = new Set<keyof Traits>(["speed", "vision", "attack", "fertility", "size"]);
+
+export function growthFalloff(key: keyof Traits, current: number): number {
+  if (!FALLOFF_TRAITS.has(key)) return 1;
+  const ceiling = TRAIT_CEILING[key];
+  if (current <= FALLOFF_FROM) return 1;
+  const room = Math.max(0, (ceiling - current) / (ceiling - FALLOFF_FROM));
+  return Math.pow(room, FALLOFF_POWER);
+}
+
+/** 카드가 게놈에 실제로 더하는 값(표시용) — 카드에 적힌 값과 실제 적용값이 다르다(전엔 원값 +15 를
+ * 보여줬으나 실제론 +9 만 붙었다 — 폰 피드백).
+ * `current`(그 형질의 현재 값)를 주면 **상한 근접 감쇠까지 반영**한 진짜 값이 나온다. 드래프트는 내 종
+ * 게놈을 아니 반드시 넘긴다 — 안 넘기면 "+12" 라 써 놓고 +5 만 오르는 거짓말이 된다. 카드 도감처럼
+ * 종이 특정되지 않는 화면은 생략하고 기준값(감쇠 없음)으로 보여준다. */
+export function effectiveDelta(key: keyof Traits, raw: number, current?: number): number {
+  let d = GROWTH_TRAITS.has(key) ? raw * CARD_GROWTH_SCALE : raw;
+  if (d > 0 && current !== undefined) d *= growthFalloff(key, current);
+  return Math.round(d);
 }
 
 /** 카드 효과를 boost 배로 키운 사본(시대 보상용). 표시값(effectiveDelta)과 실제 적용(applyCard)이 같은
@@ -975,6 +1019,8 @@ export function applyCard(genome: Genome, card: Card): void {
   for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
     let delta = card.effects[key] ?? 0;
     if (GROWTH_TRAITS.has(key)) delta *= CARD_GROWTH_SCALE; // 값형질만 증가폭 축소(성장을 천천히)
+    // 상한 근접 감쇠 — 높을수록 올리기 어렵다. 50 이하는 배수 1(기존 성장 그대로), 내리는 효과엔 안 걸린다.
+    if (delta > 0) delta *= growthFalloff(key, genome.traits[key]);
     genome.traits[key] = clampTraitValue(key, genome.traits[key] + delta);
   }
   // 내 종은 물 전용(육지 통행 불가)이 되지 않게 수영 상한을 수륙양용 문턱 바로 아래로 막는다. 지느러미·물갈퀴를

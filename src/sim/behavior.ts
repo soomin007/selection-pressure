@@ -116,6 +116,24 @@ export function maxEnergyFor(diet: number): number {
 }
 
 /**
+ * **정점(apex)** — 값 형질이 상한(100)에 닿았는가. 닿으면 그 형질만의 특별한 능력이 켜진다.
+ *
+ * 왜 필요한가: 상한 근접 감쇠(cards.ts growthFalloff)로 100 은 **값비싼 목표**가 됐다. 비싸진 만큼
+ * 닿았을 때 뭔가 있어야 한다(사용자: "100에 도달했을 때 뭔가 보상을 줄 거리는 없어?").
+ * 예전엔 그냥 멈춤(clamp)일 뿐이라 "최고조"에 아무 의미가 없었다.
+ *
+ * 정점 효과는 **그 형질의 약점을 지우는** 쪽으로 준다 — 수치를 더 키우는 게 아니라 "규칙에서 벗어난다":
+ *   · 속도 100 — 험한 땅도 이 걸음을 늦추지 못한다(험지 감속 면제)
+ *   · 시야 100 — 어둠도 수풀도 눈을 가리지 못한다(밤·수풀 시야 감쇠 면제)
+ *   · 공격력 100 — 어떤 가죽도 이빨을 막지 못한다(체급 차로 "안 박힘"이 안 걸린다)
+ *   · 번식력 100 — 한 배에 둘을 친다(쌍둥이)
+ *   · 몸집 100 — 따로 안 준다. 이미 체급만으로 보통 포식자의 이빨이 안 박힌다(그 자체가 정점 보상).
+ */
+export function isApex(v: number): boolean {
+  return v >= TRAIT_MAX;
+}
+
+/**
  * 몸집 편차(-1 ~ 0 ~ +1) — **50 이 정확히 0**이다. 모든 몸집 효과가 이 값에 비례하므로, 몸집을 안
  * 건드린 종(야생 전부·기존 프리셋)은 보정이 전부 0 이라 v6 과 똑같이 굴러간다(밸런스 보존의 열쇠).
  */
@@ -191,7 +209,11 @@ export function biteOutcome(
 ): BiteOutcome {
   const diff01 =
     (attack - preyAttack) / TRAIT_MAX + (SIM.sizeBiteWeight * (size - preySize)) / TRAIT_MAX;
-  if (diff01 <= -SIM.biteIgnoreDiff) return { ignored: true, killChance: 0, damage: 0 };
+  // **정점 공격력(100)** — 어떤 가죽도 이빨을 막지 못한다. 체급 차로 "안 박힘"이 되는 규칙에서 벗어난다
+  // (아무리 큰 상대라도 물 수는 있다 — 다만 확률·피해는 여전히 체급 차를 따른다).
+  if (diff01 <= -SIM.biteIgnoreDiff && !isApex(attack)) {
+    return { ignored: true, killChance: 0, damage: 0 };
+  }
   return {
     ignored: false,
     killChance: clamp(SIM.killChanceBias + diff01 * SIM.killChanceScale, 0, SIM.killChanceMax),
@@ -289,18 +311,22 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const sprintFactor = huntSprintFactor(t.diet, e.targetPrey !== null);
   // 험지(거친 땅)에선 이동이 느려진다 — speed 형질이 높을수록 덜 느려진다(속도가 지형에서 가치). 비행은 무시.
   // 몸집이 크면 느리다(sizeSpeedFactor — 몸집 50 이면 1.0 이라 영향 없음).
+  // **정점 속도(100)**: 험한 땅도 이 걸음을 늦추지 못한다(험지 감속 완전 면제).
+  const roughFree = canFly || isApex(t.speed);
   const maxSpeed =
     SIM.maxSpeedBase * (0.4 + speed01) *
-    (canFly ? 1 : roughSpeedFactor(world, e.x, e.y, speed01)) * sprintFactor *
+    (roughFree ? 1 : roughSpeedFactor(world, e.x, e.y, speed01)) * sprintFactor *
     sizeSpeedFactor(t.size);
   // 밤엔 시야가 준다(낮=영향 없음). vision 형질이 높을수록 밤에도 잘 본다 → 야행성 틈새(큰 눈).
   // 시야 반경 = visionBase × (시야/100). 하한이 없어 시야 0 이면 아무것도 못 본다(감각 형질의 대가).
   // 비행 종은 높이 날아 시야가 넓다(× (1+flyVisionBonus)).
+  // **정점 시야(100)**: 어둠도 수풀도 눈을 가리지 못한다(밤·수풀 감쇠 완전 면제).
+  const apexEye = isApex(t.vision);
   const vision =
     SIM.visionBase *
     vision01 *
-    nightVisionFactor(world.daylight, vision01) *
-    grassVisionFactor(world, e.x, e.y, vision01) *
+    (apexEye ? 1 : nightVisionFactor(world.daylight, vision01)) *
+    (apexEye ? 1 : grassVisionFactor(world, e.x, e.y, vision01)) *
     (canFly ? 1 + SIM.flyVisionBonus : 1);
   // 큰 몸은 많이 먹는다(sizeDrainFactor — 몸집 50 이면 1.0). 대사(metabolism)가 "효율"이라면 몸집은
   // "총량"이다: 큰 몸은 효율이 좋아도 절대 소모가 크다.
@@ -512,9 +538,18 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // --- 번식 (에너지 충분 + 확률, 상한 미만). 자식은 같은 종. ---
   // 큰 몸은 새끼를 적게 친다(sizeFertilityFactor — 몸집 50 이면 1.0). 「다산 초식」(작고 많이)과
   // 「거대 초식」(크고 적게)이 여기서 갈린다.
+  //
+  // **정점 번식력(100)** — 적은 기운으로도 새끼를 친다(번식 문턱이 apexBreedRelief 배로 낮아진다).
+  // 이 방식을 고른 이유: 처음엔 "쌍둥이"(한 배에 둘)로 만들었는데, 새끼를 한 마리 더 낳느라 **rng 를
+  // 두 번 더 소비**해 스트림이 밀렸다 — 시뮬이 통째로 다른 세계가 돼 버렸다(개체 수 45 vs 65 는 좋고
+  // 나쁨이 아니라 그냥 다른 전개였다). 문턱을 낮추는 방식은 rng 소비가 그대로라 안전하고, 효과는
+  // 오히려 더 확실하다(번식 빈도 자체가 오른다).
+  const breedThreshold = isApex(t.fertility)
+    ? SIM.reproduceThreshold * SIM.apexBreedRelief
+    : SIM.reproduceThreshold;
   if (
     world.entities.length + newborns.length < world.cap &&
-    e.energy >= SIM.reproduceThreshold &&
+    e.energy >= breedThreshold &&
     world.rng.chance(SIM.reproduceRate * (0.3 + fertility01) * sizeFertilityFactor(t.size))
   ) {
     const childEnergy = e.energy * 0.5;

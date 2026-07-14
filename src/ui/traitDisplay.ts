@@ -100,9 +100,11 @@ export function chipColor(tone: ChipTone): string {
 
 /**
  * 카드의 얻음/잃음 목록. 드래프트 카드와 대백과 카드 도감이 같은 규칙으로 보여준다.
- * 수치는 `effectiveDelta`(실제 게놈에 붙는 값) — 카드에 적힌 원값과 다르다(상한 200 형질은 ×0.6).
+ * 수치는 `effectiveDelta`(실제 게놈에 붙는 값) — 카드에 적힌 원값과 다르다.
+ * `traits`(내 종의 현재 형질)를 주면 **상한 근접 감쇠까지 반영**한 진짜 값이 나온다. 드래프트는 반드시
+ * 넘긴다 — 안 넘기면 "+12" 라 써 놓고 +5 만 오르는 거짓말이 된다. 카드 도감은 종이 특정되지 않아 생략.
  */
-export function cardEffectChips(card: Card): EffectChip[] {
+export function cardEffectChips(card: Card, traits?: Traits): EffectChip[] {
   const chips: EffectChip[] = [];
   for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
     const v = card.effects[key] ?? 0;
@@ -112,7 +114,7 @@ export function cardEffectChips(card: Card): EffectChip[] {
       // 능력형(수영·날개·초음파·독·원거리)은 수치가 무의미(3단계) → 방향만 표시.
       chips.push({ text: `${TRAIT_LABELS[key]} ${up ? "강화" : "약화"}`, tone, up });
     } else {
-      const d = effectiveDelta(key, v);
+      const d = effectiveDelta(key, v, traits?.[key]);
       chips.push({ text: `${TRAIT_LABELS[key]} ${d >= 0 ? "+" : ""}${d}`, tone: NEUTRAL_TRAITS.has(key) ? "neutral" : d >= 0 ? "gain" : "loss", up: d >= 0 });
     }
   }

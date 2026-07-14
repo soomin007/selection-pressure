@@ -8,7 +8,7 @@
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, MUTABLE_TRAITS, type Genome, type MutableTrait } from "@/sim/genome";
-import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, CARD_BODY_SCALE, PRESET_CARDS, PRESET_LINEAGE, LINEAGE_NAME, type Card, type Lineage } from "@/game/cards";
+import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, PRESET_CARDS, PRESET_LINEAGE, LINEAGE_NAME, type Card, type Lineage } from "@/game/cards";
 import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
@@ -109,7 +109,6 @@ export class Game {
   /** 내 종 시작 색(프리셋에서 정함) — 다음 시대에 새 월드를 만들어도 같은 색을 유지한다. */
   private playerColor: number | undefined;
   /** 「거인」을 고른 런은 시대를 넘어 새 월드를 만들어도 몸집을 유지한다(게놈이 유지되므로 외형도 유지). */
-  private playerBodyScale: number | undefined;
 
   /** 메타 언락 기준(플레이어 레벨) — 런 시작 시 저장본의 누적 경험치에서 레벨을 읽어 프리셋·카드 풀을 거른다.
    * 런을 거듭해 경험치가 쌓일수록 레벨이 올라 더 많이 열린다. 런 도중엔 안 바뀐다(디버그 제외). */
@@ -230,12 +229,6 @@ export class Game {
       applyCard(this.genome, card);
       this.pickedCardNames.push(card.name);
       this.pickedCardIds.push(card.id);
-      // 「거인」처럼 몸 자체가 달라지는 카드는 종의 표시 크기도 바꾼다(sim 무관 — 색과 같은 성격).
-      const bs = CARD_BODY_SCALE[card.id];
-      if (bs !== undefined) {
-        this.playerBodyScale = bs;
-        this.world.playerSpecies.bodyScale = bs;
-      }
     }
     if (this.eraReward) {
       // 시대 보상을 골랐다 — 갓 태어난 이 시대 무리에 즉시 반영하고(성장 이어짐) 첫 채집 단계로.
@@ -553,7 +546,6 @@ export class Game {
     this.champions = loadChampions(); // 지난 챔피언들을 이 런 세계에 등장(비동기 생물)
     this.era = 0; // 새 런은 첫 시대부터
     this.playerColor = undefined;
-    this.playerBodyScale = undefined;
     this.genome = defaultGenome();
     this.pickedCardNames = [];
     this.pickedCardIds = [];
@@ -831,7 +823,6 @@ export class Game {
     this.lastFoodEaten = 0;
     // 성장한 종의 색·형질을 새 초기 무리에 반영(프리셋 선택 때와 같은 처리).
     if (this.playerColor !== undefined) this.world.playerSpecies.color = this.playerColor;
-    if (this.playerBodyScale !== undefined) this.world.playerSpecies.bodyScale = this.playerBodyScale;
     for (const e of this.world.entities) {
       if (e.species.isPlayer) e.genome = cloneGenome(this.world.genome);
     }

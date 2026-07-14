@@ -308,7 +308,9 @@ export function createDraftPanel(
     for (const key of STAT_KEYS) {
       const value = c.genome.traits[key];
       const ceiling = TRAIT_CEILING[key];
-      const delta = effectiveDelta(key, card.effects[key] ?? 0);
+      // 현재 값을 넘겨야 **상한 근접 감쇠**까지 반영된 진짜 증가폭이 나온다(안 넘기면 "+12" 라 써 놓고
+      // 실제론 +5 만 오르는 거짓말이 된다 — 카드 수치는 실제값과 반드시 같아야 한다).
+      const delta = effectiveDelta(key, card.effects[key] ?? 0, value);
       const basePct = (value / ceiling) * 100;
       const deltaPct = (Math.abs(delta) / ceiling) * 100;
 
@@ -545,7 +547,7 @@ export function createDraftPanel(
       const desc = el("span", "draft-card-desc");
       desc.textContent = card.desc;
       const chips = el("span", "draft-chips");
-      for (const c of cardEffectChips(card)) chips.appendChild(effectChipEl(c));
+      for (const c of cardEffectChips(card, ctx?.genome.traits)) chips.appendChild(effectChipEl(c));
       body.append(desc, chips);
 
       node.append(row, body);

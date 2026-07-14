@@ -18,6 +18,7 @@ import {
   rarityWeightsAtLevel,
   cardPrereqMet,
   cardRedundant,
+  effectiveDelta,
   type Card,
 } from "@/game/cards";
 import { defaultGenome, type Traits } from "@/sim/genome";
@@ -396,15 +397,22 @@ describe("시작 프리셋", () => {
 });
 
 describe("카드 적용", () => {
-  it("효과가 누적되되 값형질은 증가폭이 줄고 상한 100 에서 멈춘다", () => {
+  it("값형질은 증가폭이 줄고, **높을수록 더 더디게** 오르다 상한 100 에서 멈춘다", () => {
     const g = defaultGenome(); // 모두 50
     const swift = CARD_POOL.find((c) => c.id === "swift");
     expect(swift).toBeDefined();
     if (!swift) return;
-    applyCard(g, swift); // 속도 +15 → 값형질이라 ×0.6 = +9(상한 내려도 증가폭은 그대로)
-    expect(g.traits.speed).toBe(59);
+    // 50 에서는 감쇠가 없다(growthFalloff = 1) → 카드값 ×CARD_GROWTH_SCALE 그대로.
+    applyCard(g, swift); // 속도 +15 → ×0.75 = +11
+    expect(g.traits.speed).toBe(61);
 
-    // 같은 카드 여러 번 → 100(상한)에서 멈춤
+    // 상한 근접 감쇠 — 같은 카드인데 뒤로 갈수록 덜 오른다("100 을 금방 찍는" 일이 없다).
+    const gain1 = g.traits.speed - 50;
+    applyCard(g, swift);
+    const gain2 = g.traits.speed - 50 - gain1;
+    expect(gain2).toBeLessThan(gain1);
+
+    // 그래도 충분히 쌓으면 100(상한)에 닿는다 — 정점 보상이 도달 불가능하면 안 되므로.
     for (let i = 0; i < 30; i++) applyCard(g, swift);
     expect(g.traits.speed).toBe(100);
   });
@@ -449,14 +457,18 @@ describe("시대 보상 카드 강화(boostCard)", () => {
   });
 
   it("보상 카드는 표시값(effectiveDelta)과 실제 적용값이 같은 객체라 어긋나지 않는다", () => {
-    // 상한 200 형질은 applyCard 가 ×0.6 하지만, boostCard 로 값 자체가 커진 카드를 그대로 쓰므로
+    // 값형질은 applyCard 가 ×CARD_GROWTH_SCALE 하지만, boostCard 로 값 자체가 커진 카드를 그대로 쓰므로
     // 카드에 적힌 effects 가 곧 표시·적용의 단일 소스다(수치 불일치 방지).
     const swift = CARD_POOL.find((c) => c.id === "swift"); // speed +15
     if (!swift) return;
     const boosted = boostCard(swift, 2); // speed +30
-    const g = defaultGenome(); // speed 50
-    applyCard(g, boosted); // 200 상한 형질 → ×0.6 = +18
-    expect(g.traits.speed).toBe(68);
+    const g = defaultGenome(); // speed 50 — 감쇠 없는 지점
+    applyCard(g, boosted); // +30 × 0.75 = +22.5 → 반올림 23(감쇠는 50 에서 1.0)
+    expect(g.traits.speed).toBe(73);
+    // 표시값(effectiveDelta)이 실제 적용값과 같다 — 현재값을 넘기면 감쇠까지 반영된 진짜 값이 나온다.
+    // 이게 어긋나면 "+23" 이라 써 놓고 다른 값이 붙는 거짓말이 된다.
+    expect(effectiveDelta("speed", boosted.effects.speed ?? 0, 50)).toBe(23);
+    expect(50 + effectiveDelta("speed", boosted.effects.speed ?? 0, 50)).toBe(g.traits.speed);
   });
 });
 
