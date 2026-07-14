@@ -21,7 +21,7 @@ import {
   DEFAULT_LOOK,
   type CreatureLook,
 } from "@/render/creatureLook";
-import { grassVisionFactor, nightVisionFactor } from "@/sim/behavior";
+import { grassVisionFactor, nightVisionFactor, sizeDev, effectiveCamo } from "@/sim/behavior";
 import type { CosmeticId } from "@/game/achievements";
 
 export class WorldView {
@@ -432,7 +432,11 @@ export class WorldView {
         sp.rotation = ang;
       }
       const energy = Math.max(0, Math.min(1, e.energy / SIM.maxEnergy));
-      sp.alpha = 0.5 + 0.5 * energy;
+      // 은신(v7) — 숨는 종은 흐릿하게 보인다. 포식자가 "못 보는" 규칙이 화면에서도 읽혀야 한다.
+      // 단 **완전히 투명하게는 안 한다** — 플레이어는 자기 무리를 봐야 하니까(최대 45%까지만 흐려진다).
+      // 큰 몸은 못 숨으므로(effectiveCamo) 커진 종은 흐려지지도 않는다.
+      const hide = effectiveCamo(e.genome.traits.camouflage, e.genome.traits.size);
+      sp.alpha = (0.5 + 0.5 * energy) * (1 - 0.45 * hide);
       sp.visible = true;
       i++;
     }
@@ -1129,8 +1133,12 @@ export function makeCreatureTexture(
   const limb = darken(color, 0.86); // 주둥이·꼬리 등 어두운 부속
   const OW = 2.3; // 윤곽선 두께(굵게 = 스티커 느낌)
 
-  const len = 9 + speed01 * 9; // 몸 반길이 (빠를수록 길쭉·날렵 — 9~18)
-  const wid = 8.5 - speed01 * 3.2; // 몸 반너비 (느릴수록 통통 — 8.5~5.3)
+  // 몸집(v7) — 스프라이트 크기가 곧 형질이다. **몸집 50 이면 배수 1.0** 이라 기존 종은 크기가 안 변한다.
+  // 이 축은 화면에서 즉시 읽히는 게 존재 이유다: 커진 종은 커 보여야 하고, 그래야 "안 잡아먹히는 이유"가
+  // 눈에 들어온다(작아진 종은 작아 보이고, 그래서 잘 잡아먹힌다).
+  const sizeScale = 1 + sizeDev(t.size) * 0.4; // 몸집 0 → ×0.6 · 50 → ×1.0 · 100 → ×1.4
+  const len = (9 + speed01 * 9) * sizeScale; // 몸 반길이 (빠를수록 길쭉·날렵)
+  const wid = (8.5 - speed01 * 3.2) * sizeScale; // 몸 반너비 (느릴수록 통통)
 
   // === 뒤 레이어(몸통 아래): 날개 / 꼬리지느러미 — 윤곽선 있는 깔끔한 한 쌍 ===
   if (wing01 > 0.05) {

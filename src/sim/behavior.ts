@@ -115,6 +115,51 @@ export function maxEnergyFor(diet: number): number {
   return SIM.maxEnergy + SIM.carnGorgeReserve * carnivory01(diet);
 }
 
+/**
+ * 몸집 편차(-1 ~ 0 ~ +1) — **50 이 정확히 0**이다. 모든 몸집 효과가 이 값에 비례하므로, 몸집을 안
+ * 건드린 종(야생 전부·기존 프리셋)은 보정이 전부 0 이라 v6 과 똑같이 굴러간다(밸런스 보존의 열쇠).
+ */
+export function sizeDev(size: number): number {
+  return (size - TRAIT_MAX / 2) / (TRAIT_MAX / 2);
+}
+
+/** 몸집이 최대 속도에 곱하는 배수. 큰 몸은 느리다(50 = 1.0). */
+export function sizeSpeedFactor(size: number): number {
+  return Math.max(0.1, 1 - SIM.sizeSpeedCost * sizeDev(size));
+}
+
+/** 몸집이 기본 대사에 곱하는 배수. 큰 몸은 많이 먹는다(50 = 1.0). */
+export function sizeDrainFactor(size: number): number {
+  return Math.max(0.1, 1 + SIM.sizeMetabolismCost * sizeDev(size));
+}
+
+/** 몸집이 번식 확률에 곱하는 배수. 큰 몸은 새끼를 적게 친다(50 = 1.0). */
+export function sizeFertilityFactor(size: number): number {
+  return Math.max(0, 1 - SIM.sizeFertilityCost * sizeDev(size));
+}
+
+/**
+ * 실제로 먹히는 은신(0~1) — 큰 몸은 못 숨는다. 몸집 50 이하면 감쇠가 없고, 커질수록 은신이 무력해진다.
+ * 몸집과 은신을 한 축의 양끝으로 묶는 연결고리다: **커져서 버티거나, 작게 숨거나. 둘 다는 안 된다.**
+ */
+export function effectiveCamo(camouflage: number, size: number): number {
+  const camo01 = clamp(camouflage / TRAIT_MAX, 0, 1);
+  if (camo01 <= 0) return 0;
+  const bulk = Math.max(0, sizeDev(size)); // 몸집 50 이하는 0(감쇠 없음)
+  return camo01 * (1 - SIM.sizeCamoPenalty * bulk);
+}
+
+/**
+ * 은신이 포식자의 **시야** 감지 반경에 곱하는 배수(0~1). 은신 100·몸집 50 이면 ×0.2 — 코앞에 와서야
+ * 발견된다. 은신 0 이면 1.0(영향 없음)이라 안 찍은 종은 기존 그대로다.
+ *
+ * ⚠ **초음파에는 안 통한다.** 은신은 눈을 속이는 것이지 소리를 지우는 게 아니다(호출부에서 시야 반경에만
+ * 곱한다). 감각 축끼리의 가위바위보 — 숨는 종은 초음파 사냥꾼 앞에서 무력하다.
+ */
+export function camoVisionFactor(camouflage: number, size: number): number {
+  return 1 - SIM.camoVisionCut * effectiveCamo(camouflage, size);
+}
+
 /** 한 번의 물기가 어떻게 되는가. 순수 함수라 테스트로 규칙을 못 박는다. */
 export interface BiteOutcome {
   /** 이빨이 안 박힌다 — 체급 차가 너무 크다. 즉사도 피해도 없다. */
@@ -126,14 +171,26 @@ export interface BiteOutcome {
 }
 
 /**
- * 공격력 차(공격자 − 먹잇감)로 한 번의 물기 결과를 정한다. 공격력은 무기이자 몸집이라
- * 공격·방어를 겸한다(따로 방어력 형질을 두지 않는다).
+ * 한 번의 물기 결과. **공격력 차 + 몸집 차**로 정한다(v7 부터).
+ *
+ * v6 까지는 attack 하나가 "무기이자 몸집"을 겸했다. v7 에서 몸집(size)을 떼어내 두 축이 됐다:
+ *   · attack — 사냥 무기(이빨·발톱). 얼마나 잘 죽이는가.
+ *   · size   — 체급. 얼마나 안 죽는가.
+ * 유효 체급 차 = (공격력 차 + sizeBiteWeight × 몸집 차) / 100. **몸집이 둘 다 50 이면 몸집 항이 정확히
+ * 0** 이라 v6 판정과 완전히 같다(밸런스 보존).
  *
  * - 체급이 `biteIgnoreDiff` 넘게 밀리면 **아무 일도 안 일어난다** — "일정 공격력 이하의 공격은 무시".
+ *   몸집이 크면 여기에 걸려 아예 안 물린다("코끼리는 못 문다").
  * - 그 위에서는 즉사 확률이 체급 차에 비례하고, 못 죽인 물기는 기운을 깎는다("여러 번 물리다 쓰러진다").
  */
-export function biteOutcome(attack: number, preyAttack: number): BiteOutcome {
-  const diff01 = (attack - preyAttack) / TRAIT_MAX;
+export function biteOutcome(
+  attack: number,
+  preyAttack: number,
+  size: number = TRAIT_MAX / 2,
+  preySize: number = TRAIT_MAX / 2,
+): BiteOutcome {
+  const diff01 =
+    (attack - preyAttack) / TRAIT_MAX + (SIM.sizeBiteWeight * (size - preySize)) / TRAIT_MAX;
   if (diff01 <= -SIM.biteIgnoreDiff) return { ignored: true, killChance: 0, damage: 0 };
   return {
     ignored: false,
@@ -231,9 +288,11 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 초식·잡식은 영향 0.
   const sprintFactor = huntSprintFactor(t.diet, e.targetPrey !== null);
   // 험지(거친 땅)에선 이동이 느려진다 — speed 형질이 높을수록 덜 느려진다(속도가 지형에서 가치). 비행은 무시.
+  // 몸집이 크면 느리다(sizeSpeedFactor — 몸집 50 이면 1.0 이라 영향 없음).
   const maxSpeed =
     SIM.maxSpeedBase * (0.4 + speed01) *
-    (canFly ? 1 : roughSpeedFactor(world, e.x, e.y, speed01)) * sprintFactor;
+    (canFly ? 1 : roughSpeedFactor(world, e.x, e.y, speed01)) * sprintFactor *
+    sizeSpeedFactor(t.size);
   // 밤엔 시야가 준다(낮=영향 없음). vision 형질이 높을수록 밤에도 잘 본다 → 야행성 틈새(큰 눈).
   // 시야 반경 = visionBase × (시야/100). 하한이 없어 시야 0 이면 아무것도 못 본다(감각 형질의 대가).
   // 비행 종은 높이 날아 시야가 넓다(× (1+flyVisionBonus)).
@@ -243,7 +302,10 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     nightVisionFactor(world.daylight, vision01) *
     grassVisionFactor(world, e.x, e.y, vision01) *
     (canFly ? 1 + SIM.flyVisionBonus : 1);
-  const drain = SIM.metabolismDrain * (0.5 + metabolism01) * flyDrainMultiplier(t.wings);
+  // 큰 몸은 많이 먹는다(sizeDrainFactor — 몸집 50 이면 1.0). 대사(metabolism)가 "효율"이라면 몸집은
+  // "총량"이다: 큰 몸은 효율이 좋아도 절대 소모가 크다.
+  const drain =
+    SIM.metabolismDrain * (0.5 + metabolism01) * flyDrainMultiplier(t.wings) * sizeDrainFactor(t.size);
   const maxAge = SIM.baseMaxAge;
   // 식성 구간: 초식(<35) 식물만 / 잡식(35~70) 둘 다 / 육식(>70) 사냥만.
   const canHunt = t.diet > SIM.dietHuntMin;
@@ -359,8 +421,11 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     // 물기는 쿨다운마다 한 번. 예전엔 매 틱 굴려 접촉 즉시 즉사였다.
     if (dx * dx + dy * dy <= atkRange * atkRange && e.attackCd <= 0) {
       e.attackCd = SIM.attackCooldownTicks;
-      // 독은 방어(삼킨 쪽이 중독)라 사냥 성공과 무관 — 물기 판정은 공격력 차만 본다.
-      const bite = biteOutcome(t.attack, prey.genome.traits.attack);
+      // 독은 방어(삼킨 쪽이 중독)라 사냥 성공과 무관 — 물기 판정은 공격력 차와 **몸집 차**를 본다.
+      // 큰 먹잇감은 잘 안 죽고, 아주 크면 이빨이 아예 안 박힌다(biteIgnoreDiff).
+      const bite = biteOutcome(
+        t.attack, prey.genome.traits.attack, t.size, prey.genome.traits.size,
+      );
       // ignored 면 아무 일도 안 일어난다("일정 공격력 이하의 공격은 무시").
       if (!bite.ignored) {
         if (world.rng.chance(bite.killChance)) {
@@ -445,10 +510,12 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   }
 
   // --- 번식 (에너지 충분 + 확률, 상한 미만). 자식은 같은 종. ---
+  // 큰 몸은 새끼를 적게 친다(sizeFertilityFactor — 몸집 50 이면 1.0). 「다산 초식」(작고 많이)과
+  // 「거대 초식」(크고 적게)이 여기서 갈린다.
   if (
     world.entities.length + newborns.length < world.cap &&
     e.energy >= SIM.reproduceThreshold &&
-    world.rng.chance(SIM.reproduceRate * (0.3 + fertility01))
+    world.rng.chance(SIM.reproduceRate * (0.3 + fertility01) * sizeFertilityFactor(t.size))
   ) {
     const childEnergy = e.energy * 0.5;
     e.energy -= childEnergy;
@@ -623,6 +690,20 @@ function chooseGoal(
   const canLand = e.genome.traits.swimming < SIM.aquaticOnlyThreshold;
   const canFly = e.genome.traits.wings >= SIM.flyThreshold;
 
+  /**
+   * 먹잇감 감지 — 먹이(식물)와 달리 **상대가 숨을 수 있다**(은신). 은신은 시야 반경만 줄이고
+   * 초음파는 못 속인다: 눈을 속이는 것이지 소리를 지우는 게 아니다. 숨는 종은 초음파 사냥꾼 앞에서
+   * 무력하다(감각 축끼리의 가위바위보). 큰 몸은 잘 못 숨는다(effectiveCamo).
+   */
+  const canSensePrey = (p: Entity): boolean => {
+    const dx = p.x - e.x;
+    const dy = p.y - e.y;
+    const d2 = dx * dx + dy * dy;
+    const camoF = camoVisionFactor(p.genome.traits.camouflage, p.genome.traits.size);
+    const hidden2 = vision2 * camoF * camoF; // 반경에 곱하므로 제곱거리엔 제곱으로
+    return (d2 < hidden2 && inFov(p.x, p.y)) || d2 < echo2;
+  };
+
   let prey: Entity | null = null;
   let food: Food | null = null;
   if (canHunt) {
@@ -632,7 +713,7 @@ function chooseGoal(
       senseRange,
       (p) =>
         p.alive && p !== e && p.species.id !== e.species.id &&
-        !areFriends(e.species, p.species) && canSense(p.x, p.y) &&
+        !areFriends(e.species, p.species) && canSensePrey(p) &&
         // **닿을 수 있는 먹잇감만.** 먹이(nearestFood)엔 이 검사가 있었는데 먹잇감엔 없어서, 땅 위 종이
         // 물속 물고기를 노리고 물가에 머리를 박은 채 굶어 죽었다(프로브: 내 종 개체틱의 31%).
         // 끼임 감지(stuckTicks)로는 못 푼다 — 물가에서 튕기며 진동해 "움직였다"로 판정된다.

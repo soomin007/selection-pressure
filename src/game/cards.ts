@@ -16,7 +16,9 @@ import { SIM } from "@/sim/params";
 // 능력형은 안 줄인다(성격이 다름). set(프리셋 정체성 값)도 안 줄인다(증분만).
 const CARD_GROWTH_SCALE = 0.6;
 // 성장 스케일을 받는 값형질(연속·많을수록 강함). 상한이 전부 100 이라 TRAIT_CEILING 으로는 못 가려 명시한다.
-const GROWTH_TRAITS = new Set<keyof Traits>(["speed", "vision", "attack", "fertility", "herding"]);
+// v7: herding 이 능력 형질로 강등돼 빠졌다(능력형은 스케일을 안 받는다 — 문턱을 넘겨야 켜지므로 값을
+// 깎으면 관문 카드가 관문 구실을 못 한다). 대신 size(몸집)가 값형질로 들어왔다.
+const GROWTH_TRAITS = new Set<keyof Traits>(["speed", "vision", "attack", "fertility", "size"]);
 
 /**
  * 카드 희귀도 5단계 (핸드오프 §2). 색·등장 뜸·연출은 UI(`@/ui/rarity`)가 정하고, 여기서는 "얼마나 드물게
@@ -274,31 +276,51 @@ export const CARD_POOL: readonly Card[] = [
     effects: { metabolism: 14 },
   },
   { id: "fertile", name: "다산", desc: "더 자주 새끼를 친다.", effects: { fertility: 16 } },
+  // 무리 — **관문 카드**다. 한 장으로 무리 방어 문턱(SIM.herdShieldThreshold)을 넘긴다.
+  // 「날개」와 같은 원칙: 관문 카드는 그 능력을 **실제로 열어야 한다**. 예전엔 +18 이라 여러 장을 모아야
+  // 겨우 켜졌는데 설명은 "무리로 뭉친다"였다 — 거짓말이었다(날개가 +42 로 아무 일도 안 하던 것과 같은 함정).
   {
     id: "herd",
     name: "무리 본능",
-    desc: "함께 모여 다니고, 모이면 서로 온기를 나눈다(추위에 강하다).",
-    effects: { herding: 18 },
-  },
-
-  // 조합 (작은 상승 두 개)
-  {
-    id: "eagle_eye",
-    name: "매의 눈",
-    desc: "멀리 보며 조금 빨라지지만, 멀리 살피느라 무리에서 떨어진다.",
-    effects: { vision: 20, speed: 5, herding: -6 },
+    desc: "빽빽이 뭉쳐 다닌다. 무리 한가운데 있으면 포식자가 아예 덤비지 못한다(가장자리와 낙오자만 노린다). 대신 뭉쳐 다니느라 먹이를 늦게 찾는다.",
+    effects: { herding: SIM.herdShieldThreshold + 3 },
   },
   {
     id: "pack_hunt",
     name: "무리 사냥",
-    desc: "무리 성향과 걸음이 함께 는다.",
+    desc: "이미 뭉쳐 다니는 무리가 함께 사냥한다. 결속과 걸음이 함께 는다.",
     effects: { herding: 12, speed: 8 },
+    requiresTrait: { key: "herding", min: 1 }, // 무리 짓는 종에게만 — 안 뭉치는 종엔 +12 가 아무 일도 안 한다
   },
   {
     id: "warm_pack",
     name: "옹기종기",
     desc: "무리의 온기가 짙어지고 추위에 강해진다.",
     effects: { herding: 14, metabolism: 6 },
+    requiresTrait: { key: "herding", min: 1 },
+  },
+
+  // 조합 (작은 상승 두 개)
+  {
+    id: "eagle_eye",
+    name: "매의 눈",
+    desc: "멀리 보며 조금 빨라진다.",
+    effects: { vision: 20, speed: 5 },
+  },
+
+  // 몸집 — v7. 대가를 카드에 적을 필요가 없다: 큰 몸은 **시뮬이 알아서** 느려지고 많이 먹고 새끼를
+  // 적게 친다(sizeSpeedFactor·sizeDrainFactor·sizeFertilityFactor). 형질 하나가 트레이드오프를 통째로 안는다.
+  {
+    id: "bulk",
+    name: "커다란 몸",
+    desc: "몸이 커진다. 큰 짐승은 좀처럼 잡아먹히지 않는다. 대신 걸음이 무겁고, 큰 몸을 건사하느라 많이 먹으며, 새끼를 적게 친다.",
+    effects: { size: 24 },
+  },
+  {
+    id: "small_swift",
+    name: "작고 날쌘 몸",
+    desc: "몸이 작아진다. 재빠르고 적게 먹으며 새끼를 자주 치지만, 그만큼 쉽게 잡아먹힌다.",
+    effects: { size: -22, speed: 8 },
   },
 
   // 트레이드오프 (큰 상승 + 작은 대가)
@@ -483,6 +505,22 @@ export const CARD_POOL: readonly Card[] = [
     effects: { vision: 16, attack: 16, speed: -7 },
   },
 
+  // 은신 — v7. 시야의 대칭축: 포식자가 나를 늦게 발견한다. **초음파는 못 속인다**(눈을 속이는 것이지
+  // 소리를 지우는 게 아니다). 그리고 큰 몸은 잘 못 숨는다 — 몸집과 은신은 한 축의 양끝이다.
+  {
+    id: "camo",
+    name: "보호색",
+    desc: "몸빛이 둘레를 닮아 간다. 포식자가 코앞에 와서야 알아챈다. 다만 소리로 찾는 짐승(초음파)은 속지 않고, 몸이 크면 숨을 수 없다.",
+    effects: { camouflage: 46 },
+  },
+  {
+    id: "shadow_hide",
+    name: "그림자 무늬",
+    desc: "숨는 재주가 깊어진다. 몸을 낮추고 그늘에 녹아든다.",
+    effects: { camouflage: 28, size: -8 },
+    requiresTrait: { key: "camouflage", min: 1 }, // 이미 숨을 줄 아는 종에게만
+  },
+
   // 바다 적응 — 수영을 키우면 바다 먹이를 먹는다(육상 종은 못 먹는 무경쟁 틈새).
   {
     id: "fins",
@@ -657,9 +695,9 @@ export const CARD_RARITY: Record<string, Rarity> = {
   thrifty: "common", // 대사 -14 = 기운 아낌(이득)
   hotblood: "common", // 대사 +14 = 추위 강함(이득)
   fertile: "common",
-  herd: "common",
-  pack_hunt: "common",
-  warm_pack: "common",
+  pack_hunt: "common", // 무리 강화(무리 짓는 종에게만)
+  warm_pack: "common", // 무리 강화(무리 짓는 종에게만)
+  bulk: "common", // 몸집 +24 — 대가(느림·대식·저번식)는 시뮬이 준다
   fangs: "common",
   all_rounder: "common",
   scout_pack: "common",
@@ -670,7 +708,8 @@ export const CARD_RARITY: Record<string, Rarity> = {
   stoic: "common",
 
   // ── 드묾 (10장) — 작은 대가를 치르거나, 방향을 살짝 틀거나, 능력을 보조한다.
-  eagle_eye: "uncommon", // 무리 -6
+  eagle_eye: "uncommon", // 시야 +20 / 걸음 +5
+  small_swift: "uncommon", // 몸집 -22 / 걸음 +8 — 빠르고 많이 낳지만 쉽게 잡아먹힌다
   sprint: "uncommon", // 대사 +7
   giant: "uncommon", // 걸음 -6
   furnace: "uncommon", // 대사 +20(더위에 취약)
@@ -701,13 +740,17 @@ export const CARD_RARITY: Record<string, Rarity> = {
   bat_ear: "epic", // 눈을 버리고 귀에 온전히 기댄다
   venom_gland: "epic", // 독을 치명적으로
   spit: "epic", // 원거리 + 방어독 동시
+  shadow_hide: "epic", // 은신을 완성한다(숨을 줄 아는 종에게만)
 
-  // ── 전설 (5장) — 못 하던 걸 하게 된다. 다섯 능력 계열의 **관문** 카드.
+  // ── 전설 (7장) — 못 하던 걸 하게 된다. 능력 계열의 **관문** 카드. 한 장으로 그 능력을 실제로 연다
+  // (문턱을 못 넘기는 관문 카드는 설명이 거짓말이 된다 — 날개가 +42 라 아무 일도 안 하던 함정).
   fins: "legendary", // 바다: 아무도 안 먹는 먹이터가 열린다
   wings: "legendary", // 하늘: 산·바다를 넘고 고산 먹이에 닿는다
   echo: "legendary", // 초음파: 눈 대신 귀. 어둠·수풀이 무의미해진다
   venom_fang: "legendary", // 방어독: 피식자에서 "삼키면 안 되는 것"으로
   long_horn: "legendary", // 원거리: 근접 사냥에서 벗어난다
+  herd: "legendary", // v7 무리: 뭉치면 포식자가 아예 안 덤빈다(무리 방어 문턱을 한 장으로 넘긴다)
+  camo: "legendary", // v7 은신: 포식자의 눈에서 사라진다(초음파에는 안 통한다)
 
   // ── 도전 과제 전용 (등급은 전설) — 몸 자체가 달라진다.
   titan: "legendary",

@@ -158,11 +158,15 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
 const LINEAGES: Lineage[] = ["omni", "herd", "scout", "hunter", "ranged", "sea", "sky", "venom"];
 
 describe("등급 기준 (cards.ts 주석의 규칙을 코드로 못 박는다)", () => {
-  it("전설은 정확히 다섯 능력 관문 + 「거인」이다", () => {
+  it("전설은 능력 관문 카드들 + 「거인」이다", () => {
+    // v7: 무리(herd)·은신(camo)이 능력 관문으로 합류했다. 관문 카드는 **한 장으로 그 능력을 연다**
+    // (herd 는 무리 방어 문턱, camo 는 은신) — 문턱을 못 넘기면 카드 설명이 거짓말이 된다.
     const legendary = CARD_POOL.filter((c) => cardRarity(c) === "legendary")
       .map((c) => c.id)
       .sort();
-    expect(legendary).toEqual(["echo", "fins", "long_horn", "titan", "venom_fang", "wings"].sort());
+    expect(legendary).toEqual(
+      ["echo", "fins", "long_horn", "titan", "venom_fang", "wings", "herd", "camo"].sort(),
+    );
   });
 
   it("같은 능력 계열의 두 번째 카드는 전설이 아니다(강화이지 관문이 아니다)", () => {
@@ -184,11 +188,14 @@ describe("등급 기준 (cards.ts 주석의 규칙을 코드로 못 박는다)",
   });
 
   it("귀함 이상인 비능력 카드는 모두 무언가를 잃는다(판단을 요구한다)", () => {
-    // 능력형(수영·날개·초음파·독·원거리) 카드는 예외다. 그 대가는 카드 수치가 아니라 sim 이 받는다
-    // (비행은 대사가 더 들고, 물전용은 뭍에 못 오르고, 초음파는 시야를 내준다). 그래서 카드 효과만
-    // 보면 "공짜"로 보인다 — 예: 튼튼한 날개(날개 +30, 걸음 +6).
-    const costly: (keyof Traits)[] = ["speed", "vision", "attack", "fertility", "herding"];
-    const abilityKeys: (keyof Traits)[] = ["swimming", "wings", "echo", "venom", "ranged"];
+    // 능력형 카드는 예외다. 그 대가는 카드 수치가 아니라 sim 이 받는다(비행은 대사가 더 들고, 물전용은
+    // 뭍에 못 오르고, 초음파는 시야를 내주고, **무리는 뭉치느라 먹이를 늦게 찾고, 큰 몸은 못 숨는다**).
+    // 그래서 카드 효과만 보면 "공짜"로 보인다 — 예: 튼튼한 날개(날개 +30, 걸음 +6).
+    // v7: 몸집(size)도 같은 성격이라 여기 넣는다 — 커지면 시뮬이 알아서 느려지고 많이 먹고 새끼를 덜 친다.
+    const costly: (keyof Traits)[] = ["speed", "vision", "attack", "fertility", "size"];
+    const abilityKeys: (keyof Traits)[] = [
+      "swimming", "wings", "echo", "venom", "ranged", "herding", "camouflage",
+    ];
     for (const card of CARD_POOL) {
       const r = cardRarity(card);
       if (r !== "rare" && r !== "epic" && r !== "legendary") continue;
