@@ -33,6 +33,8 @@ import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
 import { ThreatBanner } from "@/render/threatBanner";
 import { sizeWord } from "@/render/creatureLook";
+import { TRAIT_LABELS } from "@/sim/genome";
+import { APEX_BOON } from "@/ui/traitDisplay";
 import { isPredatorBoss } from "@/sim/boss";
 import { SIM } from "@/sim/params";
 import type { Entity } from "@/sim/entity";
@@ -150,6 +152,15 @@ async function boot(): Promise<void> {
       // 세대별 형질: 텍스처를 새로 만들지 않는다 — 이미 태어난 개체는 옛 모습을 유지하고, 이후 태어난
       // 개체가 새 게놈 서명으로 lazy 생성된다(worldView.textureFor). refreshSpecies(전체 교체)는 안 부른다.
       draft.hide();
+      // **정점(만렙) 도달** — 반드시 draft.hide() 뒤에. 드래프트 화면이 떠 있는 동안 띄우면 카드 뒤에
+      // 가려 아무도 못 본다. 한 카드가 둘을 동시에 올리는 일은 드물지만, 생기면 차례로 보여준다
+      // (하나만 띄우고 나머지를 삼키면 무엇이 열렸는지 영영 모른다).
+      game.takeNewApex().forEach((key, k) => {
+        const boon = APEX_BOON[key] ?? "";
+        const value = game.genome.traits[key];
+        if (k === 0) moment.apex(TRAIT_LABELS[key], value, boon);
+        else window.setTimeout(() => moment.apex(TRAIT_LABELS[key], value, boon), k * 2300);
+      });
     },
     onSkip: () => {
       // 스킵 — 형질 대신 새끼 몇 마리를 낳고 관전으로 복귀.

@@ -10,6 +10,7 @@
 import type { Renderer } from "pixi.js";
 import {
   applyCard,
+  cardDelta,
   cardRarity,
   effectiveDelta,
   CARD_POOL,
@@ -17,9 +18,17 @@ import {
   type Card,
   type Rarity,
 } from "@/game/cards";
-import { cloneGenome, TRAIT_CEILING, TRAIT_LABELS, type Genome, type Traits } from "@/sim/genome";
+import {
+  cloneGenome,
+  isApexTrait,
+  TRAIT_CEILING,
+  TRAIT_LABELS,
+  type Genome,
+  type Traits,
+} from "@/sim/genome";
 import { makeCreatureTexture } from "@/render/worldView";
 import {
+  APEX_BOON,
   cardEffectChips,
   chipColor,
   dominantTrait,
@@ -308,16 +317,18 @@ export function createDraftPanel(
     for (const key of STAT_KEYS) {
       const value = c.genome.traits[key];
       const ceiling = TRAIT_CEILING[key];
-      // 현재 값을 넘겨야 **상한 근접 감쇠**까지 반영된 진짜 증가폭이 나온다(안 넘기면 "+12" 라 써 놓고
-      // 실제론 +5 만 오르는 거짓말이 된다 — 카드 수치는 실제값과 반드시 같아야 한다).
-      const delta = effectiveDelta(key, card.effects[key] ?? 0, value);
+      // `cardDelta` 는 applyCard 가 쓰는 바로 그 함수다 — 성장 스케일·상한 근접 감쇠·정점 고정·희생이
+      // 전부 반영된 **실제로 붙을 값**이 나온다. 다른 식으로 계산하면 표시와 적용이 언젠가 갈라진다.
+      const delta = cardDelta(card, key, value);
       const basePct = (value / ceiling) * 100;
       const deltaPct = (Math.abs(delta) / ceiling) * 100;
+      const apex = isApexTrait(key, value);
 
       // 대사는 좋고 나쁨이 없다 — 늘어도 줄어도 중립색. 방향(막대가 늘어남/줄어듦)만 보여준다.
       const neutral = NEUTRAL_TRAITS.has(key);
 
       const row = el("div", "draft-stat");
+      if (apex) row.classList.add("apex"); // 막대가 금빛으로 — 여긴 도착점이다
       const label = el("span", "draft-stat-label");
       label.textContent = TRAIT_LABELS[key];
       const track = el("div", "draft-stat-track");
@@ -345,7 +356,19 @@ export function createDraftPanel(
 
       const val = el("span", "draft-stat-val");
       val.textContent = traitWord(key, value); // 날값 대신 단계 단어(델타 +N 은 아래에서 따로 보여준다)
+      if (apex) {
+        const tag = el("span", "draft-apex-tag");
+        tag.textContent = "정점";
+        val.appendChild(tag);
+      }
       if (delta !== 0) {
+        // 감쇠가 깎았으면 원래 값을 취소선으로 함께(칩과 같은 규칙 — 두 화면이 같은 말을 해야 한다).
+        const plain = effectiveDelta(key, card.effects[key] ?? 0);
+        if (delta > 0 && plain > delta) {
+          const was = el("s", "draft-was");
+          was.textContent = `+${plain}`;
+          val.append(" ", was);
+        }
         const d = el("b");
         d.textContent = delta > 0 ? `+${delta}` : String(delta);
         d.style.color = neutral ? chipColor("neutral") : delta > 0 ? "#8FD14F" : "#E85C43";
@@ -381,6 +404,26 @@ export function createDraftPanel(
       rows.appendChild(row);
     }
     popup.appendChild(rows);
+
+    // **정점이 무엇을 열었는가** — 100 을 찍은 형질마다 그 보상을 한 줄로 적는다. 정점은 수치가 더
+    // 커지는 게 아니라 **그 형질의 약점이 사라지는** 것이라, 말해 주지 않으면 화면에서 영영 안 읽힌다
+    // (도감에만 있으면 미달 — CLAUDE.md 전달 규칙).
+    const apexKeys = (Object.keys(c.genome.traits) as (keyof Traits)[]).filter(
+      (k) => isApexTrait(k, c.genome.traits[k]) && APEX_BOON[k] !== undefined,
+    );
+    if (apexKeys.length > 0) {
+      const box = el("div", "draft-apex-boons");
+      for (const key of apexKeys) {
+        const line = el("div");
+        const strong = el("b");
+        strong.textContent = `${TRAIT_LABELS[key]} 정점 — `;
+        const rest = el("span");
+        rest.textContent = APEX_BOON[key] ?? "";
+        line.append(strong, rest);
+        box.appendChild(line);
+      }
+      popup.appendChild(box);
+    }
 
     const legend = el("div", "draft-legend");
     const swatch = el("span", "draft-legend-swatch");
@@ -547,8 +590,21 @@ export function createDraftPanel(
       const desc = el("span", "draft-card-desc");
       desc.textContent = card.desc;
       const chips = el("span", "draft-chips");
-      for (const c of cardEffectChips(card, ctx?.genome.traits)) chips.appendChild(effectChipEl(c));
+      const effChips = cardEffectChips(card, ctx?.genome.traits);
+      for (const c of effChips) chips.appendChild(effectChipEl(c));
       body.append(desc, chips);
+      // 왜 수치가 이런지를 **그 자리에서** 한 줄로 답한다(대백과로 미루지 않는다 — CLAUDE.md 전달 규칙).
+      // 취소선이 떴으면 "왜 덜 오르는지", 정점 고정이 걸렸으면 "왜 안 내려가는지".
+      if (effChips.some((c) => c.base !== undefined)) {
+        const note = el("span", "draft-note");
+        note.textContent = "형질이 100 에 가까울수록 덜 올라요. 취소선은 원래 오를 값이에요.";
+        body.appendChild(note);
+      }
+      if (effChips.some((c) => c.apexLocked === true)) {
+        const note = el("span", "draft-note apex");
+        note.textContent = "정점(100)에 오른 형질은 카드로도 다시 내려가지 않아요.";
+        body.appendChild(note);
+      }
 
       node.append(row, body);
       node.style.boxShadow = restingShadow(rarity);
@@ -651,9 +707,20 @@ function effectChipEl(chip: EffectChip): HTMLElement {
   node.style.background = withAlpha(color, 0.13);
   const arrow = el("i");
   arrow.textContent = chip.up ? "▲" : "▼";
-  const text = el("span");
-  text.textContent = chip.text;
-  node.append(arrow, text);
+  const label = el("span");
+  label.textContent = chip.label;
+  node.append(arrow, label);
+  // 상한 근접 감쇠 — 원래 오를 값(+14)을 취소선으로, 실제 값(+6)을 그 뒤에. 두 수를 나란히 보여야
+  // "카드가 약해진 게 아니라 내 형질이 이미 높아서"가 읽힌다(수치 하나만 보면 카드 탓으로 읽힌다).
+  // ⚠ 반드시 **이름 뒤·수치 앞**이다. 칩 전체 문자열 앞에 붙이면 "▲ +14 속도 +6" 이 된다.
+  if (chip.base !== undefined) {
+    const was = el("s", "draft-was");
+    was.textContent = chip.base;
+    node.appendChild(was);
+  }
+  const value = el("span");
+  value.textContent = chip.value;
+  node.appendChild(value);
   return node;
 }
 

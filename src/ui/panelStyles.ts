@@ -280,6 +280,13 @@ export function ensurePanelStyles(): void {
   .draft-chip { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
     font-family: var(--font-mono); font-size: 10.5px; border-radius: 8px; padding: 4px 9px; }
   .draft-chip > i { font-size: 7px; font-style: normal; }
+  /* 상한 근접 감쇠 — 감쇠 전 값을 취소선으로 나란히("+11" 다음에 +5). "카드가 약해진 게 아니라
+     내 형질이 이미 높아서"가 그 자리에서 읽히게 한다(대백과로 미루지 않는다).
+     ⚠ 이 파일의 CSS 는 템플릿 리터럴 안이다 — 주석에도 백틱을 쓰면 문자열이 그 자리에서 끝난다. */
+  .draft-was { text-decoration: line-through; opacity: 0.48; }
+  /* 카드 아래 각주 — 왜 덜 오르는지·정점이 무엇인지 그 자리에서 한 줄로. 칩 뒤 제 줄을 통째로 쓴다. */
+  .draft-note { flex: 1 1 100%; font-size: 10px; line-height: 1.4; color: var(--sub); opacity: 0.9; }
+  .draft-note.apex { color: #F5C33B; opacity: 1; }
 
   /* §7 콘페티 — 전설 카드 안에서 전방향으로 터진다 */
   .draft-confetti { position: absolute; z-index: 2; pointer-events: none; }
@@ -346,9 +353,20 @@ export function ensurePanelStyles(): void {
   .draft-stat-gain { position: absolute; top: 0; bottom: 0; border-radius: 0 4px 4px 0;
     background: rgba(143,209,79,0.3); border: 1px dashed rgba(143,209,79,0.7); box-sizing: border-box; }
   .draft-stat-loss { position: absolute; top: -1px; bottom: -1px; border-radius: 2px; background: rgba(232,92,67,0.55); }
-  .draft-stat-val { font-family: var(--font-mono); font-size: 10px; width: 58px; text-align: right; flex: none;
+  .draft-stat-val { font-family: var(--font-mono); font-size: 10px; width: 76px; text-align: right; flex: none;
     font-variant-numeric: tabular-nums; }
   .draft-stat-val b { font-weight: 400; }
+  /* 정점(만렙) — 이 형질은 100 이고, 다시는 안 내려간다. 금빛으로 한눈에 도착점임을 알린다. */
+  .draft-stat.apex .draft-stat-fill { background: linear-gradient(90deg, #F5C33B, #FFE27A) !important;
+    box-shadow: 0 0 8px rgba(245,195,59,0.65); }
+  .draft-apex-tag { display: inline-block; font-family: var(--font-ui); font-size: 8.5px; font-weight: 800;
+    color: #241C10; background: linear-gradient(180deg,#FFE27A,#F5C33B); border-radius: 5px;
+    padding: 1px 4px; margin-left: 3px; vertical-align: 1px; }
+  /* 정점 형질이 뭘 열었는지 한 줄 — 도감을 안 읽어도 화면에서 알아채게 한다. */
+  .draft-apex-boons { margin-top: 9px; padding: 8px 10px; border-radius: 9px;
+    background: rgba(245,195,59,0.09); border: 1px solid rgba(245,195,59,0.26);
+    font-size: 10.5px; line-height: 1.5; color: #F5C33B; }
+  .draft-apex-boons b { font-weight: 700; }
 
   .draft-legend { display: flex; align-items: center; gap: 7px; margin-top: 14px;
     font-size: 11px; color: var(--sub); line-height: 1.4; }

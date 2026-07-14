@@ -7,7 +7,7 @@
 
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
-import { defaultGenome, cloneGenome, MUTABLE_TRAITS, type Genome, type MutableTrait } from "@/sim/genome";
+import { defaultGenome, cloneGenome, isApexTrait, MUTABLE_TRAITS, TRAIT_CEILING, TRAIT_KEYS, type Genome, type MutableTrait, type Traits } from "@/sim/genome";
 import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, PRESET_CARDS, PRESET_LINEAGE, LINEAGE_NAME, type Card, type Lineage } from "@/game/cards";
 import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
 import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
@@ -153,6 +153,22 @@ export class Game {
   private acc = 0;
   private ambientAcc = 0;
 
+  /**
+   * 방금 고른 카드로 **막 정점(100)에 닿은** 형질들. `takeNewApex()` 로 꺼내 가면 비워진다.
+   *
+   * 훅(onApex)이 아니라 "꺼내 가는 큐"인 이유: 훅은 `pickCard` 안에서 **동기로** 불려 드래프트 화면이
+   * 아직 떠 있는 순간에 연출이 터진다(카드 뒤에 가려 안 보인다). main 은 `draft.hide()` 뒤에 꺼내
+   * 연출을 띄운다 — 순서를 부르는 쪽이 쥐게 한다.
+   */
+  private newApex: (keyof Traits)[] = [];
+
+  /** 막 정점에 닿은 형질을 꺼내 간다(꺼내면 비워진다). 화면이 도달 연출을 띄우는 데 쓴다. */
+  takeNewApex(): (keyof Traits)[] {
+    const out = this.newApex;
+    this.newApex = [];
+    return out;
+  }
+
   // main 이 설정하는 훅
   onDraft: ((cards: Card[], preview: string) => void) | null = null;
   // canContinue = 승리라서 "다음 시대로" 이어갈 수 있는가(패배는 false). progress = 런이 진짜 끝났을 때(멸종·정복)의
@@ -225,10 +241,18 @@ export class Game {
   pickCard(index: number): void {
     if (this.phase !== "draft") return;
     const card = this.draftCards[index];
+    // 정점(100)에 **막 닿는 순간**을 잡으려면 적용 전 값을 떠 둬야 한다. 정점은 수치가 커지는 게 아니라
+    // 그 형질의 약점이 사라지는 보상이라, 도달 순간에 알려 주지 않으면 화면에서 영영 안 읽힌다.
+    const before: Partial<Record<keyof Traits, number>> = {};
+    for (const key of TRAIT_KEYS) before[key] = this.genome.traits[key];
     if (card) {
       applyCard(this.genome, card);
       this.pickedCardNames.push(card.name);
       this.pickedCardIds.push(card.id);
+      for (const key of TRAIT_KEYS) {
+        const was = before[key] ?? 0;
+        if (!isApexTrait(key, was) && isApexTrait(key, this.genome.traits[key])) this.newApex.push(key);
+      }
     }
     if (this.eraReward) {
       // 시대 보상을 골랐다 — 갓 태어난 이 시대 무리에 즉시 반영하고(성장 이어짐) 첫 채집 단계로.
@@ -267,6 +291,16 @@ export class Game {
       if (card) {
         for (const e of this.world.entities) {
           if (e.species.isPlayer && e.alive) applyCard(e.genome, card);
+        }
+        // **정점은 종 단위 성취다** — 기준선이 100 에 닿는 순간 살아있는 무리 전체가 정점이어야 한다.
+        // 카드만 각자에게 적용하면 안 된다: 개체는 **자기 값** 기준으로 상한 근접 감쇠를 받으므로(변이로
+        // 기준선보다 낮은 개체는 같은 카드로 덜 오른다) 기준선은 100 인데 무리는 95~99 에 흩어진 채
+        // 남는다. 그러면 화면은 "정점!"이라 외치는데 정작 무리는 정점 효과(험지 면제 등)를 못 누린다.
+        // 변이는 정점을 **만들지 않으므로**(genome.mutateGenome) 이 스냅이 정점의 유일한 입구다.
+        for (const key of this.newApex) {
+          for (const e of this.world.entities) {
+            if (e.species.isPlayer && e.alive) e.genome.traits[key] = TRAIT_CEILING[key];
+          }
         }
         this.logEvent("card", `레벨 ${this.level} · ${card.name}`);
       }

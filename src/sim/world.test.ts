@@ -4,7 +4,7 @@ import { SIM } from "@/sim/params";
 import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
 import { createBoss } from "@/sim/boss";
-import { defaultGenome, randomGenome, type Genome } from "@/sim/genome";
+import { cloneGenome, defaultGenome, mutateGenome, randomGenome, type Genome } from "@/sim/genome";
 import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome, grazeEfficiency, huntEfficiency, huntSprintFactor, carnivory01, gorgeFactor, maxEnergyFor, packShareGain, packHerdFactor, herdShieldedBy, isApex, sizeDev, sizeSpeedFactor, sizeDrainFactor, sizeFertilityFactor, effectiveCamo, camoVisionFactor } from "@/sim/behavior";
 import { areFriends, type Species } from "@/sim/species";
 import { createEntity, type Entity } from "@/sim/entity";
@@ -1158,22 +1158,58 @@ describe("정점 (형질 100 — 상한에 닿으면 그 형질의 약점이 사
     expect(isApex(100)).toBe(true);
   });
 
-  it("정점 번식력(100) — 적은 기운으로도 새끼를 쳐 무리가 더 불어난다", () => {
+  it("정점 번식력(100) — 새끼를 쳐도 어미가 덜 지쳐 무리가 더 크게 유지된다", () => {
     // 방향으로 검증한다(소수 개체 시뮬은 절대 수치가 노이즈에 흔들린다 — known_issues).
     // 99 와 100 은 형질값이 1 차이일 뿐인데 결과가 갈려야 한다 — 그게 "정점"의 뜻이다.
-    let apexPop = 0;
-    let nearPop = 0;
+    //
+    // ⚠ **한 시점의 개체 수로 재지 않는다**(known_issues: "종의 건강을 최종 개체 수 하나로 재지 말 것").
+    // 번식 보상은 붐-버스트를 만들 수 있어, 마지막 틱이 우연히 골짜기에 걸리면 더 강한 종이 더 약해
+    // 보인다. 실제로 옛 보상(번식 문턱 완화)은 **피크는 오르는데 평균은 떨어지는** 함정이었고, 그걸
+    // 최종 개체 수 하나로 재다가 놓칠 뻔했다. 그래서 **런 내내의 평균**으로 잰다.
+    let apexMean = 0;
+    let nearMean = 0;
     for (const seed of ["apex-0", "apex-1", "apex-2", "apex-3", "apex-4", "apex-5"]) {
       const a = new World(seed, W, H, tune({ fertility: 100, metabolism: 40, vision: 60 }));
       const b = new World(seed, W, H, tune({ fertility: 99, metabolism: 40, vision: 60 }));
+      let accA = 0;
+      let accB = 0;
       for (let i = 0; i < 1500; i++) {
         a.step();
         b.step();
+        accA += a.playerPopulation;
+        accB += b.playerPopulation;
       }
-      apexPop += a.playerPopulation;
-      nearPop += b.playerPopulation;
+      apexMean += accA / 1500;
+      nearMean += accB / 1500;
     }
-    expect(apexPop).toBeGreaterThan(nearPop);
+    expect(apexMean).toBeGreaterThan(nearMean);
+  });
+
+  it("정점은 변이가 갉지도, 만들지도 않는다 (종 단위 성취)", () => {
+    // 기준선이 100 이면 새끼도 100 으로 태어난다(안 그러면 만렙이 세대마다 새어 나간다).
+    const apex = defaultGenome();
+    apex.traits.speed = 100;
+    const rng = new Rng("mut");
+    for (let i = 0; i < 200; i++) {
+      const child = mutateGenome(cloneGenome(apex), rng, 1.5);
+      expect(child.traits.speed).toBe(100);
+    }
+    // 반대로 99 인 종의 새끼는 **절대 100 에 못 닿는다.** 닿게 두면 고정과 맞물려 래칫이 된다 —
+    // 세대가 지날수록 무리가 슬금슬금 100 으로 수렴해, 화면의 "99" 와 실제 무리가 어긋난다.
+    const near = defaultGenome();
+    near.traits.speed = 99;
+    for (let i = 0; i < 200; i++) {
+      const child = mutateGenome(cloneGenome(near), rng, 1.5);
+      expect(child.traits.speed).toBeLessThan(100);
+    }
+    // 정점이 없는 형질(대사 — 좋고 나쁨이 없는 축)은 100 에서도 정상적으로 흔들린다.
+    const hot = defaultGenome();
+    hot.traits.metabolism = 100;
+    let moved = 0;
+    for (let i = 0; i < 200; i++) {
+      if (mutateGenome(cloneGenome(hot), rng, 1.5).traits.metabolism !== 100) moved += 1;
+    }
+    expect(moved).toBeGreaterThan(0);
   });
 });
 

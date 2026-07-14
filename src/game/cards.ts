@@ -7,7 +7,7 @@
 
 import type { Rng } from "@/sim/rng";
 import type { Genome, Traits } from "@/sim/genome";
-import { clampTraitValue, TRAIT_CEILING } from "@/sim/genome";
+import { clampTraitValue, isApexTrait, TRAIT_CEILING } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 
 // 값형질(속도·시야·공격·번식·무리)의 카드 증가폭을 이만큼으로 줄인다 — 한 판 동안 여러 장을 쌓아야 상한
@@ -134,6 +134,16 @@ export interface Card {
    * 이게 없으면 못 나는 종이 "튼튼한 날개"를 골라 아무 일도 안 일어나는 손해 카드가 된다.
    */
   requiresTrait?: { key: keyof Traits; min: number };
+  /**
+   * **의도적으로 버리는 형질** — 값이 **0 이 된다**(얼마였든 상관없이). 관문 카드의 정체성이다.
+   * 「초음파」가 눈을 버리듯 — 이건 부수적 대가(effects 의 작은 음수)와 성격이 다르다:
+   *
+   * - **정점 고정(만렙)을 뚫는다.** 눈이 아무리 좋아도(시야 100) 박쥐가 되기로 했으면 눈은 먼다.
+   * - **성장 스케일·감쇠를 안 거친다.** effects 로 `vision: -100` 을 주면 ×0.75 가 걸려 -75 만 빠지는데,
+   *   그러면 시야 90 짜리 정찰자는 "눈이 먼다"는 설명과 달리 시야 15 로 **반쯤 보인다** — 카드가 거짓말을
+   *   한다. 희생은 얼마를 빼느냐가 아니라 **그 감각을 버리느냐**의 문제라 절대값(0)으로 다뤄야 한다.
+   */
+  sacrifice?: (keyof Traits)[];
 }
 
 /** 이 카드의 전제 조건을 이 종이 갖췄는가(전제가 없으면 항상 true). */
@@ -570,11 +580,18 @@ export const CARD_POOL: readonly Card[] = [
   // "초음파가 있으면 시야가 아예 필요 없는 거 아닌가?"). 그래서 관문 카드가 눈을 **0 으로** 만든다.
   // 이제 진짜 트레이드오프다: 박쥐는 눈이 퇴화했다. 대신 어둠·수풀·등 뒤가 전부 무의미해진다.
   // 대가는 분명하다 — 시야를 카운터로 쓰는 위협(그림자 매복자·큰수리)에 맨몸이 된다.
+  //
+  // ⚠ `effects: { vision: -100 }` 이 아니라 **`sacrifice: ["vision"]`** 인 이유(2026-07-15):
+  // effects 의 음수는 성장 스케일(×0.75)을 거쳐 실제론 -75 만 빠졌다 → 시야 90 짜리 정찰자가 이 카드를
+  // 뽑아도 **시야 15 로 반쯤 보였다**("눈이 멀고"가 거짓말). 게다가 정점 고정이 들어오면서, 시야 100 을
+  // 찍은 종에겐 -75 가 **아예 막혀** 초음파가 눈을 못 지우게 된다. 희생은 "얼마를 빼느냐"가 아니라
+  // "그 감각을 버리느냐"라서 절대값(0)으로 다뤄야 옳다 — 그게 sacrifice 다.
   {
     id: "echo",
     name: "초음파",
     desc: "눈이 멀고 귀가 열린다. 앞을 보는 대신 사방을 듣는다. 어둠도 수풀도 등 뒤도 막지 못하지만, 눈으로 미리 알아채야 하는 위협 앞에서는 무력하다.",
-    effects: { echo: 70, vision: -100 },
+    effects: { echo: 70 },
+    sacrifice: ["vision"], // 눈을 버린다 — 시야가 100(정점)이어도 0 이 된다
   },
   {
     id: "bat_ear",
@@ -845,11 +862,42 @@ export function growthFalloff(key: keyof Traits, current: number): number {
  * 보여줬으나 실제론 +9 만 붙었다 — 폰 피드백).
  * `current`(그 형질의 현재 값)를 주면 **상한 근접 감쇠까지 반영**한 진짜 값이 나온다. 드래프트는 내 종
  * 게놈을 아니 반드시 넘긴다 — 안 넘기면 "+12" 라 써 놓고 +5 만 오르는 거짓말이 된다. 카드 도감처럼
- * 종이 특정되지 않는 화면은 생략하고 기준값(감쇠 없음)으로 보여준다. */
+ * 종이 특정되지 않는 화면은 생략하고 기준값(감쇠 없음)으로 보여준다.
+ *
+ * ⚠ 카드가 있는 화면(드래프트)은 이걸 직접 부르지 말고 **`cardDelta`** 를 쓴다 — 정점 고정·희생까지
+ * 봐야 표시가 실제와 어긋나지 않는다. 이 함수는 그 안쪽 계단(스케일·감쇠)만 담당한다. */
 export function effectiveDelta(key: keyof Traits, raw: number, current?: number): number {
   let d = GROWTH_TRAITS.has(key) ? raw * CARD_GROWTH_SCALE : raw;
   if (d > 0 && current !== undefined) d *= growthFalloff(key, current);
   return Math.round(d);
+}
+
+/**
+ * **이 카드가 이 형질에 실제로 일으키는 변화 — 표시와 적용의 단일 진실.**
+ * `applyCard`(실제 적용)와 드래프트 칩·스탯바(화면 표시)가 **같은 이 함수**를 부른다. 둘이 갈라지면
+ * 카드에 "+12" 라 써 놓고 +5 가 붙는 거짓말이 생긴다(CLAUDE.md 전달 규칙).
+ *
+ * 다섯 계단을 순서대로 밟는다:
+ *   1. **희생**(sacrifice) — 그 형질을 통째로 버리는 카드면 현재값만큼 통으로 뺀다(→ 0). 정점도 뚫는다.
+ *   2. **정점 고정** — 100 을 찍은 형질은 카드의 **부수적 대가**로는 안 내려간다(변화 0).
+ *   3. **성장 스케일**(×0.75, 값형질만) — 한 장에 쑥 오르지 않게.
+ *   4. **상한 근접 감쇠** — 높을수록 덜 오른다(내리는 효과엔 안 걸린다).
+ *   5. **0~상한 클램프** — 게놈은 잘린다. 번식력 5 인 종에게 "-12"라 써 놓고 실제론 -5 만 빠지면
+ *      그것도 똑같은 거짓말이다. 무리 성향 0 인 종의 "무리 -18"은 **아무 일도 안 일어난다**(0).
+ *
+ * `current` 를 모르면(카드 도감처럼 종이 특정 안 되는 화면) 정점·감쇠·클램프는 건너뛰고 기준값만 보여준다.
+ */
+export function cardDelta(card: Card, key: keyof Traits, current?: number): number {
+  // 1. 희생 — "얼마를 빼느냐"가 아니라 "그 감각을 버리느냐". 현재값이 얼마든 0 이 된다.
+  if (card.sacrifice?.includes(key)) return current === undefined ? -TRAIT_CEILING[key] : -current;
+  const raw = card.effects[key] ?? 0;
+  // 2. 정점 고정 — 한 번 100 을 찍었으면 카드의 곁가지 대가로는 안 내려간다(만렙).
+  if (raw < 0 && current !== undefined && isApexTrait(key, current)) return 0;
+  // 3·4. 성장 스케일 + 상한 근접 감쇠.
+  const d = effectiveDelta(key, raw, current);
+  if (current === undefined) return d;
+  // 5. 게놈이 실제로 잘리는 만큼만 움직인다 — 여기까지 봐야 표시가 적용과 **정확히** 같아진다.
+  return clampTraitValue(key, current + d) - current;
 }
 
 /** 카드 효과를 boost 배로 키운 사본(시대 보상용). 표시값(effectiveDelta)과 실제 적용(applyCard)이 같은
@@ -1009,7 +1057,9 @@ export function rarityOdds(pool: readonly Card[], draws = 3, level = 1): Record<
 }
 
 /** 카드 효과를 게놈에 그 자리에서 적용 + 형질별 상한 클램프. (공유 게놈이라 즉시 반영)
- * 증분(effects)은 상한 200 연속 형질이면 CARD_GROWTH_SCALE 로 줄인다(극단까지 천천히). set(프리셋 정체성)은 안 줄임. */
+ * 실제 증가폭은 **`cardDelta` 하나가 정한다** — 드래프트 화면이 보여주는 수치와 같은 함수라 표시와
+ * 적용이 어긋날 수 없다(성장 스케일·상한 근접 감쇠·정점 고정·희생을 전부 그 안에서 처리).
+ * set(프리셋 정체성 절대값)만 여기서 따로 — 증분이 아니라 "이 값으로 시작한다"는 선언이다. */
 export function applyCard(genome: Genome, card: Card): void {
   if (card.set) {
     for (const key of Object.keys(card.set) as (keyof Traits)[]) {
@@ -1017,12 +1067,11 @@ export function applyCard(genome: Genome, card: Card): void {
     }
   }
   for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
-    let delta = card.effects[key] ?? 0;
-    if (GROWTH_TRAITS.has(key)) delta *= CARD_GROWTH_SCALE; // 값형질만 증가폭 축소(성장을 천천히)
-    // 상한 근접 감쇠 — 높을수록 올리기 어렵다. 50 이하는 배수 1(기존 성장 그대로), 내리는 효과엔 안 걸린다.
-    if (delta > 0) delta *= growthFalloff(key, genome.traits[key]);
-    genome.traits[key] = clampTraitValue(key, genome.traits[key] + delta);
+    genome.traits[key] = clampTraitValue(key, genome.traits[key] + cardDelta(card, key, genome.traits[key]));
   }
+  // 희생(관문 카드가 내놓기로 선언한 형질) — 정점(100)이어도 뚫고 0 이 된다. 맨 마지막이라 같은 카드가
+  // 그 형질을 만졌더라도 "버린다"가 최종 결론이다(박쥐가 되기로 했으면 눈은 먼다).
+  for (const key of card.sacrifice ?? []) genome.traits[key] = 0;
   // 내 종은 물 전용(육지 통행 불가)이 되지 않게 수영 상한을 수륙양용 문턱 바로 아래로 막는다. 지느러미·물갈퀴를
   // 쌓아도 바다까지 헤엄치되 육지에서 안 죽는다(예전엔 90 을 넘으면 갑자기 물 전용이 돼 땅에 갇혀 굶어 죽었다).
   // 진짜 물 전용(바다 거주 물고기)은 야생 물고기 떼만 — 그들은 카드가 없어 이 상한을 안 거친다(swimming 95 유지).

@@ -18,6 +18,7 @@ import {
   rarityWeightsAtLevel,
   cardPrereqMet,
   cardRedundant,
+  cardDelta,
   effectiveDelta,
   type Card,
 } from "@/game/cards";
@@ -415,6 +416,83 @@ describe("카드 적용", () => {
     // 그래도 충분히 쌓으면 100(상한)에 닿는다 — 정점 보상이 도달 불가능하면 안 되므로.
     for (let i = 0; i < 30; i++) applyCard(g, swift);
     expect(g.traits.speed).toBe(100);
+  });
+
+  it("정점 고정 — 100 을 찍은 형질은 카드의 대가로 안 내려간다(만렙)", () => {
+    const g = defaultGenome();
+    g.traits.fertility = 100; // 정점
+    g.traits.attack = 60;
+    // 번식력을 깎는 대가가 붙은 카드(「정점의 포식자」: 공격 +26 … 번식 -10)를 골라 대가가 막히는지 본다.
+    const apexHunter = CARD_POOL.find((c) => c.id === "hunter_apex");
+    expect(apexHunter).toBeDefined();
+    if (!apexHunter) return;
+    expect(apexHunter.effects.fertility).toBeLessThan(0); // 전제: 이 카드는 번식력을 깎는다
+    applyCard(g, apexHunter);
+    expect(g.traits.fertility).toBe(100); // 정점은 안 내려간다
+    expect(g.traits.attack).toBeGreaterThan(60); // 나머지 효과는 그대로 붙는다
+
+    // 정점이 아니면(99) 대가는 정상적으로 걸린다 — 고정은 "100 을 찍었을 때만"이다.
+    const near = defaultGenome();
+    near.traits.fertility = 99;
+    applyCard(near, apexHunter);
+    expect(near.traits.fertility).toBeLessThan(99);
+  });
+
+  it("정점 고정은 대사·식성·몸집에는 안 걸린다 (좋고 나쁨이 없는 축은 되돌릴 길을 막으면 함정)", () => {
+    const g = defaultGenome();
+    g.traits.metabolism = 100;
+    const chill = CARD_POOL.find((c) => (c.effects.metabolism ?? 0) < 0);
+    expect(chill).toBeDefined();
+    if (!chill) return;
+    applyCard(g, chill);
+    expect(g.traits.metabolism).toBeLessThan(100); // 대사 100 은 성취가 아니라 한쪽 극단 — 되돌아갈 수 있어야 한다
+  });
+
+  it("희생(초음파) — 시야가 정점(100)이어도 눈은 통째로 먼다", () => {
+    const echo = CARD_POOL.find((c) => c.id === "echo");
+    expect(echo).toBeDefined();
+    if (!echo) return;
+    expect(echo.sacrifice).toContain("vision");
+
+    // 정점 시야(100)도 뚫는다 — 눈이 아무리 좋아도 박쥐가 되기로 했으면 눈은 먼다.
+    const apexEye = defaultGenome();
+    apexEye.traits.vision = 100;
+    applyCard(apexEye, echo);
+    expect(apexEye.traits.vision).toBe(0);
+    expect(apexEye.traits.echo).toBeGreaterThan(0);
+
+    // 시야가 높은 정찰자도 **완전히** 먼다. 예전엔 effects 의 -100 이 성장 스케일(×0.75)을 거쳐 -75 만
+    // 빠져 시야 15 로 **반쯤 보였다** — "눈이 멀고"라는 설명이 거짓말이었다. 희생은 절대값이라야 한다.
+    const scout = defaultGenome();
+    scout.traits.vision = 90;
+    applyCard(scout, echo);
+    expect(scout.traits.vision).toBe(0);
+  });
+
+  it("표시(cardDelta)와 적용(applyCard)이 정확히 같다 — 감쇠·정점·희생 전부", () => {
+    const swift = CARD_POOL.find((c) => c.id === "swift");
+    const echo = CARD_POOL.find((c) => c.id === "echo");
+    const apexHunter = CARD_POOL.find((c) => c.id === "hunter_apex");
+    expect(swift && echo && apexHunter).toBeTruthy();
+    if (!swift || !echo || !apexHunter) return;
+
+    // 감쇠 구간 — 화면이 "+5" 라 쓰면 실제로도 +5 여야 한다(칩이 거짓말을 하면 안 된다).
+    for (const start of [50, 61, 80, 95, 100]) {
+      const g = defaultGenome();
+      g.traits.speed = start;
+      const shown = cardDelta(swift, "speed", start);
+      applyCard(g, swift);
+      expect(g.traits.speed - start).toBe(shown);
+    }
+    // 정점 고정 — 표시도 0(변화 없음)이어야 한다.
+    const gf = defaultGenome();
+    gf.traits.fertility = 100;
+    expect(cardDelta(apexHunter, "fertility", 100)).toBe(0);
+    applyCard(gf, apexHunter);
+    expect(gf.traits.fertility).toBe(100);
+    // 희생 — 표시는 "현재값만큼 통째로 잃음".
+    expect(cardDelta(echo, "vision", 90)).toBe(-90);
+    expect(cardDelta(echo, "vision", 100)).toBe(-100);
   });
 
   it("능력형 형질(독)은 상한 100 유지 — 증가폭도 안 줄인다", () => {

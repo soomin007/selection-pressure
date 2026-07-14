@@ -539,21 +539,24 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 큰 몸은 새끼를 적게 친다(sizeFertilityFactor — 몸집 50 이면 1.0). 「다산 초식」(작고 많이)과
   // 「거대 초식」(크고 적게)이 여기서 갈린다.
   //
-  // **정점 번식력(100)** — 적은 기운으로도 새끼를 친다(번식 문턱이 apexBreedRelief 배로 낮아진다).
-  // 이 방식을 고른 이유: 처음엔 "쌍둥이"(한 배에 둘)로 만들었는데, 새끼를 한 마리 더 낳느라 **rng 를
-  // 두 번 더 소비**해 스트림이 밀렸다 — 시뮬이 통째로 다른 세계가 돼 버렸다(개체 수 45 vs 65 는 좋고
-  // 나쁨이 아니라 그냥 다른 전개였다). 문턱을 낮추는 방식은 rng 소비가 그대로라 안전하고, 효과는
-  // 오히려 더 확실하다(번식 빈도 자체가 오른다).
-  const breedThreshold = isApex(t.fertility)
-    ? SIM.reproduceThreshold * SIM.apexBreedRelief
-    : SIM.reproduceThreshold;
+  // **정점 번식력(100)** — 새끼를 쳐도 어미가 덜 지친다(번식 대가가 apexBreedCost 배로 준다).
+  //
+  // ⚠ 두 번 헛짚었다. 이 자리는 rng 와 먹이 상한이 둘 다 걸려 있어 "보상"이 쉽게 자해가 된다:
+  //   ① **쌍둥이**(한 배에 둘) — 새끼를 한 마리 더 낳느라 rng 를 두 번 더 소비해 스트림이 밀렸다.
+  //      시뮬이 통째로 다른 세계가 됐다(개체 수 45 vs 65 는 좋고 나쁨이 아니라 그냥 다른 전개였다).
+  //   ② **번식 문턱 완화**(78 → 54.6) — rng 는 안 건드렸지만, 기운이 모자란 채로 낳게 만들어 어미와
+  //      새끼가 **둘 다 반쯤 굶은 채로 갈라졌다**. 굶주림 사망 125 → 176, 평균 개체 수 127 → 121
+  //      (피크만 오르고 평균은 떨어지는 붐-버스트). 먹이가 유한하니 "더 자주 낳기"는 보상이 못 된다.
+  //
+  // 지금 방식은 문턱(78)을 그대로 두고 **어미가 치르는 대가만** 깎는다 — 기운이 넉넉할 때만 낳는 규칙은
+  // 그대로라 굶는 새끼가 안 늘고, 어미가 살아남아 다음 번식에 더 빨리 닿는다. rng 소비도 불변이다.
   if (
     world.entities.length + newborns.length < world.cap &&
-    e.energy >= breedThreshold &&
+    e.energy >= SIM.reproduceThreshold &&
     world.rng.chance(SIM.reproduceRate * (0.3 + fertility01) * sizeFertilityFactor(t.size))
   ) {
-    const childEnergy = e.energy * 0.5;
-    e.energy -= childEnergy;
+    const childEnergy = e.energy * 0.5; // 새끼가 받는 기운 — 정점이어도 그대로(새끼를 더 살찌우는 게 아니다)
+    e.energy -= isApex(t.fertility) ? childEnergy * SIM.apexBreedCost : childEnergy;
     const cx = e.x + world.rng.range(-6, 6);
     const cy = e.y + world.rng.range(-6, 6);
     // 막힌 타일에 태어나면 갇히므로 가장 가까운 통행 타일로 스냅(rng 미사용 → 결정론·밸런스 보존).

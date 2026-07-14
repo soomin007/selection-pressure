@@ -194,6 +194,25 @@ export function clampTraitValue(key: keyof Traits, v: number): number {
 }
 
 /**
+ * **정점(만렙)이 있는 형질** — 상한 100 에 닿으면 ① 그 형질의 약점이 사라지고(`behavior.isApex`:
+ * 속도=험지 면제 · 시야=밤/수풀 면제 · 공격력=체급 무시 · 번식력=문턱 완화) ② 그 뒤로는 **카드로도,
+ * 개체 변이로도 안 내려간다**(정점 고정 — 비싸게 오른 만큼 확실한 도착점).
+ *
+ * 왜 이 넷뿐인가: 정점 고정은 "되돌릴 길을 막는" 규칙이라, **100 이 곧 성취인 형질에만** 걸어야 한다.
+ * - 대사·식성은 **좋고 나쁨이 없는 축**이다(추운 판에선 고대사가, 더운 판에선 저대사가 이득). 100 에
+ *   고정하면 환경이 바뀌어도 되돌릴 수 없는 **함정**이 된다.
+ * - 몸집은 50 이 중립인 **양방향 축**이다(크게 버티기 ↔ 작게 숨기). 100 고정은 「작고 날쌘 몸」을
+ *   영영 막아 버린다.
+ * 능력형(수영·날개·초음파·독·원거리·무리·은신)은 문턱만 넘으면 값이 무의미해 정점 자체가 없다.
+ */
+export const APEX_TRAITS = new Set<keyof Traits>(["speed", "vision", "attack", "fertility"]);
+
+/** 이 형질이 정점(만렙)에 닿았는가 — 정점이 있는 형질이면서 상한(100)에 도달. sim·카드·UI 가 이 하나를 본다. */
+export function isApexTrait(key: keyof Traits, v: number): boolean {
+  return APEX_TRAITS.has(key) && v >= TRAIT_CEILING[key];
+}
+
+/**
  * 값 형질은 50(=중간), 능력 형질은 0(=없음)인 기본 게놈.
  *
  * ⚠ 야생·친척 종은 이 게놈에서 출발하되 자기 아키타입 값으로 덮어쓴다(species.ts) — 여기 기본값을
@@ -258,7 +277,24 @@ export type MutableTrait = (typeof MUTABLE_TRAITS)[number];
 export function mutateGenome(genome: Genome, rng: Rng, strength: number): Genome {
   if (strength <= 0) return genome;
   for (const key of MUTABLE_TRAITS) {
-    genome.traits[key] = clampTraitValue(key, genome.traits[key] + rng.range(-strength, strength));
+    // ⚠ rng 는 **정점이라 안 쓸 때도 반드시 뽑는다**(소비 횟수 고정). 건너뛰면 mutRng 스트림이 밀려
+    // 개체 변이가 통째로 다른 세계가 된다(known_issues: 쌍둥이 rng 함정과 같은 계열).
+    const delta = rng.range(-strength, strength);
+    const cur = genome.traits[key];
+
+    // **정점은 변이가 갉지 않는다.** 부모가 100 이면 새끼도 100 으로 태어난다 — 안 그러면 애써 올린
+    // 만렙이 세대마다 ±1.5 씩 새어 나가 정점 효과(험지 면제 등)를 곧 잃는다(변이 폭이 상한에 부딪혀
+    // 아래로만 열려 있어, 평균이 100 → 99.4 → … 로 계속 흘러내린다).
+    if (isApexTrait(key, cur)) continue;
+
+    // **정점은 변이가 만들지도 않는다.** 위의 고정과 맞물리면 이게 래칫이 된다: 종 기준선이 99 여도
+    // 새끼 1/3 은 반올림으로 100 을 찍고, 찍으면 고정돼 영영 안 내려온다 → 세대가 지날수록 무리가
+    // 슬금슬금 100 으로 수렴한다. 화면(설계도·드래프트)엔 "번식력 99"라 써 있는데 실제 무리는 정점을
+    // 누리는 셈 — 표시와 실제가 어긋나면 그건 거짓말이다. 프로브에서 실제로 관측됐다(기준선 99 종의
+    // 살아있는 개체 평균 번식력이 99.20 까지 올라갔다).
+    // **정점은 플레이어가 카드로 쌓아 올린 종 단위 성취다** — 우연이 대신 찍어 주지 않는다.
+    const v = clampTraitValue(key, cur + delta);
+    genome.traits[key] = APEX_TRAITS.has(key) ? Math.min(v, TRAIT_CEILING[key] - 1) : v;
   }
   return genome;
 }
