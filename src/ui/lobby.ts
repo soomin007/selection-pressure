@@ -92,9 +92,12 @@ export function createLobby(
     show: () => {
       cosmetics.refresh(); // 방금 딴 꾸밈이 바로 보이게 열 때마다 다시 읽는다
       root.style.display = "flex";
+      // 타이틀 화면에선 ?dev 패널을 숨긴다(첫 화면이 개발용 버튼으로 어지럽지 않게 — panelStyles 규칙).
+      document.body.classList.add("lobby-open");
     },
     hide: () => {
       root.style.display = "none";
+      document.body.classList.remove("lobby-open");
     },
   };
 }

@@ -136,7 +136,7 @@ const SVG = {
 const SECTIONS: readonly Section[] = [
   {
     title: "형질 도감",
-    intro: "형질은 한 종을 이루는 저울입니다. 모든 종은 50에서 시작해 카드로 조금씩 키우고, 상한은 100입니다. 속도·시야·공격력·번식력·무리 성향·대사는 0~100 숫자로 보고, 수영·날개·초음파·독·원거리는 없음·보통·강함 세 단계로 봅니다.",
+    intro: "형질은 한 종을 이루는 저울입니다. 상한은 100입니다.\n값 형질(속도·시야·공격력·번식력·몸집·대사)은 50에서 시작해 카드로 키우며, 0~100 숫자로 봅니다.\n능력 형질(무리 성향·은신·수영·날개·초음파·독침·원거리)은 처음엔 없고, 카드로 열어야 생깁니다. 없음·보통·강함 세 단계로 봅니다.",
     entries: [
       {
         term: "수치 읽는 법",
@@ -298,9 +298,10 @@ const SECTIONS: readonly Section[] = [
   {
     title: "카드 도감",
     intro:
-      "카드는 두 갈래입니다. **공통 카드**는 어느 종이든 뽑고, **갈래 전용 카드**는 그 종으로 시작해야만 나옵니다.\n" +
+      // (마크다운 별표를 쓰면 안 된다 — 이 문구는 textContent 로 그려져 별표가 그대로 보인다.)
+      "카드는 두 갈래입니다. 공통 카드는 어느 종이든 뽑고, 갈래 전용 카드는 그 종으로 시작해야만 나옵니다.\n" +
       "드래프트 3장 중 1장은 늘 내 갈래의 전용 카드입니다(「내 갈래」 배지). 다른 갈래의 전용 카드는 이번 판에 아예 보이지 않으니, 시작 종을 고르는 것이 곧 이번 판에 갈 수 있는 길을 고르는 일입니다.\n" +
-      "다만 지느러미·날개·초음파·독 살갗·가시 쏘기 같은 능력을 여는 카드는 공통입니다. 걷던 종이 날개를 얻는 진화는 어느 갈래에서든 일어날 수 있습니다.\n" +
+      "다만 무리 본능·보호색·지느러미·날개·초음파·독 살갗·가시 쏘기 같은 능력을 여는 카드는 공통입니다. 걷던 종이 날개를 얻는 진화는 어느 갈래에서든 일어날 수 있습니다.\n" +
       "아래 확률은 공통 카드 기준입니다. 카드마다 희귀도가 있어, 희귀할수록 후보로 잘 안 뜨고 드래프트에서도 더 늦게 등장합니다. 무리가 세대를 거듭할수록 높은 등급이 더 자주 찾아옵니다.",
     entries: [
       {
@@ -858,8 +859,9 @@ export function createGlossary(): Glossary {
     "justify-content:center; align-items:center; font-family:var(--font-body);";
 
   const panel = document.createElement("div");
+  // position:relative — 따라다니는 목차 버튼(absolute)이 이 패널을 기준으로 붙는다.
   panel.style.cssText =
-    "width:min(100%,460px); height:min(88vh,680px); box-sizing:border-box; display:flex; flex-direction:column;" +
+    "position:relative; width:min(100%,460px); height:min(88vh,680px); box-sizing:border-box; display:flex; flex-direction:column;" +
     "background:var(--bg-report); border:1px solid var(--line); border-radius:var(--r-panel); color:var(--ink); overflow:hidden;";
 
   const header = document.createElement("div");
@@ -883,13 +885,15 @@ export function createGlossary(): Glossary {
   const body = document.createElement("div");
   body.style.cssText = "flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:6px 14px 16px;";
 
-  // 목록 화면
+  // 목록 화면. 섹션 제목 요소를 모아 둔다(목차가 이 위치로 스크롤한다).
   const listView = document.createElement("div");
+  const sectionHeads: HTMLElement[] = [];
   for (const sec of SECTIONS) {
     const h = document.createElement("div");
     h.textContent = sec.title;
     h.style.cssText = "color:var(--lime); font-family:var(--font-title); font-size:15px; margin:16px 2px 6px;";
     listView.appendChild(h);
+    sectionHeads.push(h);
     if (sec.intro) {
       const intro = document.createElement("div");
       intro.textContent = sec.intro;
@@ -920,11 +924,58 @@ export function createGlossary(): Glossary {
   const detailView = document.createElement("div");
   detailView.style.display = "none";
 
-  function showList(): void {
+  // --- 따라다니는 목차 (패널 우하단 고정) ---
+  // 대백과가 길어져(7개 섹션·수십 항목) 폰에서 원하는 곳까지 한참 굴려야 했다. 목차로 바로 뛴다.
+  const tocBtn = document.createElement("button");
+  tocBtn.textContent = "≡ 목차";
+  tocBtn.style.cssText =
+    "position:absolute; right:14px; bottom:14px; z-index:2;" +
+    "border:1px solid var(--line); background:var(--panelSolid); color:var(--ink);" +
+    "border-radius:999px; padding:9px 15px; font-family:var(--font-title); font-size:14px;" +
+    "cursor:pointer; box-shadow:0 3px 12px rgba(0,0,0,0.45);";
+
+  // 목차 메뉴 — 버튼 위로 펼쳐진다(드롭업). 섹션을 누르면 그 자리로 스크롤하고 닫힌다.
+  const tocMenu = document.createElement("div");
+  tocMenu.style.cssText =
+    "position:absolute; right:14px; bottom:56px; z-index:3; display:none; flex-direction:column; gap:2px;" +
+    "background:var(--bg-report); border:1px solid var(--line); border-radius:var(--r-card);" +
+    "padding:6px; box-shadow:0 6px 20px rgba(0,0,0,0.55); min-width:150px;";
+  SECTIONS.forEach((sec, i) => {
+    const item = document.createElement("button");
+    item.textContent = sec.title;
+    item.style.cssText =
+      "border:0; background:transparent; color:var(--ink); text-align:left;" +
+      "padding:9px 11px; border-radius:8px; font-family:var(--font-body); font-size:14px; cursor:pointer;";
+    item.addEventListener("mouseenter", () => (item.style.background = "rgba(255,255,255,0.07)"));
+    item.addEventListener("mouseleave", () => (item.style.background = "transparent"));
+    item.addEventListener("click", () => {
+      const head = sectionHeads[i];
+      // 상세를 보던 중이면 목록으로 먼저 돌아온다(목차는 목록의 좌표계를 쓴다).
+      if (detailView.style.display !== "none") showList(true);
+      if (head) body.scrollTop = head.offsetTop - 8;
+      closeToc();
+    });
+    tocMenu.appendChild(item);
+  });
+
+  function closeToc(): void {
+    tocMenu.style.display = "none";
+  }
+  tocBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    tocMenu.style.display = tocMenu.style.display === "none" ? "flex" : "none";
+  });
+
+  // 읽던 위치 기억 — 항목에 들어갔다 「‹ 뒤로」로 돌아오면 **보던 자리 그대로** 복귀한다.
+  // (예전엔 맨 위로 튕겨서, 목록 아래쪽 항목을 하나 볼 때마다 다시 굴려 내려와야 했다.)
+  let listScroll = 0;
+
+  function showList(keepScroll = false): void {
     detailView.style.display = "none";
     listView.style.display = "block";
     back.style.visibility = "hidden";
-    body.scrollTop = 0;
+    tocBtn.style.display = "block";
+    if (!keepScroll) body.scrollTop = listScroll;
   }
   function showDetail(e: Entry): void {
     detailView.replaceChildren();
@@ -1012,28 +1063,35 @@ export function createGlossary(): Glossary {
       detailView.appendChild(note);
     }
 
+    // 들어가기 직전의 목록 스크롤을 기억해 둔다(「‹ 뒤로」가 이 자리로 되돌린다).
+    listScroll = body.scrollTop;
     listView.style.display = "none";
     detailView.style.display = "block";
     back.style.visibility = "visible";
+    tocBtn.style.display = "none"; // 상세에선 목차를 숨긴다(목록의 좌표계라 뜻이 없다)
+    closeToc();
     body.scrollTop = 0;
   }
 
   body.append(listView, detailView);
-  panel.append(header, body);
+  panel.append(header, body, tocMenu, tocBtn);
   scrim.appendChild(panel);
   document.body.appendChild(scrim);
 
   const hide = (): void => {
+    closeToc();
     scrim.style.display = "none";
   };
-  back.addEventListener("click", showList);
+  back.addEventListener("click", () => showList());
   close.addEventListener("click", hide);
+  body.addEventListener("click", closeToc); // 본문을 누르면 목차가 닫힌다
   scrim.addEventListener("click", (ev) => {
     if (ev.target === scrim) hide();
   });
 
   return {
     show: () => {
+      listScroll = 0; // 새로 열 땐 맨 위부터
       showList();
       scrim.style.display = "flex";
     },

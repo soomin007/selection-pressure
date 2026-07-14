@@ -183,6 +183,10 @@ export function ensurePanelStyles(): void {
   body.draft-open .controls-bar,
   body.draft-open .dev-overlay { display: none !important; }
 
+  /* 타이틀(로비) 화면에선 ?dev 패널·진단 배지를 숨긴다 — 첫 화면이 개발용 버튼으로 어지러워진다
+     (사용자 지적). 게임에 들어가면 다시 보인다. */
+  body.lobby-open .dev-overlay { display: none !important; }
+
   .draft-root { position: fixed; inset: 0; z-index: 15; display: none;
     font-family: var(--font-body); color: var(--ink); user-select: none; }
   .draft-root.open { display: block; }
