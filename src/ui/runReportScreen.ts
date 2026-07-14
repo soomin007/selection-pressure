@@ -15,12 +15,13 @@ export interface RunReportScreen {
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-// 형질별 선 색 — 형질 6색 매핑(고정)과 일치(속도 amber·시야 blue·공격 red·무리 purple·대사 orange·번식 lime).
+// 형질별 선 색 — 형질 6색 매핑(고정)과 일치(속도 amber·시야 blue·공격 red·몸집 teal·대사 orange·번식 lime).
+// v7: 무리 성향이 능력 형질로 빠지고 몸집이 그 자리에 들어왔다(변이 축 = 개체 진화가 드러나는 축).
 const TRAIT_COLOR: Record<MutableTrait, string> = {
   speed: "#F5C33B",
   vision: "#5AB0E2",
   attack: "#E85C43",
-  herding: "#B98CE0",
+  size: "#4FC3B0",
   metabolism: "#F2903A",
   fertility: "#8FD14F",
 };

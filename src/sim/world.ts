@@ -515,8 +515,10 @@ export class World {
 
       // 형질별 미세 드리프트(독립 rng). swimming·wings 는 수생/비행 정체성이라 제외(드리프트로 뒤집히면
       // 어색 — 비행 종이 날개를 잃으면 산에서 굶는다).
+      // v7(size·camouflage)도 제외한다 — **rng 소비 횟수를 늘리면 이 독립 스트림 안에서 순서가 밀려
+      // 야생 진화 결과가 통째로 달라진다**(밸런스 이동). 야생 몸집·은신을 진화시키려면 별도 설계로.
       for (const key of TRAIT_KEYS) {
-        if (key === "swimming" || key === "wings") continue;
+        if (key === "swimming" || key === "wings" || key === "size" || key === "camouflage") continue;
         t[key] = clampTrait(t[key] + this.wildEvoRng.range(-SIM.wildDriftStep, SIM.wildDriftStep));
       }
     }

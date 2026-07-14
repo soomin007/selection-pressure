@@ -5,14 +5,24 @@ import { SIM } from "@/sim/params";
 import { TRAIT_LABELS, type Traits } from "@/sim/genome";
 import { effectiveDelta, type Card } from "@/game/cards";
 
-/** 3단계로 표시하는 능력형 형질들(연속 수치 대신 없음/보통/강함). */
-export const ABILITY_KEYS = new Set<keyof Traits>(["swimming", "wings", "echo", "venom", "ranged"]);
+/**
+ * 3단계로 표시하는 능력형 형질들(연속 수치 대신 없음/보통/강함).
+ * v7: 무리 성향(herding)이 여기로 내려왔다 — 값 형질(기본 50)이면서 여덟 프리셋 중 하나에서만 실제로
+ * 작동해, 나머지 빌드에선 뭉치느라 먹이 탐색만 좁아지는 순손해였다. 이제 카드로 여는 능력이다.
+ * 은신(camouflage)도 능력형(기본 0).
+ */
+export const ABILITY_KEYS = new Set<keyof Traits>([
+  "swimming", "wings", "echo", "venom", "ranged", "herding", "camouflage",
+]);
 
 /** 능력형 형질 값 → 0(없음)/1(보통)/2(강함). 임계(수영·날개는 통행 임계, 나머지는 55)로 나눈다. */
 export function abilityLevel(key: keyof Traits, v: number): 0 | 1 | 2 {
   if (key === "swimming") return v >= SIM.aquaticOnlyThreshold ? 2 : v >= SIM.swimThreshold ? 1 : 0; // 물전용/수륙양용/육지
   if (key === "wings") return v >= SIM.flyThreshold ? 2 : 0; // 비행/없음(켜짐·꺼짐)
-  return v <= 0 ? 0 : v > 55 ? 2 : 1; // 초음파·독·원거리: 없음/보통/강함
+  // 무리 성향은 방패 임계(herdShieldThreshold)가 "강함"의 기준 — 그 위에서만 무리 방어가 켜진다.
+  // 그 아래는 뭉침·보온만 하는 "보통". 화면 표시와 실제 규칙이 같은 문턱을 본다.
+  if (key === "herding") return v <= 0 ? 0 : v > SIM.herdShieldThreshold ? 2 : 1;
+  return v <= 0 ? 0 : v > 55 ? 2 : 1; // 초음파·독·원거리·은신: 없음/보통/강함
 }
 
 export function abilityWord(level: 0 | 1 | 2): string {
@@ -46,8 +56,10 @@ export const TRAIT_COLORS: Partial<Record<keyof Traits, string>> = {
   vision: "#5AB0E2", // 시야 · blue
   attack: "#E85C43", // 공격력 · red
   fertility: "#8FD14F", // 번식력 · lime
-  herding: "#B98CE0", // 무리 성향 · purple
+  size: "#4FC3B0", // 몸집 · teal (v7 — 무리 성향이 능력형으로 내려간 자리)
   metabolism: "#F2903A", // 대사 · orange
+  herding: "#B98CE0", // 무리 성향 · purple (능력형이지만 색은 유지 — 무리 카드가 이 색을 쓴다)
+  camouflage: "#7E8C7A", // 은신 · muted green-grey (눈에 안 띄는 색이 곧 뜻)
 };
 
 export function traitColor(key: keyof Traits): string {

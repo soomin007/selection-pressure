@@ -250,7 +250,8 @@ describe("다시 뽑기(리롤)", () => {
 });
 
 describe("런 보고서(히스토리)", () => {
-  const MUTABLE = ["attack", "fertility", "herding", "metabolism", "speed", "vision"];
+  // v7: herding 이 능력 형질로 강등되고 size(몸집)가 변이 축에 들어왔다(genome.ts MUTABLE_TRAITS).
+  const MUTABLE = ["attack", "fertility", "metabolism", "size", "speed", "vision"];
 
   // 한 런을 result 까지 끝까지 돌린다(드래프트는 첫 카드로 넘긴다).
   function playToEnd(seed: string): Game {

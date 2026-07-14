@@ -33,6 +33,8 @@ const HIGH_ADJ: Record<AdjKey, string> = {
   wings: "하늘을 나는",
   venom: "독을 지닌",
   ranged: "멀리서 치는",
+  size: "덩치 큰",
+  camouflage: "몸을 숨기는",
 };
 const LOW_ADJ: Record<AdjKey, string> = {
   speed: "발이 느린",
@@ -46,6 +48,8 @@ const LOW_ADJ: Record<AdjKey, string> = {
   wings: "땅에 붙어 사는",
   venom: "독이 없는",
   ranged: "근접만 하는",
+  size: "몸집 작은",
+  camouflage: "눈에 띄는",
 };
 const ADJ_KEYS: readonly AdjKey[] = [
   "speed",
@@ -59,6 +63,8 @@ const ADJ_KEYS: readonly AdjKey[] = [
   "wings",
   "venom",
   "ranged",
+  "size",
+  "camouflage",
 ];
 
 const dietNoun = (diet: number): string =>
@@ -67,8 +73,12 @@ const dietNoun = (diet: number): string =>
 /** 게놈 → "이 종은 어떤 종이었나" 한 줄 묘사 (가장 두드러진 형질 1~2개 + 식성). */
 export function describeSpecies(genome: Genome): string {
   const t = genome.traits;
-  // echo·wings·venom·ranged 는 기본 0 인 특화 형질이라 0 기준 편차(있으면 특징). 나머지는 50 기준.
-  const zeroBase = (k: AdjKey): boolean => k === "echo" || k === "wings" || k === "venom" || k === "ranged";
+  // 능력 형질은 기본 0 이라 **0 기준 편차**(있으면 특징, 없으면 무특징)로 본다. 50 기준으로 재면
+  // "안 찍은 능력"이 전부 "두드러지게 낮음"으로 읽혀 모든 종이 "혼자 다니는 눈에 띄는 …"이 된다.
+  // v7 에서 herding(무리 성향)이 능력 형질로 강등되고 camouflage(은신)가 생겨 여기에 함께 들어왔다.
+  const zeroBase = (k: AdjKey): boolean =>
+    k === "echo" || k === "wings" || k === "venom" || k === "ranged" ||
+    k === "herding" || k === "camouflage";
   const scored = ADJ_KEYS.map((k) => ({ k, dev: zeroBase(k) ? t[k] : t[k] - 50 })).sort(
     (a, b) => Math.abs(b.dev) - Math.abs(a.dev),
   );
