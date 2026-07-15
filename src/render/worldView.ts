@@ -21,7 +21,7 @@ import {
   DEFAULT_LOOK,
   type CreatureLook,
 } from "@/render/creatureLook";
-import { grassVisionFactor, nightVisionFactor, sizeDev, effectiveCamo } from "@/sim/behavior";
+import { grassVisionFactor, nightVisionFactor, sizeDev, effectiveCamo, herdShielded } from "@/sim/behavior";
 import type { CosmeticId } from "@/game/achievements";
 
 export class WorldView {
@@ -314,6 +314,20 @@ export class WorldView {
         this.playerG
           .circle(rx, ry, 12.5)
           .stroke({ color: 0xaaffb0, width: 1.6, alpha: 0.35 + 0.25 * ringPulse });
+        // **무리 방어 표식** — 이 개체가 뭉친 무리 안이라 포식자가 표적으로 안 삼는가(herdShielded).
+        // "포식자가 안 온다"는 그 자체로는 눈에 안 보이는 방어라(backlog ⑥), 방패가 선 개체에 파란 보호
+        // 링을 얹어 "이 무리는 지금 지켜지고 있다"를 그 자리에서 보인다. 초록 강조 고리(내 종)와 다른
+        // 색·바깥 반경이라 겹쳐도 구분된다. 무리에서 떨어지면(낙오) 링이 사라져 "혼자면 위험"도 읽힌다.
+        // herding 문턱을 먼저 걸러 야생·비무리 종의 판정 비용(격자 순회)을 0 으로 둔다(herdShielded 내부).
+        if (e.genome.traits.herding > SIM.herdShieldThreshold && herdShielded(e, world)) {
+          // 초록 강조 고리(반경 12.5)보다 바깥에 둬 두 링이 분리돼 보이게 한다. 파란빛 채움 + 밝은
+          // 스트로크로 "보호막" 느낌. 숨쉬듯 맥동해 살아 있는 방어로 읽힌다.
+          const sh = 0.5 + 0.5 * Math.sin((this.frame % 84) / 84 * Math.PI * 2);
+          this.playerG.circle(rx, ry, 18).fill({ color: 0x8fbcff, alpha: 0.06 + 0.06 * sh });
+          this.playerG
+            .circle(rx, ry, 17.5)
+            .stroke({ color: 0xcfe6ff, width: 2, alpha: 0.38 + 0.28 * sh });
+        }
         // 도전 과제 꾸밈 — 효과는 전혀 없다. 무지갯빛은 몸 색이라 아래 sp.tint 에서 처리한다.
         this.drawCosmetic(rx, ry, e.id);
         // 신생아 표식 — 갓 태어난 내 종 개체를 amber 링(nb-pulse: 밖으로 퍼지며 옅어짐)으로 잠깐 강조.

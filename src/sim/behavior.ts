@@ -248,7 +248,9 @@ export function herdShieldedBy(herding: number, neighbors: number): boolean {
  * 무리 성향이 임계 이하면 이웃을 세지도 않는다(순회 비용 0 — 야생종이 전부 여기서 빠진다).
  * rng 미사용·격자 순회 순서 고정 → 결정론 보존.
  */
-function herdShielded(p: Entity, world: World): boolean {
+// export: 렌더(worldView)가 "방패가 선 무리 개체"에 보호 링을 그리려고 같은 판정을 읽는다. 시각=로직
+// 1:1 — 화면의 방패 링이 실제로 포식자가 안 오는 개체와 정확히 일치해야 한다(안 그러면 표시가 거짓말).
+export function herdShielded(p: Entity, world: World): boolean {
   const herding = p.genome.traits.herding;
   if (herding <= SIM.herdShieldThreshold) return false;
   const neighbors = world.grid.countMatching(
