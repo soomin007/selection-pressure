@@ -271,6 +271,25 @@ describe("갈래 전용 카드 (슬레이 더 스파이어식 직업 풀)", () =
     expect(drawn.length).toBe(3);
     expect(drawn.every((c) => c.lineage === undefined)).toBe(true);
   });
+
+  it("여덟 갈래 모두 몸집(size) 전용 카드를 하나씩 갖는다 (v7 새 축 · backlog ③)", () => {
+    for (const l of LINEAGES) {
+      const own = lineageCards(l);
+      const sizeCards = own.filter((c) => (c.effects.size ?? 0) !== 0);
+      expect(sizeCards.length, `${l} 갈래에 몸집 전용 카드가 없다`).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("갈래마다 전용 카드는 5장이다(드묾3·귀함1·아주귀함1) — 갈래 풀 피라미드 보존", () => {
+    for (const l of LINEAGES) {
+      const own = lineageCards(l);
+      expect(own.length, `${l}`).toBe(5);
+      const n = (r: string): number => own.filter((c) => cardRarity(c) === r).length;
+      expect(n("uncommon"), `${l} 드묾`).toBe(3);
+      expect(n("rare"), `${l} 귀함`).toBe(1);
+      expect(n("epic"), `${l} 아주귀함`).toBe(1);
+    }
+  });
 });
 
 describe("레벨 보정 (세대가 오를수록 높은 등급이 자주 뜬다)", () => {
@@ -697,6 +716,46 @@ describe("무의미 카드 필터(cardRedundant)", () => {
     expect(cardRedundant(card("swift"), t)).toBe(false); // 아직 상한 아래
     t.speed = 100;
     expect(cardRedundant(card("swift"), t)).toBe(true); // 상한
+  });
+
+  it("초음파로 사는 종에겐 시야가 주효과인 카드가 무의미하다 (backlog ② 낚시 방지)", () => {
+    const eye = defaultGenome().traits; // echo 0 — 눈으로 산다
+    const ear = defaultGenome().traits;
+    ear.echo = 70; // 초음파 관문을 켠 종(눈이 멀었다)
+    ear.vision = 0;
+    // 시야가 주효과인 카드 — 눈으로 사는 종엔 유효, 귀로 사는 종엔 무의미(뽑아도 감지 반경이 안 바뀐다).
+    for (const id of ["keen", "eagle_eye", "hunter_eye", "farsight"]) {
+      expect(cardRedundant(card(id), eye), `${id}: 눈으로 사는 종엔 유효`).toBe(false);
+      expect(cardRedundant(card(id), ear), `${id}: 귀로 사는 종엔 무의미`).toBe(true);
+    }
+  });
+
+  it("시야가 부수효과인 카드(우뚝한 몸집·매복 사냥꾼)는 초음파 종에게도 남는다 — 주효과가 시야가 아니므로", () => {
+    const ear = defaultGenome().traits;
+    ear.echo = 70;
+    ear.vision = 0;
+    // looming = 몸집 주효과 / ambush = 시야·공격 동률(시야가 유일 주효과가 아니다). 이들의 진짜 이득은 안 죽는다.
+    expect(cardRedundant(card("looming"), ear)).toBe(false); // 몸집이 주효과
+  });
+
+  it("초음파를 살짝만 켠 종(echo ≤ 55)은 아직 눈도 쓰므로 시야 카드가 유효하다", () => {
+    const t = defaultGenome().traits;
+    t.echo = 40; // 강함 문턱(55) 아래 — 눈과 귀를 함께 쓴다
+    expect(cardRedundant(card("keen"), t)).toBe(false);
+  });
+
+  it("초음파 종도 드래프트 후보 3장이 고갈되지 않는다(시야 카드를 빼도 풀이 넉넉하다)", () => {
+    const ear = defaultGenome().traits;
+    ear.echo = 70;
+    ear.vision = 0;
+    const allow = (c: Card): boolean => cardPrereqMet(c, ear) && !cardRedundant(c, ear);
+    const rng = new Rng("echo-pool");
+    for (let i = 0; i < 40; i++) {
+      const drawn = drawCards(rng, 3, allow);
+      expect(drawn.length).toBe(3);
+      // 뽑힌 카드에 "시야가 주효과"인 죽은 카드가 없다(낚시가 사라졌다).
+      for (const c of drawn) expect(cardRedundant(c, ear), `${c.id} 가 낚시로 떴다`).toBe(false);
+    }
   });
 });
 

@@ -152,6 +152,12 @@ export function cardPrereqMet(card: Card, traits: Traits): boolean {
   return traits[card.requiresTrait.key] >= card.requiresTrait.min;
 }
 
+// 초음파로 사는 종(echo 가 이 값보다 큼)은 눈이 죽은 값이다 — sim 의 감지 반경은 max(시야, 초음파)이고
+// (behavior.chooseGoal), 초음파 관문이 echo 70 을 주므로 초음파가 늘 이긴다. 그래서 시야를 아무리 올려도
+// 아무 일도 안 일어난다. 이 문턱은 traitDisplay 의 초음파 "강함"(55)과 같은 값이다 — 순환 import 를
+// 피하려고 여기 상수로 둔다(둘이 어긋나면 "강함이라 표시된 종에게 시야 카드가 여전히 뜨는" 불일치가 난다).
+const ECHO_BLINDS_VISION = 55;
+
 /**
  * 이 카드가 지금 종에게 무의미한가(드래프트에서 뺄지) — 가장 크게 올리는 형질(주 효과)이 이미 "쓸모의
  * 상한"에 닿아 더 골라도 이득이 없으면 true. 손해/헛 카드가 드래프트에 반복해 뜨는 걸 막는다.
@@ -180,6 +186,11 @@ export function cardRedundant(card: Card, t: Traits): boolean {
     }
   }
   if (!primary) return false;
+  // **초음파 시야 낚시 방지(backlog ②).** 눈이 먼 초음파 종에게 시야가 주효과인 카드는 죽은 카드다 —
+  // 뽑아도 감지 반경이 안 바뀐다("매의 눈" "천리안" "넓은 시야" 등). 후보에서 뺀다. 부수 효과(속도 등)를
+  // 잃는 손해가 조금 있지만, "시야를 원해서 뽑았는데 아무 일도 안 일어나는" 낚시가 더 나쁘다.
+  // 초음파를 조금만 켠 종(echo ≤ 55)은 아직 눈도 쓰므로 안 뺀다.
+  if (primary === "vision" && t.echo > ECHO_BLINDS_VISION) return true;
   const cur = t[primary];
   if (primary === "wings") return cur >= SIM.flyThreshold; // 관문: 이미 날면 무의미
   if (primary === "swimming") return cur >= SIM.swimThreshold; // 관문: 이미 헤엄치면 무의미(값은 문턱 위서 무효)
@@ -703,48 +714,56 @@ export const CARD_POOL: readonly Card[] = [
   { id: "omni_hardy", name: "끈질긴 혈통", desc: "어떤 땅에서도 버틴다. 새끼가 늘고 몸도 단단해지지만, 몸이 무거워 걸음이 느려진다.", effects: { fertility: 20, attack: 12, metabolism: 6, speed: -8 }, lineage: "omni" },
   { id: "omni_anywhere", name: "어디서나 산다", desc: "기본기가 두루 오른다. 뛰어난 것은 없지만 모자란 것도 없다. 다만 싸움에는 약해진다.", effects: { speed: 14, vision: 14, herding: 12, fertility: 10, attack: -10 }, lineage: "omni" },
   { id: "omni_apex", name: "만능의 정점", desc: "무엇 하나 빠지지 않는 종이 된다. 힘도 눈도 발도 오르지만, 큰 몸을 건사하느라 새끼는 드물게 친다.", effects: { speed: 16, vision: 18, attack: 16, herding: 12, fertility: -12, metabolism: 8 }, lineage: "omni" },
+  { id: "omni_sturdy", name: "듬직한 몸", desc: "몸이 커져 웬만해선 잡아먹히지 않고, 높은 데서 멀리 살핀다. 대신 큰 몸을 건사하느라 많이 먹는다.", effects: { size: 16, vision: 8 }, lineage: "omni" },
 
   // ── 다산 초식 무리: 수로 밀어붙인다. 번식·무리가 정체성.
   { id: "herd_boom", name: "폭발적 번식", desc: "새끼를 쉴 새 없이 친다. 그만큼 기운을 많이 쓴다.", effects: { fertility: 26, metabolism: 8, attack: -6 }, lineage: "herd" },
   { id: "herd_wall", name: "촘촘한 대열", desc: "빈틈없이 붙어 다녀 외톨이가 생기지 않는다. 대신 굼뜨다.", effects: { herding: 22, vision: 8, speed: -5 }, lineage: "herd" },
   { id: "herd_nursery", name: "젖먹이 무리", desc: "무리가 새끼를 함께 돌본다. 수가 불어나며 결속도 단단해진다.", effects: { fertility: 18, herding: 18, speed: -6 }, lineage: "herd" },
   { id: "herd_swarm", name: "밀물 같은 무리", desc: "솎여도 메우고 또 메운다. 수가 곧 방패다.", effects: { fertility: 24, herding: 16, vision: 8, attack: -8 }, lineage: "herd" },
+  { id: "herd_runt", name: "작고 많은 떼", desc: "몸이 작아지고 새끼가 는다. 적게 먹으며 부지런히 수를 불리지만, 작은 몸은 쉽게 잡아먹힌다. 수로 메운다.", effects: { size: -16, fertility: 14 }, lineage: "herd" },
 
   // ── 느긋한 정찰자: 멀리 보고 아껴 쓴다. 시야·저대사가 정체성.
   { id: "scout_far", name: "멀리 보는 눈", desc: "누구보다 멀리 본다. 위협도 먹이도 먼저 알아채지만, 멀리 살피느라 무리에서 떨어져 다닌다.", effects: { vision: 26, metabolism: -6, herding: -10 }, lineage: "scout" },
   { id: "scout_thrift", name: "아끼는 몸", desc: "기운을 거의 쓰지 않아 굶주림에 오래 버틴다.", effects: { metabolism: -18, fertility: 8 }, lineage: "scout" },
   { id: "scout_watch", name: "지평선의 감시자", desc: "무리 전체가 사방을 살핀다. 아무도 몰래 다가오지 못하지만, 살피느라 걸음이 더뎌진다.", effects: { vision: 22, herding: 14, speed: -8 }, lineage: "scout" },
   { id: "scout_sage", name: "오래 사는 현자", desc: "느리게 살아 오래 버틴다. 눈은 더없이 밝아진다.", effects: { vision: 26, metabolism: -14, fertility: 10, speed: -6 }, lineage: "scout" },
+  { id: "scout_low", name: "낮게 엎드리기", desc: "몸을 낮추고 작게 만들어 눈에 덜 띈다. 멀리 살피면서 스스로는 좀처럼 들키지 않는다.", effects: { size: -14, vision: 12 }, lineage: "scout" },
 
   // ── 날쌘 육식 사냥꾼: 잡아야 산다. 속도·공격이 정체성.
   { id: "hunter_throat", name: "목을 무는 법", desc: "급소를 문다. 한 번의 사냥이 훨씬 잘 먹힌다.", effects: { attack: 22, speed: 8, fertility: -6 }, lineage: "hunter" },
   { id: "hunter_relent", name: "지치지 않는 추격", desc: "끝까지 쫓는다. 대신 늘 배가 고프다.", effects: { speed: 18, metabolism: 10 }, lineage: "hunter" },
   { id: "hunter_lone", name: "단독 사냥꾼", desc: "혼자 사냥한다. 무리를 버린 대신 발과 이빨을 얻는다.", effects: { attack: 18, speed: 14, herding: -16 }, lineage: "hunter" },
   { id: "hunter_apex", name: "정점의 포식자", desc: "이 땅에서 가장 무서운 것이 된다. 쫓기던 것들이 이제 쫓긴다.", effects: { attack: 26, speed: 16, vision: 12, fertility: -10 }, lineage: "hunter" },
+  { id: "hunter_bulk", name: "거대한 사냥꾼", desc: "몸이 커져 더 큰 먹잇감도 제압하고, 스스로는 좀처럼 당하지 않는다. 대신 걸음이 무겁고 많이 먹는다.", effects: { size: 18, attack: 8 }, lineage: "hunter" },
 
   // ── 원거리 사냥꾼: 다가서지 않고 친다. 사거리·시야가 정체성.
   { id: "ranged_reach", name: "더 멀리 쏘기", desc: "더 먼 곳까지 닿는다. 다가설 필요가 없다.", effects: { ranged: 18, vision: 10 }, lineage: "ranged" },
   { id: "ranged_aim", name: "조준하는 눈", desc: "겨눈 것을 놓치지 않는다. 멀리 보고 정확히 친다.", effects: { vision: 20, ranged: 12, speed: -4 }, lineage: "ranged" },
   { id: "ranged_volley", name: "연달아 쏘기", desc: "쉼 없이 쏘아댄다. 가까이 붙기 전에 쓰러뜨린다.", effects: { ranged: 22, attack: 10, herding: -6 }, lineage: "ranged" },
   { id: "ranged_sniper", name: "보이지 않는 사수", desc: "상대가 알아채기도 전에 끝낸다. 사거리와 눈이 함께 극에 달한다.", effects: { ranged: 24, vision: 22, attack: 8, fertility: -8 }, lineage: "ranged" },
+  { id: "ranged_bastion", name: "진 치는 몸", desc: "몸이 커져 자리를 지키며 멀리서 쏜다. 다가오는 것을 버티고, 스스로는 좀처럼 밀리지 않는다. 대신 걸음이 무겁다.", effects: { size: 16, ranged: 6 }, lineage: "ranged" },
 
   // ── 바다 개척자: 물이 삶터다. 헤엄과 바다 사냥이 정체성(수영값은 문턱 위에선 안 오르므로 다른 형질로).
   { id: "sea_current", name: "해류를 타다", desc: "물살을 읽어 힘 안 들이고 나아간다.", effects: { speed: 18, metabolism: -8 }, lineage: "sea" },
   { id: "sea_hunt", name: "먼바다 사냥", desc: "탁 트인 바다에서 사냥한다. 눈과 이빨이 함께 자란다.", effects: { attack: 16, vision: 14, herding: -6 }, lineage: "sea" },
   { id: "sea_school", name: "물고기 떼처럼", desc: "한 덩어리로 헤엄쳐 포식자를 혼란시킨다. 뭉쳐 도망칠 뿐 맞서 싸우지는 않는다.", effects: { herding: 22, speed: 12, fertility: 10, attack: -12 }, lineage: "sea" },
   { id: "sea_leviathan", name: "바다의 주인", desc: "이 바다에 맞설 것이 없다. 몸도 힘도 바다에 맞게 커진다.", effects: { attack: 22, speed: 16, vision: 14, metabolism: -6, fertility: -8 }, lineage: "sea" },
+  { id: "sea_behemoth", name: "바다의 거수", desc: "물이 큰 몸을 떠받쳐, 뭍에서라면 굼떴을 덩치가 바다에서는 거뜬하다. 커진 만큼 잘 안 잡아먹히고, 기운도 아껴 쓴다.", effects: { size: 20, metabolism: -6 }, lineage: "sea" },
 
   // ── 하늘 개척자: 하늘이 삶터다. 날개·시야가 정체성.
   { id: "sky_updraft", name: "상승 기류", desc: "바람을 타 힘 안 들이고 오래 난다.", effects: { wings: 12, metabolism: -10 }, lineage: "sky" },
   { id: "sky_stoop", name: "매의 강하", desc: "하늘에서 내리꽂아 덮친다.", effects: { speed: 16, attack: 14, fertility: -6 }, lineage: "sky" },
   { id: "sky_soar", name: "높이 나는 눈", desc: "더 높이 날아 온 땅을 굽어본다.", effects: { wings: 10, vision: 22 }, lineage: "sky" },
   { id: "sky_lord", name: "하늘의 지배자", desc: "하늘에 맞설 것이 없다. 날개도 눈도 극에 달한다.", effects: { wings: 16, vision: 20, speed: 12, metabolism: -8 }, lineage: "sky" },
+  { id: "sky_hollow", name: "가벼운 뼈", desc: "몸이 작고 가벼워져 더 오래, 더 힘 안 들이고 난다. 대신 작은 몸은 쉽게 당한다.", effects: { size: -16, wings: 6 }, lineage: "sky" },
 
   // ── 독 살갗: 삼킨 자가 죽는다. 독이 정체성.
   { id: "venom_thick", name: "짙은 독", desc: "독이 더 독해진다. 무는 자가 먼저 쓰러진다.", effects: { venom: 20 }, lineage: "venom" },
   { id: "venom_armor", name: "독가시 갑옷", desc: "온몸이 독가시다. 건드리는 것마다 중독된다.", effects: { venom: 14, attack: 12, speed: -6 }, lineage: "venom" },
   { id: "venom_bright", name: "경고하는 빛깔", desc: "화려한 빛깔이 \"먹으면 죽는다\"고 알린다. 아무도 다가오지 않는다.", effects: { venom: 16, herding: 12, fertility: 10 }, lineage: "venom" },
   { id: "venom_untouchable", name: "누구도 삼키지 못한다", desc: "이 종을 먹고 살아남은 것은 없다. 독이 극에 달한다.", effects: { venom: 26, attack: 14, herding: 10, speed: -8 }, lineage: "venom" },
+  { id: "venom_bloated", name: "비대한 독샘", desc: "몸이 커지며 독샘도 함께 부푼다. 큰 덩치는 잘 안 잡아먹히고, 삼킨 자에게 더 짙은 독을 남긴다. 대신 걸음이 무겁다.", effects: { size: 14, venom: 8 }, lineage: "venom" },
 ];
 
 // (v7: CARD_BODY_SCALE 제거 — "외형만 키우는 별도 배율"은 몸집(size) 형질이 생기기 전의 임시방편이었다.
@@ -852,40 +871,50 @@ export const CARD_RARITY: Record<string, Rarity> = {
   // ── 도전 과제 전용 (등급은 전설) — 몸 자체가 달라진다.
   titan: "legendary",
 
-  // ── 갈래 전용 (32장) — 그 갈래로 시작한 종에게만 나온다. 갈래마다 **드묾 2 · 귀함 1 · 아주 귀함 1**:
+  // ── 갈래 전용 (40장) — 그 갈래로 시작한 종에게만 나온다. 갈래마다 **드묾 3 · 귀함 1 · 아주 귀함 1**:
   // "기본기 → 정체성 심화 → 그 길의 정점" 순으로 한 판의 성장 곡선이 된다. 이 분포여야 갈래 풀
   // (공통 + 전용)도 피라미드를 지킨다(cards.test 가 갈래별로 검사한다). 전설은 없다 — 전설은
   // "못 하던 걸 하게 되는" 공통 관문의 자리라, 갈래 전용이 그 자리를 뺏으면 안 된다.
+  // v7 새 축: 갈래마다 **몸집(size)** 전용 카드를 하나씩 더했다(드묾) — 갈래 정체성에 맞춰 크게/작게.
+  // 은신은 관문(camouflage 문턱)이 있어 갈래 전용으로 넣으면 관문의 유일성을 흔든다 → 몸집만 넣는다.
   omni_gut: "uncommon",
   omni_hardy: "uncommon",
+  omni_sturdy: "uncommon", // 몸집 +16 / 시야 +8 — 균형 갈래의 안정형(크고 멀리 본다)
   omni_anywhere: "rare",
   omni_apex: "epic",
   herd_boom: "rare",
   herd_wall: "uncommon",
   herd_nursery: "uncommon",
+  herd_runt: "uncommon", // 몸집 -16 / 번식 +14 — 작고 많이(다산 극대화)
   herd_swarm: "epic",
   scout_far: "rare",
   scout_thrift: "uncommon",
   scout_watch: "uncommon",
+  scout_low: "uncommon", // 몸집 -14 / 시야 +12 — 작아 안 띄고 멀리 본다
   scout_sage: "epic",
   hunter_throat: "uncommon",
   hunter_relent: "uncommon",
+  hunter_bulk: "uncommon", // 몸집 +18 / 공격 +8 — 큰 몸 포식자(속도 정체성의 대안)
   hunter_lone: "rare",
   hunter_apex: "epic",
   ranged_reach: "uncommon",
   ranged_aim: "uncommon",
+  ranged_bastion: "uncommon", // 몸집 +16 / 원거리 +6 — 버티며 쏘는 진지형
   ranged_volley: "rare",
   ranged_sniper: "epic",
   sea_current: "uncommon",
   sea_hunt: "uncommon",
+  sea_behemoth: "uncommon", // 몸집 +20 / 대사 -6 — 바다가 큰 몸을 떠받친다
   sea_school: "rare",
   sea_leviathan: "epic",
   sky_updraft: "uncommon",
   sky_stoop: "uncommon",
+  sky_hollow: "uncommon", // 몸집 -16 / 날개 +6 — 가벼워야 잘 난다
   sky_soar: "rare",
   sky_lord: "epic",
   venom_thick: "uncommon",
   venom_armor: "uncommon",
+  venom_bloated: "uncommon", // 몸집 +14 / 독 +8 — 큰 몸에 짙은 독
   venom_bright: "rare",
   venom_untouchable: "epic",
 };
