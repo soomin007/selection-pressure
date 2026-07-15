@@ -1004,6 +1004,27 @@ describe("식성(diet) 섭취 효율 (제너럴리스트 페널티)", () => {
     expect(huntEfficiency(75)).toBeGreaterThanOrEqual(huntEfficiency(50));
     expect(huntEfficiency(50)).toBeGreaterThan(huntEfficiency(40));
   });
+
+  it("채집 절벽 완화 — diet 70 위에서 채집 효율이 뚝 끊기지 않고 완만히 0 으로 준다", () => {
+    // 예전엔 canGraze 이진 게이트가 diet 70 에서 채집을 **0 으로** 끊어 순수 육식이 굶어 죽었다.
+    // 이제 70(0.7)에서 100(0)까지 tail 로 이어진다 — 순수 육식의 굶주림 fallback.
+    expect(grazeEfficiency(GRAZE)).toBeCloseTo(1 - PEN); // diet 70 = tail 시작점(0.7, 불변)
+    expect(grazeEfficiency(100)).toBe(0); // 완전 육식은 풀에서 아무것도 못 얻는다
+    // 70~100 단조 감소(절벽이 아니라 경사).
+    expect(grazeEfficiency(74)).toBeLessThan(grazeEfficiency(70));
+    expect(grazeEfficiency(85)).toBeLessThan(grazeEfficiency(74));
+    expect(grazeEfficiency(100)).toBeLessThan(grazeEfficiency(90));
+    // diet 74(순수 육식 경계)는 fallback 이 유의미하게 남는다(즉사 방지). diet 90 은 미미(사냥 위주).
+    expect(grazeEfficiency(74)).toBeGreaterThan(0.3);
+    expect(grazeEfficiency(90)).toBeLessThan(0.1);
+  });
+
+  it("채집 tail 은 야생 포식자(diet 85)에게 거의 안 간다 — 생태 보존(카드 프리셋은 diet 70 아래라 불변)", () => {
+    // falloff 가 급해 diet 85 는 채집 ~9% 뿐이다. 이게 커지면 야생 포식자가 채집으로 살찌워져 생태가
+    // 통째로 바뀐다(프로브로 확인한 안전선). diet 70 아래(모든 프리셋·야생 초식)는 tail 이 없어 완전 불변.
+    expect(grazeEfficiency(85)).toBeLessThan(0.15);
+    expect(grazeEfficiency(69)).toBeCloseTo(1 - PEN * ((69 - HUNT) / (GRAZE - HUNT))); // 70 아래는 옛 공식 그대로
+  });
 });
 
 describe("사냥 스퍼트 (질주형 육식 — speed 가 사냥법이 된다)", () => {

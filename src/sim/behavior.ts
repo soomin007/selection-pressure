@@ -39,15 +39,23 @@ export function flyDrainMultiplier(wings: number): number {
 /**
  * 식성(diet) 섭취 효율 — 특화할수록 자기 먹이에서 온전히(1.0), 잡식일수록 페널티(제너럴리스트 페널티).
  *
- * 곡선은 특화 끝에서 1.0 으로 "평평"하다: 순수 초식(diet ≤ dietHuntMin)은 채집 1.0, 순수 육식
- * (diet ≥ dietGrazeMax)은 사냥 1.0. 잡식 구간(dietHuntMin~dietGrazeMax)에서만 효율이 떨어진다.
- * 이렇게 두면 야생 초식종(diet 12~30)·포식자(85)는 효율이 안 변해 통과기준 밸런스가 **잡식 기준선에만**
- * 걸린다(밸런스 이동 최소화). 문턱(diet 35·70)과도 정렬 — 사냥·채집을 막 시작하는 잡식 끝이 가장 비효율.
+ * 곡선: 순수 초식(diet ≤ dietHuntMin)은 채집 1.0, 잡식 구간(dietHuntMin~dietGrazeMax)에서 효율이 떨어진다
+ * (잡식 끝 diet 70 에서 0.7). 야생 초식종(diet 12~30)은 효율이 안 변해 통과기준 밸런스가 **잡식 기준선에만**
+ * 걸린다(밸런스 이동 최소화).
+ *
+ * **diet 70 위(순수 육식)는 채집 효율이 완만히 0 으로 감소한다(2026-07-15 채집 절벽 완화).** 예전엔 여기가
+ * `canGraze` 이진 게이트로 **뚝 끊겨**(70% → 0%) 순수 육식이 사냥 사이에 굶어 죽었다 — 이제 사냥이 주력이되
+ * 풀도 조금 뜯어 연명하는 fallback 이 된다. tail 이 급해(carnGrazeFalloff) 야생 포식자(diet 85)에겐 채집
+ * 이득이 거의 안 간다(생태 보존): diet 74=46% · 85=9% · 100=0%.
  */
 export function grazeEfficiency(diet: number): number {
   const span = SIM.dietGrazeMax - SIM.dietHuntMin;
   const omni01 = clamp((diet - SIM.dietHuntMin) / span, 0, 1); // 0=순수 초식 … 1=채집 상한(잡식 끝)
-  return 1 - SIM.dietSpecializationPenalty * omni01;
+  const base = 1 - SIM.dietSpecializationPenalty * omni01; // diet 70 에서 0.7
+  if (diet <= SIM.dietGrazeMax) return base;
+  // 순수 육식 구간(70~100): base 에서 완만히 0 으로. over=0(diet 70)→1(diet 100).
+  const over = clamp((diet - SIM.dietGrazeMax) / Math.max(1, TRAIT_MAX - SIM.dietGrazeMax), 0, 1);
+  return base * (1 - over) ** SIM.carnGrazeFalloff;
 }
 export function huntEfficiency(diet: number): number {
   const span = SIM.dietGrazeMax - SIM.dietHuntMin;
@@ -333,9 +341,12 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const drain =
     SIM.metabolismDrain * (0.5 + metabolism01) * flyDrainMultiplier(t.wings) * sizeDrainFactor(t.size);
   const maxAge = SIM.baseMaxAge;
-  // 식성 구간: 초식(<35) 식물만 / 잡식(35~70) 둘 다 / 육식(>70) 사냥만.
+  // 식성 구간: 초식(<35) 식물만 / 잡식(35~70) 둘 다 / 육식(>70) 사냥 위주 + 채집 fallback(효율이 남는 한).
   const canHunt = t.diet > SIM.dietHuntMin;
-  const canGraze = t.diet < SIM.dietGrazeMax;
+  // 채집 게이트를 효율 기반으로(2026-07-15 채집 절벽 완화). 예전엔 `diet < 70` 이진이라 순수 육식이 채집을
+  // 아예 못 해 굶어 죽었다. 이제 채집 효율이 유의미하게 남아 있으면(diet ~86 까지) 풀도 뜯는다. 극단 육식
+  // (diet 87+, 효율 <6%)은 무의미한 채집 이동을 안 하게 여기서 끊는다 — grazeEfficiency 의 tail 과 한 쌍이다.
+  const canGraze = grazeEfficiency(t.diet) > SIM.grazeMinEff;
   // 수영 종만 물에 들어가고(산은 못 넘되 비행은 예외), 물 전용(수영 아주 높음)은 육지에 못 올라온다.
   const canSwim = t.swimming >= SIM.swimThreshold;
   const canLand = t.swimming < SIM.aquaticOnlyThreshold;
