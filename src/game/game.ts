@@ -10,7 +10,7 @@ import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, isApexTrait, MUTABLE_TRAITS, TRAIT_CEILING, TRAIT_KEYS, type Genome, type MutableTrait, type Traits } from "@/sim/genome";
 import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, PRESET_CARDS, PRESET_LINEAGE, LINEAGE_NAME, type Card, type Lineage } from "@/game/cards";
 import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
-import { GAME, SCHEDULE, eraDifficulty, type StageKind } from "@/game/config";
+import { GAME, SCHEDULE, eraDifficulty, eraScarcity, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, bossEligible, BOSS_TYPES, type BossType } from "@/sim/boss";
@@ -619,6 +619,7 @@ export class Game {
       this.areaScale,
       this.champions,
       this.currentMapType,
+      eraScarcity(this.era), // 시대가 지날수록 세계가 척박(먹이↓·재생↓) — era 0 = 1.0 = 기존과 동일
     );
   }
 

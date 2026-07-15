@@ -2,7 +2,7 @@
 // Game 은 순수 TS(Pixi 무관)라 headless 로 런을 끝까지 돌려 관찰할 수 있다.
 import { describe, it, expect } from "vitest";
 import { Game, type RunHistory } from "@/game/game";
-import { eraDifficulty } from "@/game/config";
+import { eraDifficulty, eraScarcity } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { CARD_POOL, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
 import { Rng } from "@/sim/rng";
@@ -87,6 +87,16 @@ describe("난이도 루프(승리 후 진행)", () => {
     expect(eraDifficulty(5) - eraDifficulty(4)).toBeGreaterThan(eraDifficulty(2) - eraDifficulty(1));
     // 음수 방어(0으로 clamp).
     expect(eraDifficulty(-3)).toBe(1);
+  });
+
+  it("세계 척박화도 era 0 은 1.0(첫 시대 보존), 이후 복리로 오른다", () => {
+    expect(eraScarcity(0)).toBe(1); // 첫 시대 = 먹이 척박 없음(기존 밸런스·통과기준 테스트 보존)
+    expect(eraScarcity(1)).toBeCloseTo(1.14);
+    expect(eraScarcity(2)).toBeCloseTo(1.14 ** 2);
+    expect(eraScarcity(5)).toBeCloseTo(1.14 ** 5);
+    expect(eraScarcity(-2)).toBe(1); // 음수 방어
+    // 위협 강도와 척박화가 함께 오른다 — 위협이 세지는 동시에 회복이 억제된다(사용자: "시대가 안 어려워진다").
+    expect(eraScarcity(3)).toBeGreaterThan(eraScarcity(1));
   });
 
   it("보스 강도(즉사 반경)가 난이도 배율로 커진다 — 첫 시대는 불변", () => {

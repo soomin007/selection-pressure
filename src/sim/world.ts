@@ -114,6 +114,10 @@ export class World {
   heat = 0; // 대멸종 폭염
   foodRegrowMultiplier = 1; // 대멸종 대가뭄
   plagueRate = 0; // 대멸종 대역병 (매 틱 솎임 확률 — 번식/수로 메워야 버틴다)
+  /** 시대별 먹이 척박도(1=기본). 클수록 먹이가 적고 재생이 느리다 — 시대가 지날수록 위협 사이 회복이
+   * 억제돼 무리가 얇아진 채 다음 시련·대멸종을 맞는다. game 이 eraScarcity(era) 로 넘긴다(sim 은 era 를
+   * 모른다). era 0(첫 시대)=1.0 이라 기존 밸런스·통과기준 테스트가 그대로 보존된다. */
+  readonly foodScarcity: number;
 
   /** 내 종이 무엇에 죽었나 — 런 내내 누적(정산 가독성, §7). World 는 런마다 새로 만들어지므로 런 단위 집계. */
   readonly deaths: DeathTally = emptyDeathTally();
@@ -131,10 +135,12 @@ export class World {
     areaScale = 1,
     champions: ChampionSeed[] = [],
     mapType: MapType = "continent",
+    foodScarcity = 1,
   ) {
     this.width = width;
     this.height = height;
     this.areaScale = areaScale;
+    this.foodScarcity = foodScarcity;
     // 기본값 "대륙" = 지금까지의 유일한 맵(지형 파라미터·먹이 배수 전부 기존값) → 기존 밸런스·테스트 보존.
     this.mapType = mapType;
     this.rng = new Rng(seed);
@@ -376,7 +382,12 @@ export class World {
     // 비옥할수록 많이. this.rng 사용(스폰 전이라 생물 스폰 rng 와 이어짐 — 소비 횟수는 환경칸판과 동일).
     // 먹이 수는 "고정"이라, 땅이 좁은 맵(군도·대양)에선 같은 먹이가 좁은 땅에 몰려 밀도가 되레 치솟는다
     // → 맵 종류의 landFoodScale 로 함께 줄여 밀도를 지킨다(대륙 = 1.0 = 기존과 동일).
-    const count = Math.round(SIM.foodPatches * this.areaScale * mapKind(this.mapType).landFoodScale);
+    // 시대가 지날수록 육지 먹이가 준다(foodScarcity) — 위협 사이 회복을 억제한다. era 0 = 1.0 = 기존과 동일.
+    // ⚠ count 가 바뀌면 spawnFoodOnTiles 의 rng 소비가 달라져 그 뒤 스트림이 밀린다. 하지만 각 시대는
+    // 독립 시드(`-era{n}`)라 무방하고, era 0(scarcity 1)에선 count 가 안 바뀌어 기존 밸런스가 보존된다.
+    const count = Math.round(
+      (SIM.foodPatches * this.areaScale * mapKind(this.mapType).landFoodScale) / this.foodScarcity,
+    );
     this.spawnFoodOnTiles(this.rng, count, false, (kind, fertility) =>
       kind === TILE.land ? 0.15 + fertility : 0,
     );

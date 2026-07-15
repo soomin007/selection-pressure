@@ -500,7 +500,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       } else {
         // 채집 수입 = 기본 × 식성 효율(초식 특화일수록 온전히, 잡식은 페널티).
         e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy * grazeEfficiency(t.diet));
-        food.regrowTimer = Math.round(SIM.foodRegrowTicks * world.foodRegrowMultiplier);
+        // 시대가 지날수록(foodScarcity) 먹힌 풀이 더 느리게 자란다 — 큰 무리일수록 고갈이 빨라 회복이 억제된다.
+        food.regrowTimer = Math.round(SIM.foodRegrowTicks * world.foodRegrowMultiplier * world.foodScarcity);
       }
       food.available = false;
       e.targetFood = null;
