@@ -528,6 +528,8 @@ export class WorldView {
         this.drawLayerCue(boss.roam, p.x, p.y, 10);
         this.drawBossCreature(p.x, p.y, p.hx, p.hy, 10, boss.type, hc.dot, boss.killRadius, pulse);
       }
+      // 격퇴 체력 바 — 무리가 카운터 형질로 보스를 깎는 게 보인다(레이드 켜진 보스만).
+      if (boss.maxHp > 0) this.drawRaidBar(cx, cy - maxR - 28, boss.hp, boss.maxHp, hc.ring, pulse);
     } else if (boss && boss.killRadius > 0) {
       const bx = boss.prevX + (boss.x - boss.prevX) * interp;
       const by = boss.prevY + (boss.y - boss.prevY) * interp;
@@ -535,6 +537,7 @@ export class WorldView {
       // 단일 추격자(치타·큰수리·상어) — 크게 그려 "한 마리 맹수가 돌진한다"를 강조.
       this.drawLayerCue(boss.roam, bx, by, 20);
       this.drawBossCreature(bx, by, boss.x - boss.prevX, boss.y - boss.prevY, 20, boss.type, hc.dot, boss.killRadius, pulse);
+      if (boss.maxHp > 0) this.drawRaidBar(bx, by - Math.max(30, boss.killRadius + 16), boss.hp, boss.maxHp, hc.ring, pulse);
     }
 
     // 낮/밤 + 대멸종 화면 틴트 (둘 다 overlayG — 밤을 먼저 깔고 대멸종 틴트를 그 위에)
@@ -569,6 +572,27 @@ export class WorldView {
     }
     if (tintAlpha > 0)
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });
+  }
+
+  /**
+   * 레이드 격퇴 체력 바 — 보스 위에 뜬다. 무리가 카운터 형질(공격·속도·무리·시야·번식)로 보스를 깎으면
+   * 바가 줄어, "직접 잡고 있다"가 화면에서 읽힌다(대백과 의존 금지 — CLAUDE.md). era 0·독 안개(maxHp 0)는
+   * 안 뜬다(버티기 게이트). 다 깎이면 즉시 통과라 hp≤0 상태는 렌더되지 않는다(항상 hp>0 동안만 보인다).
+   */
+  private drawRaidBar(cx: number, bottomY: number, hp: number, maxHp: number, color: number, pulse: number): void {
+    const w = 46;
+    const h = 5;
+    const frac = Math.max(0, Math.min(1, hp / maxHp));
+    const x0 = cx - w / 2;
+    const y0 = bottomY - h;
+    // 트랙(깎인 부분) — 어두운 바탕으로 대비. 폰에서도 바가 어디 있는지 보이게 옅은 테두리.
+    this.bossG.roundRect(x0 - 1, y0 - 1, w + 2, h + 2, 3).fill({ color: 0x101018, alpha: 0.7 });
+    // 남은 격퇴 체력 — 보스 색으로 채워 "이 보스의 기세"임을 묶는다. 얼마 안 남으면(30% 이하) 맥동해
+    // "곧 격퇴"를 알린다(주목).
+    const nearDown = frac <= 0.3;
+    const fillAlpha = nearDown ? 0.75 + pulse * 0.25 : 0.95;
+    if (frac > 0.01) this.bossG.roundRect(x0, y0, w * frac, h, 2).fill({ color, alpha: fillAlpha });
+    this.bossG.roundRect(x0, y0, w, h, 2).stroke({ color: 0xffffff, width: 1, alpha: 0.35 });
   }
 
   /**
