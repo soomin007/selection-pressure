@@ -24,6 +24,9 @@ import type { Rng } from "@/sim/rng";
 import type { Traits } from "@/sim/genome";
 import { TRAIT_MAX } from "@/sim/genome";
 import { SIM } from "@/sim/params";
+// 무리 방어 판정을 render(worldView)·boss 격퇴가 같은 소스로 읽는다(시각=로직 1:1). behavior 도 boss 를
+// import 하지만 둘 다 함수 안에서만 쓰므로 순환 import 가 안전하다(모듈 로드 시점엔 서로를 안 부른다).
+import { herdShielded } from "@/sim/behavior";
 
 export type BossType =
   | "chaser"
@@ -42,6 +45,17 @@ export type BossType =
  * 나는 종(날개≥flyThreshold)은 늘 하늘에 떠 있고, 물 타일 위의 종은 물속에, 나머지는 땅에 있다.
  */
 export type Layer = "air" | "land" | "water";
+
+/**
+ * 레이드 카운터 형질 — 이 보스를 격퇴하는 무리 형질. 형질마다 잘 잡는 보스가 달라 빌드 선택이 깊어진다.
+ *   attack   = 강한 개체(전사)가 맞서 반격(약탈자). **1단계**: behavior.memberKills 에서 hp 를 깎는다.
+ *   speed    = 빠른 무리가 안 잡히고 따돌린다(추격자·말벌·상어). **2단계**: stepBoss 매 틱 집계.
+ *   group    = 뭉친 무리(herdShielded)라 외톨이를 못 노린다(외톨이 사냥꾼). **2단계**.
+ *   vision   = 무리 시야가 넓어 매복을 미리 본다(그림자 매복자·하늘의 사냥꾼). **2단계**.
+ *   fertility= 수·번식으로 압도한다(사나운 무리). **2단계**.
+ *   null     = 격퇴 없음(독 안개=전역이라 못 때린다 → 저대사 버티기 유지).
+ */
+export type RaidCounter = "attack" | "speed" | "group" | "vision" | "fertility" | null;
 
 /** 개체가 지금 있는 층. 나는 종은 지형과 무관하게 늘 하늘(공중에 떠 있다). */
 export function entityLayer(traits: Traits, terrain: Terrain, x: number, y: number): Layer {
@@ -111,12 +125,14 @@ export interface Boss extends Mover {
   members: BossMember[];
   /**
    * 레이드 격퇴 체력 — 무리가 이 보스의 카운터 형질을 충족하면 깎여, 0 이 되면 격퇴(즉시 통과).
-   * **maxHp 0 = 레이드 없음**(기존 버티기 게이트 그대로): 첫 시대(era 0)·전역 시련(독 안개)·아직 카운터를
-   * 안 붙인 보스가 여기 해당. hp 를 깎는 방식은 카운터별로 다르다 — 공격 카운터는 전사가 직접 때리고
-   * (behavior.raidDesired), 나머지 카운터는 무리 형질 집계(2단계 stepBoss).
+   * **maxHp 0 = 레이드 없음**(기존 버티기 게이트 그대로): 첫 시대(era 0)·전역 시련(독 안개, raidCounter null)이
+   * 여기 해당. hp 를 깎는 방식은 카운터별로 다르다 — 공격(약탈자)은 전사가 물린 순간 반격하고
+   * (behavior→memberKills), 나머지 초식 카운터(속도·무리·시야·번식)는 매 틱 무리 형질 충족도 집계(stepBoss).
    */
   hp: number;
   maxHp: number;
+  /** 이 보스를 격퇴하는 카운터 형질(위 RaidCounter). null=격퇴 없음(독 안개). */
+  raidCounter: RaidCounter;
 }
 
 interface Preset
@@ -151,6 +167,7 @@ const PRESETS: Record<BossType, Preset> = {
     cullAttackResist: 0,
     cullGroupResist: 0,
     cullVisionResist: 0,
+    raidCounter: "speed", // 빠른 무리가 따돌리면 지쳐 물러난다
     threat: "아주 빠르게 쫓아와 닿으면 잡아먹습니다. 땅 위만 달립니다.",
     counter: "속도가 높아야 도망칠 수 있습니다. 날거나 물에 들면 닿지 않습니다.",
   },
@@ -166,6 +183,7 @@ const PRESETS: Record<BossType, Preset> = {
     cullAttackResist: 0,
     cullGroupResist: 0,
     cullVisionResist: 0,
+    raidCounter: null, // 풀에서 제외된 보스(BOSS_TYPES 에 없음) — 격퇴 대상 아님
     threat: "느리지만 거대해 가까이 가면 잡아먹습니다.",
     counter: "시야가 넓어야 일찍 보고 피합니다.",
   },
@@ -183,6 +201,7 @@ const PRESETS: Record<BossType, Preset> = {
     cullAttackResist: 0,
     cullGroupResist: 0,
     cullVisionResist: 0,
+    raidCounter: "fertility", // 수·번식으로 압도하면 물러난다
     memberCount: 6, // 떼답게 여럿(응집+분리로 무리 대형을 이뤄 몰려온다). 건강한 큰 무리만 버틴다.
     threat: "사나운 무리가 사방에서 몰려들어 닿는 개체를 물어뜯습니다. 땅 위만 기어옵니다.",
     counter: "수가 많고 빠르게 번식해야 솎여도 메우며 버팁니다.",
@@ -199,6 +218,7 @@ const PRESETS: Record<BossType, Preset> = {
     cullAttackResist: 0,
     cullGroupResist: 0,
     cullVisionResist: 0,
+    raidCounter: null, // 전역 재난이라 때릴 대상이 없다 → 저대사 버티기(격퇴 없음)
     // 독 안개는 **전역 재난**이라 층위가 없다 — 하늘로도 물로도 못 피한다(온 땅을 덮는다).
     huntLayers: ["air", "land", "water"],
     roam: "air", // 위치가 무의미(전역). 지형에 안 걸리게 하늘로 둔다.
@@ -217,6 +237,7 @@ const PRESETS: Record<BossType, Preset> = {
     cullAttackResist: 0.9, // 근접 시 공격력 높으면 반격해 생존(확률: kill = rng < 1 - this×attack)
     cullGroupResist: 0,
     cullVisionResist: 0,
+    raidCounter: "attack", // 전사(공격력≥문턱)가 물린 순간 반격해 격퇴(1단계, memberKills)
     memberCount: 5, // 떼로 달려든다
     threat: "뿔 달린 짐승 떼가 달려들어 약한 개체부터 들이받습니다. 땅 위만 달립니다.",
     counter: "공격력(이빨·뿔)이 높아야 맞서 싸워 버팁니다.",
@@ -233,6 +254,7 @@ const PRESETS: Record<BossType, Preset> = {
     cullAttackResist: 0,
     cullGroupResist: 0.9, // 근접 시 무리 성향 높으면 함께 뭉쳐 생존(확률: kill = rng < 1 - this×herding)
     cullVisionResist: 0,
+    raidCounter: "group", // 뭉친 무리(herdShielded)면 외톨이를 못 노려 물러난다
     memberCount: 3, // 무리 사이를 헤집는 소수 사냥꾼
     threat: "늑대가 무리에서 떨어진 외톨이를 노려 잡아갑니다. 땅 위만 달립니다.",
     counter: "무리 성향이 높아 함께 뭉쳐 다녀야 안전합니다.",
@@ -249,6 +271,7 @@ const PRESETS: Record<BossType, Preset> = {
     cullAttackResist: 0,
     cullGroupResist: 0,
     cullVisionResist: 0.9, // 근접해도 시야 높으면 미리 보고 피한다(수풀 밖). 수풀 안에선 저항 감소(memberKills)
+    raidCounter: "vision", // 무리 시야가 넓어 매복을 미리 보면 사냥을 접고 물러난다
     memberCount: 4, // 수풀에 숨어 덮치는 매복자들(수풀 스폰이라 위협이 분산돼 수를 늘림)
     threat: "표범이 수풀에 숨어 있다 다가온 개체를 덮칩니다. 땅 위만 노립니다.",
     counter: "시야가 넓어야 일찍 보고 피합니다. 수풀 안에선 시야가 안 통합니다.",
@@ -273,6 +296,7 @@ const PRESETS: Record<BossType, Preset> = {
     cullAttackResist: 0,
     cullGroupResist: 0,
     cullVisionResist: 0,
+    raidCounter: "vision", // 무리 시야가 넓어 미리 알아채면 헛되이 맴돌다 물러난다
     huntLayers: ["air", "land"],
     roam: "air",
     grassCover: true, // 수풀에 든 땅 개체는 못 본다(엄폐)
@@ -295,6 +319,7 @@ const PRESETS: Record<BossType, Preset> = {
     cullGroupResist: 0,
     cullVisionResist: 0,
     cullSpeedResist: 0.9, // 빠르면 쏘이기 전에 벗어난다(확률: kill = rng >= this×speed)
+    raidCounter: "speed", // 빠른 무리가 계속 벗어나면 떼가 지쳐 흩어진다
     huntLayers: ["air", "land"],
     roam: "air",
     memberCount: 6,
@@ -315,6 +340,7 @@ const PRESETS: Record<BossType, Preset> = {
     cullAttackResist: 0,
     cullGroupResist: 0,
     cullVisionResist: 0,
+    raidCounter: "speed", // 빠른 무리가 헤엄쳐 따돌리면 지쳐 물러난다
     huntLayers: ["water"],
     roam: "water",
     threat: "물속을 도는 상어가 헤엄치는 개체를 통째로 삼킵니다. 뭍은 건드리지 못합니다.",
@@ -446,10 +472,11 @@ export function createBoss(
     path: [],
     pathGoalTile: -1,
     members,
-    // 레이드 격퇴 체력 — **1단계: 공격 카운터 보스(약탈자, cullAttackResist>0)만** 켠다. 약탈자는 즉사
-    // 반경이 작아(8) 근접 전사가 안전하게 팬다 — 카운터 형질(공격력)이 자연히 맞는다. 다른 카운터(속도·무리·
-    // 시야·번식)는 2단계에서 붙인다. era 0 이면 raidEnabled=false 라 0(첫 시대 버티기 유지).
-    ...(raidEnabled && p.cullAttackResist > 0
+    raidCounter: p.raidCounter,
+    // 레이드 격퇴 체력 — **era 1+ 이고 카운터가 있는 보스(raidCounter != null)** 에 준다. 공격(약탈자)은
+    // 전사 반격(memberKills)으로, 초식 카운터(속도·무리·시야·번식)는 매 틱 무리 충족도 집계(stepBoss)로 깎인다.
+    // era 0(raidEnabled=false)·독 안개(raidCounter null)는 0 → 기존 버티기 게이트 유지(era 0 밸런스 보존).
+    ...(raidEnabled && p.raidCounter !== null
       ? { maxHp: SIM.bossMaxHp * diffMul, hp: SIM.bossMaxHp * diffMul }
       : { maxHp: 0, hp: 0 }),
   };
@@ -616,15 +643,70 @@ export function bossRaidable(boss: Boss): boolean {
   return boss.maxHp > 0 && boss.hp > 0;
 }
 
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/** 한 형질 값(0~100)을 floor~100 구간에서 0~1 충족도로. floor 이하는 0(야생·기본이 미미하게 걸린다). */
+function traitFulfill(value: number, floor: number): number {
+  return clamp01((value - floor) / (TRAIT_MAX - floor));
+}
+
+/**
+ * 레이드 2단계 — 초식 카운터(속도·무리·시야·번식)가 매 틱 격퇴 체력을 깎는다. 무리가 자기 형질을
+ * **시연하며 버티면**(빠르게 따돌리고·뭉치고·미리 보고·수로 메우면) 보스가 지쳐 물러난다. 공격(약탈자,
+ * 전사 반격=memberKills)과 격퇴 없음(독 안개, raidCounter null)은 여기서 제외한다.
+ */
+function applyRaidWear(boss: Boss, world: World): void {
+  if (!bossRaidable(boss)) return;
+  const counter = boss.raidCounter;
+  if (counter === null || counter === "attack") return;
+
+  // huntable 한 내 종 개체의 카운터 충족도 합/수. 층위가 안 겹치면(하늘로 피한 종) 위협도 격퇴도 아니다.
+  let sum = 0;
+  let n = 0;
+  for (const e of world.entities) {
+    if (!e.alive || !e.species.isPlayer) continue;
+    if (!bossCanHunt(boss, e, world)) continue;
+    n += 1;
+    const t = e.genome.traits;
+    if (counter === "speed") sum += traitFulfill(t.speed, SIM.raidSpeedFloor);
+    else if (counter === "vision") sum += traitFulfill(t.vision, SIM.raidVisionFloor);
+    else if (counter === "fertility") sum += traitFulfill(t.fertility, SIM.raidFertFloor);
+    else if (counter === "group") sum += herdShielded(e, world) ? 1 : 0;
+  }
+  if (n === 0) return; // 무리가 통째로 사냥 층 밖(피난) — 위협도 격퇴도 없다(버티기 타이머로).
+
+  // 충족도(0~1). 대부분 평균(무리 크기 무관 — 큰 무리가 거저 이기지 않고, 형질이 높은 무리만 제 시간에 격퇴).
+  let score: number;
+  if (counter === "group") {
+    // 무리 = 뭉친(방패) 비율. 목표 비율에 닿으면 완전 카운터(무리 전체가 방패는 cohesion 상 어렵다).
+    score = clamp01(sum / n / SIM.raidShieldTarget);
+  } else {
+    // 속도·시야·번식 = 평균 형질 충족도. floor 이하 무리는 0 이라 격퇴가 안 일어난다(잘못된 빌드 배제).
+    score = sum / n;
+  }
+
+  boss.hp -= SIM.raidWearRate * score;
+  if (boss.hp < 0) boss.hp = 0;
+}
+
 /** 보스 한 틱. 타입별로 다른 압박을 가한다. */
 export function stepBoss(boss: Boss, world: World): void {
   // 개체형 떼 시련(사나운 무리·약탈자·외톨이 사냥꾼·그림자 매복자·말벌 떼) — 실제 개체가 몰려와 문다.
   // 무엇이 죽느냐만 타입별로 다르다(memberKills): 무조건/공격력 반격/무리 이탈/시야 회피/속도 회피.
   if (boss.members.length > 0) {
     stepMemberHorde(boss, world);
-    return;
+  } else {
+    stepSingleBoss(boss, world);
   }
+  // 레이드 2단계 — 초식 카운터(속도·무리·시야·번식)는 매 틱 무리의 카운터 충족도만큼 격퇴 체력을 깎는다.
+  // 공격(약탈자)은 전사 반격(memberKills)이 이미 깎으므로 여기선 제외한다.
+  applyRaidWear(boss, world);
+}
 
+/** 단일 개체 보스(떼가 아닌 chaser·poison 등) 한 틱 — 이동 후 즉사/전역 솎기/에너지 흡수. */
+function stepSingleBoss(boss: Boss, world: World): void {
   moveTowardNearest(boss, world);
 
   if (boss.killRadius > 0) {

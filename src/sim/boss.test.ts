@@ -234,14 +234,28 @@ describe("보스 레이드 1단계 — 공격 카운터 보스(약탈자)를 전
     return { defeats, hpLeft };
   }
 
-  it("레이드는 era 1+(raidEnabled)만 켜진다 — 약탈자만 격퇴 체력이 생기고, 첫 시대는 0", () => {
+  it("레이드는 era 1+(raidEnabled)만 켜진다 — era 0 은 모든 보스가 버티기(maxHp 0)", () => {
     const w = new World("env-1", W, H, defaultGenome());
-    // era 0(raidEnabled=false): 모든 보스 maxHp 0(기존 버티기).
-    expect(createBoss("raider", W, H, w.terrain, 1, false).maxHp).toBe(0);
-    // era 1+(raidEnabled=true): 공격 카운터 보스(약탈자)만 격퇴 체력. 다른 카운터는 2단계라 아직 0.
+    // era 0(raidEnabled=false): 모든 보스 maxHp 0(기존 버티기 게이트 — era 0 밸런스 보존).
+    for (const t of BOSS_TYPES) {
+      expect(createBoss(t, W, H, w.terrain, 1, false).maxHp, `${t} 가 era 0 에서 격퇴 체력을 가졌다`).toBe(0);
+    }
+    // era 1+(raidEnabled=true): 카운터가 있는 보스는 격퇴 체력, 독 안개(전역)만 여전히 0(버티기).
     expect(createBoss("raider", W, H, w.terrain, 1, true).maxHp).toBeGreaterThan(0);
-    expect(createBoss("chaser", W, H, w.terrain, 1, true).maxHp).toBe(0); // 속도 카운터 — 2단계
-    expect(createBoss("poison", W, H, w.terrain, 1, true).maxHp).toBe(0); // 전역 시련 — 버티기
+    expect(createBoss("chaser", W, H, w.terrain, 1, true).maxHp).toBeGreaterThan(0); // 속도 카운터(2단계)
+    expect(createBoss("poison", W, H, w.terrain, 1, true).maxHp).toBe(0); // 전역 시련 — 때릴 대상 없음(버티기)
+  });
+
+  it("독 안개(전역)를 뺀 모든 풀 보스는 era 1+ 에 격퇴 체력이 있다(카운터 누락 방지)", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    for (const t of BOSS_TYPES) {
+      const b = createBoss(t, W, H, w.terrain, 1, true);
+      if (t === "poison") expect(b.raidCounter).toBeNull();
+      else {
+        expect(b.raidCounter, `${t} 에 카운터가 안 붙었다`).not.toBeNull();
+        expect(b.maxHp, `${t} 에 격퇴 체력이 없다`).toBeGreaterThan(0);
+      }
+    }
   });
 
   it("공격형(전사)은 약탈자를 격퇴하고, 초식(공격력 낮음)은 못 잡는다", () => {
@@ -285,5 +299,64 @@ describe("보스 레이드 1단계 — 공격 카운터 보스(약탈자)를 전
     expect(bossSurvivors(tune({ vision: 90 }), "raptor")).toBeGreaterThan(
       bossSurvivors(tune({ vision: 30 }), "raptor"),
     );
+  });
+});
+
+describe("보스 레이드 2단계 — 초식 카운터(속도·무리·시야·번식)가 격퇴 체력을 깎는다", () => {
+  /** era 1+ 에서 이 게놈이 이 보스를 격퇴한 시드 수(매 틱 무리 충족도가 hp 를 깎아 0 이 되는가). */
+  function defeats(genome: Genome, type: BossType): number {
+    let count = 0;
+    for (const seed of SEEDS) {
+      const w = new World(seed, W, H, genome);
+      for (let i = 0; i < 750; i++) w.step();
+      w.boss = createBoss(type, W, H, w.terrain, 1, true);
+      for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) {
+        w.step();
+        if (w.boss && w.boss.maxHp > 0 && w.boss.hp <= 0) {
+          count += 1;
+          break;
+        }
+      }
+    }
+    return count;
+  }
+
+  it("속도 카운터(추격자·말벌): 빠른 무리는 격퇴하고, 느린 무리는 한 번도 못 잡는다(따돌림)", () => {
+    const fast = tune({ speed: 88, vision: 55 });
+    const slow = tune({ speed: 45, vision: 85 }); // 속도 floor — 시야가 높아도 속도 카운터는 안 통한다
+    for (const t of ["chaser", "hornet"] as const) {
+      expect(defeats(fast, t), `빠른 무리가 ${t} 를 못 잡았다`).toBeGreaterThanOrEqual(SEEDS.length - 1);
+      expect(defeats(slow, t), `느린 무리가 ${t} 를 잡아 버렸다(엉뚱한 격퇴)`).toBe(0);
+    }
+  });
+
+  it("시야 카운터(매복자·큰수리): 넓은 시야는 격퇴하고, 좁은 시야는 못 잡는다(경계)", () => {
+    const sharp = tune({ vision: 90 });
+    const blind = tune({ vision: 40 });
+    for (const t of ["stalker", "raptor"] as const) {
+      expect(defeats(sharp, t), `넓은 시야가 ${t} 를 못 잡았다`).toBeGreaterThanOrEqual(SEEDS.length - 1);
+      expect(defeats(blind, t), `좁은 시야가 ${t} 를 잡아 버렸다`).toBe(0);
+    }
+  });
+
+  it("번식 카운터(사나운 무리): 다산 무리는 격퇴하고, 저번식은 못 잡는다(수로 메운다)", () => {
+    const fecund = tune({ fertility: 92, herding: 60, diet: 20 });
+    const barren = tune({ fertility: 40, diet: 20 });
+    expect(defeats(fecund, "swarm"), "다산 무리가 사나운 무리를 못 잡았다").toBeGreaterThanOrEqual(SEEDS.length - 1);
+    expect(defeats(barren, "swarm"), "저번식이 사나운 무리를 잡아 버렸다").toBe(0);
+  });
+
+  it("무리 카운터(외톨이 사냥꾼): 뭉친 무리만 격퇴하고, 흩어진 무리는 못 잡는다(뭉침)", () => {
+    const tight = tune({ herding: 95, fertility: 70, diet: 20 });
+    const loose = tune({ herding: 40 }); // 방패 문턱(85) 아래 — 뭉침 카운터 무효
+    // 외톨이는 가장 elusive 한 카운터(무리가 시드에 따라 안 뭉치면 못 잡고 버틴다) — 적어도 한 시드는 격퇴.
+    expect(defeats(tight, "isolation"), "뭉친 무리가 외톨이를 한 번도 못 잡았다").toBeGreaterThan(0);
+    expect(defeats(loose, "isolation"), "흩어진 무리가 외톨이를 잡아 버렸다").toBe(0);
+  });
+
+  it("엉뚱한 형질로는 격퇴 못 한다 — 공격 특화는 속도 보스(추격자)를 못 잡는다(카운터가 맞아야)", () => {
+    // 공격력만 높고 속도는 floor 인 빌드: 약탈자(공격 카운터)는 잡아도 추격자(속도)는 못 잡는다.
+    const bruiser = tune({ attack: 90, speed: 45 });
+    expect(defeats(bruiser, "chaser"), "공격 특화가 추격자를 격퇴했다(카운터 불일치)").toBe(0);
   });
 });
