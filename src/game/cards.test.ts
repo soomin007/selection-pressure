@@ -592,6 +592,69 @@ describe("날개 계열 — 관문과 강화가 실제로 다르다", () => {
   });
 });
 
+describe("초음파·은신 계열 확장 — 관문을 켠 종에게만 자기 계열 강화가 열린다", () => {
+  const find = (id: string): Card => {
+    const c = CARD_POOL.find((x) => x.id === id);
+    if (!c) throw new Error(`카드 없음: ${id}`);
+    return c;
+  };
+
+  it("초음파 강화(메아리 걸음·음파 사냥)는 눈으로 사는 종에겐 안 나오고, 귀로 사는 종에게만 나온다", () => {
+    const eye = defaultGenome(); // echo 0
+    const ear = defaultGenome();
+    ear.traits.echo = 70; // 초음파 관문을 켠 상태
+    for (const id of ["echo_step", "echo_maw"]) {
+      const card = find(id);
+      expect(card.requiresTrait?.key).toBe("echo");
+      expect(cardPrereqMet(card, eye.traits)).toBe(false);
+      expect(cardPrereqMet(card, ear.traits)).toBe(true);
+    }
+  });
+
+  it("초음파 강화는 시야를 안 건드린다 — 눈이 먼 종의 카드이므로(시야를 주면 죽은 값이다)", () => {
+    for (const id of ["echo_step", "echo_maw"]) {
+      expect(find(id).effects.vision ?? 0).toBe(0);
+    }
+  });
+
+  it("초음파를 켠 종은 이제 자기 계열 강화를 실제로 뽑는다(시야 낚시 완화)", () => {
+    // echo 종의 드래프트를 여러 번 돌려, 초음파 강화(bat_ear·echo_step·echo_maw)가 실제로 후보에 든다.
+    const ear = defaultGenome();
+    ear.traits.echo = 70;
+    ear.traits.vision = 0; // 초음파는 눈을 버린다
+    const echoBoosts = new Set(["bat_ear", "echo_step", "echo_maw"]);
+    const allow = (c: Card): boolean => cardPrereqMet(c, ear.traits);
+    let sawEchoBoost = 0;
+    const rng = new Rng("echo-draft");
+    for (let i = 0; i < 60; i++) {
+      const drawn = drawCards(rng, 3, allow);
+      if (drawn.some((c) => echoBoosts.has(c.id))) sawEchoBoost += 1;
+    }
+    expect(sawEchoBoost).toBeGreaterThan(0); // 눈이 먼 종이 뽑을 자기 계열 카드가 실제로 존재한다
+  });
+
+  it("은신 강화(살금살금·숨은 이빨)는 숨을 줄 아는 종에게만 나온다", () => {
+    const plain = defaultGenome(); // camouflage 0
+    const hidden = defaultGenome();
+    hidden.traits.camouflage = 46; // 은신 관문을 켠 상태
+    for (const id of ["camo_creep", "camo_fang"]) {
+      const card = find(id);
+      expect(card.requiresTrait?.key).toBe("camouflage");
+      expect(cardPrereqMet(card, plain.traits)).toBe(false);
+      expect(cardPrereqMet(card, hidden.traits)).toBe(true);
+    }
+  });
+
+  it("몸집 조합 카드는 실제로 몸집을 바꾼다(양방향)", () => {
+    const up = defaultGenome();
+    applyCard(up, find("stout")); // 큰 몸
+    expect(up.traits.size).toBeGreaterThan(50);
+    const down = defaultGenome();
+    applyCard(down, find("runt")); // 작은 몸
+    expect(down.traits.size).toBeLessThan(50);
+  });
+});
+
 describe("무의미 카드 필터(cardRedundant)", () => {
   const withSwim = (v: number): Traits => {
     const t = defaultGenome().traits;

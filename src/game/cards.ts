@@ -339,6 +339,26 @@ export const CARD_POOL: readonly Card[] = [
     desc: "몸이 작아진다. 재빠르고 적게 먹으며 새끼를 자주 치지만, 그만큼 쉽게 잡아먹힌다.",
     effects: { size: -22, speed: 8 },
   },
+  // 몸집 조합 — v7 축을 받쳐 주는 카드가 없었다(bulk·small_swift·giant·titan 넷뿐). 몸집을 다른
+  // 형질과 엮어 "큰데 추위에 강한 곰" "작고 많이 낳는 설치류" "키 커서 멀리 보는 기린" 같은 결을 만든다.
+  {
+    id: "stout",
+    name: "곰의 체구",
+    desc: "몸이 크고 추위에 강해진다. 큰 덩치는 좀처럼 잡아먹히지 않고, 두꺼운 몸이 추위를 견딘다. 대신 큰 몸을 건사하느라 많이 먹는다.",
+    effects: { size: 16, metabolism: 10 },
+  },
+  {
+    id: "runt",
+    name: "작고 많은 것들",
+    desc: "몸이 작아지고 새끼가 는다. 적게 먹으며 부지런히 새끼를 치지만, 작은 몸은 쉽게 잡아먹힌다.",
+    effects: { size: -16, fertility: 12 },
+  },
+  {
+    id: "looming",
+    name: "우뚝한 몸집",
+    desc: "키가 커져 멀리 내다본다. 높은 데서 먹이와 위협을 먼저 알아채고, 큰 덩치로 덜 잡아먹힌다.",
+    effects: { size: 14, vision: 8 },
+  },
 
   // 트레이드오프 (큰 상승 + 작은 대가)
   {
@@ -541,6 +561,23 @@ export const CARD_POOL: readonly Card[] = [
     effects: { camouflage: 28, size: -8 },
     requiresTrait: { key: "camouflage", min: 1 }, // 이미 숨을 줄 아는 종에게만
   },
+  // 은신 강화 두 갈래 — 숨는 종의 방향을 가른다. 「살금살금」은 숨어서 다가가는 발, 「숨은 이빨」은
+  // 매복해 덮치는 이빨. 둘 다 이미 숨을 줄 아는 종(camo 관문을 뽑은 종)에게만 나온다(requiresTrait).
+  // 은신 종은 시야도 그대로라 시야 카드가 안 죽는다 — 초음파와 달리 자기 계열이 넉넉하다.
+  {
+    id: "camo_creep",
+    name: "살금살금",
+    desc: "둘레에 녹아든 채 소리 없이 다가간다. 상대가 알아채기 전에 코앞에 선다. 이미 숨을 줄 아는 종만 얻는다.",
+    effects: { camouflage: 24, speed: 8 },
+    requiresTrait: { key: "camouflage", min: 1 },
+  },
+  {
+    id: "camo_fang",
+    name: "숨은 이빨",
+    desc: "숨어 기다리다 덮친다. 보이지 않는 곳에서 급소를 문다. 이미 숨을 줄 아는 종만 얻는다.",
+    effects: { camouflage: 20, attack: 16 },
+    requiresTrait: { key: "camouflage", min: 1 },
+  },
 
   // 바다 적응 — 수영을 키우면 바다 먹이를 먹는다(육상 종은 못 먹는 무경쟁 틈새).
   {
@@ -599,6 +636,23 @@ export const CARD_POOL: readonly Card[] = [
     desc: "귀가 극에 달한다. 사방을 아주 멀리까지 훤히 듣는다. 이미 초음파로 사는 종만 얻을 수 있다.",
     effects: { echo: 30 },
     requiresTrait: { key: "echo", min: 1 }, // 이미 귀로 사는 종의 강화(관문이 아니다)
+  },
+  // 초음파 강화 두 갈래 — 눈이 먼 종이 뽑을 자기 계열 카드다. 초음파를 켜면 시야가 0 이 돼 시야 조합
+  // 카드가 통째로 죽는데(known_issues "초음파 시야 낚시"), 그 자리를 이 카드들이 메운다. 「메아리 걸음」은
+  // 소리로 길을 읽는 발, 「음파 사냥」은 반향으로 급소를 그리는 이빨. 둘 다 시야를 안 건드린다(귀로 산다).
+  {
+    id: "echo_step",
+    name: "메아리 걸음",
+    desc: "소리로 앞을 읽어 거침없이 내닫는다. 어둠 속에서도 부딪히지 않는다. 이미 초음파로 사는 종만 얻는다.",
+    effects: { echo: 22, speed: 10 },
+    requiresTrait: { key: "echo", min: 1 },
+  },
+  {
+    id: "echo_maw",
+    name: "음파 사냥",
+    desc: "반향으로 먹잇감의 급소를 그려내 문다. 눈으로 사냥하지 않는 종의 방식이다. 이미 초음파로 사는 종만 얻는다.",
+    effects: { echo: 20, attack: 16 },
+    requiresTrait: { key: "echo", min: 1 },
   },
 
   // 전투 형질 (P5) — 독침(방어 독: 잡아먹으면 포식자 중독)·원거리(사거리). 기본 0 이라 큰 값(카드로 켜야 바뀐다).
@@ -723,7 +777,7 @@ export const CARD_POOL: readonly Card[] = [
  *   `fins`(+22) 가 대표 관문이고 `webbed` 는 보조(+16, 걸음도 조금)라 등급을 나눴다.
  */
 export const CARD_RARITY: Record<string, Rarity> = {
-  // ── 흔함 (16장) — 대가가 없다. 무조건 좋으니 고민할 게 없다.
+  // ── 흔함 (19장) — 대가가 없다. 무조건 좋으니 고민할 게 없다.
   swift: "common",
   keen: "common",
   thrifty: "common", // 대사 -14 = 기운 아낌(이득)
@@ -740,8 +794,11 @@ export const CARD_RARITY: Record<string, Rarity> = {
   beast_metab: "common",
   swift_breeder: "common",
   stoic: "common",
+  stout: "common", // 몸집 +16 / 대사 +10 — 대가는 시뮬이 준다(큰 몸=대식). 대사는 절충(추위 강·더위 약)
+  runt: "common", // 몸집 -16 / 번식 +12 — 작아지는 건 특성(적게 먹고 자주 낳되 쉽게 잡아먹힘)
+  looming: "common", // 몸집 +14 / 시야 +8 — 둘 다 이득 방향(대가는 큰 몸의 대식으로 시뮬이 준다)
 
-  // ── 드묾 (10장) — 작은 대가를 치르거나, 방향을 살짝 틀거나, 능력을 보조한다.
+  // ── 드묾 (13장) — 작은 대가를 치르거나, 방향을 살짝 틀거나, 능력을 보조한다.
   eagle_eye: "uncommon", // 시야 +20 / 걸음 +5
   small_swift: "uncommon", // 몸집 -22 / 걸음 +8 — 빠르고 많이 낳지만 쉽게 잡아먹힌다
   sprint: "uncommon", // 대사 +7
@@ -753,8 +810,12 @@ export const CARD_RARITY: Record<string, Rarity> = {
   thick_fur: "uncommon",
   nest_herd: "uncommon", // 걸음 -6
   webbed: "uncommon", // 수영 보조
+  echo_step: "uncommon", // 초음파 강화 + 걸음(귀로 사는 종 전용 — requiresTrait echo)
+  camo_creep: "uncommon", // 은신 강화 + 걸음(숨는 종 전용 — requiresTrait camouflage)
 
-  // ── 귀함 (9장) — 크게 얻고 뚜렷이 잃는다. 무엇을 포기할지 고르게 만든다.
+  // ── 귀함 (11장) — 크게 얻고 뚜렷이 잃는다. 무엇을 포기할지 고르게 만든다.
+  //    (초음파·은신 강화 둘은 카드엔 대가가 안 적혀 있다 — 능력형이라 대가는 sim 이 준다: 눈 먼 종은
+  //     시야 카운터에 무력하고, 숨는 종은 큰 몸이면 못 숨는다. 그래서 등급 규칙에서 능력형 예외.)
   hunter_eye: "rare", // 시야 +24 / 번식 -6
   brood: "rare", // 번식 +22 / 걸음 -7
   loner: "rare", // 걸음 +20 / 무리 -18
@@ -764,6 +825,8 @@ export const CARD_RARITY: Record<string, Rarity> = {
   apex_scout: "rare", // 시야·공격 +16 / 걸음 -7
   locust: "rare", // 번식 +28 / 공격 -6
   great_fangs: "rare", // 공격 +26 / 걸음 -8
+  echo_maw: "rare", // 초음파 강화 + 공격(귀로 사냥 — 대가는 sim: 눈이 멀어 시야 카운터에 무력)
+  camo_fang: "rare", // 은신 강화 + 공격(매복 포식 — 대가는 sim: 큰 몸은 못 숨는다)
 
   // ── 아주 귀함 (8장) — 이 한 장으로 종의 방향이 정해진다. 능력형은 그 능력을 극단까지 민다.
   cheetah: "epic", // 극단 속도
