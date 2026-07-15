@@ -212,6 +212,55 @@ describe("보스 층위 — 실제로 그렇게 굴러간다", () => {
     expect(bossDeaths(FLYING, "raptor")).toBeGreaterThan(0);
     expect(bossDeaths(FLYING, "hornet")).toBeGreaterThan(0);
   });
+});
+
+describe("보스 레이드 1단계 — 공격 카운터 보스(약탈자)를 전사가 반격으로 격퇴", () => {
+  /** 약탈자 레이드 결과 — era 1+ 에서 공격형이 격퇴하는가(격퇴 시드 수 + 체력 남음). */
+  function raidResult(genome: Genome, diffMul: number, raidEnabled: boolean): { defeats: number; hpLeft: number } {
+    let defeats = 0;
+    let hpLeft = 0;
+    for (const seed of SEEDS) {
+      const w = new World(seed, W, H, genome);
+      for (let i = 0; i < 750; i++) w.step();
+      w.boss = createBoss("raider", W, H, w.terrain, diffMul, raidEnabled);
+      let killed = false;
+      for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) {
+        w.step();
+        if (w.boss && w.boss.maxHp > 0 && w.boss.hp <= 0) { killed = true; break; }
+      }
+      if (killed) defeats += 1;
+      hpLeft += Math.max(0, w.boss?.hp ?? 0);
+    }
+    return { defeats, hpLeft };
+  }
+
+  it("레이드는 era 1+(raidEnabled)만 켜진다 — 약탈자만 격퇴 체력이 생기고, 첫 시대는 0", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    // era 0(raidEnabled=false): 모든 보스 maxHp 0(기존 버티기).
+    expect(createBoss("raider", W, H, w.terrain, 1, false).maxHp).toBe(0);
+    // era 1+(raidEnabled=true): 공격 카운터 보스(약탈자)만 격퇴 체력. 다른 카운터는 2단계라 아직 0.
+    expect(createBoss("raider", W, H, w.terrain, 1, true).maxHp).toBeGreaterThan(0);
+    expect(createBoss("chaser", W, H, w.terrain, 1, true).maxHp).toBe(0); // 속도 카운터 — 2단계
+    expect(createBoss("poison", W, H, w.terrain, 1, true).maxHp).toBe(0); // 전역 시련 — 버티기
+  });
+
+  it("공격형(전사)은 약탈자를 격퇴하고, 초식(공격력 낮음)은 못 잡는다", () => {
+    const hunter = tune({ diet: 68, attack: 64, speed: 68, vision: 62 }); // 육식 사냥꾼
+    const herb = tune({ diet: 20, attack: 44, fertility: 88, herding: 92 }); // 다산 초식(공격력<문턱)
+    const hunterR = raidResult(hunter, 1, true);
+    const herbR = raidResult(herb, 1, true);
+    // 공격형은 대부분 시드에서 격퇴(전사 반격이 체력을 깎는다).
+    expect(hunterR.defeats, "공격형이 약탈자를 못 잡았다").toBeGreaterThanOrEqual(SEEDS.length - 1);
+    // 초식은 공격력이 문턱 미만이라 전사가 없어 거의 못 잡는다(자기 카운터가 아니다 → 버티기).
+    expect(herbR.defeats, "초식이 약탈자를 잡아 버렸다").toBeLessThan(hunterR.defeats);
+    expect(herbR.hpLeft, "초식이 체력을 많이 깎았다").toBeGreaterThan(hunterR.hpLeft);
+  });
+
+  it("공격력이 높을수록 더 많이 깎는다(반격 = 공격력 비례)", () => {
+    const strong = tune({ attack: 85, speed: 66, vision: 62 });
+    const mild = tune({ attack: 58, speed: 66, vision: 62 }); // 문턱 바로 위
+    expect(raidResult(strong, 1, true).hpLeft).toBeLessThanOrEqual(raidResult(mild, 1, true).hpLeft);
+  });
 
   it("상어는 물에 든 종만 솎는다 — 육상 종은 손도 못 댄다", () => {
     expect(bossDeaths(defaultGenome(), "shark")).toBe(0); // 물에 못 들어가는 종엔 무해

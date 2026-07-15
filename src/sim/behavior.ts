@@ -14,7 +14,7 @@ import type { Traits } from "@/sim/genome";
 import { TRAIT_MAX, cloneGenome, mutateGenome } from "@/sim/genome";
 import { createEntity } from "@/sim/entity";
 import { areFriends } from "@/sim/species";
-import { bossCanHunt } from "@/sim/boss";
+import { bossCanHunt, bossRaidable } from "@/sim/boss";
 import { SIM } from "@/sim/params";
 
 interface Vec {
@@ -360,11 +360,17 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   let desired: Vec;
   let turn: number = SIM.steerTurn;
 
-  const flee = computeFlee(e, world, t, maxSpeed, canSwim, canLand, canFly);
+  // **레이드 — 강한 개체(전사)는 도망 대신 맞서 반격한다(공격 카운터 보스).** 공격력이 문턱을 넘는 내 종
+  // 개체는 약탈자 떼에 안 도망치고 평소처럼(채집·무리) 버티며, 떼가 물어 올 때 공격력으로 반격해 격퇴
+  // 체력을 깎는다(boss.memberKills). 약한 개체는 그대로 도망(computeFlee) — "전사와 도망자".
+  // 접근·kiting 이 아니라 "반격"인 이유: 약탈자 떼는 내 종보다 빨라(도망 차단이 설계) kiting 이 원천적으로
+  // 안 통한다. 이미 있는 카운터(공격력 반격)를 격퇴로 확장하는 게 자연스럽다.
+  const warrior = isRaidWarrior(e, world, t);
+  const flee = warrior ? null : computeFlee(e, world, t, maxSpeed, canSwim, canLand, canFly);
   const fleeing = flee !== null;
   if (flee) {
     desired = flee;
-    turn = SIM.fleeTurn; // 도망은 빠르게 반응(생존)
+    turn = SIM.fleeTurn; // 도망은 빠르게 반응
   } else {
     const goal = chooseGoal(e, world, vision, SIM.echoBase * (t.echo / TRAIT_MAX), canHunt, canGraze);
     if (goal) {
@@ -583,6 +589,24 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, childEnergy, childGenome));
     world.emit("birth", spot.x, spot.y); // 연출: 탄생(초록 반짝)
   }
+}
+
+/**
+ * 이 개체가 지금 "레이드 전사"인가 — 공격 카운터 보스(격퇴 체력 있음)에 맞서 반격하는 강한 개체.
+ * 전사면 그 보스에게 안 도망친다(computeFlee 스킵). 실제 격퇴는 떼가 물어 올 때 반격으로 일어난다
+ * (boss.memberKills 가 공격력≥문턱이면 격퇴 체력을 깎고 전사를 살린다).
+ * 공격 카운터 보스(cullAttackResist>0=약탈자)에만 — 다른 카운터 보스는 2단계에서 각자 방식으로.
+ */
+function isRaidWarrior(e: Entity, world: World, t: Traits): boolean {
+  const boss = world.boss;
+  return (
+    e.species.isPlayer &&
+    boss !== null &&
+    bossRaidable(boss) &&
+    boss.cullAttackResist > 0 &&
+    t.attack >= SIM.raidWarriorAttack &&
+    bossCanHunt(boss, e, world)
+  );
 }
 
 /** 보스/포식자가 도망 범위 안이면 도망 속도(단위×maxSpeed), 아니면 null. 도망 방향은 지형 회피로 보정. */

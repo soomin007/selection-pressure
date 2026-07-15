@@ -362,6 +362,14 @@ export class Game {
           this.finishStage(false);
           return;
         }
+        // **보스 격퇴(레이드)** — 무리가 카운터 형질로 격퇴 체력을 다 깎았다. 시간을 안 기다리고 즉시
+        // 통과한다("직접 잡아야 사라진다" — 사용자 방향). 레이드가 안 켜진 보스(era 0·전역 시련·2단계
+        // 미도입 카운터)는 maxHp 0 이라 여기 안 걸린다(기존 버티기 게이트로).
+        const boss = this.world.boss;
+        if (boss !== null && boss.maxHp > 0 && boss.hp <= 0) {
+          this.finishStage(true, true);
+          return;
+        }
         if (this.stageTicksLeft <= 0) {
           this.finishStage(true);
           return;
@@ -465,7 +473,7 @@ export class Game {
     const diff = eraDifficulty(this.era);
     if ((BOSS_TYPES as readonly string[]).includes(kind)) {
       const bt = kind as BossType;
-      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff);
+      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff, this.era > 0);
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
     } else {
@@ -698,7 +706,7 @@ export class Game {
     const diff = eraDifficulty(this.era); // 시대별 위협 강도 배율(era 0 = 1.0)
     if (kind === "boss") {
       const bt = this.takeBossType();
-      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff);
+      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff, this.era > 0);
       // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
@@ -717,7 +725,7 @@ export class Game {
     }
   }
 
-  private finishStage(survivedTimer: boolean): void {
+  private finishStage(survivedTimer: boolean, bossDefeated = false): void {
     const kind = this.currentKind();
     this.clearStageState();
 
@@ -727,8 +735,10 @@ export class Game {
     }
 
     // 통과기준은 절대 수(소수 개체 게임) — 개체가 맵 크기와 무관하게 소수라 기준도 고정.
+    // 레이드: 보스를 **격퇴**했으면 개체 수와 무관하게 통과("직접 잡았다"). 못 잡아도 3마리 버티면 통과
+    // (사용자 방향: 버티기도 통과는 되되 — 처치 보상·버티기 페널티는 후속 단계). 대멸종은 형질 필터.
     let passed = true;
-    if (kind === "boss") passed = this.world.playerPopulation >= GAME.bossPassThreshold;
+    if (kind === "boss") passed = bossDefeated || this.world.playerPopulation >= GAME.bossPassThreshold;
     else if (kind === "extinction") passed = this.world.playerPopulation >= GAME.extinctionPassThreshold;
 
     if (!passed) {
@@ -737,7 +747,7 @@ export class Game {
     }
 
     // 보고서: 위협을 넘긴 순간(연대기). stageLabel 은 "보스 · 약탈자" · "대멸종 · 혹독한 추위" 형태.
-    if (kind === "boss") this.logEvent("boss", `${this.stageLabel} 넘김`);
+    if (kind === "boss") this.logEvent("boss", bossDefeated ? `${this.stageLabel} 처치` : `${this.stageLabel} 버팀`);
     else if (kind === "extinction") this.logEvent("extinction", `${this.stageLabel} 견딤`);
 
     this.stageIndex += 1;

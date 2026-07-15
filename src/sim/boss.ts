@@ -109,10 +109,21 @@ export interface Boss extends Mover {
   grassCover: boolean;
   // 다수 추격 개체(떼). 비어있으면 단일 개체(x,y) 모드. 각 멤버가 killRadius 로 즉사시킨다.
   members: BossMember[];
+  /**
+   * 레이드 격퇴 체력 — 무리가 이 보스의 카운터 형질을 충족하면 깎여, 0 이 되면 격퇴(즉시 통과).
+   * **maxHp 0 = 레이드 없음**(기존 버티기 게이트 그대로): 첫 시대(era 0)·전역 시련(독 안개)·아직 카운터를
+   * 안 붙인 보스가 여기 해당. hp 를 깎는 방식은 카운터별로 다르다 — 공격 카운터는 전사가 직접 때리고
+   * (behavior.raidDesired), 나머지 카운터는 무리 형질 집계(2단계 stepBoss).
+   */
+  hp: number;
+  maxHp: number;
 }
 
 interface Preset
-  extends Omit<Boss, "type" | "name" | "x" | "y" | "prevX" | "prevY" | "members" | "path" | "pathGoalTile"> {
+  extends Omit<
+    Boss,
+    "type" | "name" | "x" | "y" | "prevX" | "prevY" | "members" | "path" | "pathGoalTile" | "hp" | "maxHp"
+  > {
   name: string;
   threat: string;
   counter: string;
@@ -375,6 +386,7 @@ export function createBoss(
   height: number,
   terrain?: Terrain,
   diffMul = 1,
+  raidEnabled = false, // era 1+ 에서만 true — 첫 시대는 레이드 없이 기존 버티기(era 0 밸런스 보존)
 ): Boss {
   const p = PRESETS[type];
   // 보스는 자기 사냥터(roam)에 태어난다 — 땅 보스가 물에, 상어가 뭍에 나면 갇혀 아무 일도 안 난다.
@@ -434,6 +446,12 @@ export function createBoss(
     path: [],
     pathGoalTile: -1,
     members,
+    // 레이드 격퇴 체력 — **1단계: 공격 카운터 보스(약탈자, cullAttackResist>0)만** 켠다. 약탈자는 즉사
+    // 반경이 작아(8) 근접 전사가 안전하게 팬다 — 카운터 형질(공격력)이 자연히 맞는다. 다른 카운터(속도·무리·
+    // 시야·번식)는 2단계에서 붙인다. era 0 이면 raidEnabled=false 라 0(첫 시대 버티기 유지).
+    ...(raidEnabled && p.cullAttackResist > 0
+      ? { maxHp: SIM.bossMaxHp * diffMul, hp: SIM.bossMaxHp * diffMul }
+      : { maxHp: 0, hp: 0 }),
   };
 }
 
@@ -572,6 +590,32 @@ function bossNavTo(boss: Boss, world: World, m: Mover, gx: number, gy: number): 
   return { x: terr.tileCenterX(w), y: terr.tileCenterY(w) };
 }
 
+/**
+ * 레이드 타겟 위치 — (fx,fy)의 전사가 때릴 지점. **떼 보스는 그 전사에게 가장 가까운 개체**(가장자리)를,
+ * 단일 보스는 본체를 돌려준다. 무게중심이 아닌 이유: 떼 한가운데로 돌진하면 여러 개체의 즉사 반경에 물려
+ * 죽는다(프로브: 전멸). 가장자리 개체를 치면 격퇴 체력은 떼가 공유하므로 아무나 때려도 깎인다.
+ */
+export function bossRaidTargetFor(boss: Boss, fx: number, fy: number): { x: number; y: number } {
+  if (boss.members.length === 0) return { x: boss.x, y: boss.y };
+  let best = Infinity;
+  let tx = boss.members[0]?.x ?? boss.x;
+  let ty = boss.members[0]?.y ?? boss.y;
+  for (const m of boss.members) {
+    const d2 = (m.x - fx) ** 2 + (m.y - fy) ** 2;
+    if (d2 < best) {
+      best = d2;
+      tx = m.x;
+      ty = m.y;
+    }
+  }
+  return { x: tx, y: ty };
+}
+
+/** 이 보스가 레이드로 잡을 수 있는 대상인가 — 격퇴 체력이 있고(레이드 켜짐) 아직 안 죽었는가. */
+export function bossRaidable(boss: Boss): boolean {
+  return boss.maxHp > 0 && boss.hp > 0;
+}
+
 /** 보스 한 틱. 타입별로 다른 압박을 가한다. */
 export function stepBoss(boss: Boss, world: World): void {
   // 개체형 떼 시련(사나운 무리·약탈자·외톨이 사냥꾼·그림자 매복자·말벌 떼) — 실제 개체가 몰려와 문다.
@@ -694,7 +738,18 @@ function stepMemberHorde(boss: Boss, world: World): void {
  */
 function memberKills(e: Entity, boss: Boss, world: World): boolean {
   const t = e.genome.traits;
-  if (boss.cullAttackResist > 0) return world.rng.unit() >= boss.cullAttackResist * (t.attack / TRAIT_MAX);
+  if (boss.cullAttackResist > 0) {
+    // 약탈자 — 공격력으로 반격. **레이드가 켜진 시대(era 1+)엔 전사(공격력≥문턱)가 물린 순간 반격해
+    // 격퇴 체력을 깎고 살아남는다.** 떼가 계속 몰려와 물수록 전사들의 반격이 쌓여 격퇴로 이어진다
+    // (도망 못 하는 약탈자 상대라 "맞서 싸워 잡는다"가 자연스럽다 — kiting 이 안 통하는 걸 반격으로 푼다).
+    // era 0·비전사(공격력<문턱)는 기존 확률 저항(공격력 높으면 생존, 낮으면 죽음).
+    if (bossRaidable(boss) && t.attack >= SIM.raidWarriorAttack) {
+      boss.hp -= SIM.raidDamagePerHit * (t.attack / TRAIT_MAX);
+      world.emit("bite", e.x, e.y); // 연출: 전사가 반격한 자리
+      return false; // 반격 성공 — 전사는 안 죽는다
+    }
+    return world.rng.unit() >= boss.cullAttackResist * (t.attack / TRAIT_MAX);
+  }
   if (boss.cullGroupResist > 0) return world.rng.unit() >= boss.cullGroupResist * (t.herding / TRAIT_MAX);
   if (boss.cullSpeedResist > 0) return world.rng.unit() >= boss.cullSpeedResist * (t.speed / TRAIT_MAX);
   if (boss.cullVisionResist > 0) {
