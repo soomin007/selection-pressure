@@ -67,6 +67,11 @@ describe("Phase 3 — 환경이 결과를 가른다", () => {
   });
 });
 
+// 필터 **판별** 기준 — 게이트 통과기준(GAME.*PassThreshold=1, 0마리만 패배)과 **별개**다. 게이트는 관대해도
+// 환경/보스는 여전히 부적응 종을 이 선 아래로 크게 솎어야 한다(적응 종은 이 위로 뚜렷이 생존). 이 테스트들은
+// "게이트를 통과/실패하는가"가 아니라 "sim 이 형질을 가르는가"라는 메커니즘을 본다(2026-07-16 게이트 완화 후 분리).
+const FILTER_SURVIVE = 3;
+
 describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", () => {
   // 내 종 기준. 한 forage 라운드로 성장시킨 뒤 게이트를 적용한다.
   function afterGate(genome: Genome, seconds: number, apply: (w: World) => void): number {
@@ -86,7 +91,7 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
       w.boss = createBoss("poison", W, H);
     });
     expect(lo).toBeGreaterThan(base);
-    expect(lo).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
+    expect(lo).toBeGreaterThanOrEqual(FILTER_SURVIVE);
   });
 
   it("약탈자: 공격력이 높을수록 잘 버틴다(공격력 카운터)", () => {
@@ -98,7 +103,7 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     const lo = afterGate(tune({ attack: 10 }), GAME.bossSeconds, (w) => {
       w.boss = createBoss("raider", W, H);
     });
-    expect(hi).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
+    expect(hi).toBeGreaterThanOrEqual(FILTER_SURVIVE);
     expect(hi).toBeGreaterThan(lo);
   });
 
@@ -185,8 +190,8 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     const weak = afterGate(tune({ vision: 15, speed: 14, fertility: 14 }), GAME.bossSeconds, (w) => {
       w.boss = createBoss("swarm", W, H);
     });
-    expect(strong).toBeGreaterThanOrEqual(GAME.bossPassThreshold);
-    expect(weak).toBeLessThan(GAME.bossPassThreshold);
+    expect(strong).toBeGreaterThanOrEqual(FILTER_SURVIVE);
+    expect(weak).toBeLessThan(FILTER_SURVIVE);
     expect(strong).toBeGreaterThan(weak);
   });
 
@@ -209,8 +214,8 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     const lo = afterGate(tune({ metabolism: 10 }), GAME.extinctionSeconds, (w) => {
       w.globalCold = 1.3;
     });
-    expect(hi).toBeGreaterThanOrEqual(GAME.extinctionPassThreshold);
-    expect(lo).toBeLessThan(GAME.extinctionPassThreshold);
+    expect(hi).toBeGreaterThanOrEqual(FILTER_SURVIVE);
+    expect(lo).toBeLessThan(FILTER_SURVIVE);
   });
 
   it("폭염 대멸종: 저대사는 통과, 고대사는 실패", () => {
@@ -220,8 +225,8 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     const hi = afterGate(tune({ metabolism: 90 }), GAME.extinctionSeconds, (w) => {
       w.heat = 1.1;
     });
-    expect(lo).toBeGreaterThanOrEqual(GAME.extinctionPassThreshold);
-    expect(hi).toBeLessThan(GAME.extinctionPassThreshold);
+    expect(lo).toBeGreaterThanOrEqual(FILTER_SURVIVE);
+    expect(hi).toBeLessThan(FILTER_SURVIVE);
   });
 
   it("대역병 대멸종: 번식력이 높으면 통과, 낮으면 실패", () => {
@@ -231,8 +236,8 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     const lo = afterGate(tune({ fertility: 10 }), GAME.extinctionSeconds, (w) => {
       w.plagueRate = 0.006; // 게임 applyExtinction 과 동일(대역병 세기)
     });
-    expect(hi).toBeGreaterThanOrEqual(GAME.extinctionPassThreshold);
-    expect(lo).toBeLessThan(GAME.extinctionPassThreshold);
+    expect(hi).toBeGreaterThanOrEqual(FILTER_SURVIVE);
+    expect(lo).toBeLessThan(FILTER_SURVIVE);
   });
 });
 
