@@ -234,15 +234,15 @@ describe("보스 레이드 1단계 — 공격 카운터 보스(약탈자)를 전
     return { defeats, hpLeft };
   }
 
-  it("레이드는 era 1+(raidEnabled)만 켜진다 — era 0 은 모든 보스가 버티기(maxHp 0)", () => {
+  it("raidEnabled 파라미터가 격퇴 체력을 켠다(false=버티기 · true=격퇴). 게임은 첫 시대부터 true 를 넘긴다", () => {
     const w = new World("env-1", W, H, defaultGenome());
-    // era 0(raidEnabled=false): 모든 보스 maxHp 0(기존 버티기 게이트 — era 0 밸런스 보존).
+    // raidEnabled=false: 모든 보스 maxHp 0(레이드 없는 버티기 경로 — 테스트가 이 경로를 따로 검증).
     for (const t of BOSS_TYPES) {
-      expect(createBoss(t, W, H, w.terrain, 1, false).maxHp, `${t} 가 era 0 에서 격퇴 체력을 가졌다`).toBe(0);
+      expect(createBoss(t, W, H, w.terrain, 1, false).maxHp, `${t} 가 버티기 경로에서 격퇴 체력을 가졌다`).toBe(0);
     }
-    // era 1+(raidEnabled=true): 카운터가 있는 보스는 격퇴 체력, 독 안개(전역)만 여전히 0(버티기).
+    // raidEnabled=true(게임이 첫 시대부터 넘김): 카운터가 있는 보스는 격퇴 체력, 독 안개(전역)만 여전히 0.
     expect(createBoss("raider", W, H, w.terrain, 1, true).maxHp).toBeGreaterThan(0);
-    expect(createBoss("chaser", W, H, w.terrain, 1, true).maxHp).toBeGreaterThan(0); // 속도 카운터(2단계)
+    expect(createBoss("chaser", W, H, w.terrain, 1, true).maxHp).toBeGreaterThan(0); // 속도 카운터
     expect(createBoss("poison", W, H, w.terrain, 1, true).maxHp).toBe(0); // 전역 시련 — 때릴 대상 없음(버티기)
   });
 

@@ -473,7 +473,7 @@ export class Game {
     const diff = eraDifficulty(this.era);
     if ((BOSS_TYPES as readonly string[]).includes(kind)) {
       const bt = kind as BossType;
-      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff, this.era > 0);
+      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff, true); // 레이드 첫 시대부터
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
     } else {
@@ -706,7 +706,9 @@ export class Game {
     const diff = eraDifficulty(this.era); // 시대별 위협 강도 배율(era 0 = 1.0)
     if (kind === "boss") {
       const bt = this.takeBossType();
-      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff, this.era > 0);
+      // 레이드는 첫 시대(era 0)부터 켠다 — 격퇴 체력바·직접 잡기는 핵심 메커니즘이라 첫 판부터 보여야 한다
+      // (era 1+ 로 미뤘더니 한 판 이겨 다음 시대로 가기 전엔 아예 안 보였다 — 사용자: "레이드 체력바가 안 보인다").
+      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff, true);
       // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협 — ${bossPreview(bt)}`;

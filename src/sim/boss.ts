@@ -412,7 +412,8 @@ export function createBoss(
   height: number,
   terrain?: Terrain,
   diffMul = 1,
-  raidEnabled = false, // era 1+ 에서만 true — 첫 시대는 레이드 없이 기존 버티기(era 0 밸런스 보존)
+  raidEnabled = false, // 기본 false(테스트는 "레이드 없는 버티기" 경로를 봄). **게임은 첫 시대(era 0)부터
+  // true 를 넘겨 켠다** — 격퇴 체력바=핵심 메커니즘이라 첫 판부터 보여야 한다(era 1+ 로 미뤘더니 안 보였다).
 ): Boss {
   const p = PRESETS[type];
   // 보스는 자기 사냥터(roam)에 태어난다 — 땅 보스가 물에, 상어가 뭍에 나면 갇혀 아무 일도 안 난다.
