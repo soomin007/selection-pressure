@@ -32,6 +32,7 @@ import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
 import { ThreatBanner } from "@/render/threatBanner";
+import { RaidBossBar } from "@/render/raidBossBar";
 import { sizeWord } from "@/render/creatureLook";
 import { TRAIT_LABELS } from "@/sim/genome";
 import { APEX_BOON } from "@/ui/traitDisplay";
@@ -96,6 +97,8 @@ async function boot(): Promise<void> {
   app.stage.addChild(minimap.container);
   const threatBanner = new ThreatBanner(); // 위협 예고 전광판(최상단)
   app.stage.addChild(threatBanner.container);
+  const raidBossBar = new RaidBossBar(); // 레이드 격퇴 체력 바(화면 상단 글로벌 — 보스 이름 + 게이지)
+  app.stage.addChild(raidBossBar.container);
 
   // 소수 개체 게임: 월드를 약간 크게(MAP_SCALE) + 개체는 절대 수(소수)지만 먹이 밀도·상한은 면적 비례
   // (areaScale=면적배율) → 큰 맵일수록 개체당 먹이가 넉넉해 굶지 않는다. 카메라가 한 무리를 따라다닌다.
@@ -669,6 +672,11 @@ async function boot(): Promise<void> {
     detectEvents();
     highlights.update(ticker.deltaMS, app.screen.width);
     threatBanner.update(ticker.deltaMS, app.screen.width, app.screen.height);
+    // 레이드 격퇴 체력 바(글로벌) — 관전 중 격퇴 체력이 있는 보스(레이드 켜짐)일 때 보스 이름 + 게이지를 상단에.
+    const rbBoss = game.world.boss;
+    const raidActive = game.phase === "watch" && rbBoss !== null && rbBoss.maxHp > 0 && rbBoss.hp > 0;
+    raidBossBar.set(raidActive && rbBoss ? rbBoss.name : null, raidActive && rbBoss ? rbBoss.hp / rbBoss.maxHp : 0, 0xff5a44);
+    raidBossBar.update(ticker.deltaMS, app.screen.width);
 
     if (debugBadge) {
       let txt = `디버그: ${debugLabel()}`;
@@ -844,7 +852,7 @@ async function boot(): Promise<void> {
     prevBoss = bossNow;
 
     const ext = w.globalCold > 0 ? "한파" : w.heat > 0 ? "폭염" : w.foodRegrowMultiplier > 1 ? "대가뭄" : "";
-    if (ext && ext !== prevExt) highlights.flash(`대멸종 — ${ext}`, 0x8ab4ff);
+    if (ext && ext !== prevExt) highlights.flash(`대멸종. ${ext}`, 0x8ab4ff);
     prevExt = ext;
 
     const pop = w.playerPopulation;
