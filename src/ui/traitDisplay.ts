@@ -29,6 +29,23 @@ export function abilityWord(level: 0 | 1 | 2): string {
   return level === 0 ? "없음" : level === 1 ? "보통" : "강함";
 }
 
+// 값이 문턱 위에서도 **계속 의미 있는** 능력(원거리 사거리·초음파 반경·독량·은신도)은 "강함"에서 안 바뀌어
+// 잉여로 느껴졌다(사용자: "원거리도 잉여 뭐시기가 있다. 단계를 더 세부적으로"). 이 넷만 5단계로 세분해
+// 오를수록 표시가 바뀌게 한다. 수영·날개(통행 문턱)·무리(방패 문턱)는 값이 무의미해 기존 3단계 유지.
+export const FINE_ABILITIES = new Set<keyof Traits>(["echo", "venom", "ranged", "camouflage"]);
+export function fineAbilityWord(v: number): string {
+  if (v <= 0) return "없음";
+  if (v <= 55) return "보통";
+  if (v <= 70) return "강함";
+  if (v <= 85) return "막강";
+  return "최강";
+}
+/** 능력형 세분 표시 비율(0~100) — 막대용. 세분 능력은 값 그대로, 나머지는 3단계 눈금(0/50/100). */
+export function abilityFillPct(key: keyof Traits, v: number): number {
+  if (FINE_ABILITIES.has(key)) return Math.max(0, Math.min(100, v));
+  return abilityLevel(key, v) * 50;
+}
+
 /** 식성 스펙트럼 — 초식/잡식/육식(중립). 문턱은 sim 과 같은 값(dietHuntMin·dietGrazeMax). */
 export function dietWord(v: number): string {
   return v < SIM.dietHuntMin ? "초식" : v > SIM.dietGrazeMax ? "육식" : "잡식";
@@ -43,7 +60,7 @@ export function dietWord(v: number): string {
  * - 식성 = 초식/잡식/육식(스펙트럼).
  */
 export function traitWord(key: keyof Traits, v: number): string {
-  if (ABILITY_KEYS.has(key)) return abilityWord(abilityLevel(key, v));
+  if (ABILITY_KEYS.has(key)) return FINE_ABILITIES.has(key) ? fineAbilityWord(v) : abilityWord(abilityLevel(key, v));
   if (key === "diet") return dietWord(v);
   return String(Math.round(v)); // 값형질·대사 = 숫자
 }

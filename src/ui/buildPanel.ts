@@ -2,7 +2,7 @@
 // 종 한 줄 요약 + 현재 형질값(7개) + 고른 카드 목록. 캔버스 위 HTML 오버레이(인라인 스타일, 터치 통과).
 
 import { TRAIT_KEYS, TRAIT_LABELS, TRAIT_CEILING, type Traits } from "@/sim/genome";
-import { ABILITY_KEYS, abilityLevel, traitColor, traitWord } from "@/ui/traitDisplay";
+import { ABILITY_KEYS, abilityFillPct, traitColor, traitWord } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { huntingBuild, dietNote } from "@/game/runReport";
 
@@ -113,7 +113,6 @@ export function createBuildPanel(): BuildPanel {
     for (const key of TRAIT_KEYS) {
       const v = data.traits[key];
       const isAbility = ABILITY_KEYS.has(key);
-      const lvl = isAbility ? abilityLevel(key, v) : 0;
       const row = document.createElement("div");
       row.style.cssText = "margin-top:3px;";
       const top = document.createElement("div");
@@ -131,8 +130,8 @@ export function createBuildPanel(): BuildPanel {
         const track = document.createElement("div");
         track.style.cssText = "margin-top:2px; height:4px; border-radius:3px; background:rgba(255,255,255,0.06); overflow:hidden;";
         const fill = document.createElement("div");
-        // 능력형은 3단계 눈금(0/50/100%), 연속형은 형질별 상한(200 등) 기준 비율. 색은 형질 6색 매핑.
-        const pct = isAbility ? lvl * 50 : Math.round(Math.max(0, Math.min(100, (v / TRAIT_CEILING[key]) * 100)));
+        // 능력형은 눈금(세분 능력=값 그대로, 나머지=0/50/100%), 값형질은 상한 기준 비율. 색은 형질 6색 매핑.
+        const pct = isAbility ? abilityFillPct(key, v) : Math.round(Math.max(0, Math.min(100, (v / TRAIT_CEILING[key]) * 100)));
         fill.style.cssText = `height:100%; width:${pct}%; border-radius:3px; background:${traitColor(key)};`;
         track.appendChild(fill);
         row.appendChild(track);

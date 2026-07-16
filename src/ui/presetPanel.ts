@@ -6,7 +6,7 @@ import { defaultGenome, clampGenome, TRAIT_KEYS, TRAIT_LABELS, type Genome } fro
 import { applyCard, type Card } from "@/game/cards";
 import { describeSpecies } from "@/game/runReport";
 import { makeCreatureTexture } from "@/render/worldView";
-import { ABILITY_KEYS, abilityLevel, traitColor, traitWord } from "@/ui/traitDisplay";
+import { ABILITY_KEYS, abilityLevel, abilityFillPct, traitColor, traitWord } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { registerKeyLayer, keyChip } from "@/ui/keys";
 import type { Renderer } from "pixi.js";
@@ -306,8 +306,8 @@ export function createPresetPanel(
       const track = document.createElement("div");
       track.style.cssText = "margin-top:2px; height:4px; border-radius:3px; background:rgba(255,255,255,0.06); overflow:hidden;";
       const fill = document.createElement("div");
-      // 능력형은 3단계 눈금(0/50/100%), 연속형은 값(0~100 기준 — 프리셋은 100 이하). 색은 형질 6색 매핑.
-      const pct = isAbility ? lvl * 50 : Math.round(Math.max(0, Math.min(100, v)));
+      // 능력형은 눈금(세분 능력=값, 나머지=0/50/100%), 값형질은 값 그대로. 색은 형질 6색 매핑.
+      const pct = isAbility ? abilityFillPct(key, v) : Math.round(Math.max(0, Math.min(100, v)));
       fill.style.cssText = `height:100%; width:${pct}%; border-radius:3px; background:${traitColor(key)}; opacity:${strong ? 1 : 0.55};`;
       track.appendChild(fill);
       cell.appendChild(track);
@@ -352,7 +352,7 @@ export function createPresetPanel(
   const show = (cs: Card[], _preview: string, world?: WorldBriefing): void => {
     cards = cs;
     if (world) {
-      worldTitle.textContent = `이번 세계 — ${world.name} · 바다 ${world.sea}%`;
+      worldTitle.textContent = `이번 세계. ${world.name} · 바다 ${world.sea}%`;
       worldDesc.textContent = world.desc;
       worldCard.style.display = "";
     } else {
