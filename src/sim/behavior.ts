@@ -14,7 +14,7 @@ import type { Traits } from "@/sim/genome";
 import { TRAIT_MAX, cloneGenome, mutateGenome } from "@/sim/genome";
 import { createEntity } from "@/sim/entity";
 import { areFriends } from "@/sim/species";
-import { bossCanHunt, isRaidFighter } from "@/sim/boss";
+import { bossCanHunt, isRaidFighter, isRaidRangedFighter, raidRangedPower, dealRaidHit, bossRaidTargetFor } from "@/sim/boss";
 import { SIM } from "@/sim/params";
 
 interface Vec {
@@ -365,7 +365,16 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 되고, 약한 개체는 그대로 도망(computeFlee) — "전사와 도망자". 접근·kiting 이 아니라 그 자리 반격인
   // 이유: 떼가 내 종보다 빨라 kiting 이 원천적으로 안 통한다(도망 차단이 설계). 전사만 맞서 전멸도 없다.
   const raidBoss = world.boss;
-  const fighter = raidBoss !== null && isRaidFighter(raidBoss, e, world);
+  const fighter = raidBoss !== null && isRaidFighter(raidBoss, e, world); // 근접(공격·카운터) 또는 원거리
+  // **원거리 전사** — 보스가 사거리 안에 들면 쏜다(격퇴 체력 깎기). 근접 전사가 제자리에서 반격하듯, 원거리도
+  // 쫓지 않는다(보스가 무리로 오므로) — 지형에 막혀 접근 못 하던 문제를 없앤다. 안 죽는 전사라 코앞이어도 쏜다.
+  if (fighter && raidBoss && isRaidRangedFighter(raidBoss, e, world)) {
+    const tgt = bossRaidTargetFor(raidBoss, e.x, e.y);
+    if ((e.x - tgt.x) ** 2 + (e.y - tgt.y) ** 2 <= atkRange * atkRange && e.attackCd <= 0) {
+      dealRaidHit(raidBoss, world, e, raidRangedPower(t) * SIM.raidRangedMul);
+      e.attackCd = SIM.attackCooldownTicks;
+    }
+  }
   const flee = fighter ? null : computeFlee(e, world, t, maxSpeed, canSwim, canLand, canFly);
   const fleeing = flee !== null;
   if (flee) {

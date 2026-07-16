@@ -650,64 +650,53 @@ function traitFulfill(value: number, floor: number): number {
   return clamp01((value - floor) / (TRAIT_MAX - floor));
 }
 
-/** 이 보스의 카운터 형질에 대한 개체의 충족도(0~1) — floor~100 을 0~1 로. */
-function raidContribution(boss: Boss, t: Traits): number {
-  switch (boss.raidCounter) {
-    case "attack":
-      return traitFulfill(t.attack, SIM.raidAttackFloor);
-    case "speed":
-      return traitFulfill(t.speed, SIM.raidSpeedFloor);
-    case "vision":
-      return traitFulfill(t.vision, SIM.raidVisionFloor);
-    case "group":
-      return traitFulfill(t.herding, SIM.raidHerdFloor);
-    case "fertility":
-      return traitFulfill(t.fertility, SIM.raidFertFloor);
-    default:
-      return 0;
-  }
-}
-
 /**
- * 이 개체가 이 보스의 "전사"인가 — 카운터 형질이 문턱을 넘어 **맞서 반격하는 강한 개체**(안 도망).
- * 보스가 물면 dealRaidHit 으로 격퇴 체력을 깎고 살아남는다. 형질마다 되받아치는 방식이 다르다:
- * 공격=반격 · 속도=치고 빠짐 · 무리=뭉쳐 물리침 · 시야=미리 보고 되치기 · 번식=다산 무리가 수로 되받아침.
- * 독 안개(null)만 전사가 없다(전역이라 때릴 대상이 없음).
+ * 이 개체가 보스를 **근접에서 되받아치는 세기**(0~1). 두 갈래로 전사가 된다("모든 빌드가 싸우게"):
+ *   · 보스 전용 카운터(속도·시야·무리·번식) — 그 형질이 강하면 자기 방식으로 되받아친다.
+ *   · **공격력(만능 근접)** — 공격력이 높으면 **어떤 보스든** 이빨·뿔로 맞선다(카운터가 아니어도).
+ * 0 이면 근접 전사가 아니다. (원거리는 raidRangedPower 로 따로 — 멀리서 안전하게 쏜다.)
  */
-function isRaidFighterTrait(boss: Boss, t: Traits): boolean {
-  switch (boss.raidCounter) {
-    case "attack":
-      return t.attack >= SIM.raidWarriorAttack;
-    case "speed":
-      return t.speed >= SIM.raidFighterThreshold;
-    case "vision":
-      return t.vision >= SIM.raidFighterThreshold;
-    case "group":
-      return t.herding >= SIM.raidFighterThreshold;
-    case "fertility":
-      return t.fertility >= SIM.raidFighterThreshold;
-    default:
-      return false; // null(독 안개) — 전사가 없다
-  }
-}
-
-/** 보스가 이 개체를 물었다 — 개체의 카운터 충족도만큼 격퇴 체력을 깎고 반격 연출을 낸다(**물기당** 이벤트). */
-function dealRaidHit(boss: Boss, world: World, e: Entity): void {
-  boss.hp -= SIM.raidHitDamage * raidContribution(boss, e.genome.traits);
-  if (boss.hp < 0) boss.hp = 0;
-  world.emit("bite", e.x, e.y); // 연출: 맞받아친 자리
+function raidMeleePower(boss: Boss, t: Traits): number {
+  let p = 0;
+  const c = boss.raidCounter;
+  if (c === "speed" && t.speed >= SIM.raidFighterThreshold) p = traitFulfill(t.speed, SIM.raidSpeedFloor);
+  else if (c === "vision" && t.vision >= SIM.raidFighterThreshold) p = traitFulfill(t.vision, SIM.raidVisionFloor);
+  else if (c === "group" && t.herding >= SIM.raidFighterThreshold) p = traitFulfill(t.herding, SIM.raidHerdFloor);
+  else if (c === "fertility" && t.fertility >= SIM.raidFighterThreshold) p = traitFulfill(t.fertility, SIM.raidFertFloor);
+  // 공격 = 만능 근접 카운터(어떤 보스든 맞선다). 카운터 충족도와 견줘 큰 쪽을 쓴다.
+  if (c !== null && t.attack >= SIM.raidWarriorAttack) p = Math.max(p, traitFulfill(t.attack, SIM.raidAttackFloor));
+  return p;
 }
 
 /**
- * 이 개체가 지금 이 보스에 맞서는 전사인가(레이드 켜짐 + 카운터 문턱 + 사냥 가능 층). behavior 가 이걸 보고
- * 전사는 도망을 스킵하게 한다("강한 개체는 맞서고 약한 개체는 도망"). 전사만 맞서므로 전멸하지 않는다.
+ * 이 개체가 보스를 **멀리서 저격하는 세기**(0~1) — 원거리 형질이 문턱(rangedThreshold)을 넘으면. 원거리는
+ * 즉사 반경 밖에서 안전하게 쏘므로 **어떤 보스든**(만능) 상대한다("원거리로 시작해도 보스를 잡는다").
+ */
+export function raidRangedPower(t: Traits): number {
+  return t.ranged >= SIM.rangedThreshold ? traitFulfill(t.ranged, SIM.raidRangedFloor) : 0;
+}
+
+/** 보스가 물었거나 원거리 사격이 명중했다 — power(0~1)만큼 격퇴 체력을 깎고 반격 연출을 낸다(**공격당** 이벤트). */
+export function dealRaidHit(boss: Boss, world: World, e: Entity, power: number): void {
+  if (power <= 0) return;
+  boss.hp -= SIM.raidHitDamage * power;
+  if (boss.hp < 0) boss.hp = 0;
+  world.emit("bite", e.x, e.y); // 연출: 맞받아치거나 명중한 자리
+}
+
+/**
+ * 이 개체가 지금 이 보스에 맞서는 전사인가(근접 또는 원거리). behavior 가 이걸 보고 전사는 도망을 스킵하게
+ * 한다("강한 개체는 맞서고 약한 개체는 도망"). 전사만 맞서므로 전멸하지 않는다. 내 종만·사냥 가능 층만.
  */
 export function isRaidFighter(boss: Boss, e: Entity, world: World): boolean {
+  if (!e.species.isPlayer || !bossRaidable(boss) || !bossCanHunt(boss, e, world)) return false;
+  return raidMeleePower(boss, e.genome.traits) > 0 || raidRangedPower(e.genome.traits) > 0;
+}
+
+/** 이 개체가 **원거리 전사**인가 — 멀리서 쏜다. behavior 가 접근·카이팅·사격에 쓴다(근접 전사는 그 자리에서 반격). */
+export function isRaidRangedFighter(boss: Boss, e: Entity, world: World): boolean {
   return (
-    e.species.isPlayer && // 내 종만 보스에 맞선다(야생은 보스를 안 깎는다)
-    bossRaidable(boss) &&
-    isRaidFighterTrait(boss, e.genome.traits) &&
-    bossCanHunt(boss, e, world)
+    e.species.isPlayer && bossRaidable(boss) && bossCanHunt(boss, e, world) && raidRangedPower(e.genome.traits) > 0
   );
 }
 
@@ -734,10 +723,13 @@ function stepSingleBoss(boss: Boss, world: World): void {
       const dx = e.x - boss.x;
       const dy = e.y - boss.y;
       if (dx * dx + dy * dy < killR2) {
-        // 전사(빠른 개체)는 파고들어 치고 빠진다 — 격퇴 체력을 깎고 안 죽는다(추격자·상어=속도 카운터).
-        if (bossRaidable(boss) && e.species.isPlayer && isRaidFighterTrait(boss, e.genome.traits)) {
-          dealRaidHit(boss, world, e);
-          continue;
+        // 전사(빠른 개체·만능 공격, 또는 원거리)는 격퇴 체력을 깎고 안 죽는다(추격자·상어).
+        if (bossRaidable(boss) && e.species.isPlayer) {
+          const melee = raidMeleePower(boss, e.genome.traits);
+          if (melee > 0 || raidRangedPower(e.genome.traits) > 0) {
+            if (melee > 0) dealRaidHit(boss, world, e, melee);
+            continue;
+          }
         }
         e.alive = false;
         world.recordDeath(e.species, "boss");
@@ -840,11 +832,14 @@ function stepMemberHorde(boss: Boss, world: World): void {
  */
 function memberKills(e: Entity, boss: Boss, world: World): boolean {
   const t = e.genome.traits;
-  // 전사(카운터 형질≥문턱)는 물린 순간 맞받아쳐 격퇴 체력을 깎고 산다(공격=반격·속도=치고빠짐·무리=뭉쳐
-  // 물리침·시야=되치기·번식=수로 되받아침). 약한 개체는 아래 확률 저항으로 생존/죽음.
-  if (bossRaidable(boss) && e.species.isPlayer && isRaidFighterTrait(boss, t)) {
-    dealRaidHit(boss, world, e);
-    return false;
+  // 전사(근접 카운터·만능 공격, 또는 원거리)는 물려도 산다. 근접 전사는 그 자리에서 맞받아쳐 격퇴 체력을
+  // 깎고(dealRaidHit), 원거리 전사는 여기선 안 깎고 뒤로 물러나 쏜다(behavior). 약한 개체는 아래 확률 저항.
+  if (bossRaidable(boss) && e.species.isPlayer) {
+    const melee = raidMeleePower(boss, t);
+    if (melee > 0 || raidRangedPower(t) > 0) {
+      if (melee > 0) dealRaidHit(boss, world, e, melee);
+      return false;
+    }
   }
   // 비전사(약한 개체)·레이드 꺼짐: 카운터 형질 확률 저항(형질 높을수록 잘 산다). 저항 없으면(사나운 무리) 죽음.
   if (boss.cullAttackResist > 0) return world.rng.unit() >= boss.cullAttackResist * (t.attack / TRAIT_MAX);

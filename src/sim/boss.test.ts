@@ -356,9 +356,19 @@ describe("보스 레이드 2단계 — 초식 카운터(속도·무리·시야·
     expect(defeats(loose, "isolation"), "흩어진 무리가 외톨이를 잡아 버렸다").toBe(0);
   });
 
-  it("엉뚱한 형질로는 격퇴 못 한다 — 공격 특화는 속도 보스(추격자)를 못 잡는다(카운터가 맞아야)", () => {
-    // 공격력만 높고 속도는 floor 인 빌드: 약탈자(공격 카운터)는 잡아도 추격자(속도)는 못 잡는다.
-    const bruiser = tune({ attack: 90, speed: 45 });
-    expect(defeats(bruiser, "chaser"), "공격 특화가 추격자를 격퇴했다(카운터 불일치)").toBe(0);
+  it("공격·원거리는 만능 카운터 — 어떤 보스든 잡는다(모든 빌드가 싸우게)", () => {
+    // 공격 특화는 자기 카운터가 아닌 속도 보스(추격자)도 이빨·뿔로 맞서 잡는다.
+    const bruiser = tune({ attack: 90, speed: 55, diet: 60 });
+    expect(defeats(bruiser, "chaser"), "공격 특화가 추격자를 못 잡았다").toBeGreaterThan(0);
+    // 원거리 특화는 즉사 반경 밖에서 쏴 어떤 보스든 깎는다(원거리로 시작해도 보스전이 된다 — 사용자 지적).
+    const sniper = tune({ ranged: 85, diet: 55, attack: 45 });
+    expect(defeats(sniper, "chaser"), "원거리 특화가 추격자를 못 잡았다").toBeGreaterThan(0);
+  });
+
+  it("싸울 형질이 하나도 없으면 격퇴 못 한다(공격·원거리·카운터 전부 문턱 아래)", () => {
+    // 공격 40·원거리 40·속도 45 — 전사가 되는 형질이 없어 어떤 보스도 못 깎는다(도망만).
+    const helpless = tune({ attack: 40, ranged: 40, speed: 45, vision: 45, herding: 40, fertility: 45 });
+    expect(defeats(helpless, "chaser"), "싸울 형질 없는 빌드가 추격자를 잡았다").toBe(0);
+    expect(defeats(helpless, "raider"), "싸울 형질 없는 빌드가 약탈자를 잡았다").toBe(0);
   });
 });

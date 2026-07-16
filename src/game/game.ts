@@ -529,7 +529,8 @@ export class Game {
     const next = SCHEDULE[this.stageIndex + 1];
     if (next === "boss") {
       const bt = this.peekBossType(); // 실제로 나올 보스(무의미 보스는 건너뛴 결과) — 예고가 진실이어야 한다
-      if (bt) return { title: `곧 ${bossName(bt)}!`, sub: bossCounter(bt) };
+      // 카운터 힌트 + 만능 수단 안내: 공격력·원거리가 높으면 어떤 보스든 맞서 잡는다(원거리로 시작해도 보스전 가능).
+      if (bt) return { title: `곧 ${bossName(bt)}!`, sub: `${bossCounter(bt)} 공격력이나 원거리가 높으면 어떤 보스든 맞서 잡습니다.` };
       return { title: "곧 위협이 닥칩니다", sub: "" };
     }
     if (next === "extinction") {
