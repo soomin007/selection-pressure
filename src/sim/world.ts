@@ -70,11 +70,14 @@ export function adaptWildTraits(t: Traits, p: WildPressure): void {
 
 /** 화면 연출용 1회성 사건(전 종, 위치 포함). 렌더가 매 프레임 읽고 비운다. rng 미사용 → 결정론 무관. */
 /** "bite" = 못 죽인 물기(기운만 깎였다). 즉사는 "kill". */
-export type VisualEventKind = "birth" | "death" | "kill" | "bite";
+export type VisualEventKind = "birth" | "death" | "kill" | "bite" | "spit";
 export interface VisualEvent {
   kind: VisualEventKind;
   x: number;
   y: number;
+  /** 방향성 사건(원거리 발사체 "spit")의 목표점 — (x,y)에서 여기로 날아간다. 없으면 제자리 사건. */
+  tx?: number;
+  ty?: number;
 }
 
 export class World {
@@ -366,9 +369,10 @@ export class World {
     this.deaths[cause] += 1;
   }
 
-  /** 연출용 사건 1건(전 종, 위치 포함). rng 미사용 → 결정론 무관. 상한을 두어 무한 증가 방지. */
-  emit(kind: VisualEventKind, x: number, y: number): void {
-    if (this.events.length < 300) this.events.push({ kind, x, y });
+  /** 연출용 사건 1건(전 종, 위치 포함). tx,ty 를 주면 방향성 사건(원거리 발사체). rng 미사용 → 결정론 무관. */
+  emit(kind: VisualEventKind, x: number, y: number, tx?: number, ty?: number): void {
+    if (this.events.length >= 300) return;
+    this.events.push(tx !== undefined && ty !== undefined ? { kind, x, y, tx, ty } : { kind, x, y });
   }
 
   get availableFood(): number {

@@ -676,12 +676,11 @@ export function raidRangedPower(t: Traits): number {
   return t.ranged >= SIM.rangedThreshold ? traitFulfill(t.ranged, SIM.raidRangedFloor) : 0;
 }
 
-/** 보스가 물었거나 원거리 사격이 명중했다 — power(0~1)만큼 격퇴 체력을 깎고 반격 연출을 낸다(**공격당** 이벤트). */
-export function dealRaidHit(boss: Boss, world: World, e: Entity, power: number): void {
+/** power(0~1)만큼 격퇴 체력을 깎는다(**공격당** 이벤트). 연출(근접 bite / 원거리 spit)은 방향이 달라 호출부에서 낸다. */
+export function dealRaidHit(boss: Boss, power: number): void {
   if (power <= 0) return;
   boss.hp -= SIM.raidHitDamage * power;
   if (boss.hp < 0) boss.hp = 0;
-  world.emit("bite", e.x, e.y); // 연출: 맞받아치거나 명중한 자리
 }
 
 /**
@@ -727,7 +726,10 @@ function stepSingleBoss(boss: Boss, world: World): void {
         if (bossRaidable(boss) && e.species.isPlayer) {
           const melee = raidMeleePower(boss, e.genome.traits);
           if (melee > 0 || raidRangedPower(e.genome.traits) > 0) {
-            if (melee > 0) dealRaidHit(boss, world, e, melee);
+            if (melee > 0) {
+              dealRaidHit(boss, melee);
+              world.emit("bite", e.x, e.y); // 연출: 맞받아침(근접)
+            }
             continue;
           }
         }
@@ -837,7 +839,10 @@ function memberKills(e: Entity, boss: Boss, world: World): boolean {
   if (bossRaidable(boss) && e.species.isPlayer) {
     const melee = raidMeleePower(boss, t);
     if (melee > 0 || raidRangedPower(t) > 0) {
-      if (melee > 0) dealRaidHit(boss, world, e, melee);
+      if (melee > 0) {
+        dealRaidHit(boss, melee);
+        world.emit("bite", e.x, e.y); // 연출: 그 자리에서 맞받아침(근접)
+      }
       return false;
     }
   }

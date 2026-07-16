@@ -10,12 +10,14 @@ interface Particle {
   kind: VisualEventKind;
   x: number;
   y: number;
+  tx: number; // 방향성 사건(spit)의 목표점 — 없으면 x,y 와 같다
+  ty: number;
   age: number; // 경과(ms)
   life: number; // 수명(ms)
   seed: number; // 0~1, 파편·반짝임 방향/속도 변주용(위치에서 파생 → 결정론)
 }
 
-const LIFE: Record<VisualEventKind, number> = { birth: 720, death: 820, kill: 620, bite: 260 };
+const LIFE: Record<VisualEventKind, number> = { birth: 720, death: 820, kill: 620, bite: 240, spit: 300 };
 const TAU = Math.PI * 2;
 
 // 위치 → [0,1) 결정론 해시(파티클 시드). 같은 자리 사건은 늘 같은 모양(재현성, Math.random 회피).
@@ -43,9 +45,9 @@ export class Effects {
     this.container.addChild(this.g);
   }
 
-  spawn(kind: VisualEventKind, x: number, y: number): void {
+  spawn(kind: VisualEventKind, x: number, y: number, tx?: number, ty?: number): void {
     if (this.particles.length > 220) return; // 과부하 방지(대량 사망 시)
-    this.particles.push({ kind, x, y, age: 0, life: LIFE[kind], seed: seedAt(x, y) });
+    this.particles.push({ kind, x, y, tx: tx ?? x, ty: ty ?? y, age: 0, life: LIFE[kind], seed: seedAt(x, y) });
   }
 
   /** 런/월드가 바뀌면 이전 사건 잔여를 지운다. */
@@ -79,8 +81,36 @@ function drawParticle(g: Graphics, p: Particle, t: number): void {
     drawBirth(g, x, y, e, fade, p.seed);
   } else if (p.kind === "bite") {
     drawBite(g, x, y, e, fade, p.seed);
+  } else if (p.kind === "spit") {
+    drawSpit(g, x, y, p.tx, p.ty, t, fade, p.seed);
   } else {
     drawDeath(g, x, y, e, fade, p.seed);
+  }
+}
+
+// 원거리 공격 — 뱉은 것/쏜 가시가 목표로 **날아간다**(레일건 조준선 대신 생물다운 발사체). 짧은 꼬리가
+// 달린 작은 알갱이가 포물선 없이 곧게 날아가, 도착하면 작게 톡 튄다. 매 프레임 직선이 아니라 "한 번 발사"라
+// 생물이 뱉/쏜 것처럼 읽힌다(사용자 피드백: 레일건 같지 않게).
+function drawSpit(g: Graphics, sx: number, sy: number, tx: number, ty: number, t: number, fade: number, seed: number): void {
+  const dx = tx - sx;
+  const dy = ty - sy;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const flightEnd = 0.72; // 이 진행까지 날아가고, 나머지는 도착 튐
+  if (t < flightEnd) {
+    const travel = t / flightEnd; // 0→1 로 목표까지
+    const px = sx + dx * travel;
+    const py = sy + dy * travel;
+    const tail = 5 + seed * 3; // 꼬리 길이(개체마다 조금 다름)
+    // 꼬리(살짝 흐릿) → 머리(밝은 알갱이). 유기적인 뱉기/가시.
+    g.moveTo(px - ux * tail, py - uy * tail).lineTo(px, py).stroke({ color: 0xd9c47e, width: 2, alpha: 0.7, cap: "round" });
+    g.circle(px, py, 2.2).fill({ color: 0xfff2c0, alpha: 0.95 });
+  } else {
+    const e2 = (t - flightEnd) / (1 - flightEnd); // 도착 후 진행 0→1
+    // 명중 — 작은 튐 고리 + 알갱이 하나(닿아 터진 자리). 작고 짧아 화면을 안 어지럽힌다.
+    g.circle(tx, ty, 1.5 + e2 * 5).stroke({ color: 0xe6cf88, width: 1.6 * fade + 0.3, alpha: 0.8 * fade });
+    g.circle(tx, ty, 1.6 * fade + 0.3).fill({ color: 0xfff2c0, alpha: 0.85 * fade });
   }
 }
 
@@ -124,13 +154,21 @@ function drawBirth(g: Graphics, x: number, y: number, e: number, fade: number, s
 // 물렸다(즉사 아님) — 짧고 작게 튄다. 잡아먹힘(drawKill)의 축소판이라 "같은 종류의 사건"으로 읽히되,
 // 크기·수명이 확연히 작아 "아직 안 죽었다"가 구분된다. 추격 중 여러 번 뜨므로 화면을 어지럽히면 안 된다.
 function drawBite(g: Graphics, x: number, y: number, e: number, fade: number, seed: number): void {
-  g.circle(x, y, 2 + e * 7).stroke({ color: 0xff6a4a, width: 1.8 * fade + 0.3, alpha: 0.8 * fade });
+  // 물기 — 딱딱한 링+점(폭발형) 대신 살점이 튀듯 짧은 파편이 흩뿌려진다(유기적, 사용자 피드백). 무는
+  // 방향(seed)으로 살짝 쏠려 "여기를 물었다"가 읽히고, 작고 짧아 추격 중 여러 번 떠도 안 어지럽다.
   const n = 4;
+  const base = seed * TAU;
   for (let i = 0; i < n; i++) {
-    const a = (i / n) * TAU + seed * TAU;
-    const d = 3 + e * 8;
-    g.circle(x + Math.cos(a) * d, y + Math.sin(a) * d, 1.4 * fade + 0.3).fill({ color: 0xff4326, alpha: 0.9 * fade });
+    const a = base + (i / n) * TAU + (frand(seed, i) - 0.5) * 0.7;
+    const r0 = 1.4 + e * 4;
+    const r1 = r0 + (3 + frand(seed, i + 20) * 5) * fade;
+    const ca = Math.cos(a);
+    const sa = Math.sin(a);
+    g.moveTo(x + ca * r0, y + sa * r0)
+      .lineTo(x + ca * r1, y + sa * r1)
+      .stroke({ color: 0xd94b34, width: 1.7 * fade + 0.3, alpha: 0.82 * fade, cap: "round" });
   }
+  g.circle(x, y, 2.2 * fade + 0.6).fill({ color: 0xff6a4a, alpha: 0.55 * fade }); // 무른 중심(살점)
 }
 
 function drawDeath(g: Graphics, x: number, y: number, e: number, fade: number, seed: number): void {

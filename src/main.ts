@@ -645,7 +645,7 @@ async function boot(): Promise<void> {
     resolveSelection();
     view.sync(game.world, game.interpAlpha, ticker.deltaMS);
     // 사건 연출: sim 이 이번 프레임에 emit 한 사건(탄생/죽음/잡아먹힘)을 효과로 옮기고 비운다.
-    for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y);
+    for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y, ev.tx, ev.ty);
     game.world.events.length = 0;
     effects.update(ticker.deltaMS);
     hud.update({

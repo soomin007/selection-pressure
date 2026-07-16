@@ -371,8 +371,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   if (fighter && raidBoss && isRaidRangedFighter(raidBoss, e, world)) {
     const tgt = bossRaidTargetFor(raidBoss, e.x, e.y);
     if ((e.x - tgt.x) ** 2 + (e.y - tgt.y) ** 2 <= atkRange * atkRange && e.attackCd <= 0) {
-      dealRaidHit(raidBoss, world, e, raidRangedPower(t) * SIM.raidRangedMul);
+      dealRaidHit(raidBoss, raidRangedPower(t) * SIM.raidRangedMul);
       e.attackCd = SIM.attackCooldownTicks;
+      world.emit("spit", e.x, e.y, tgt.x, tgt.y); // 연출: 발사체가 보스로 날아간다(원거리)
     }
   }
   const flee = fighter ? null : computeFlee(e, world, t, maxSpeed, canSwim, canLand, canFly);
@@ -475,6 +476,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     // 물기는 쿨다운마다 한 번. 예전엔 매 틱 굴려 접촉 즉시 즉사였다.
     if (dx * dx + dy * dy <= atkRange * atkRange && e.attackCd <= 0) {
       e.attackCd = SIM.attackCooldownTicks;
+      // 원거리 종은 발사체(spit)가 먹잇감으로 날아간다(레일건 조준선 대신 생물다운 뱉기/가시). 근접은 그 자리 물기.
+      const ranged = t.ranged >= SIM.rangedThreshold;
+      if (ranged) world.emit("spit", e.x, e.y, prey.x, prey.y);
       // 독은 방어(삼킨 쪽이 중독)라 사냥 성공과 무관 — 물기 판정은 공격력 차와 **몸집 차**를 본다.
       // 큰 먹잇감은 잘 안 죽고, 아주 크면 이빨이 아예 안 박힌다(biteIgnoreDiff).
       const bite = biteOutcome(
@@ -487,7 +491,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         } else {
           prey.energy -= bite.damage;
           prey.woundTicks = SIM.woundTicks; // 다쳤다 — 이 동안 쓰러지면 "부상"이지 굶주림이 아니다
-          world.emit("bite", prey.x, prey.y); // 연출: 물렸다(작은 붉은 튐)
+          if (!ranged) world.emit("bite", prey.x, prey.y); // 근접만 그 자리 물기(원거리는 위 spit 이 명중 표현)
           // 여러 번 물려 기운이 다하면 그 자리에서 잡아먹힌다(사망 원인은 잡아먹힘 — 포식자가 먹는다).
           if (prey.energy <= 0) devour(e, prey, world);
         }
