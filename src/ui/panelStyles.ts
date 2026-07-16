@@ -276,7 +276,9 @@ export function ensurePanelStyles(): void {
      안 그러면 설명이 짧은 카드(예: "다산")만 칩이 같은 줄 오른쪽에 붙어 카드마다 레이아웃이 달라진다.
      스펙 목업은 설명이 짧아 한 줄에 나란히 뒀지만, 실제 한국어 설명은 대부분 줄바꿈된다. */
   .draft-card-desc { flex: 1 1 100%; font-size: 11.5px; color: var(--sub); line-height: 1.4; }
-  .draft-chips { display: flex; gap: 5px; flex: none; flex-wrap: wrap; }
+  /* max-width 로 카드 폭에 가둔다 — flex:none 만 두면 좁은 폰에서 칩들이 한 줄 max-content 폭을 가져
+     wrap 이 안 되고 4번째 칩이 카드 밖으로 삐져나간다(정점의 포식자처럼 효과 4개 카드, 사용자 지적). */
+  .draft-chips { display: flex; gap: 5px; flex: none; flex-wrap: wrap; max-width: 100%; }
   .draft-chip { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
     font-family: var(--font-mono); font-size: 10.5px; border-radius: 8px; padding: 4px 9px; }
   .draft-chip > i { font-size: 7px; font-style: normal; }
