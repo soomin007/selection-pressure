@@ -475,12 +475,12 @@ export class Game {
       const bt = kind as BossType;
       this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff, true); // 레이드 첫 시대부터
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
-      this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
+      this.preview = `다가오는 위협. ${bossPreview(bt)}`;
     } else {
       const et = kind as ExtinctionType;
       applyExtinction(this.world, et, diff);
       this.stageLabel = `대멸종 · ${extinctionName(et)}`;
-      this.preview = `대멸종 — ${extinctionPreview(et)}`;
+      this.preview = `대멸종. ${extinctionPreview(et)}`;
     }
     this.stageTicksLeft = 99999; // 관찰용 — 타이머 만료로 통과 판정이 나지 않게
   }
@@ -664,7 +664,7 @@ export class Game {
     // **이번 세계를 먼저 알린다.** 세계가 정해진 뒤에 종을 고르는 게 이 게임이다 — 무엇이 기다리는지
     // 모르고 고르면 그건 선택이 아니라 운이다(군도인데 걷는 종을 고르면 섬에 갇힌다).
     const w = this.worldBriefing();
-    this.preview = `이번 세계 — ${w.name} · 바다 ${w.sea}%. ${w.desc} 여기서 살아갈 종을 고르세요.`;
+    this.preview = `이번 세계. ${w.name} · 바다 ${w.sea}%. ${w.desc} 여기서 살아갈 종을 고르세요.`;
   }
 
   /**
@@ -711,14 +711,14 @@ export class Game {
       this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff, true);
       // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
-      this.preview = `다가오는 위협 — ${bossPreview(bt)}`;
+      this.preview = `다가오는 위협. ${bossPreview(bt)}`;
       this.stageTicksLeft = GAME.bossSeconds * SIM.stepsPerSecond;
     } else if (kind === "extinction") {
       // 예고와 실제가 일치하도록 미리 정해 둔 큐에서 꺼낸다(peek 로 예고한 종류 == 여기서 shift 되는 종류).
       const et = this.extinctionQueue.shift() ?? this.extRng.pick(EXTINCTION_TYPES);
       applyExtinction(this.world, et, diff);
       this.stageLabel = `대멸종 · ${extinctionName(et)}`;
-      this.preview = `대멸종 — ${extinctionPreview(et)}`;
+      this.preview = `대멸종. ${extinctionPreview(et)}`;
       this.stageTicksLeft = GAME.extinctionSeconds * SIM.stepsPerSecond;
     } else {
       this.stageLabel = "채집";
