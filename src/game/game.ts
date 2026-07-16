@@ -794,7 +794,8 @@ export class Game {
         name: championName(this.genome, conquered),
         genome: cloneGenome(this.genome),
         era: this.era,
-        color: this.playerColor ?? 0x6cc24a,
+        // 색을 살짝 흔든다 — 같은 프리셋으로 저장한 챔피언들이 똑같은 색이라 못 알아보던 문제(사용자 지적).
+        color: jitterColor(this.playerColor ?? 0x6cc24a),
       };
       saveChampion(champ);
     }
@@ -978,24 +979,49 @@ export class Game {
 }
 
 /** 챔피언 이름 — 가장 두드러진 형질로 별명 + 정복/생존 칭호(비동기 생물이 등장할 때 왕관과 함께 표시). */
+// 챔피언(예전의 내 종) 이름 — 최고 형질에서 별칭을 뽑되, **별칭·칭호를 여러 후보에서 무작위로** 골라
+// 같은 빌드라도 이름이 안 겹치게 한다(사용자 지적: "맹아의 생존자"가 같은 색으로 둘 있어 못 알아본다).
+// 게임 층이라 Math.random 허용(sim 결정론과 무관 — 이름은 저장 시 한 번 정해진다).
+const CHAMPION_EPITHETS: Record<string, readonly string[]> = {
+  speed: ["질풍", "쏜살", "바람발", "번개"],
+  attack: ["맹아", "폭군", "야수", "사나운 이빨"],
+  vision: ["천리안", "매의 눈", "먼눈", "밝은 눈"],
+  fertility: ["번성", "다산", "만생", "불어남"],
+  herding: ["결속", "무리", "동맹", "한 몸"],
+  metabolism: ["불꽃", "열혈", "잿불", "화톳불"],
+  swimming: ["심해", "물살", "해류", "깊은 물"],
+  wings: ["창공", "하늘", "바람날개", "높이"],
+  venom: ["독아", "맹독", "검은 이빨", "쐐기"],
+  ranged: ["원사", "먼 사냥", "쏘는 손", "긴 팔"],
+  echo: ["음파", "메아리", "밤귀", "울림"],
+};
+const CHAMPION_SURVIVOR = ["생존자", "방랑자", "후예", "잔존자", "그림자", "떠돌이"];
+const CHAMPION_CONQUEROR = ["정복자", "군주", "패왕", "전설", "왕", "우두머리"];
+
+/** 색을 무작위로 살짝 흔든다(챔피언 구분용). 각 채널을 ±이 정도로 밀되 0~255 로 클램프. Math.random 허용(게임 층). */
+function jitterColor(color: number): number {
+  const j = (): number => Math.round((Math.random() - 0.5) * 56); // ±28
+  const cl = (v: number): number => (v < 0 ? 0 : v > 255 ? 255 : v);
+  const r = cl(((color >> 16) & 0xff) + j());
+  const g = cl(((color >> 8) & 0xff) + j());
+  const b = cl((color & 0xff) + j());
+  return (r << 16) | (g << 8) | b;
+}
+
 function championName(g: Genome, conquered: boolean): string {
   const t = g.traits;
   const pairs: [number, string][] = [
-    [t.speed, "질풍"],
-    [t.attack, "맹아"],
-    [t.vision, "천리안"],
-    [t.fertility, "번성"],
-    [t.herding, "결속"],
-    [t.metabolism, "불꽃"],
-    [t.swimming, "심해"],
-    [t.wings, "창공"],
-    [t.venom, "독아"],
-    [t.ranged, "원사"],
-    [t.echo, "음파"],
+    [t.speed, "speed"], [t.attack, "attack"], [t.vision, "vision"], [t.fertility, "fertility"],
+    [t.herding, "herding"], [t.metabolism, "metabolism"], [t.swimming, "swimming"], [t.wings, "wings"],
+    [t.venom, "venom"], [t.ranged, "ranged"], [t.echo, "echo"],
   ];
   pairs.sort((a, b) => b[0] - a[0]);
-  const epithet = pairs[0]?.[1] ?? "무명";
-  return `${epithet}의 ${conquered ? "정복자" : "생존자"}`;
+  const topKey = pairs[0]?.[1] ?? "attack";
+  const pool = CHAMPION_EPITHETS[topKey] ?? ["무명"];
+  const epithet = pool[Math.floor(Math.random() * pool.length)] ?? "무명";
+  const titles = conquered ? CHAMPION_CONQUEROR : CHAMPION_SURVIVOR;
+  const title = titles[Math.floor(Math.random() * titles.length)] ?? (conquered ? "정복자" : "생존자");
+  return `${epithet}의 ${title}`;
 }
 
 

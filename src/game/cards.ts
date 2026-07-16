@@ -742,7 +742,7 @@ export const CARD_POOL: readonly Card[] = [
   { id: "ranged_aim", name: "조준하는 눈", desc: "겨눈 것을 놓치지 않는다. 멀리 보고 정확히 친다.", effects: { vision: 20, ranged: 12, speed: -4 }, lineage: "ranged" },
   { id: "ranged_volley", name: "연달아 쏘기", desc: "쉼 없이 쏘아댄다. 가까이 붙기 전에 쓰러뜨린다.", effects: { ranged: 22, attack: 10, herding: -6 }, lineage: "ranged" },
   { id: "ranged_sniper", name: "보이지 않는 사수", desc: "상대가 알아채기도 전에 끝낸다. 사거리와 눈이 함께 극에 달한다.", effects: { ranged: 24, vision: 22, attack: 8, fertility: -8 }, lineage: "ranged" },
-  { id: "ranged_bastion", name: "진 치는 몸", desc: "몸이 커져 자리를 지키며 멀리서 쏜다. 다가오는 것을 버티고, 스스로는 좀처럼 밀리지 않는다. 대신 걸음이 무겁다.", effects: { size: 16, ranged: 6 }, lineage: "ranged" },
+  { id: "ranged_bastion", name: "버티는 사수", desc: "몸이 커져 자리를 지키며 멀리서 쏜다. 다가오는 것을 버티고, 스스로는 좀처럼 밀리지 않는다. 대신 걸음이 무겁다.", effects: { size: 16, ranged: 6 }, lineage: "ranged" },
 
   // ── 바다 개척자: 물이 삶터다. 헤엄과 바다 사냥이 정체성(수영값은 문턱 위에선 안 오르므로 다른 형질로).
   { id: "sea_current", name: "해류를 타다", desc: "물살을 읽어 힘 안 들이고 나아간다.", effects: { speed: 18, metabolism: -8 }, lineage: "sea" },
