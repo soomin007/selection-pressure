@@ -335,10 +335,16 @@ export function ensurePanelStyles(): void {
   .draft-popup-wrap.on { display: flex; }
   /* color 필수: 팝업 래퍼는 body 직속이라 .draft-root 의 color 를 상속받지 못한다 — 안 주면
      이름·스탯 값·고른 형질 칩이 body 기본 검정 글씨가 되어 어두운 바탕에서 안 보인다. */
+  /* max-height + 내부 스크롤 — 형질이 많이 쌓이면(후반) 팝업이 화면을 넘겨 위로 자라, 닫기 버튼(헤더)이
+     화면 밖으로 밀려 못 눌렀다(사용자: 그래서 뒤로가기로 닫다 게임 진행이 날아감). 팝업을 뷰포트에 가두고
+     내부에서 스크롤하되, 헤더는 sticky 로 늘 위에 붙어 닫기가 항상 보인다. dvh 로 모바일 주소창까지 반영. */
   .draft-popup { width: 100%; max-width: 410px; box-sizing: border-box; background: rgba(30,23,16,0.97);
     border: 1px solid var(--line); border-radius: 22px; padding: 20px 20px 18px;
-    color: var(--ink); animation: draft-sheet-rise 0.35s ease-out; }
-  .draft-popup-head { display: flex; justify-content: space-between; align-items: center; }
+    color: var(--ink); animation: draft-sheet-rise 0.35s ease-out;
+    max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px); overflow-y: auto; }
+  .draft-popup-head { display: flex; justify-content: space-between; align-items: center;
+    position: sticky; top: 0; z-index: 2; background: #1e1710; /* 불투명 — 스크롤된 내용이 헤더 밑으로 안 비친다 */
+    margin: -20px -20px 0; padding: 18px 20px 11px; border-radius: 21px 21px 0 0; }
   .draft-popup-id { display: flex; align-items: center; gap: 11px; min-width: 0; }
   .draft-popup-thumb { width: 46px; height: 42px; border-radius: 13px; flex: none;
     background-color: #141B28; background-position: center; background-size: 120%; background-repeat: no-repeat; }
@@ -413,7 +419,9 @@ export function ensurePanelStyles(): void {
     .draft-dim { display: none !important; }
     .draft-popup-wrap { top: 64px; bottom: auto; left: auto; right: 0;
       align-items: flex-start; justify-content: flex-end; padding: 0 22px; }
-    .draft-popup { max-width: 320px; box-shadow: 0 22px 50px -14px rgba(0,0,0,0.62); }
+    /* 데스크톱은 top:64px 에서 시작 → 그만큼 뺀 높이로 가둔다(모바일과 같은 sticky 헤더 + 내부 스크롤). */
+    .draft-popup { max-width: 320px; box-shadow: 0 22px 50px -14px rgba(0,0,0,0.62);
+      max-height: calc(100vh - 86px); max-height: calc(100dvh - 86px); }
   }
 
   /* §6 등장 연출 키프레임 */
