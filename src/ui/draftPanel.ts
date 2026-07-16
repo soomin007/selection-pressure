@@ -35,6 +35,7 @@ import {
   traitColor,
   traitWord,
   abilityLevel,
+  ABILITY_KEYS,
   NEUTRAL_TRAITS,
   type EffectChip,
 } from "@/ui/traitDisplay";
@@ -362,15 +363,21 @@ export function createDraftPanel(
         val.appendChild(tag);
       }
       if (delta !== 0) {
-        // 감쇠가 깎았으면 원래 값을 취소선으로 함께(칩과 같은 규칙 — 두 화면이 같은 말을 해야 한다).
-        const plain = effectiveDelta(key, card.effects[key] ?? 0);
-        if (delta > 0 && plain > delta) {
-          const was = el("s", "draft-was");
-          was.textContent = `+${plain}`;
-          val.append(" ", was);
-        }
         const d = el("b");
-        d.textContent = delta > 0 ? `+${delta}` : String(delta);
+        if (ABILITY_KEYS.has(key)) {
+          // 능력형(무리 성향)은 값이 단계(없음/보통/강함)라 카드 칩과 똑같이 "강화/약화"로 말한다.
+          // 숫자 델타·취소선을 붙이면 "강함 +12→+8"처럼 낱말과 수치가 뒤섞여 읽힌다(사용자 지적).
+          d.textContent = delta > 0 ? "강화" : "약화";
+        } else {
+          // 값형질 — 감쇠가 깎았으면 원래 값을 취소선으로 함께(칩과 같은 규칙 — 두 화면이 같은 말을 해야 한다).
+          const plain = effectiveDelta(key, card.effects[key] ?? 0);
+          if (delta > 0 && plain > delta) {
+            const was = el("s", "draft-was");
+            was.textContent = `+${plain}`;
+            val.append(" ", was);
+          }
+          d.textContent = delta > 0 ? `+${delta}` : String(delta);
+        }
         d.style.color = neutral ? chipColor("neutral") : delta > 0 ? "#8FD14F" : "#E85C43";
         val.append(" ", d);
       }
@@ -380,7 +387,7 @@ export function createDraftPanel(
 
     // 능력형·식성 — 지닌 것(또는 이 카드가 건드리는 것)만 보여준다. 날개·수영 같은 중요한 스탯이 아예 안
     // 뜨던 구멍을 메운다(사용자 지적). 값이 문턱 위에선 무의미해 막대 대신 단어/범주로, 변화는 강화·약화·방향.
-    const ABIL_DIET: readonly (keyof Traits)[] = ["diet", "swimming", "wings", "echo", "venom", "ranged"];
+    const ABIL_DIET: readonly (keyof Traits)[] = ["diet", "camouflage", "swimming", "wings", "echo", "venom", "ranged"];
     for (const key of ABIL_DIET) {
       const value = c.genome.traits[key];
       const eff = card.effects[key] ?? 0;
