@@ -24,9 +24,6 @@ import type { Rng } from "@/sim/rng";
 import type { Traits } from "@/sim/genome";
 import { TRAIT_MAX } from "@/sim/genome";
 import { SIM } from "@/sim/params";
-// 무리 방어 판정을 render(worldView)·boss 격퇴가 같은 소스로 읽는다(시각=로직 1:1). behavior 도 boss 를
-// import 하지만 둘 다 함수 안에서만 쓰므로 순환 import 가 안전하다(모듈 로드 시점엔 서로를 안 부른다).
-import { herdShielded } from "@/sim/behavior";
 
 export type BossType =
   | "chaser"
@@ -509,7 +506,7 @@ function clampTo(v: number, lo: number, hi: number): number {
 /** 전투 전 위협 예고 문구 (쉬운 말). */
 export function bossPreview(type: BossType): string {
   const p = PRESETS[type];
-  return `${p.name} — ${p.threat} ${p.counter}`;
+  return `${p.name}. ${p.threat} ${p.counter}`;
 }
 
 export function bossName(type: BossType): string {
@@ -653,57 +650,76 @@ function traitFulfill(value: number, floor: number): number {
   return clamp01((value - floor) / (TRAIT_MAX - floor));
 }
 
+/** 이 보스의 카운터 형질에 대한 개체의 충족도(0~1) — floor~100 을 0~1 로. */
+function raidContribution(boss: Boss, t: Traits): number {
+  switch (boss.raidCounter) {
+    case "attack":
+      return traitFulfill(t.attack, SIM.raidAttackFloor);
+    case "speed":
+      return traitFulfill(t.speed, SIM.raidSpeedFloor);
+    case "vision":
+      return traitFulfill(t.vision, SIM.raidVisionFloor);
+    case "group":
+      return traitFulfill(t.herding, SIM.raidHerdFloor);
+    case "fertility":
+      return traitFulfill(t.fertility, SIM.raidFertFloor);
+    default:
+      return 0;
+  }
+}
+
 /**
- * 레이드 2단계 — 초식 카운터(속도·무리·시야·번식)가 매 틱 격퇴 체력을 깎는다. 무리가 자기 형질을
- * **시연하며 버티면**(빠르게 따돌리고·뭉치고·미리 보고·수로 메우면) 보스가 지쳐 물러난다. 공격(약탈자,
- * 전사 반격=memberKills)과 격퇴 없음(독 안개, raidCounter null)은 여기서 제외한다.
+ * 이 개체가 이 보스의 "전사"인가 — 카운터 형질이 문턱을 넘어 **맞서 반격하는 강한 개체**(안 도망).
+ * 보스가 물면 dealRaidHit 으로 격퇴 체력을 깎고 살아남는다. 형질마다 되받아치는 방식이 다르다:
+ * 공격=반격 · 속도=치고 빠짐 · 무리=뭉쳐 물리침 · 시야=미리 보고 되치기 · 번식=다산 무리가 수로 되받아침.
+ * 독 안개(null)만 전사가 없다(전역이라 때릴 대상이 없음).
  */
-function applyRaidWear(boss: Boss, world: World): void {
-  if (!bossRaidable(boss)) return;
-  const counter = boss.raidCounter;
-  if (counter === null || counter === "attack") return;
-
-  // huntable 한 내 종 개체의 카운터 충족도 합/수. 층위가 안 겹치면(하늘로 피한 종) 위협도 격퇴도 아니다.
-  let sum = 0;
-  let n = 0;
-  for (const e of world.entities) {
-    if (!e.alive || !e.species.isPlayer) continue;
-    if (!bossCanHunt(boss, e, world)) continue;
-    n += 1;
-    const t = e.genome.traits;
-    if (counter === "speed") sum += traitFulfill(t.speed, SIM.raidSpeedFloor);
-    else if (counter === "vision") sum += traitFulfill(t.vision, SIM.raidVisionFloor);
-    else if (counter === "fertility") sum += traitFulfill(t.fertility, SIM.raidFertFloor);
-    else if (counter === "group") sum += herdShielded(e, world) ? 1 : 0;
+function isRaidFighterTrait(boss: Boss, t: Traits): boolean {
+  switch (boss.raidCounter) {
+    case "attack":
+      return t.attack >= SIM.raidWarriorAttack;
+    case "speed":
+      return t.speed >= SIM.raidFighterThreshold;
+    case "vision":
+      return t.vision >= SIM.raidFighterThreshold;
+    case "group":
+      return t.herding >= SIM.raidFighterThreshold;
+    case "fertility":
+      return t.fertility >= SIM.raidFighterThreshold;
+    default:
+      return false; // null(독 안개) — 전사가 없다
   }
-  if (n === 0) return; // 무리가 통째로 사냥 층 밖(피난) — 위협도 격퇴도 없다(버티기 타이머로).
+}
 
-  // 충족도(0~1). 대부분 평균(무리 크기 무관 — 큰 무리가 거저 이기지 않고, 형질이 높은 무리만 제 시간에 격퇴).
-  let score: number;
-  if (counter === "group") {
-    // 무리 = 뭉친(방패) 비율. 목표 비율에 닿으면 완전 카운터(무리 전체가 방패는 cohesion 상 어렵다).
-    score = clamp01(sum / n / SIM.raidShieldTarget);
-  } else {
-    // 속도·시야·번식 = 평균 형질 충족도. floor 이하 무리는 0 이라 격퇴가 안 일어난다(잘못된 빌드 배제).
-    score = sum / n;
-  }
-
-  boss.hp -= SIM.raidWearRate * score;
+/** 보스가 이 개체를 물었다 — 개체의 카운터 충족도만큼 격퇴 체력을 깎고 반격 연출을 낸다(**물기당** 이벤트). */
+function dealRaidHit(boss: Boss, world: World, e: Entity): void {
+  boss.hp -= SIM.raidHitDamage * raidContribution(boss, e.genome.traits);
   if (boss.hp < 0) boss.hp = 0;
+  world.emit("bite", e.x, e.y); // 연출: 맞받아친 자리
+}
+
+/**
+ * 이 개체가 지금 이 보스에 맞서는 전사인가(레이드 켜짐 + 카운터 문턱 + 사냥 가능 층). behavior 가 이걸 보고
+ * 전사는 도망을 스킵하게 한다("강한 개체는 맞서고 약한 개체는 도망"). 전사만 맞서므로 전멸하지 않는다.
+ */
+export function isRaidFighter(boss: Boss, e: Entity, world: World): boolean {
+  return (
+    e.species.isPlayer && // 내 종만 보스에 맞선다(야생은 보스를 안 깎는다)
+    bossRaidable(boss) &&
+    isRaidFighterTrait(boss, e.genome.traits) &&
+    bossCanHunt(boss, e, world)
+  );
 }
 
 /** 보스 한 틱. 타입별로 다른 압박을 가한다. */
 export function stepBoss(boss: Boss, world: World): void {
   // 개체형 떼 시련(사나운 무리·약탈자·외톨이 사냥꾼·그림자 매복자·말벌 떼) — 실제 개체가 몰려와 문다.
-  // 무엇이 죽느냐만 타입별로 다르다(memberKills): 무조건/공격력 반격/무리 이탈/시야 회피/속도 회피.
+  // 격퇴 체력은 **보스가 물 때만**(memberKills·killRadius) 전사의 반격/다산 압도로 깎인다(시간 아닌 물기당).
   if (boss.members.length > 0) {
     stepMemberHorde(boss, world);
   } else {
     stepSingleBoss(boss, world);
   }
-  // 레이드 2단계 — 초식 카운터(속도·무리·시야·번식)는 매 틱 무리의 카운터 충족도만큼 격퇴 체력을 깎는다.
-  // 공격(약탈자)은 전사 반격(memberKills)이 이미 깎으므로 여기선 제외한다.
-  applyRaidWear(boss, world);
 }
 
 /** 단일 개체 보스(떼가 아닌 chaser·poison 등) 한 틱 — 이동 후 즉사/전역 솎기/에너지 흡수. */
@@ -718,6 +734,11 @@ function stepSingleBoss(boss: Boss, world: World): void {
       const dx = e.x - boss.x;
       const dy = e.y - boss.y;
       if (dx * dx + dy * dy < killR2) {
+        // 전사(빠른 개체)는 파고들어 치고 빠진다 — 격퇴 체력을 깎고 안 죽는다(추격자·상어=속도 카운터).
+        if (bossRaidable(boss) && e.species.isPlayer && isRaidFighterTrait(boss, e.genome.traits)) {
+          dealRaidHit(boss, world, e);
+          continue;
+        }
         e.alive = false;
         world.recordDeath(e.species, "boss");
         world.emit("kill", e.x, e.y); // 연출: 보스 즉사 반경
@@ -812,32 +833,25 @@ function stepMemberHorde(boss: Boss, world: World): void {
 }
 
 /**
- * 닿은 개체를 실제로 죽이는가 — 카운터 형질이 높으면 살아남는다(시각=로직: 화면의 떼가 무는 것과 일치).
- *   공격력 저항(약탈자): 공격력이 높으면 반격해 생존.
- *   무리 저항(외톨이):   무리 성향이 높으면(함께 뭉쳐) 생존.
- *   시야 저항(매복자):   시야가 높으면 미리 보고 피함.
- *   속도 저항(말벌 떼):  속도가 높으면 쏘이기 전에 벗어남.
- *   저항 없음(사나운 무리): 닿으면 무조건. (모두 kill = rng >= resist×형질)
+ * 떼 개체가 문 개체를 실제로 죽이는가 — 그리고 **문 순간 격퇴 체력을 깎는가**(레이드).
+ *   전사(카운터 형질≥문턱, 공격·속도·무리·시야): 물린 순간 **맞받아쳐 격퇴 체력을 깎고 살아남는다**.
+ *   번식 카운터(사나운 무리): 전사가 없다 → 물리면 죽되, 물릴 때마다 다산 무리가 수로 압도해 떼를 지치게 한다.
+ *   그 외(약한 개체·era 0·레이드 꺼짐): 기존 확률 저항으로 생존/죽음(카운터 형질 높으면 잘 산다).
  */
 function memberKills(e: Entity, boss: Boss, world: World): boolean {
   const t = e.genome.traits;
-  if (boss.cullAttackResist > 0) {
-    // 약탈자 — 공격력으로 반격. **레이드가 켜진 시대(era 1+)엔 전사(공격력≥문턱)가 물린 순간 반격해
-    // 격퇴 체력을 깎고 살아남는다.** 떼가 계속 몰려와 물수록 전사들의 반격이 쌓여 격퇴로 이어진다
-    // (도망 못 하는 약탈자 상대라 "맞서 싸워 잡는다"가 자연스럽다 — kiting 이 안 통하는 걸 반격으로 푼다).
-    // era 0·비전사(공격력<문턱)는 기존 확률 저항(공격력 높으면 생존, 낮으면 죽음).
-    if (bossRaidable(boss) && t.attack >= SIM.raidWarriorAttack) {
-      boss.hp -= SIM.raidDamagePerHit * (t.attack / TRAIT_MAX);
-      world.emit("bite", e.x, e.y); // 연출: 전사가 반격한 자리
-      return false; // 반격 성공 — 전사는 안 죽는다
-    }
-    return world.rng.unit() >= boss.cullAttackResist * (t.attack / TRAIT_MAX);
+  // 전사(카운터 형질≥문턱)는 물린 순간 맞받아쳐 격퇴 체력을 깎고 산다(공격=반격·속도=치고빠짐·무리=뭉쳐
+  // 물리침·시야=되치기·번식=수로 되받아침). 약한 개체는 아래 확률 저항으로 생존/죽음.
+  if (bossRaidable(boss) && e.species.isPlayer && isRaidFighterTrait(boss, t)) {
+    dealRaidHit(boss, world, e);
+    return false;
   }
+  // 비전사(약한 개체)·레이드 꺼짐: 카운터 형질 확률 저항(형질 높을수록 잘 산다). 저항 없으면(사나운 무리) 죽음.
+  if (boss.cullAttackResist > 0) return world.rng.unit() >= boss.cullAttackResist * (t.attack / TRAIT_MAX);
   if (boss.cullGroupResist > 0) return world.rng.unit() >= boss.cullGroupResist * (t.herding / TRAIT_MAX);
   if (boss.cullSpeedResist > 0) return world.rng.unit() >= boss.cullSpeedResist * (t.speed / TRAIT_MAX);
   if (boss.cullVisionResist > 0) {
     // 그림자 매복자 — 수풀 안에선 시야가 안 통해 미리 못 알아챈다(저항 40%로 감소 → 수풀이 사냥터).
-    // 트인 곳에선 시야로 멀찍이 알아채 피한다. 시야 형질은 수풀 밖에서 진가를 낸다(지형×형질).
     const resist = world.terrain.isGrass(e.x, e.y) ? boss.cullVisionResist * 0.4 : boss.cullVisionResist;
     return world.rng.unit() >= resist * (t.vision / TRAIT_MAX);
   }
