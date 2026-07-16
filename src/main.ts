@@ -675,7 +675,7 @@ async function boot(): Promise<void> {
     // 레이드 격퇴 체력 바(글로벌) — 관전 중 격퇴 체력이 있는 보스(레이드 켜짐)일 때 보스 이름 + 게이지를 상단에.
     const rbBoss = game.world.boss;
     const raidActive = game.phase === "watch" && rbBoss !== null && rbBoss.maxHp > 0 && rbBoss.hp > 0;
-    raidBossBar.set(raidActive && rbBoss ? rbBoss.name : null, raidActive && rbBoss ? rbBoss.hp / rbBoss.maxHp : 0, 0xff5a44);
+    raidBossBar.set(raidActive && rbBoss ? rbBoss.name : null, raidActive && rbBoss ? rbBoss.hp / rbBoss.maxHp : 0, 0xff5a44, game.secondsLeft);
     raidBossBar.update(ticker.deltaMS, app.screen.width);
 
     if (debugBadge) {

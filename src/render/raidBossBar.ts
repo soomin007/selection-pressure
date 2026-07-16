@@ -9,6 +9,7 @@ export class RaidBossBar {
   private readonly track = new Graphics();
   private readonly fill = new Graphics();
   private readonly nameText: Text;
+  private readonly timeText: Text; // 남은 시간 카운트다운(보스 타이머)
   private frac = 1;
   private displayFrac = 1; // 부드럽게 따라가는 표시값(깎일 때 스르륵 줄어든다)
   private color = 0xff5a44;
@@ -25,12 +26,23 @@ export class RaidBossBar {
       }),
     });
     this.nameText.anchor.set(0.5, 1); // 가로 가운데, 아래 기준(바 위에 올린다)
-    this.container.addChild(this.track, this.fill, this.nameText);
+    this.timeText = new Text({
+      text: "",
+      style: new TextStyle({
+        fill: 0xffd9a0,
+        fontSize: 12,
+        fontWeight: "700",
+        fontFamily: "monospace",
+        stroke: { color: 0x160a06, width: 3 },
+      }),
+    });
+    this.timeText.anchor.set(1, 1); // 바 오른쪽 위에 붙인다
+    this.container.addChild(this.track, this.fill, this.nameText, this.timeText);
     this.container.visible = false;
   }
 
-  /** 보스 상태 반영 — name 이 null 이면(격퇴 없는 보스·보스 없음) 숨긴다. */
-  set(name: string | null, frac: number, color: number): void {
+  /** 보스 상태 반영 — name 이 null 이면(격퇴 없는 보스·보스 없음) 숨긴다. secondsLeft = 남은 관전 시간(타이머). */
+  set(name: string | null, frac: number, color: number, secondsLeft: number): void {
     if (name === null) {
       this.container.visible = false;
       return;
@@ -38,6 +50,7 @@ export class RaidBossBar {
     if (!this.container.visible) this.displayFrac = frac; // 새로 뜰 땐 튀지 않게 현재값으로
     this.container.visible = true;
     this.nameText.text = name;
+    this.timeText.text = `${Math.max(0, Math.ceil(secondsLeft))}초`;
     this.frac = frac < 0 ? 0 : frac > 1 ? 1 : frac;
     this.color = color;
   }
@@ -64,5 +77,8 @@ export class RaidBossBar {
 
     this.nameText.x = screenW / 2;
     this.nameText.y = y0 - 4;
+    // 남은 시간 — 바 오른쪽 위 모서리(이름과 안 겹치게).
+    this.timeText.x = x0 + barW;
+    this.timeText.y = y0 - 4;
   }
 }

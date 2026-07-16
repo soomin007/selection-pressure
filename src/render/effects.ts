@@ -17,7 +17,7 @@ interface Particle {
   seed: number; // 0~1, 파편·반짝임 방향/속도 변주용(위치에서 파생 → 결정론)
 }
 
-const LIFE: Record<VisualEventKind, number> = { birth: 720, death: 820, kill: 620, bite: 240, spit: 300 };
+const LIFE: Record<VisualEventKind, number> = { birth: 720, death: 820, kill: 620, bite: 240, spit: 200 };
 const TAU = Math.PI * 2;
 
 // 위치 → [0,1) 결정론 해시(파티클 시드). 같은 자리 사건은 늘 같은 모양(재현성, Math.random 회피).
@@ -82,34 +82,34 @@ function drawParticle(g: Graphics, p: Particle, t: number): void {
   } else if (p.kind === "bite") {
     drawBite(g, x, y, e, fade, p.seed);
   } else if (p.kind === "spit") {
-    drawSpit(g, x, y, p.tx, p.ty, t, fade, p.seed);
+    drawSpit(g, x, y, p.tx, p.ty, p.age, p.life, p.seed);
   } else {
     drawDeath(g, x, y, e, fade, p.seed);
   }
 }
 
-// 원거리 공격 — 뱉은 것/쏜 가시가 목표로 **날아간다**(레일건 조준선 대신 생물다운 발사체). 짧은 꼬리가
-// 달린 작은 알갱이가 포물선 없이 곧게 날아가, 도착하면 작게 톡 튄다. 매 프레임 직선이 아니라 "한 번 발사"라
-// 생물이 뱉/쏜 것처럼 읽힌다(사용자 피드백: 레일건 같지 않게).
-function drawSpit(g: Graphics, sx: number, sy: number, tx: number, ty: number, t: number, fade: number, seed: number): void {
+// 원거리 공격 — 뱉은 것/쏜 가시가 목표로 **빠르게 날아간다**(레일건 조준선 대신 생물다운 발사체). 비행은
+// **거리 기반이되 아주 짧게**(sim 은 즉시 명중·처치하므로, 발사체가 느리면 "닿기 전에 이미 죽는다" — 사용자
+// 지적). 짧은 꼬리 알갱이가 곧게 날아가 곧장 톡 튄다.
+function drawSpit(g: Graphics, sx: number, sy: number, tx: number, ty: number, ageMs: number, life: number, seed: number): void {
   const dx = tx - sx;
   const dy = ty - sy;
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
-  const flightEnd = 0.72; // 이 진행까지 날아가고, 나머지는 도착 튐
-  if (t < flightEnd) {
-    const travel = t / flightEnd; // 0→1 로 목표까지
+  const dist = Math.hypot(dx, dy) || 1;
+  const flightMs = Math.min(dist / 1.7, 85); // 빠른 발사체(59px ≈ 35ms) — 죽음과 거의 동시에 명중해 어긋남이 안 보인다
+  const travel = Math.min(1, ageMs / flightMs);
+  const ux = dx / dist;
+  const uy = dy / dist;
+  if (travel < 1) {
     const px = sx + dx * travel;
     const py = sy + dy * travel;
     const tail = 5 + seed * 3; // 꼬리 길이(개체마다 조금 다름)
-    // 꼬리(살짝 흐릿) → 머리(밝은 알갱이). 유기적인 뱉기/가시.
-    g.moveTo(px - ux * tail, py - uy * tail).lineTo(px, py).stroke({ color: 0xd9c47e, width: 2, alpha: 0.7, cap: "round" });
+    g.moveTo(px - ux * tail, py - uy * tail).lineTo(px, py).stroke({ color: 0xd9c47e, width: 2, alpha: 0.72, cap: "round" });
     g.circle(px, py, 2.2).fill({ color: 0xfff2c0, alpha: 0.95 });
   } else {
-    const e2 = (t - flightEnd) / (1 - flightEnd); // 도착 후 진행 0→1
-    // 명중 — 작은 튐 고리 + 알갱이 하나(닿아 터진 자리). 작고 짧아 화면을 안 어지럽힌다.
-    g.circle(tx, ty, 1.5 + e2 * 5).stroke({ color: 0xe6cf88, width: 1.6 * fade + 0.3, alpha: 0.8 * fade });
+    const it = Math.min(1, (ageMs - flightMs) / Math.max(1, life - flightMs)); // 도착 후 진행 0→1
+    const fade = 1 - it;
+    // 명중 — 작은 튐(닿아 터진 자리). 작고 짧아 화면을 안 어지럽힌다.
+    g.circle(tx, ty, 1.5 + it * 5).stroke({ color: 0xe6cf88, width: 1.6 * fade + 0.3, alpha: 0.8 * fade });
     g.circle(tx, ty, 1.6 * fade + 0.3).fill({ color: 0xfff2c0, alpha: 0.85 * fade });
   }
 }
