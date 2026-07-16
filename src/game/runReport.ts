@@ -150,7 +150,7 @@ export function formatDeaths(deaths: DeathTally): string {
 }
 
 /** 사망 원인 문단을 식별하는 머리말. buildRunReport(포맷)과 parseDeathLine(역파싱)이 공유. */
-export const DEATH_LINE_PREFIX = "사망 원인 — ";
+export const DEATH_LINE_PREFIX = "사망 원인 · ";
 
 export interface DeathRow {
   label: string;

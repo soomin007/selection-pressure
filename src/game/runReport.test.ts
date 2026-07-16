@@ -64,7 +64,7 @@ describe("buildRunReport", () => {
     expect(blocks[0]).toBe("4단계에서 멸종했습니다.");
     expect(blocks[1]).toContain("이 종은");
     expect(blocks[1]).toContain("추위에 약하고"); // 저대사 한온 적응 한 줄
-    expect(blocks[2]).toBe("사망 원인 — 추위 30 · 굶음 5");
+    expect(blocks[2]).toBe(`${DEATH_LINE_PREFIX}추위 30 · 굶음 5`);
   });
 
   it("죽음이 없으면 사망 원인 문단을 넣지 않는다", () => {
