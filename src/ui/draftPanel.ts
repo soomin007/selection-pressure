@@ -400,10 +400,22 @@ export function createDraftPanel(
       const track = el("div", "draft-stat-track"); // 빈 트랙 — 막대 행과 값 열을 정렬만 맞춘다
       track.style.background = "transparent";
       const val = el("span", "draft-stat-val");
-      val.textContent = traitWord(key, value);
+      const word = traitWord(key, value);
+      val.textContent = word;
+      // 식성은 흰색이라 잘 안 보였다(사용자) → 초식=초록·잡식=amber·육식=빨강으로 강조(굵게).
+      if (key === "diet") {
+        val.style.color = word === "육식" ? "#E85C43" : word === "초식" ? "#8FD14F" : "#F5C33B";
+        val.style.fontWeight = "700";
+      }
       if (affected) {
         const d = el("b");
-        d.textContent = key === "diet" ? (eff > 0 ? "더 육식" : "더 초식") : eff > 0 ? "강화" : "약화";
+        if (key === "diet") {
+          // "더 육식"만으론 얼만지 모른다(사용자) → 실제 바뀌는 값(0~100 척도)을 함께 보여준다.
+          const dd = cardDelta(card, "diet", value);
+          d.textContent = `${eff > 0 ? "더 육식" : "더 초식"} ${dd > 0 ? "+" : ""}${dd}`;
+        } else {
+          d.textContent = eff > 0 ? "강화" : "약화";
+        }
         d.style.color = NEUTRAL_TRAITS.has(key) ? chipColor("neutral") : eff > 0 ? "#8FD14F" : "#E85C43";
         val.append(" ", d);
       }
@@ -423,7 +435,7 @@ export function createDraftPanel(
       for (const key of apexKeys) {
         const line = el("div");
         const strong = el("b");
-        strong.textContent = `${TRAIT_LABELS[key]} 정점 — `;
+        strong.textContent = `${TRAIT_LABELS[key]} 정점. `;
         const rest = el("span");
         rest.textContent = APEX_BOON[key] ?? "";
         line.append(strong, rest);
@@ -616,12 +628,13 @@ export function createDraftPanel(
       node.append(row, body);
       node.style.boxShadow = restingShadow(rarity);
       node.style.animation = cardAnimation(rarity, delay, bounce);
-      // 데스크톱: 클릭이 곧 선택(미리보기는 호버·화살표로 충분). 모바일: 클릭은 미리보기, 확정은 CTA.
+      // 데스크톱: 클릭이 곧 선택(마우스는 클릭으로 고른다). 모바일: 클릭은 미리보기, 확정은 CTA.
       node.addEventListener("click", () => {
         if (isDesktopLayout()) pickCard(i);
         else setPreview(i);
       });
-      node.addEventListener("mouseenter", () => setPreview(i));
+      // 호버로 preview 를 바꾸지 않는다 — 마우스가 가운데 카드에 얹혀 있으면 키보드로 다른 카드를 골라도
+      // Enter(=pickCard(preview))가 가운데를 선택하던 버그(사용자 지적). 마우스는 클릭, 키보드는 화살표+Enter.
       // 카드 모서리의 번호 키 표식(1·2·3) — 데스크톱에서만 보인다.
       if (i < 3) {
         const num = keyChip(String(i + 1));
