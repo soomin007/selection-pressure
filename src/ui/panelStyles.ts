@@ -409,6 +409,9 @@ export function ensurePanelStyles(): void {
       gap: 16px; margin-top: 10px; }
     /* 데스크톱은 세로 배치 — flex-basis:100% 는 세로축(높이)이 되므로 되돌린다. */
     .draft-card-desc { flex: 1 1 auto; font-size: 13px; line-height: 1.55; }
+    /* 취소선/정점 안내문도 마찬가지 — flex:1 1 100% 를 두면 세로축 100% 를 먹으려다 카드 밖으로 넘친다
+       (데스크톱, 사용자 지적). 자연 높이로 카드 안에 담기게 되돌린다. */
+    .draft-note { flex: 0 0 auto; width: 100%; }
     .draft-chips { justify-content: center; gap: 7px; }
     .draft-chip { font-size: 11.5px; border-radius: 9px; padding: 5px 11px; }
     .draft-chip > i { font-size: 8px; }
