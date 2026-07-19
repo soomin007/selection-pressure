@@ -4,7 +4,7 @@
 // 월드는 스케일 컨테이너(root)에, HUD/UI 는 화면 픽셀 그대로(선명).
 
 import { Application, Container, Graphics } from "pixi.js";
-import { chooseLayout, COLORS } from "@/config";
+import { chooseLayout, COLORS, uiScale } from "@/config";
 import { DEBUG, DEBUG_ACTIVE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
@@ -99,6 +99,22 @@ async function boot(): Promise<void> {
   app.stage.addChild(threatBanner.container);
   const raidBossBar = new RaidBossBar(); // 레이드 격퇴 체력 바(화면 상단 글로벌 — 보스 이름 + 게이지)
   app.stage.addChild(raidBossBar.container);
+
+  // 데스크톱 UI 확대 — 폰 기준 크기의 글자·패널이 큰 모니터에서 너무 작다(사용자 지적). 창 높이에 비례한
+  // 배율(uiScale)을 DOM 오버레이엔 CSS zoom(--ui-zoom, panelStyles)으로, 화면 픽셀 Pixi UI(미니맵·하이라이트·
+  // 위협 전광판·보스 바)엔 컨테이너 스케일로 똑같이 먹인다. update 호출부는 화면 크기를 배율로 나눠
+  // "논리 화면"을 넘긴다 → 중앙·모서리 배치가 그대로 맞는다.
+  let uiZoom = 1;
+  const applyUiScale = (): void => {
+    uiZoom = uiScale(layout.isDesktop, app.screen.width, app.screen.height);
+    document.documentElement.style.setProperty("--ui-zoom", uiZoom.toFixed(3));
+    minimap.setUiScale(uiZoom);
+    highlights.setUiScale(uiZoom);
+    threatBanner.setUiScale(uiZoom);
+    raidBossBar.setUiScale(uiZoom);
+  };
+  applyUiScale();
+  app.renderer.on("resize", applyUiScale);
 
   // 소수 개체 게임: 월드를 약간 크게(MAP_SCALE) + 개체는 절대 수(소수)지만 먹이 밀도·상한은 면적 비례
   // (areaScale=면적배율) → 큰 맵일수록 개체당 먹이가 넉넉해 굶지 않는다. 카메라가 한 무리를 따라다닌다.
@@ -670,13 +686,13 @@ async function boot(): Promise<void> {
       minimap.place(app.screen.width, app.screen.height);
     }
     detectEvents();
-    highlights.update(ticker.deltaMS, app.screen.width);
-    threatBanner.update(ticker.deltaMS, app.screen.width, app.screen.height);
+    highlights.update(ticker.deltaMS, app.screen.width / uiZoom);
+    threatBanner.update(ticker.deltaMS, app.screen.width / uiZoom, app.screen.height / uiZoom);
     // 레이드 격퇴 체력 바(글로벌) — 관전 중 격퇴 체력이 있는 보스(레이드 켜짐)일 때 보스 이름 + 게이지를 상단에.
     const rbBoss = game.world.boss;
     const raidActive = game.phase === "watch" && rbBoss !== null && rbBoss.maxHp > 0 && rbBoss.hp > 0;
     raidBossBar.set(raidActive && rbBoss ? rbBoss.name : null, raidActive && rbBoss ? rbBoss.hp / rbBoss.maxHp : 0, 0xff5a44, game.secondsLeft);
-    raidBossBar.update(ticker.deltaMS, app.screen.width);
+    raidBossBar.update(ticker.deltaMS, app.screen.width / uiZoom);
 
     if (debugBadge) {
       let txt = `디버그: ${debugLabel()}`;

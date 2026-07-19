@@ -41,6 +41,15 @@ export class RaidBossBar {
     this.container.visible = false;
   }
 
+  /** 데스크톱 UI 확대 — 컨테이너를 키우고, 텍스트는 배율만큼 높은 해상도로 다시 구워 흐림을 막는다.
+   *  호출부(main)는 update 에 화면 폭을 배율로 나눈 "논리 화면"을 넘긴다. */
+  setUiScale(s: number): void {
+    this.container.scale.set(s);
+    const res = (window.devicePixelRatio || 1) * s;
+    this.nameText.resolution = res;
+    this.timeText.resolution = res;
+  }
+
   /** 보스 상태 반영 — name 이 null 이면(격퇴 없는 보스·보스 없음) 숨긴다. secondsLeft = 남은 관전 시간(타이머). */
   set(name: string | null, frac: number, color: number, secondsLeft: number): void {
     if (name === null) {

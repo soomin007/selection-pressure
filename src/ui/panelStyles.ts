@@ -142,6 +142,13 @@ export function ensurePanelStyles(): void {
   /* 하단 시트 등장 애니메이션 */
   @keyframes sheet-rise { 0% { transform: translateX(-50%) translateY(24px); opacity: 0; } 100% { transform: translateX(-50%) translateY(0); opacity: 1; } }
 
+  /* 데스크톱 UI 확대 — 창 높이 비례 배율(--ui-zoom, main.ts 가 계산해 :root 에 싣는다).
+     캔버스(#app)만 제외: 월드는 scale-to-fit 이 이미 화면을 채우고, body 직속 오버레이 전부
+     (HUD·컨트롤·시트·드래프트·로비·개체 카드)가 폰 기준 크기 그대로 배율 확대된다.
+     ⚠ zoom 아래에선 vh/vw 단위가 배율만큼 커져 화면을 넘친다(실측 확인) — zoom 대상 안에서
+     vh/vw 를 쓰면 var(--ui-zoom) 로 나눠 보정할 것(.draft-popup 데스크톱 규칙 참고). */
+  body[data-layout="desktop"] > :not(#app) { zoom: var(--ui-zoom, 1); }
+
   /* 데스크톱: 가로 레이아웃 — 카드를 한 줄로, 패널은 떠 있는 넓은 바. */
   body[data-layout="desktop"] .ui-root {
     width: min(88%, 760px); bottom: 16px; border-radius: var(--r-panel); padding: 14px 18px;
@@ -422,9 +429,10 @@ export function ensurePanelStyles(): void {
     .draft-dim { display: none !important; }
     .draft-popup-wrap { top: 64px; bottom: auto; left: auto; right: 0;
       align-items: flex-start; justify-content: flex-end; padding: 0 22px; }
-    /* 데스크톱은 top:64px 에서 시작 → 그만큼 뺀 높이로 가둔다(모바일과 같은 sticky 헤더 + 내부 스크롤). */
+    /* 데스크톱은 top:64px 에서 시작 → 그만큼 뺀 높이로 가둔다(모바일과 같은 sticky 헤더 + 내부 스크롤).
+       vh 는 zoom(--ui-zoom) 아래에서 배율만큼 커지므로 배율로 나눠 실제 화면 높이에 맞춘다. */
     .draft-popup { max-width: 320px; box-shadow: 0 22px 50px -14px rgba(0,0,0,0.62);
-      max-height: calc(100vh - 86px); max-height: calc(100dvh - 86px); }
+      max-height: calc(100vh / var(--ui-zoom, 1) - 86px); max-height: calc(100dvh / var(--ui-zoom, 1) - 86px); }
   }
 
   /* §6 등장 연출 키프레임 */

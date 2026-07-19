@@ -18,6 +18,7 @@ export class Minimap {
   private terrainRef: World["terrain"] | null = null; // 새 런(지형 바뀜) 감지용
   private scale = 1;
   private mmH = 0;
+  private ui = 1; // 데스크톱 UI 확대 배율(main.applyUiScale) — 배치·탭 판정에 같은 배율 적용
   private dragging = false;
   /** 미니맵을 누르거나 끌면 그 지점의 월드 좌표를 넘긴다(수동 카메라 팬). main 이 카메라에 반영. */
   onPan: ((worldX: number, worldY: number) => void) | null = null;
@@ -102,15 +103,25 @@ export class Minimap {
       .stroke({ color: 0xffffff, width: 1, alpha: 0.7 });
   }
 
-  /** 화면 우하단 등 모서리에 배치(여백 margin). */
+  /** 데스크톱 UI 확대 — 미니맵 패널 전체를 배율만큼 키운다. 드래그 좌표는 toLocal 이 스케일을 반영. */
+  setUiScale(s: number): void {
+    this.ui = s;
+    this.container.scale.set(s);
+  }
+
+  /** 화면 우하단 등 모서리에 배치(여백 margin). 확대 배율만큼 커진 실제 크기로 계산한다. */
   place(screenW: number, screenH: number, margin = 10): void {
-    this.container.position.set(screenW - MM_W - margin, screenH - this.mmH - margin);
+    this.container.position.set(
+      screenW - (MM_W + margin) * this.ui,
+      screenH - (this.mmH + margin) * this.ui,
+    );
   }
 
   /** 화면 좌표(px)가 미니맵 패널 위인지 — 미니맵을 탭했을 때 뒤의 개체가 선택되지 않게 막는다. */
   containsScreenPoint(x: number, y: number): boolean {
     const p = this.container.position;
-    return x >= p.x - 4 && x <= p.x + MM_W + 4 && y >= p.y - 4 && y <= p.y + this.mmH + 4;
+    const u = this.ui;
+    return x >= p.x - 4 * u && x <= p.x + (MM_W + 4) * u && y >= p.y - 4 * u && y <= p.y + (this.mmH + 4) * u;
   }
 
   get height(): number {

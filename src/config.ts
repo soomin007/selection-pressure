@@ -33,6 +33,17 @@ export function chooseLayout(): Layout {
   return { width: MOBILE.width, height: Math.round(MOBILE.width / ratio), isDesktop: false };
 }
 
+/**
+ * 데스크톱 UI 확대 배율 — 폰 기준 픽셀 크기로 만든 HUD·패널·글자가 큰 모니터에서 너무 작아,
+ * 창 높이에 비례해 키운다(1080p 전체화면 ≈ 1.35배). 좁은 세로 창에서 과확대되지 않게 폭으로도
+ * 묶고, 상한 1.7(4K 과대 확대 방지). 모바일은 1(기존 그대로).
+ * DOM 오버레이는 CSS zoom(--ui-zoom), 화면 픽셀 Pixi UI 는 컨테이너 스케일로 같은 값을 쓴다(main.ts).
+ */
+export function uiScale(isDesktop: boolean, screenW: number, screenH: number): number {
+  if (!isDesktop) return 1;
+  return Math.min(1.7, Math.max(1, Math.min(screenH / 750, screenW / 900)));
+}
+
 // 하위 호환용 기본값(모바일).
 export const LOGICAL_WIDTH = MOBILE.width;
 export const LOGICAL_HEIGHT = MOBILE.height;

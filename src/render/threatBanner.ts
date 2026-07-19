@@ -52,6 +52,15 @@ export class ThreatBanner {
     this.container.visible = false;
   }
 
+  /** 데스크톱 UI 확대 — 컨테이너를 키우고, 텍스트는 배율만큼 높은 해상도로 다시 구워 흐림을 막는다.
+   *  호출부(main)는 update 에 화면 크기를 배율로 나눈 "논리 화면"을 넘긴다. */
+  setUiScale(s: number): void {
+    this.container.scale.set(s);
+    const res = (window.devicePixelRatio || 1) * s;
+    this.text.resolution = res;
+    this.subText.resolution = res;
+  }
+
   show(title: string, sub: string): void {
     this.text.text = title;
     this.subText.text = sub;
