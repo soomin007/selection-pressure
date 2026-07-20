@@ -70,7 +70,10 @@ async function boot(): Promise<void> {
   const view = new WorldView(app.renderer);
   const effects = new Effects();
   view.container.addChild(effects.container); // 사건 연출(월드 좌표 → 카메라와 함께 움직임)
-  const hud = createHudPanel(); // 상단 HUD — 캔버스 위 DOM 오버레이(정보 카드·타임라인·범례)
+  // 상단 HUD(시안 A "한 줄 상태 바") — 상태 바 + 타임라인 + 접힌 칩 2개(종 안내·내 형질).
+  // "내 형질" 칩은 buildPanel 을 토글한다(아래 ticker 에서 traitsOpen 반영).
+  let traitsOpen = false;
+  const hud = createHudPanel({ onTraitsToggle: (open) => { traitsOpen = open; } });
   const highlights = new Highlights();
   root.addChild(view.container);
   // 월드를 논리 사각형으로 클리핑 — 가장자리 생물이 화면 밖으로 삐져나오지 않게.
@@ -666,14 +669,17 @@ async function boot(): Promise<void> {
     effects.update(ticker.deltaMS);
     hud.update({
       world: game.world,
-      statusText: statusLine(),
+      visible: game.phase !== "lobby",
+      stageText: game.phase === "watch" ? `${game.eraLabel ? `${game.eraLabel} · ` : ""}${game.stageLabel}` : "카드 선택",
+      timeText: game.phase === "watch" ? `${game.secondsLeft}초${game.paused ? " (멈춤)" : ""}` : "",
+      envText: game.environmentSummary(),
       level: game.level,
       xpProgress: game.xpProgress,
       timeline: game.timeline,
     });
-    // 설계도는 관전 중에만 — 드래프트는 전체 화면이라 그 아래 깔린 UI 가 뿌연 유리로 비쳐 보인다.
-    // 드래프트 중 내 종 정보는 헤더의 "내 종" 팝업이 대신한다(핸드오프 §9).
-    buildPanel.setVisible(game.phase === "watch");
+    // 내 형질 패널은 관전 중 + 칩이 켜져 있을 때만 — 드래프트는 전체 화면이라 그 아래 깔린 UI 가
+    // 뿌연 유리로 비쳐 보인다. 드래프트 중 내 종 정보는 헤더의 "내 종" 팝업이 대신한다(핸드오프 §9).
+    buildPanel.setVisible(game.phase === "watch" && traitsOpen);
     // 좌하단 조작 열(한 마리 관찰·줌)은 관전 중 + 개체 미선택일 때만 — 로비·드래프트·개체 정보 카드와
     // 좌하단에서 겹치지 않게(known_issues: 좌하단 UI 셋이 한자리에 겹친다).
     zoomBar.style.display = game.phase === "watch" && selectedId === null ? "flex" : "none";
@@ -890,21 +896,6 @@ async function boot(): Promise<void> {
     prevThreat = threatKey;
   }
 
-  function statusLine(): string {
-    if (game.phase === "lobby") return "";
-    const env = game.environmentSummary();
-    const s = `${game.stageNumber}/${game.totalStages}`;
-    // 모바일에서 한 줄이 길어 잘리던 문제 → 2줄(단계·시간 / 환경)로 나눈다.
-    if (game.phase === "draft") return `단계 ${s} · 카드 선택\n${env}`;
-    // 관전 첫 줄은 무슨 단계인지(시련/보스 이름)만 둔다 — 단계 번호(N/M)는 타임라인 막대가 대신
-    // 보여줘 중복이고, 긴 시련 이름(그림자 매복자 등)이 우상단 낮밤 타이머와 겹치지 않게 짧게 유지한다.
-    if (game.phase === "watch") {
-      // 시대(era>0)면 "시대 N ·" 접두어로 지금 몇 번째 시대인지 보인다(첫 시대는 빈 문자열이라 변화 없음).
-      const eraPre = game.eraLabel ? `${game.eraLabel} · ` : "";
-      return `${eraPre}${game.stageLabel}\n${game.secondsLeft}초${game.paused ? " (멈춤)" : ""} · ${env}`;
-    }
-    return env;
-  }
 }
 
 boot().catch((err: unknown) => {

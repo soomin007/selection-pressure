@@ -119,6 +119,9 @@ export function ensurePanelStyles(): void {
     cursor: pointer; touch-action: auto; display: flex; align-items: center; justify-content: center;
   }
   .ctrl-btn:active { background: rgba(143, 209, 79, 0.28); }
+  /* 모바일(시안 A): 상태 바가 상단을 가로로 다 쓰므로 배속·멈춤을 타임라인 아래 칩 줄(우측)로 내린다. */
+  body[data-layout="mobile"] .controls-bar { top: calc(94px + env(safe-area-inset-top)); }
+  body[data-layout="mobile"] .ctrl-btn { height: 36px; min-width: 42px; font-size: 12.5px; padding: 0 12px; }
 
   /* 멈춤 메뉴 */
   .pause-menu {

@@ -1,5 +1,7 @@
-// 빌드 패널 — 화면 우상단에 "내가 고른 형질(카드)"을 상시 보여준다.
-// 종 한 줄 요약 + 현재 형질값(7개) + 고른 카드 목록. 캔버스 위 HTML 오버레이(인라인 스타일, 터치 통과).
+// 빌드 패널 — "내가 고른 형질(카드)". 종 한 줄 요약 + 현재 형질값 + 고른 카드 목록.
+// 시안 A(화면 정리, 2026-07-20): 상시 표시가 아니라 HUD 의 "내 형질" 칩이 토글하는 패널이 됐다.
+// 위치도 우상단이 아니라 칩 아래(좌상단, 종 안내 패널과 같은 자리 — 서로 배타적으로 열린다).
+// 캔버스 위 HTML 오버레이(인라인 스타일).
 
 import { TRAIT_KEYS, TRAIT_LABELS, TRAIT_CEILING, type Traits } from "@/sim/genome";
 import { ABILITY_KEYS, abilityFillPct, traitColor, traitWord } from "@/ui/traitDisplay";
@@ -19,30 +21,22 @@ export interface BuildPanel {
 
 export function createBuildPanel(): BuildPanel {
   ensurePanelStyles(); // :root 토큰 보장
+  const isDesktop = document.body?.dataset.layout === "desktop";
   const root = document.createElement("div");
-  // 컨트롤바(우상단 top:12 높이 42)와 안 겹치게 그 아래로 내린다(모바일 겹침 해소).
+  // HUD 칩("내 형질") 아래 자리 — hudPanel 의 .hud-legend 와 같은 슬롯(둘은 배타적으로 열린다).
+  // 형질·카드가 쌓이면 길어지므로 최대 높이를 고정 px 로 가두고 안에서 스크롤(vh 는 데스크톱
+  // UI 확대 zoom 아래에서 배율만큼 커져 화면을 넘친다 — panelStyles 주석 참고).
   root.style.cssText =
-    "position:fixed; top:calc(62px + env(safe-area-inset-top)); right:calc(12px + env(safe-area-inset-right));" +
-    "width:138px; box-sizing:border-box; padding:9px 11px;" +
+    (isDesktop
+      ? "position:fixed; top:140px; left:16px;"
+      : "position:fixed; top:calc(144px + env(safe-area-inset-top)); left:calc(8px + env(safe-area-inset-left));") +
+    "width:190px; box-sizing:border-box; padding:10px 12px; max-height:420px; overflow-y:auto;" +
     "background:var(--panel); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);" +
-    "border:1px solid var(--line); border-radius:var(--r-panel);" +
+    "border:1px solid var(--line); border-radius:var(--r-card);" +
     "color:var(--ink); font-family:var(--font-body); font-size:12px; line-height:1.4;" +
-    "z-index:9; pointer-events:none; user-select:none; display:none;";
-
-  // 헤더(탭하면 접기/펴기). 헤더만 클릭 가능(pointer-events:auto), 본문 영역은 터치 통과.
-  const header = document.createElement("div");
-  header.style.cssText =
-    "display:flex; align-items:center; justify-content:space-between; gap:6px;" +
-    "cursor:pointer; pointer-events:auto;";
-  const title = document.createElement("span");
-  title.textContent = "선택한 형질";
-  title.style.cssText = "font-family:var(--font-title); font-size:12.5px; color:var(--ink);";
-  const arrow = document.createElement("span");
-  arrow.style.cssText = "font-size:11px; color:var(--faint);";
-  header.append(title, arrow);
+    "z-index:9; pointer-events:auto; user-select:none; display:none;";
 
   const body = document.createElement("div");
-  body.style.cssText = "margin-top:6px;";
 
   const headline = document.createElement("div");
   headline.style.cssText =
@@ -72,20 +66,7 @@ export function createBuildPanel(): BuildPanel {
   const list = document.createElement("div");
   body.append(headline, huntLine, dietLine, traitsLabel, traitsBox, cardsLabel, list);
 
-  // 레이아웃별 기본값: 데스크톱은 펼침(공간 여유), 모바일은 접힘(클러터 최소화). 탭으로 토글.
-  let collapsed = document.body.dataset.layout !== "desktop";
-  const applyCollapsed = (): void => {
-    body.style.display = collapsed ? "none" : "block";
-    arrow.textContent = collapsed ? "▸" : "▾";
-    root.style.width = collapsed ? "auto" : "138px"; // 접으면 칩처럼 폭만 차지
-  };
-  header.addEventListener("click", () => {
-    collapsed = !collapsed;
-    applyCollapsed();
-  });
-  applyCollapsed();
-
-  root.append(header, body);
+  root.appendChild(body);
   document.body.appendChild(root);
 
   const setData = (data: BuildData): void => {
