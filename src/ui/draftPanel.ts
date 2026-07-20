@@ -194,6 +194,12 @@ export function createDraftPanel(
   let popupOpen = false;
   // 데스크톱 레이아웃(카드 3열·좌우 여백)일 때만 클릭=선택 / 팝업 인라인. CSS 의 @media 기준과 맞춘다.
   const isDesktopLayout = (): boolean => window.matchMedia("(min-width: 860px)").matches;
+  // 확대 배율(--ui-zoom, 데스크톱 UI 확대)을 뺀 "논리 폭" — zoom 아래에선 px 규칙이 배율만큼 커져,
+  // 실제로 쓸 수 있는 가로 공간은 창 폭을 배율로 나눈 값이다.
+  const logicalViewportW = (): number => {
+    const z = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-zoom"));
+    return window.innerWidth / (Number.isFinite(z) && z > 0 ? z : 1);
+  };
   let commitTimer = 0;
   let toastTimer = 0;
   const spriteUrls: (string | null)[] = [];
@@ -479,11 +485,13 @@ export function createDraftPanel(
     renderPopup();
     dim.classList.add("on");
     popupWrap.classList.add("on");
+    root.classList.add("popup-open"); // 데스크톱: 카드 영역을 왼쪽으로 밀어 팝업 자리(오른쪽)를 비운다
   };
   const closePopup = (): void => {
     popupOpen = false;
     dim.classList.remove("on");
     popupWrap.classList.remove("on");
+    root.classList.remove("popup-open");
   };
 
   // 클릭과 키보드가 같은 길을 지나도록 행동을 함수로 뽑아 둔다.
@@ -665,9 +673,11 @@ export function createDraftPanel(
     document.body.classList.add("draft-open");
     // display:none 상태에선 크기를 못 재므로 보이게 한 다음 맞춘다.
     fitHero();
-    // 데스크톱: 내 종 정보(오른쪽 인라인 패널)를 기본으로 펼쳐 둔다 — 가리는 게 없는 여백 자리라,
-    // 지금 스탯과 보고 있는 카드의 변화를 항상 나란히 두고 고를 수 있다. 모바일은 바텀 시트(가림)라 닫아 둔다.
-    if (isDesktopLayout()) openPopup();
+    // 데스크톱: 내 종 정보(오른쪽 인라인 패널)를 기본으로 펼쳐 둔다 — 지금 스탯과 보고 있는 카드의
+    // 변화를 나란히 두고 고를 수 있다(popup-open 이 카드 영역을 왼쪽으로 밀어 자리를 비운다).
+    // 단 확대 배율을 뺀 논리 폭이 좁으면(작은 창) 카드가 너무 쪼그라들어 자동으로는 안 열고
+    // M/내 종 버튼으로만 연다. 모바일은 바텀 시트(가림)라 닫아 둔다.
+    if (isDesktopLayout() && logicalViewportW() >= 1280) openPopup();
   };
 
   const hide = (): void => {

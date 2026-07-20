@@ -427,6 +427,14 @@ export function ensurePanelStyles(): void {
     .draft-reroll { font-size: 12.5px; padding: 9px 17px; }
     /* 데스크톱: 내 종 팝업을 중앙 오버레이 대신 화면 오른쪽에 인라인으로 펼친다(좌우 여백 활용, dim 없이). */
     .draft-dim { display: none !important; }
+    /* 팝업이 열리면 카드 영역을 왼쪽으로 밀어 팝업 자리를 비운다 — UI 확대 배율로 옆 여백이
+       모자라면 팝업이 3번 카드를 덮었다(사용자 지적). 여백이 넉넉하면 max() 가 자연 여백을 골라
+       가운데 정렬 그대로다. 100vw 는 zoom 안에서 배율만큼 커지므로 --ui-zoom 으로 나눈다. */
+    .draft-shell { transition: margin-right 0.22s ease; }
+    .draft-root.popup-open .draft-shell {
+      margin-left: auto;
+      margin-right: max(364px, calc((100vw / var(--ui-zoom, 1) - 1120px) / 2));
+    }
     .draft-popup-wrap { top: 64px; bottom: auto; left: auto; right: 0;
       align-items: flex-start; justify-content: flex-end; padding: 0 22px; }
     /* 데스크톱은 top:64px 에서 시작 → 그만큼 뺀 높이로 가둔다(모바일과 같은 sticky 헤더 + 내부 스크롤).
