@@ -11,6 +11,9 @@ import { SIM, LEAD } from "@/sim/params";
 import { TILE } from "@/sim/terrain";
 import { createBoss, bossCanHunt, type BossType } from "@/sim/boss";
 import { defaultGenome, type Genome, type Traits } from "@/sim/genome";
+import { attackRangeOf, leadBiteTarget, leadRelation } from "@/sim/behavior";
+import { areFriends } from "@/sim/species";
+import { createEntity } from "@/sim/entity";
 import type { LeadCommand } from "@/sim/lead";
 import type { Entity } from "@/sim/entity";
 
@@ -670,5 +673,333 @@ describe("보스 — 한 번이라도 몬 세계에선 수풀이 내 종을 숨�
     w.step();
     expect(w.lead.commanded).toBe(true);
     expect(probe()).toEqual(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 21~30. 사람이 시킨 물기
+//
+// 이 모드의 약속은 하나다: **알파는 능력을 새로 얻지 않는다. 이미 있는 능력을 사람이 대신 결정할
+// 뿐이다.** 그래서 아래 테스트의 절반은 "된다"가 아니라 **"권능이 안 붙었다"** 를 증명한다 —
+// 사거리 밖은 못 물고, 이빨이 안 박히는 상대는 못 물고, 사냥하는 식성이 아니면 아무도 못 물고,
+// 쿨다운은 AI 사냥과 같은 값이다. 여기가 빨간불이면 형질이 장식이 된 것이다.
+// ---------------------------------------------------------------------------
+
+/** 물기만 누른 명령 — main 이 이동 입력 없이 물기만 눌렸을 때 보내는 것과 같은 모양(제자리 물기). */
+const BITE: LeadCommand = { dx: 0, dy: 0, throttle: 0, bite: true };
+
+/** 사냥하는 식성 + 보통 이빨. 웬만한 상대에겐 이빨이 박힌다. */
+const HUNTER: Partial<Traits> = { diet: 90, attack: 60 };
+/** 사냥하는 식성이지만 이빨이 약한 쪽 — 물어도 잘 안 죽는다(여러 번 물기를 관찰하려고). */
+const HUNTER_WEAK: Partial<Traits> = { diet: 90, attack: 40 };
+/** 물면 그냥 죽는 약한 상대. */
+const SOFT: Partial<Traits> = { attack: 20, size: 40, diet: 5 };
+/**
+ * 물리긴 하는데 한 입에 안 죽는 상대. HUNTER_WEAK(공격 40) 기준 유효 체급 차 -0.30 →
+ * 즉사 확률이 정확히 0 이고(clamp) 피해만 들어간다 → 여러 틱을 관찰해도 표적이 안 사라진다.
+ */
+const TOUGH: Partial<Traits> = { attack: 70, size: 50, diet: 5 };
+/** 이빨이 아예 안 박히는 상대(체급 압도). HUNTER 기준 유효 체급 차 -0.98 → biteOutcome.ignored. */
+const TANK: Partial<Traits> = { attack: 95, size: 95, diet: 5 };
+
+interface Mark {
+  /** 개체 id 를 직접 준다 — 동률 처리(작은 id)를 "만든 순서"와 갈라 놓고 재려면 필요하다. */
+  id: number;
+  dx: number;
+  dy: number;
+  traits: Partial<Traits>;
+}
+
+interface BiteLab {
+  w: World;
+  alpha: Entity;
+  /** 세운 순서대로의 표적들(= w.entities 에 들어간 순서). */
+  targets: Entity[];
+}
+
+/**
+ * 물기 실험대 — 알파 한 마리와 내가 세운 표적만 남긴 세계.
+ *
+ * 알파 게놈에 **시야·초음파 0** 을 강제한다. 알파의 **자율 사냥**을 끄기 위해서다: 코앞의 표적을
+ * AI 가 먼저 물어 버리면 "사람이 시킨 물기"만 따로 잴 수가 없다(대조군의 0 이 증거가 못 된다).
+ * 물기 판정 자체는 감각을 안 보므로(사거리 안 = 코앞이다) 실험이 왜곡되지 않는다 — 아래 대조군
+ * 테스트가 "명령이 없으면 0 건"으로 그 사실을 매번 다시 확인한다.
+ */
+function biteLab(alphaOver: Partial<Traits>, marks: readonly Mark[]): BiteLab {
+  const w = new World("bite-1", W, H, tune({ vision: 0, echo: 0, ...alphaOver }));
+  w.armLead();
+  const alpha = w.entities.find((e) => e.id === w.lead.leaderId);
+  if (!alpha) throw new Error("알파가 지정되지 않았다");
+  w.entities = [alpha]; // 알파만 남긴다 — 다른 개체가 끼면 "누가 물었나"가 흐려진다
+  const wild = w.species.find((s) => !s.isPlayer && !areFriends(alpha.species, s));
+  if (!wild) throw new Error("표적으로 쓸 야생종이 없다");
+  const targets = marks.map((m) =>
+    createEntity(m.id, alpha.x + m.dx, alpha.y + m.dy, wild, 100, tune(m.traits)),
+  );
+  for (const t of targets) w.entities.push(t);
+  w.grid.rebuild(w.entities); // leadBiteTarget 을 step 없이 바로 물어볼 수 있게
+  return { w, alpha, targets };
+}
+
+/**
+ * 알파와 표적을 **제자리에 고정한 채** cmd 로 ticks 틱 돌리고, 그동안 실제로 성사된 물기 수를 센다.
+ * 위치를 매 틱 되돌리는 이유: 배회·도망으로 몇 px 씩 흘러가면 "사거리 안/밖"이 실험 도중 뒤집힌다.
+ * 세는 방법은 sim 이 실제로 낸 연출 사건이다 — 물기가 박히면 "bite", 잡아먹으면 "kill" 이 뜬다.
+ */
+function holdAndStep(lab: BiteLab, cmd: LeadCommand | null, ticks: number): number {
+  const ax = lab.alpha.x;
+  const ay = lab.alpha.y;
+  const spots = lab.targets.map((t) => ({ t, x: t.x, y: t.y }));
+  let bites = 0;
+  for (let i = 0; i < ticks; i++) {
+    lab.alpha.x = ax;
+    lab.alpha.y = ay;
+    lab.alpha.vx = 0;
+    lab.alpha.vy = 0;
+    for (const s of spots) {
+      s.t.x = s.x;
+      s.t.y = s.y;
+      s.t.vx = 0;
+      s.t.vy = 0;
+    }
+    lab.w.events.length = 0; // 이번 틱의 사건만 세려고 비운다(렌더가 매 프레임 하는 것과 같다)
+    lab.w.lead.cmd = cmd;
+    lab.w.step();
+    for (const ev of lab.w.events) if (ev.kind === "bite" || ev.kind === "kill") bites += 1;
+  }
+  return bites;
+}
+
+/** 이 게놈의 사냥 사정거리(px) — AI 사냥이 쓰는 바로 그 값. */
+function rangeOf(over: Partial<Traits>): number {
+  return attackRangeOf(tune(over).traits);
+}
+
+describe("사람이 시킨 물기 — 무입력 동일성", () => {
+  it("이동 명령에 bite:false 를 달아도 세계가 1비트도 안 바뀐다 (600틱)", () => {
+    // 같은 각본을 두 번 돌린다. 한 번은 **bite 필드가 아예 없는** 명령(기존 호출부·테스트와 같은
+    // 모양), 한 번은 bite:false 를 명시한 명령. 물기 코드가 한 줄이라도 돌면 rng 가 밀려 어긋난다.
+    const drive = (explicit: boolean): World => {
+      const w = new World("golden-1", W, H, HERD92());
+      for (let i = 0; i < 600; i++) {
+        w.armLead();
+        const c = steerTo(w, W * 0.5, H * 0.5);
+        w.lead.cmd = c === null ? null : explicit ? { ...c, bite: false } : c;
+        w.step();
+      }
+      return w;
+    };
+    const plain = drive(false);
+    const explicit = drive(true);
+    expect(snapshot(explicit)).toEqual(snapshot(plain));
+    expect(explicit.rng.getState()).toBe(plain.rng.getState());
+  });
+
+  it("물기를 한 번도 안 누른 실험대는 아무도 안 문다 (대조군 — 아래 0 들이 증거가 되게)", () => {
+    // 이게 없으면 "0 건"은 "명령이 안 통했다"와 구분되지 않는다. 여기서 0 이고 다음 테스트에서
+    // 같은 배치에 물기만 눌러 >0 이 나와야 비로소 명령이 원인이라고 말할 수 있다.
+    const lab = biteLab(HUNTER, [{ id: 5000, dx: rangeOf(HUNTER) * 0.5, dy: 0, traits: SOFT }]);
+    expect(holdAndStep(lab, null, 12)).toBe(0);
+    expect(lab.targets[0]?.alive).toBe(true);
+  });
+});
+
+describe("사람이 시킨 물기 — 권능이 없다", () => {
+  it("사거리 안이면 물리고, 사거리 밖이면 못 문다 (사거리는 AI 사냥과 같은 값)", () => {
+    const r = rangeOf(HUNTER);
+    const near = biteLab(HUNTER, [{ id: 5000, dx: r * 0.5, dy: 0, traits: SOFT }]);
+    expect(holdAndStep(near, BITE, 12)).toBeGreaterThan(0);
+
+    const far = biteLab(HUNTER, [{ id: 5000, dx: r * 3, dy: 0, traits: SOFT }]);
+    expect(holdAndStep(far, BITE, 12)).toBe(0);
+    expect(far.targets[0]?.alive).toBe(true);
+    expect(far.targets[0]?.woundTicks).toBe(0);
+    expect(far.w.lead.biteTargetId).toBe(-1); // 화면도 "지금은 못 문다"고 말한다
+  });
+
+  it("이빨이 안 박히는 상대(체급 압도)는 물어도 아무 일이 안 일어난다", () => {
+    const lab = biteLab(HUNTER, [{ id: 5000, dx: 4, dy: 0, traits: TANK }]);
+    const tank = lab.targets[0];
+    expect(tank).toBeDefined();
+    if (!tank) return;
+    // 실험 전제 — 규칙이 실제로 "못 문다"라고 말하고 있다(안 그러면 아래 0 은 공허하다).
+    expect(leadRelation(lab.alpha, tank).prey).toBe(false);
+
+    expect(holdAndStep(lab, BITE, 30)).toBe(0);
+    expect(tank.alive).toBe(true);
+    expect(tank.woundTicks).toBe(0);
+    expect(lab.w.lead.biteTargetId).toBe(-1); // 버튼도 안 켜진다 = 화면이 거짓말하지 않는다
+    expect(lab.alpha.attackCd).toBe(0); // 헛손질에는 쿨다운도 안 돈다
+  });
+
+  it("사냥하는 식성이 아니면(초식) 이빨이 세도 아무도 못 문다", () => {
+    // 공격력 90 · 몸집 90 짜리 초식 — 힘은 넘치는데 **식성**이 사냥이 아니다. 같은 몸으로 식성만
+    // 바꾸면(대조군) 곧바로 물린다 → 못 무는 이유가 힘이 아니라 형질(식성)임이 드러난다.
+    const body: Partial<Traits> = { attack: 90, size: 90 };
+    const grazer = biteLab({ ...body, diet: 10 }, [{ id: 5000, dx: 4, dy: 0, traits: SOFT }]);
+    const gt = grazer.targets[0];
+    expect(gt).toBeDefined();
+    if (!gt) return;
+    expect(leadRelation(grazer.alpha, gt).prey).toBe(false);
+    expect(holdAndStep(grazer, BITE, 30)).toBe(0);
+    expect(gt.alive).toBe(true);
+    expect(grazer.w.lead.biteTargetId).toBe(-1);
+
+    const carn = biteLab({ ...body, diet: 90 }, [{ id: 5000, dx: 4, dy: 0, traits: SOFT }]);
+    expect(holdAndStep(carn, BITE, 30)).toBeGreaterThan(0);
+  });
+
+  it("쿨다운은 AI 사냥과 같다 — 계속 누르고 있어도 attackCooldownTicks 마다 한 번만 나간다", () => {
+    // 즉사 확률이 정확히 0 인 조합이라 표적이 안 사라지고, 물기 횟수만 깨끗이 남는다.
+    const lab = biteLab(HUNTER_WEAK, [{ id: 5000, dx: 4, dy: 0, traits: TOUGH }]);
+    const ticks = 10;
+    const n = holdAndStep(lab, BITE, ticks);
+    expect(n).toBe(Math.ceil(ticks / SIM.attackCooldownTicks)); // 3틱 간격 → 10틱에 4번
+    const t = lab.targets[0];
+    expect(t?.alive).toBe(true); // 즉사 확률 0 — "확실히 죽인다" 같은 알파 보정이 없다
+    expect(t?.woundTicks).toBeGreaterThan(0); // 그래도 물리긴 했다(피해는 들어간다)
+  });
+
+  it("명령은 알파 한 마리만 쓴다 — 옆에 선 같은 종은 물지 않는다", () => {
+    // world.lead.cmd 는 세계에 하나뿐이다. 게이트가 leaderId 가 아니면 내 종 전부가 동시에 문다.
+    const lab = biteLab(HUNTER_WEAK, [
+      { id: 4000, dx: 4, dy: 0, traits: TOUGH }, // 알파 코앞
+      { id: 5000, dx: 200, dy: 0, traits: TOUGH }, // 저 멀리 — 아래 동료의 코앞
+    ]);
+    const mate = createEntity(6000, lab.alpha.x + 204, lab.alpha.y, lab.alpha.species, 100);
+    lab.w.entities.push(mate);
+    holdAndStep(lab, BITE, 6);
+    expect(lab.targets[0]?.woundTicks).toBeGreaterThan(0); // 알파는 물었다
+    expect(lab.targets[1]?.woundTicks).toBe(0); // 동료는 안 물었다
+    expect(lab.targets[1]?.alive).toBe(true);
+  });
+});
+
+describe("사람이 시킨 물기 — 대상 선택(화면의 브래킷과 같은 규칙)", () => {
+  it("사거리 안에서 가장 가까운 것을 고른다 (세운 순서와 무관)", () => {
+    const pick = (nearFirst: boolean): number => {
+      const near: Mark = { id: 5000, dx: 4, dy: 0, traits: TOUGH };
+      const far: Mark = { id: 4000, dx: 9, dy: 0, traits: TOUGH };
+      const lab = biteLab(HUNTER_WEAK, nearFirst ? [near, far] : [far, near]);
+      return leadBiteTarget(lab.alpha, lab.w)?.id ?? -1;
+    };
+    expect(pick(true)).toBe(5000); // 가까운 쪽(5000)이 먼저 세워져도
+    expect(pick(false)).toBe(5000); // 나중에 세워져도 답은 같다
+  });
+
+  it("거리가 같으면 작은 id 를 고른다 (rng 도, 배열 순서도 아니다)", () => {
+    // 알파 좌우 같은 거리에 한 마리씩. **세운 순서를 뒤집어도** 늘 작은 id 가 뽑혀야 한다
+    // (거리 비교만 하고 동률을 안 깨면 '먼저 세운 쪽'이 뽑혀 두 답이 갈린다).
+    const pick = (bigFirst: boolean): number => {
+      const big: Mark = { id: 5000, dx: 6, dy: 0, traits: TOUGH };
+      const small: Mark = { id: 4000, dx: -6, dy: 0, traits: TOUGH };
+      const lab = biteLab(HUNTER_WEAK, bigFirst ? [big, small] : [small, big]);
+      // 실험 전제 — 두 거리가 실제로 완전히 같다(부동소수점까지).
+      const a = lab.targets[0];
+      const b = lab.targets[1];
+      expect(a).toBeDefined();
+      expect(b).toBeDefined();
+      if (a && b) {
+        const d = (t: Entity): number => (t.x - lab.alpha.x) ** 2 + (t.y - lab.alpha.y) ** 2;
+        expect(d(a)).toBe(d(b));
+      }
+      return leadBiteTarget(lab.alpha, lab.w)?.id ?? -1;
+    };
+    expect(pick(true)).toBe(4000);
+    expect(pick(false)).toBe(4000);
+  });
+
+  it("leadRelation.prey 가 false 면 더 가까워도 안 고른다 (브래킷이 뜬 것만 물린다)", () => {
+    // 코앞에 '못 무는' 상대(체급 압도), 그 뒤에 '물 수 있는' 상대. 거리만 보면 앞의 것이 뽑히지만
+    // 화면에 브래킷이 뜨는 건 뒤의 것뿐이고, 물기도 뒤의 것에 나가야 화면이 거짓말을 안 한다.
+    const lab = biteLab(HUNTER, [
+      { id: 4000, dx: 3, dy: 0, traits: TANK },
+      { id: 5000, dx: 9, dy: 0, traits: SOFT },
+    ]);
+    const tank = lab.targets[0];
+    const soft = lab.targets[1];
+    expect(tank).toBeDefined();
+    expect(soft).toBeDefined();
+    if (!tank || !soft) return;
+    expect(leadRelation(lab.alpha, tank).prey).toBe(false);
+    expect(leadRelation(lab.alpha, soft).prey).toBe(true);
+    expect(leadBiteTarget(lab.alpha, lab.w)?.id).toBe(5000);
+  });
+
+  it("사거리 밖은 후보에 안 든다", () => {
+    const r = rangeOf(HUNTER);
+    const inside = biteLab(HUNTER, [{ id: 5000, dx: r * 0.9, dy: 0, traits: SOFT }]);
+    expect(leadBiteTarget(inside.alpha, inside.w)?.id).toBe(5000);
+    const outside = biteLab(HUNTER, [{ id: 5000, dx: r * 1.2, dy: 0, traits: SOFT }]);
+    expect(leadBiteTarget(outside.alpha, outside.w)).toBeNull();
+  });
+});
+
+describe("사람이 시킨 물기 — 화면과 실제가 같다 / 결정론", () => {
+  it("버튼이 가리키는 개체(biteTargetId)가 실제로 물리는 개체다", () => {
+    const lab = biteLab(HUNTER_WEAK, [
+      { id: 4000, dx: 9, dy: 0, traits: TOUGH }, // 조금 먼 쪽
+      { id: 5000, dx: 4, dy: 0, traits: TOUGH }, // 가까운 쪽 = 조준 대상
+    ]);
+    expect(holdAndStep(lab, BITE, 4)).toBeGreaterThan(0);
+    expect(lab.w.lead.biteTargetId).toBe(5000); // 화면이 가리키던 것
+    expect(lab.targets[1]?.woundTicks).toBeGreaterThan(0); // 실제로 물린 것
+    expect(lab.targets[0]?.woundTicks).toBe(0); // 옆의 상대는 멀쩡하다
+  });
+
+  it("같은 시드·같은 명령 각본이면 두 세계가 완전히 같다", () => {
+    const run = (): { snap: string; rng: number; bites: number } => {
+      const lab = biteLab(HUNTER_WEAK, [
+        { id: 4000, dx: 5, dy: 0, traits: TOUGH },
+        { id: 5000, dx: -5, dy: 3, traits: TOUGH },
+      ]);
+      const bites = holdAndStep(lab, BITE, 40);
+      return { snap: snapshot(lab.w), rng: lab.w.rng.getState(), bites };
+    };
+    const a = run();
+    const b = run();
+    expect(a.bites).toBeGreaterThan(0); // 함정이 실제로 놓였다(물기가 돌긴 했다)
+    expect(b).toEqual(a);
+  });
+
+  it("먹잇감을 쫓으며 계속 무는 긴 각본도 두 세계가 같다 (실제 월드, 900틱)", () => {
+    // 실험대가 아니라 **살아 있는 세계** 한복판에서 돌린다. 사람이 하듯 가장 가까운 '물 수 있는'
+    // 상대로 몰아가며 물기를 계속 누르고 있는다 — 물기가 실제로 여러 번 성사되고, 그 결과가 번식·
+    // 사망·야생 진화로 퍼져 나간 뒤에도 두 세계가 완전히 같아야 한다.
+    const run = (): { snap: string; rng: number; armed: number; bites: number } => {
+      const w = new World("golden-1", W, H, tune({ diet: 90, attack: 80, speed: 80, herding: 60 }));
+      let armed = 0;
+      let bites = 0;
+      for (let i = 0; i < 900; i++) {
+        w.armLead();
+        const alpha = w.entities.find((e) => e.id === w.lead.leaderId);
+        let gx = W * 0.5;
+        let gy = H * 0.5;
+        if (alpha) {
+          let bestD2 = Infinity;
+          for (const o of w.entities) {
+            if (o === alpha || !leadRelation(alpha, o).prey) continue;
+            const d2 = (o.x - alpha.x) ** 2 + (o.y - alpha.y) ** 2;
+            if (d2 < bestD2) {
+              bestD2 = d2;
+              gx = o.x;
+              gy = o.y;
+            }
+          }
+        }
+        const c = steerTo(w, gx, gy);
+        w.lead.cmd = c === null ? null : { ...c, bite: true };
+        w.events.length = 0; // 이번 틱의 사건만 세려고(렌더가 매 프레임 하는 것과 같다 — sim 은 안 읽는다)
+        w.step();
+        if (w.lead.biteTargetId >= 0) armed += 1;
+        for (const ev of w.events) if (ev.kind === "bite" || ev.kind === "kill") bites += 1;
+      }
+      return { snap: snapshot(w), rng: w.rng.getState(), armed, bites };
+    };
+    const a = run();
+    // 각본이 공허하지 않다 — 조준이 실제로 걸렸고 물기도 실제로 성사됐다.
+    expect(a.armed).toBeGreaterThan(0);
+    expect(a.bites).toBeGreaterThan(0);
+    expect(run()).toEqual(a);
   });
 });

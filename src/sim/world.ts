@@ -15,7 +15,7 @@ import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
 import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeMapSpecies, mapSpeciesHabitat, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
 import type { Biome } from "@/sim/environment";
-import { stepEntity, visionRadius } from "@/sim/behavior";
+import { stepEntity, visionRadius, leadBiteTarget } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
 import { createLeadState, type LeadState } from "@/sim/lead";
 import { SIM, LEAD } from "@/sim/params";
@@ -259,6 +259,9 @@ export class World {
     const L = this.lead;
     // HUD 표시용 집계는 매 틱 여기서만 0 으로 되돌린다(세는 곳은 behavior 의 cohesion 한 자리뿐).
     L.followerCount = 0;
+    // 조준 대상도 매 틱 여기서 다시 잡는다. 먼저 비워 두면 알파가 없거나(leaderId<0) 이번 틱에
+    // 쓰러진 경우(아래 조기 반환)에도 "물 수 있다"가 낡은 채로 남지 않는다.
+    L.biteTargetId = -1;
     if (L.followTicks > 0) L.followTicks -= 1;
     if (L.leaderId < 0) return;
     let cur: Entity | null = null;
@@ -280,6 +283,12 @@ export class World {
     }
     L.visionR = visionRadius(t, this, cur.x, cur.y);
     L.echoR = SIM.echoBase * (t.echo / TRAIT_MAX);
+    // 지금 물 수 있는 대상 — 화면의 물기 버튼이 이 값 하나로 켜지고 꺼진다.
+    // **실제 물기가 부르는 바로 그 함수**를 부르므로 버튼이 가리키는 대상과 물리는 대상이 어긋날 수 없다.
+    // 격자는 이 틱 시작에 rebuild 된 뒤라 최신이고, 이 호출은 rng 를 안 쓰며 아무것도 안 바꾼다
+    // (그래서 명령을 한 번도 안 준 세계의 지문·rng 상태가 그대로다).
+    const aim = leadBiteTarget(cur, this);
+    L.biteTargetId = aim === null ? -1 : aim.id;
     const cmd = L.cmd;
     // ★ 명령이 있는 틱에만 추종이 켜진다. 명령을 한 번도 안 받으면 followTicks 는 영원히 0,
     //   commanded 는 영원히 false 라서 "알파를 지정만 한 세계"가 기존 세계와 부동소수점까지
@@ -318,6 +327,8 @@ export class World {
     //   바뀌어도 유효하고, 승계로 수풀 봉인이 풀리면 알파를 일부러 버리는 우회가 생긴다.
     L.cmd = null;
     L.followTicks = 0;
+    // 죽은 이의 조준까지 물려받지 않는다(다음 틱 syncLeadStart 가 새 알파 기준으로 다시 잡는다).
+    L.biteTargetId = -1;
     L.changedTick = this.tick;
     if (best === null) {
       L.leaderId = -1; // 내 종 전멸 — 패배 판정은 기존 그대로(game.ts)

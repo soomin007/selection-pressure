@@ -657,6 +657,56 @@ async function boot(): Promise<void> {
     "font-family:var(--font-mono); font-size:12.5px; pointer-events:none; display:none;";
   document.body.appendChild(leadChip);
 
+  // --- 상호작용 버튼(오른쪽 엄지) — 조종 모드의 "물기" ---
+  // 코어는 폰 기준 **스틱 1개 + 버튼 2개**로 성립해야 한다. 지금 만드는 건 그중 하나이고, 나머지
+  // 한 자리(대쉬)는 이 가로줄에 그대로 얹히도록 컨테이너로 잡아 둔다.
+  //
+  // 자리: 우하단 모서리는 미니맵(폭 100 + 여백 10)이 이미 쓰고 있다 → 그 **왼쪽**에 붙인다.
+  // 데스크톱은 body 직속 오버레이가 통째로 CSS zoom(--ui-zoom) 을 받으므로 미니맵(같은 배율로
+  // 커지는 Pixi 컨테이너)과 어긋나지 않는다.
+  const actionBar = document.createElement("div");
+  actionBar.style.cssText =
+    "position:fixed; right:114px; bottom:10px; z-index:31; display:none; gap:10px; align-items:flex-end;";
+  const biteBtn = document.createElement("button");
+  biteBtn.type = "button";
+  const biteLabel = document.createElement("span");
+  // 문구는 실제 동작과 같아야 한다. 누르면 **보이는 먹잇감을 노려 쫓고**(AI 사냥과 같은 질주가 붙는다)
+  // 닿는 순간 문다. "사거리 안의 것을 문다"가 아니다 — 그렇게 적으면 화면이 거짓말한다.
+  biteLabel.textContent = "사냥";
+  biteBtn.append(biteLabel, keyChip("E"));
+  biteBtn.title = "보이는 먹잇감을 노려 쫓습니다. 닿으면 뭅니다. 노릴 상대가 있을 때만 켜집니다 (E)";
+  // 색은 월드의 먹잇감 표식(호박빛 브래킷, render/leadVision 의 PREY_COLOR)과 같은 계열로 맞춘다 —
+  // "브래킷이 뜬 저 개체"와 "지금 켜진 이 버튼"이 같은 것을 가리킨다는 걸 색으로 잇는다.
+  // touch-action:none — 폰에서 버튼을 누른 채 손가락이 흔들려도 스크롤·제스처로 새지 않게.
+  biteBtn.style.cssText =
+    "width:78px; height:78px; border-radius:999px; border:2px solid var(--line);" +
+    "background:var(--panel); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);" +
+    "color:var(--ink); font-family:var(--font-title); font-size:16px; line-height:1.15; cursor:pointer;" +
+    "display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;" +
+    "touch-action:none; user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent;" +
+    "transition:opacity 0.12s ease, transform 0.08s ease, background 0.12s ease, border-color 0.12s ease;";
+  actionBar.appendChild(biteBtn);
+  document.body.appendChild(actionBar);
+
+  // 누르고 있는 동안만 물기 명령이 나간다(키·손가락 두 갈래). 방향 입력과 같은 "유지 입력"이라
+  // 프레임률·배속과 무관하고, 실제로 몇 번 무는지는 sim 의 쿨다운(AI 와 같은 값)이 정한다.
+  let biteKeyHeld = false;
+  let bitePointerHeld = false;
+  const releaseBite = (): void => {
+    bitePointerHeld = false;
+  };
+  biteBtn.addEventListener("pointerdown", (ev: PointerEvent) => {
+    ev.preventDefault(); // 포인터가 캔버스로 새서 조향 스틱이 서지 않게
+    bitePointerHeld = true;
+    // 손가락이 버튼 밖으로 미끄러져도 뗄 때까지 이 버튼이 이벤트를 받는다(안 걸면 영원히 눌린 상태로 남는다).
+    if (biteBtn.hasPointerCapture(ev.pointerId)) return;
+    biteBtn.setPointerCapture(ev.pointerId);
+  });
+  biteBtn.addEventListener("pointerup", releaseBite);
+  biteBtn.addEventListener("pointercancel", releaseBite);
+  biteBtn.addEventListener("lostpointercapture", releaseBite);
+  window.addEventListener("blur", releaseBite);
+
   // 눌러 유지하는 조향 — keys.ts 라우터는 keydown 전용이라 keyup 만 window 에서 따로 듣는다.
   // (새 키 레이어를 등록하면 열린 첫 레이어에서 무조건 return 하는 구조 탓에 기존 관전 키가 통째로 죽는다.)
   // blur 초기화를 빼먹으면 탭을 바꾼 뒤 알파가 영원히 한 방향으로 간다.
@@ -667,8 +717,12 @@ async function boot(): Promise<void> {
   if (leadMode) {
     window.addEventListener("keyup", (ev: KeyboardEvent) => {
       heldDirs.delete(ev.code);
+      if (ev.code === "KeyE") biteKeyHeld = false;
     });
-    window.addEventListener("blur", () => heldDirs.clear());
+    window.addEventListener("blur", () => {
+      heldDirs.clear();
+      biteKeyHeld = false;
+    });
   }
 
   // 키보드 조작(관전·멈춤 메뉴) — 우선순위 0(바닥). 드래프트·결과·오버레이가 열리면 그쪽 레이어가 먼저 받는다.
@@ -707,6 +761,12 @@ async function boot(): Promise<void> {
         if (!heldDirs.has(e.code)) selectedId = null;
         heldDirs.add(e.code);
         manualCam = null; // 조향이 들어오면 조망을 풀고 카메라가 앞장선 개체로 돌아온다
+        return true;
+      }
+      // 물기(E) — 조종 모드에서만. 누르고 있는 동안 계속 나가고, 떼는 것은 위 window keyup 이 받는다.
+      // 관전 레이어에서 안 쓰던 키라 기존 조작(Space·F·B·[ ]·숫자·+/−·Esc·Q·G)을 하나도 안 뺏는다.
+      if (leadMode && e.code === "KeyE") {
+        biteKeyHeld = true;
         return true;
       }
       switch (e.code) {
@@ -777,12 +837,17 @@ async function boot(): Promise<void> {
    * 스틱이 우선(손가락을 대고 있으면 그게 뜻이다), 없으면 눌러 둔 방향키를 읽는다.
    * 입력이 없으면 잠깐 타력으로 나아간다(COAST_MS). 한 번도 안 몰았으면 타력도 없어서
    * 계속 null 이다 → "지정만 하면 기존과 동일"이 그대로 성립한다.
+   *
+   * 물기(bite)도 같은 유지 입력이다. 방향과 다른 점 하나: **가만히 서서도 물 수 있어야 하므로**,
+   * 이동 입력도 타력도 없을 때 물기만 눌려 있으면 throttle 0 짜리 명령을 낸다(sim 에서 throttle 0 은
+   * 이동·추종 분기를 전부 안 타므로 "제자리에서 물기"가 된다).
    */
   function buildLeadCommand(dtMS: number): LeadCommand | null {
     if (!leadMode || game.phase !== "watch" || game.paused) {
       coastMs = 0;
       return null;
     }
+    const bite = biteKeyHeld || bitePointerHeld;
     let dx = 0;
     let dy = 0;
     let throttle = 0;
@@ -813,13 +878,17 @@ async function boot(): Promise<void> {
       coastMs = COAST_MS;
       coastDx = dx;
       coastDy = dy;
-      return { dx, dy, throttle };
+      return { dx, dy, throttle, bite };
     }
     // 입력 없음 — 남은 타력만큼 마지막 방향으로 힘이 빠지며 나아간다(1 → 0 선형).
-    if (coastMs <= 0) return null;
-    coastMs = Math.max(0, coastMs - dtMS);
-    if (coastMs <= 0) return null;
-    return { dx: coastDx, dy: coastDy, throttle: coastMs / COAST_MS };
+    if (coastMs > 0) {
+      coastMs = Math.max(0, coastMs - dtMS);
+      if (coastMs > 0) return { dx: coastDx, dy: coastDy, throttle: coastMs / COAST_MS, bite };
+    }
+    // 이동 입력도 타력도 없다. 물기를 누르고 있으면 그것만 담아 보낸다(제자리에서 무는 경우).
+    // throttle 0 이라 sim 쪽 이동·추종·수풀 봉인 분기는 전부 안 걸린다 = 이동으로는 무입력과 같다.
+    if (!bite) return null;
+    return { dx: 0, dy: 0, throttle: 0, bite: true };
   }
 
   app.ticker.add((ticker) => {
@@ -828,6 +897,9 @@ async function boot(): Promise<void> {
     if (leadMode && (game.phase !== "watch" || game.paused)) {
       heldDirs.clear();
       stick = null;
+      // 물기도 같이 푼다 — 카드를 고르는 동안 눌린 상태가 남으면 관전으로 돌아오는 순간 물어 버린다.
+      biteKeyHeld = false;
+      bitePointerHeld = false;
     }
     game.setLeadCommand(buildLeadCommand(ticker.deltaMS)); // update 직전 — 이번 프레임의 모든 틱이 같은 명령을 본다
     game.update(ticker.deltaMS);
@@ -895,8 +967,19 @@ async function boot(): Promise<void> {
         }
       }
       view.setLead(game.world.lead.leaderId >= 0 ? game.world.lead.leaderId : null);
+      // 물기 버튼 — "지금 물 수 있나"를 그 자체로 보이게. 대상이 없으면 흐리게, 사거리 안에 물 수 있는
+      // 상대가 생기면 또렷하게 켜진다. 판단은 화면에서 다시 하지 않고 sim 이 규칙으로 고른 값
+      // (lead.biteTargetId)을 그대로 읽는다 — 그게 실제로 물리는 그 개체다.
+      actionBar.style.display = "flex";
+      const canBite = game.world.lead.biteTargetId >= 0;
+      const pressed = biteKeyHeld || bitePointerHeld;
+      biteBtn.style.opacity = canBite ? "1" : "0.34";
+      biteBtn.style.borderColor = canBite ? "#ffb43a" : "var(--line)";
+      biteBtn.style.background = canBite ? "rgba(255,180,58,0.20)" : "var(--panel)";
+      biteBtn.style.transform = pressed ? "scale(0.92)" : "scale(1)";
     } else {
       leadChip.style.display = "none";
+      actionBar.style.display = "none";
       view.setLead(null);
     }
     leadStick.set(stick ? { x: stick.ox, y: stick.oy } : null, stick?.dx ?? 0, stick?.dy ?? 0, STICK_MAX);

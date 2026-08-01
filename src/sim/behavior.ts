@@ -334,6 +334,99 @@ function devour(e: Entity, prey: Entity, world: World): void {
   e.targetPrey = null;
 }
 
+/**
+ * 이 형질의 사냥 사정거리(px). 근접 기본값(SIM.attackRange)에 원거리(ranged) 형질이 얹힌다.
+ * 임계 기반이라 임계 이하는 기존 기울기(밸런스 불변), 초과분만 급하게 는다(전문 원거리 종만 멀리서 쏜다).
+ *
+ * stepEntity 안에 있던 지역 계산을 **한 글자도 안 바꾸고** 뽑은 것이다(visionRadius 추출과 같은 이유·같은 방식).
+ * 따로 뽑은 까닭: 사람이 시킨 물기(leadBiteTarget)가 AI 사냥과 **같은 사거리**를 써야 하는데, 그 식을 두 군데
+ * 적으면 한쪽만 바뀌었을 때 화면의 버튼과 실제 물기가 조용히 어긋난다.
+ * ⚠ 덧셈 순서를 바꾸면 부동소수점 마지막 자리가 달라져 결정론 지문이 깨진다. 순서를 손대지 말 것.
+ */
+export function attackRangeOf(t: Traits): number {
+  const rangedLow = Math.min(t.ranged, SIM.rangedThreshold);
+  const rangedHigh = Math.max(0, t.ranged - SIM.rangedThreshold);
+  return (
+    SIM.attackRange +
+    (rangedLow / TRAIT_MAX) * SIM.rangedBonus +
+    (rangedHigh / TRAIT_MAX) * SIM.rangedBonusHigh
+  );
+}
+
+/**
+ * 한 번의 물기를 실제로 해소한다 — **AI 사냥과 사람이 시킨 물기가 이 함수 하나를 같이 부른다.**
+ *
+ * 왜 함수로 뽑았나: 알파 조종의 약속이 "능력을 새로 얻는 게 아니라 이미 있는 능력을 사람이 대신
+ * 결정하는 것"이라서다. 물기 결과를 두 군데 적으면 언젠가 한쪽에만 보정이 붙고, 그 순간 형질이
+ * 장식이 된다(공격력·몸집을 안 찍어도 사람이 몰면 문다). 같은 코드를 부르면 그럴 수가 없다.
+ *
+ * 부작용 순서는 예전 사냥 블록 그대로다: 쿨다운 세팅 → (원거리면) 발사체 → 물기 판정 → rng 굴림 →
+ * 잡아먹기 또는 피해+부상 → 기운이 다하면 그 자리에서 잡아먹힘.
+ */
+function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): void {
+  const t = e.genome.traits;
+  e.attackCd = SIM.attackCooldownTicks;
+  // 원거리 종은 발사체(spit)가 먹잇감으로 날아간다(레일건 조준선 대신 생물다운 뱉기/가시). 근접은 그 자리 물기.
+  if (ranged) world.emit("spit", e.x, e.y, prey.x, prey.y);
+  // 독은 방어(삼킨 쪽이 중독)라 사냥 성공과 무관 — 물기 판정은 공격력 차와 **몸집 차**를 본다.
+  // 큰 먹잇감은 잘 안 죽고, 아주 크면 이빨이 아예 안 박힌다(biteIgnoreDiff).
+  const bite = biteOutcome(t.attack, prey.genome.traits.attack, t.size, prey.genome.traits.size);
+  // ignored 면 아무 일도 안 일어난다("일정 공격력 이하의 공격은 무시").
+  if (bite.ignored) return;
+  if (world.rng.chance(bite.killChance)) {
+    devour(e, prey, world);
+    return;
+  }
+  prey.energy -= bite.damage;
+  prey.woundTicks = SIM.woundTicks; // 다쳤다 — 이 동안 쓰러지면 "부상"이지 굶주림이 아니다
+  if (!ranged) world.emit("bite", prey.x, prey.y); // 근접만 그 자리 물기(원거리는 위 spit 이 명중 표현)
+  // 여러 번 물려 기운이 다하면 그 자리에서 잡아먹힌다(사망 원인은 잡아먹힘 — 포식자가 먹는다).
+  if (prey.energy <= 0) devour(e, prey, world);
+}
+
+/**
+ * 사람이 물기를 눌렀을 때 **누가 물리는가** — 사거리 안에서 `leadRelation(...).prey` 인 개체 중
+ * 가장 가까운 것. 거리가 같으면 **작은 id**(id 는 유일값이라 동률이 원리적으로 없는 전순서다 →
+ * 격자 순회 순서와 무관하게 답이 하나다. rng 로 고르면 결정론이 깨진다).
+ *
+ * ⚠ 조건을 여기서 다시 유도하지 않는다. "내가 쟤를 잡아먹을 수 있나"는 `leadRelation` 하나가 정하고,
+ *   화면의 호박빛 브래킷(render/leadVision)도 같은 함수를 읽는다 → **브래킷이 뜬 개체 = 물리는 개체**가
+ *   정의상 어긋날 수 없다(known_issues "화면에 뜨는 숫자를 규칙에서 다시 유도하지 마라").
+ *   사거리도 AI 사냥이 쓰는 `attackRangeOf` 그대로다.
+ *
+ * 전체 순회가 아니라 격자 이웃만 훑는다(사거리는 12~60px 남짓이라 몇 칸이면 끝난다).
+ * rng 미사용·순수 읽기 — 그래서 화면 표시용으로 매 틱 불러도 세계가 안 갈린다.
+ */
+export function leadBiteTarget(lead: Entity, world: World): Entity | null {
+  const lt = lead.genome.traits;
+  // **노릴 수 있는 거리 = 사정거리와 감지 범위 중 넓은 쪽.**
+  // 사정거리(12px)만 보면 근접 종은 버튼이 사실상 안 켜진다(실측: 90초 동안 한 번도. 먹잇감 최근접이
+  // 평균 90px 였다). 그러면 물기는 원거리 종만의 능력이 되고, 근접 종에겐 없는 기능이나 마찬가지다.
+  // "볼 수 있으면 노릴 수 있다"가 맞는 규칙이고, 그래서 **시야 형질이 사냥 가능 범위를 정한다** —
+  // 눈이 밝을수록 멀리서 표적을 잡는다(초음파 종은 사방으로). 노린다고 물리는 건 아니다: 실제 물기는
+  // 여전히 사정거리 안에서만, 같은 판정·같은 쿨다운으로 일어난다.
+  const r = Math.max(
+    attackRangeOf(lt),
+    visionRadius(lt, world, lead.x, lead.y),
+    SIM.echoBase * (lt.echo / TRAIT_MAX),
+  );
+  let best: Entity | null = null;
+  let bestId = -1;
+  let bestD2 = Infinity;
+  world.grid.forEachMatching(lead.x, lead.y, r, (o) => {
+    // 격자는 틱 시작에 만들어지므로 이번 틱에 이미 죽은 개체가 남아 있을 수 있다(AI 사냥도 alive 를 본다).
+    if (o === lead || !o.alive) return;
+    if (!leadRelation(lead, o).prey) return;
+    const d2 = (o.x - lead.x) ** 2 + (o.y - lead.y) ** 2;
+    if (d2 < bestD2 || (d2 === bestD2 && bestId >= 0 && o.id < bestId)) {
+      bestD2 = d2;
+      bestId = o.id;
+      best = o;
+    }
+  });
+  return best;
+}
+
 export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const t = e.genome.traits;
   // 형질은 0~100 자연수 저장 → 계수 계산은 0~1 로 정규화(÷TRAIT_MAX)해 해석한다(임계 비교는 0~100 그대로).
@@ -347,12 +440,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 원거리(ranged) 사거리 — 사냥 사정거리이자, 원거리 종이 먹잇감에 붙지 않고 멈춰 쏘는 거리(kiting).
   // 임계 기반: 임계(rangedThreshold) 이하는 기존 기울기(밸런스 불변), 초과분만 급한 기울기로 사거리가
   // 확 는다 → 전문 원거리 종만 멀리서 쏜다(야생·부수적 ranged 는 근접 그대로).
-  const rangedLow = Math.min(t.ranged, SIM.rangedThreshold);
-  const rangedHigh = Math.max(0, t.ranged - SIM.rangedThreshold);
-  const atkRange =
-    SIM.attackRange +
-    (rangedLow / TRAIT_MAX) * SIM.rangedBonus +
-    (rangedHigh / TRAIT_MAX) * SIM.rangedBonusHigh;
+  // (식은 attackRangeOf 로 뽑아 뒀다 — 사람이 시킨 물기가 **같은 사거리**를 써야 하기 때문이다.)
+  const atkRange = attackRangeOf(t);
   // 사냥 스퍼트(질주형 육식): 순수 육식이 먹잇감을 추격 중이면 속도가 오른다 — 도망치는 초식을 speed 50
   // 으론 못 잡던 병목을 speed 형질로 푼다(치타의 폭발적 추격). 순수 육식일수록·추격 중일 때만이라 야생
   // 초식·잡식은 영향 0.
@@ -551,6 +640,43 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
 
   // --- 섭취 / 사냥 (쫓던 목표가 사정거리면) ---
   if (e.attackCd > 0) e.attackCd -= 1;
+
+  // --- 알파 조종: 사람이 시킨 물기 ---
+  // 알파가 능력을 새로 얻는 게 아니다. AI 가 사냥할 때 쓰는 바로 그 경로(resolveBite)를, 바로 그
+  // 사거리(atkRange)와 쿨다운(attackCd)으로 쓴다. 다른 것은 하나뿐이다 — **누구를 언제 물지를
+  // 사람이 정한다.** 대미지 보너스도, 늘어난 사거리도, 무조건 명중도 없다. 힘이 모자라면 못 문다.
+  //
+  // ★ 게이트는 반드시 `cmd !== null && cmd.bite` 다. `leaderId >= 0`(알파를 지정했나)으로 걸면
+  //   **명령을 한 번도 안 준 세계가 갈라진다** — leadBiteTarget 이 world.rng 를 안 쓰더라도, 물기가
+  //   한 번이라도 나가는 순간 rng.chance 가 스트림을 밀어 그 뒤 전부가 다른 세계가 된다.
+  //   같은 자리에서 이미 크리티컬 버그가 났었다(lead.test.ts 의 격리 테스트가 그 감지기다).
+  //
+  // 대상이 없으면 **아무 일도 안 일어난다 — 쿨다운도 안 돈다.** 헛손질에 벌을 주면 "안 되는 이유"가
+  // 화면에서 안 읽히는 벌이 된다(버튼은 대상이 있을 때만 켜지므로 헛손질 자체가 드물다).
+  //
+  // ⚠ 도망(fleeing) 중에도 나간다. AI 의 사냥·섭취는 `!fleeing` 에 걸려 있지만, "쫓길 때 맞설 것인가
+  //   달아날 것인가"는 이 모드에서 사람이 정하는 것이고(레이드의 전사/도망자와 같은 갈림길),
+  //   무엇보다 **화면에 켜진 버튼이 안 먹히면 그게 거짓말**이다. 이득은 없다 — 판정·피해·쿨다운은 그대로다.
+  const bcmd = world.lead.cmd;
+  if (bcmd !== null && bcmd.bite === true && e.id === world.lead.leaderId) {
+    const aim = leadBiteTarget(e, world);
+    if (aim !== null) {
+      // ① **표적을 붙든다** — AI 포식자가 사냥할 때 세우는 바로 그 상태(targetPrey)다. 이걸 안 세우면
+      //    사람이 모는 포식자가 AI 보다 **느리다**: 사냥 질주(huntSprintFactor)가 `targetPrey !== null`
+      //    에 걸려 있어서다. 도망치는 먹잇감을 질주 없이 12px 까지 손으로 몰아붙이는 건 사실상 불가능해,
+      //    실측에서 근접 종은 버튼이 90초 동안 한 번도 안 켜졌다. 표적을 세우면 질주가 붙고, 사정거리에
+      //    닿는 순간 아래 AI 경로가 알아서 문다 — 사람은 모는 데 집중한다.
+      //    새 능력이 아니다. AI 가 스스로 고르던 표적을 **사람이 대신 고르는 것**뿐이다.
+      e.targetPrey = aim;
+      // ② 이미 사정거리 안이면 지금 문다(같은 판정·같은 쿨다운). 쿨다운 중이면 아무 일도 안 일어난다.
+      const adx = aim.x - e.x;
+      const ady = aim.y - e.y;
+      if (e.attackCd <= 0 && adx * adx + ady * ady <= atkRange * atkRange) {
+        resolveBite(e, aim, world, t.ranged >= SIM.rangedThreshold);
+      }
+    }
+  }
+
   if (!fleeing && e.targetPrey && e.targetPrey.alive) {
     const prey = e.targetPrey;
     const dx = prey.x - e.x;
@@ -558,27 +684,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     // 원거리 종은 이 넓은 사거리(atkRange, 상단 계산)에서 쏜다 — 붙지 않고 멀리서 명중.
     // 물기는 쿨다운마다 한 번. 예전엔 매 틱 굴려 접촉 즉시 즉사였다.
     if (dx * dx + dy * dy <= atkRange * atkRange && e.attackCd <= 0) {
-      e.attackCd = SIM.attackCooldownTicks;
-      // 원거리 종은 발사체(spit)가 먹잇감으로 날아간다(레일건 조준선 대신 생물다운 뱉기/가시). 근접은 그 자리 물기.
-      const ranged = t.ranged >= SIM.rangedThreshold;
-      if (ranged) world.emit("spit", e.x, e.y, prey.x, prey.y);
-      // 독은 방어(삼킨 쪽이 중독)라 사냥 성공과 무관 — 물기 판정은 공격력 차와 **몸집 차**를 본다.
-      // 큰 먹잇감은 잘 안 죽고, 아주 크면 이빨이 아예 안 박힌다(biteIgnoreDiff).
-      const bite = biteOutcome(
-        t.attack, prey.genome.traits.attack, t.size, prey.genome.traits.size,
-      );
-      // ignored 면 아무 일도 안 일어난다("일정 공격력 이하의 공격은 무시").
-      if (!bite.ignored) {
-        if (world.rng.chance(bite.killChance)) {
-          devour(e, prey, world);
-        } else {
-          prey.energy -= bite.damage;
-          prey.woundTicks = SIM.woundTicks; // 다쳤다 — 이 동안 쓰러지면 "부상"이지 굶주림이 아니다
-          if (!ranged) world.emit("bite", prey.x, prey.y); // 근접만 그 자리 물기(원거리는 위 spit 이 명중 표현)
-          // 여러 번 물려 기운이 다하면 그 자리에서 잡아먹힌다(사망 원인은 잡아먹힘 — 포식자가 먹는다).
-          if (prey.energy <= 0) devour(e, prey, world);
-        }
-      }
+      resolveBite(e, prey, world, t.ranged >= SIM.rangedThreshold);
     }
   } else if (!fleeing && e.targetFood && e.targetFood.available) {
     const food = e.targetFood;
