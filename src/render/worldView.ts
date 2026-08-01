@@ -23,6 +23,16 @@ import {
 } from "@/render/creatureLook";
 import { grassVisionFactor, nightVisionFactor, sizeDev, effectiveCamo, herdShielded } from "@/sim/behavior";
 import type { CosmeticId } from "@/game/achievements";
+import {
+  LeadTerrainLayer,
+  bodyRadiusOf,
+  drawPreyMark,
+  drawThreatMark,
+  leadCanEatFood,
+  leadCapsOf,
+  leadMarkWeights,
+  type LeadCaps,
+} from "@/render/leadVision";
 
 export class WorldView {
   readonly container = new Container();
@@ -36,6 +46,9 @@ export class WorldView {
   private readonly foodG = new Graphics();
   private readonly playerG = new Graphics(); // 내 종 강조(스프라이트 아래 빛나는 고리)
   private readonly leadG = new Graphics(); // 앞장선 개체(알파 조종) 지면 표식 — 스프라이트 아래
+  // 알파 시점 레이어(조종 모드 전용). leadId 가 null 이면 전부 비고 숨어 기존 화면과 문자 그대로 같다.
+  private readonly leadTerrain = new LeadTerrainLayer(); // 못 가는 지형(정적 — 통행 능력이 바뀔 때만 재생성)
+  private readonly relG = new Graphics(); // 관계 고리(위험 톱니 링 / 먹잇감 브래킷) — 스프라이트 아래
   private readonly creatureLayer = new Container();
   private readonly selectG = new Graphics(); // 탭으로 고른 개체 강조 고리(개인 카메라)
   private readonly favG = new Graphics(); // 즐겨찾기(단골) 개체 상시 마커(머리 위 금빛 별)
@@ -53,14 +66,23 @@ export class WorldView {
   private readonly heading = new Map<number, { x: number; y: number }>(); // 진행방향 벡터 저역통과(좌우 회전 진동 제거)
   private readonly dispPos = new Map<number, { x: number; y: number }>(); // 렌더 전용 위치 평활(고주파 떨림 제거)
   private frame = 0;
+  // 지금 보이는 월드 구간(setCamera 가 채운다). 초기값이 아주 크므로 카메라가 오기 전엔 아무것도 안 잘린다.
+  private viewCX = 0;
+  private viewCY = 0;
+  private viewHalfW = 1e9;
+  private viewHalfH = 1e9;
 
   constructor(renderer: Renderer) {
     this.renderer = renderer;
     this.container.addChild(this.envG);
+    // 못 가는 지형은 지형 바로 위·먹이 아래 — 먹이와 생물은 안 어둡게 하고 "땅"만 죽인다.
+    this.container.addChild(this.leadTerrain.g);
     this.container.addChild(this.foodG);
     this.container.addChild(this.playerG);
     // 알파 표식은 스프라이트 **아래**(지면에 눕는 표식) — 몸을 가리면 무슨 종인지가 안 읽힌다.
     this.container.addChild(this.leadG);
+    // 관계 고리도 스프라이트 아래 — 몸 바깥 반경에만 그리므로 안 가려지고, 몸(=무슨 종인지)을 안 덮는다.
+    this.container.addChild(this.relG);
     this.container.addChild(this.creatureLayer);
     this.container.addChild(this.selectG);
     this.container.addChild(this.favG);
@@ -93,6 +115,27 @@ export class WorldView {
   }
 
   /**
+   * 지금 조종 중인 알파 개체와 그 능력(통행·섭식). 조종 모드가 아니거나(leadId=null) 알파가 방금
+   * 쓰러져 승계 중이면 null 이고, 그러면 알파 시점 레이어가 통째로 꺼진다.
+   * 프레임당 한 번만 도는 선형 탐색이라(개체 상한 120) 비용이 사실상 없다.
+   */
+  private findLead(world: World): { e: Entity; caps: LeadCaps } | null {
+    if (this.leadId === null) return null;
+    for (const e of world.entities) {
+      if (e.id === this.leadId) return { e, caps: leadCapsOf(e.genome) };
+    }
+    return null;
+  }
+
+  /** 이 월드 좌표가 지금 화면 안(여유 margin 포함)인가. 알파 시점 레이어의 화면 밖 컬링에만 쓴다. */
+  private inView(x: number, y: number, margin: number): boolean {
+    return (
+      Math.abs(x - this.viewCX) <= this.viewHalfW + margin &&
+      Math.abs(y - this.viewCY) <= this.viewHalfH + margin
+    );
+  }
+
+  /**
    * 카메라 — 초점(fx,fy)을 화면 중앙에 두고 zoom 배율로. 월드 밖(가장자리 너머 빈 공간)이 안 보이게
    * 화면 절반만큼 안쪽으로 클램프. 월드(worldW/H)와 화면(screenW/H)을 분리해 큰 월드의 일부만 보여준다.
    */
@@ -109,6 +152,12 @@ export class WorldView {
     const halfH = screenH / (2 * zoom);
     const cx = clampRange(fx, halfW, worldW - halfW);
     const cy = clampRange(fy, halfH, worldH - halfH);
+    // 보이는 월드 구간을 기억해 둔다 — 알파 시점 레이어가 "화면 밖"을 아예 안 그리는 데 쓴다.
+    // (sync 가 setCamera 보다 먼저 도는 프레임이 있어 한 프레임 낡을 수 있다 → 아래에서 여유를 둔다.)
+    this.viewCX = cx;
+    this.viewCY = cy;
+    this.viewHalfW = halfW;
+    this.viewHalfH = halfH;
     this.container.scale.set(zoom);
     this.container.pivot.set(cx, cy);
     this.container.position.set(screenW / 2, screenH / 2);
@@ -189,6 +238,8 @@ export class WorldView {
     const terr = world.terrain;
     const env = world.environment;
     const cs = terr.cellSize;
+    // 지형이 통째로 바뀌었다(새 런·새 단계) → 알파의 "못 가는 곳"도 다음 프레임에 다시 만든다.
+    this.leadTerrain.reset();
     this.envG.clear();
     for (let cy = 0; cy < terr.rows; cy++) {
       for (let cx = 0; cx < terr.cols; cx++) {
@@ -219,9 +270,25 @@ export class WorldView {
     // 부드럽게 한다 — 어떤 sim 파라미터로도 못 잡는 본질적 떨림이라 렌더에서 흡수. smooth=1 이면 끔.
     const smoothK =
       TUNE.renderSmooth >= 1 ? 1 : 1 - Math.pow(1 - TUNE.renderSmooth, dtMS / (1000 / 60));
+    // ── 알파 시점(조종 모드 전용) 준비 ─────────────────────────────────────────────
+    // lead 가 null 이면 아래 분기가 전부 기존 경로로 떨어진다 = 관전 화면은 문자 그대로 예전 그대로다.
+    const lead = this.findLead(world);
+    this.leadTerrain.update(world, lead ? lead.caps : null);
+    if (lead !== null) {
+      this.relG.clear();
+      this.relG.visible = true;
+    } else if (this.relG.visible) {
+      this.relG.clear();
+      this.relG.visible = false;
+    }
+
     this.foodG.clear();
+    // 조종 중이면 **화면 밖 먹이는 아예 안 그린다.** 알파 시점 표시를 얹으면서도 도형 수를 오히려 줄이려는
+    // 것이다(폰 프레임이 이 게임의 생명 — 먹이는 수백 개고 대부분 화면 밖이다). 관전은 예전 그대로 전부.
+    const leadKinds = lead ? lead.e.species.foodKinds : null;
     for (const f of world.food) {
       if (!f.available) continue;
+      if (lead && !this.inView(f.x, f.y, 24)) continue;
       // 육지 식물은 종류별 자연색, 얕은 바다는 청록, 깊은 바다는 진한 남청(물고기 전용), 고산은 흰빛.
       const color = f.mountainous
         ? MOUNTAIN_FOOD_COLOR
@@ -230,12 +297,32 @@ export class WorldView {
           : f.aquatic
             ? SEA_FOOD_COLOR
             : (FOOD_COLORS[f.kind] ?? 0x9bee5a);
-      this.foodG.circle(f.x, f.y, 4).fill({ color, alpha: 1 });
+      if (!leadKinds || !lead) {
+        this.foodG.circle(f.x, f.y, 4).fill({ color, alpha: 1 });
+        continue;
+      }
+      // 못 먹는 먹이는 흐리게 죽인다 — "가서 먹으면 되는 것"만 또렷이 남아야 한눈에 골라 간다.
+      // 먹을 수 있는 것엔 옅은 흰 고리를 둘러 배경(초록 풀밭)에 묻히지 않게 한다.
+      if (leadCanEatFood(f, lead.caps, leadKinds)) {
+        this.foodG.circle(f.x, f.y, 4.6).fill({ color, alpha: 1 });
+        // 흰 고리는 **가까운 것에만** 두른다. 멀리 있는 먹이까지 고리를 두르면 (ㄱ) 화면이 고리밭이 되고
+        // (ㄴ) 넓은 화면(데스크톱)에서 도형 수가 배로 뛴다. "지금 가서 먹을 만한 것"만 도드라지면 된다.
+        if (Math.abs(f.x - lead.e.x) < REL_FAR && Math.abs(f.y - lead.e.y) < REL_FAR) {
+          this.foodG.circle(f.x, f.y, 7.2).stroke({ color: 0xffffff, width: 1, alpha: 0.17 });
+        }
+      } else {
+        // 아주 지워 버리진 않는다 — 세계가 텅 빈 것처럼 보이면 "저기 먹이가 있긴 한데 내가 못 먹는다"는
+        // 정보(예: 이 바다는 통째로 남의 밥상)까지 같이 사라진다.
+        this.foodG.circle(f.x, f.y, 3).fill({ color, alpha: 0.22 });
+      }
     }
 
     // 생물 스프라이트 풀 — sim(30/s)과 화면(60fps) 사이를 prev→현재로 보간해 드득거림을 없앤다.
     this.playerG.clear();
     const ringPulse = 0.5 + 0.5 * Math.sin((this.frame % 70) / 70 * Math.PI * 2);
+    // 위험 표식용 맥동 — 다른 고리들(70프레임)보다 빨라 "급하다"로 읽힌다. 조종 모드에서만 쓴다.
+    const threatPulse = 0.5 + 0.5 * Math.sin((this.frame % 44) / 44 * Math.PI * 2);
+    let relMarks = 0;
     const nbWindow = 2.4 * SIM.stepsPerSecond; // 신생아 강조 지속(스텝)
     const nbPeriod = 0.8 * SIM.stepsPerSecond; // nb-pulse 반복 주기(스텝)
     let i = 0;
@@ -373,6 +460,26 @@ export class WorldView {
         this.playerG
           .circle(rx, ry, 11.5)
           .stroke({ color: 0xffcf6a, width: 1.2, alpha: 0.22 + 0.14 * ringPulse });
+      }
+
+      // ── 알파 시점 관계 고리 ─────────────────────────────────────────────────────
+      // "쟤가 날 잡아먹나 / 내가 쟤를 잡아먹나"를 그 개체 위에 직접 칠한다. 무해한 개체는 **아무것도
+      // 안 그린다** — 전부 칠하면 화면이 고리로 뒤덮여 정작 위험이 안 읽힌다(밀도가 이 작업의 핵심).
+      // 화면 밖도 안 그리고, 개체 수 상한(안전장치)도 둔다. 내 종은 이미 초록 고리가 있어 제외한다.
+      if (lead && !e.species.isPlayer && relMarks < LEAD_MARK_CAP && this.inView(rx, ry, 56)) {
+        // 그릴지 말지는 sim 의 leadRelation 하나가 정한다(leadMarkWeights 안에서 부른다) —
+        // 화면에 먹잇감으로 표시된 개체 = 실제로 물리는 개체가 정의상 어긋날 수 없다.
+        const rel = leadMarkWeights(lead.e, e);
+        if (rel.threat || rel.prey) {
+          // 가까운 위협일수록 진하게(0.5~1.0). 먼 것은 "저기 있다" 정도만. 기준을 화면 크기가 아니라
+          // **월드 거리**로 잡는다 — 폰과 데스크톱에서 같은 거리가 같은 세기여야 감이 같아진다.
+          const dist = Math.hypot(rx - lead.e.x, ry - lead.e.y);
+          const prox = 0.5 + 0.5 * clamp01((REL_FAR - dist) / (REL_FAR - REL_NEAR));
+          const mr = bodyRadiusOf(e) + 5;
+          if (rel.threat) drawThreatMark(this.relG, rx, ry, mr, rel.threatPower, prox, threatPulse);
+          if (rel.prey) drawPreyMark(this.relG, rx, ry, mr, rel.preyPower, prox);
+          relMarks++;
+        }
       }
 
       // 중독(독 걸림) 표식 — 종 불문. sp.tint 곱셈만으론 초록 생물이 탁해질 뿐 "보라"가 안 나므로,
@@ -1024,6 +1131,13 @@ const LEAD_COLOR = 0xf0f8ff;
 const LEAD_OUTLINE = 0x06080d;
 // 표식 링 반경(월드 px) — 내 종 초록 고리(12.5)와 무리 방패 링(17.5) 사이에 끼워 둘 다와 안 겹친다.
 const LEAD_RING_R = 15;
+// 한 프레임에 그릴 관계 고리 수 상한(안전장치). 화면 밖 컬링만으로도 보통 10~20 개라 실제로는 안 걸리지만,
+// 개체가 화면에 몰리는 최악(떼 시련이 한 화면에 들어옴)에도 프레임이 안 무너지게 못을 박아 둔다.
+const LEAD_MARK_CAP = 40;
+// 관계 고리 거리 감쇠(월드 px) — 이 안쪽은 최대 세기, 이 바깥은 바닥(0.5). 코앞의 위협이 저 멀리 것과
+// 같은 진하기면 "지금 급한 것"이 안 도드라진다.
+const REL_NEAR = 90;
+const REL_FAR = 420;
 
 // 회전 떨림 방지: 이만큼(px/스텝)보다 실제로 더 움직일 때만 진행 방향을 갱신한다.
 // (느린 종은 미세 변위의 방향이 노이즈라, 낮으면 제자리에서 몸이 떤다.)
