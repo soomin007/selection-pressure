@@ -15,9 +15,10 @@ import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
 import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeMapSpecies, mapSpeciesHabitat, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
 import type { Biome } from "@/sim/environment";
-import { stepEntity } from "@/sim/behavior";
+import { stepEntity, visionRadius } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
-import { SIM } from "@/sim/params";
+import { createLeadState, type LeadState } from "@/sim/lead";
+import { SIM, LEAD } from "@/sim/params";
 
 /** 한 마리가 죽은 이유 (가독성 §7: "왜 내 종이 죽었나"). 사람이 읽는 한글 라벨은 game 층에서. */
 /** "wound"(부상) = 물려서 기운이 다해 죽음. 포식자가 마무리하지 못하고 놓친 개체 — 굶주림이 아니다. */
@@ -104,6 +105,16 @@ export class World {
   readonly foodGrid: FoodGrid;
   /** 야생 진화의 무작위 드리프트 전용 rng — 메인 rng 스트림을 안 건드려 기존 결정론을 보존한다. */
   private readonly wildEvoRng: Rng;
+
+  /**
+   * 알파 조종 상태. leaderId < 0 이면 이 기능은 존재하지 않는 것과 같다(= 기존 모드).
+   * 알파를 **지정만** 하고 명령을 한 번도 안 줘도 마찬가지다: sim 안에서 조종이 갈라놓는 분기는
+   * followTicks(무리 추종)와 commanded(수풀 봉인) 둘뿐이고, 둘 다 첫 명령 전에는 0/false 다.
+   * **Entity 에는 아무것도 추가하지 않는다** — "직렬화 안 함" 관례·createEntity 시그니처·
+   * 게놈 버전 계약을 흔들지 않기 위해 World 의 id 하나로만 추적한다.
+   * entities 는 매 틱 filter 로 재구성되므로 인덱스가 아니라 반드시 id 로 추적한다.
+   */
+  readonly lead: LeadState = createLeadState();
 
   entities: Entity[] = [];
   food: Food[] = [];
@@ -212,6 +223,111 @@ export class World {
     return this.idCounter++;
   }
 
+  /**
+   * 조종 모드 시작 — 무리 무게중심에 가장 가까운 내 종이 앞장선다(처음부터 무리 한복판에 서게).
+   * 거리가 같으면 먼저 태어난 쪽(작은 id). id 는 유일값이라 동률이 원리적으로 불가능한 전순서다
+   * → 배열 순회 순서와 무관하게 답이 하나다.
+   * rng 를 안 쓰고 개체를 새로 만들지도 않는다(nextId 미호출 → 이후 신생아 wanderAngle 불변).
+   * 이미 알파가 있으면 아무 일도 안 한다(멱등) — game 이 매 프레임 불러도 안전하다.
+   */
+  armLead(): void {
+    const L = this.lead;
+    if (L.leaderId >= 0) return;
+    const c = this.playerCentroid();
+    let best: Entity | null = null;
+    let bestD2 = Infinity;
+    for (const e of this.entities) {
+      if (!e.species.isPlayer) continue;
+      const d2 = (e.x - c.x) ** 2 + (e.y - c.y) ** 2;
+      if (d2 < bestD2 || (d2 === bestD2 && best !== null && e.id < best.id)) {
+        bestD2 = d2;
+        best = e;
+      }
+    }
+    if (best === null) return;
+    L.leaderId = best.id;
+    L.x = best.x;
+    L.y = best.y;
+  }
+
+  /**
+   * 알파의 틱 시작 스냅샷. rng 미사용·개체 생성 없음.
+   * 파생값을 여기서 한 번만 굳히는 이유: 개체 루프 안에서 갱신하면 알파가 몇 번째로 순회되느냐에
+   * 따라 이웃이 다른 값을 본다(숨은 순회 순서 의존 = rng 지문으로도 안 잡히는 결정론 지뢰).
+   */
+  private syncLeadStart(): void {
+    const L = this.lead;
+    // HUD 표시용 집계는 매 틱 여기서만 0 으로 되돌린다(세는 곳은 behavior 의 cohesion 한 자리뿐).
+    L.followerCount = 0;
+    if (L.followTicks > 0) L.followTicks -= 1;
+    if (L.leaderId < 0) return;
+    let cur: Entity | null = null;
+    for (const e of this.entities) {
+      if (e.id === L.leaderId) {
+        cur = e;
+        break;
+      }
+    }
+    if (cur === null) return; // 이번 틱에 죽었다 → step 끝의 syncLeader 가 승계
+    const t = cur.genome.traits;
+    L.x = cur.x;
+    L.y = cur.y;
+    const sp = Math.hypot(cur.vx, cur.vy);
+    L.omni = sp <= SIM.fovMinSpeed;
+    if (!L.omni) {
+      L.fx = cur.vx / sp;
+      L.fy = cur.vy / sp;
+    }
+    L.visionR = visionRadius(t, this, cur.x, cur.y);
+    L.echoR = SIM.echoBase * (t.echo / TRAIT_MAX);
+    const cmd = L.cmd;
+    // ★ 명령이 있는 틱에만 추종이 켜진다. 명령을 한 번도 안 받으면 followTicks 는 영원히 0,
+    //   commanded 는 영원히 false 라서 "알파를 지정만 한 세계"가 기존 세계와 부동소수점까지
+    //   같다(게놈과 무관하게. 수풀 봉인도 commanded 를 보므로 여기서 함께 잠긴다).
+    if (cmd !== null && cmd.throttle > 0) {
+      L.followTicks = LEAD.followHoldTicks;
+      // 끈끈한 플래그 — 한 번 올라가면 이 세계가 끝날 때까지 안 내려간다(승계도 안 되돌린다).
+      // 손을 떼면 되돌아가는 followTicks 로 수풀 봉인을 걸면 "몰아넣고 손 떼기"로 우회된다.
+      L.commanded = true;
+    }
+  }
+
+  /**
+   * 알파 승계 — "쓰러진 자리에서 가장 가까운 내 종이 앞장선다. 거리가 같으면 먼저 태어난 쪽."
+   * rng 를 한 번도 안 쓰고 nextId 도 안 부른다.
+   * **반드시 개체 루프 밖·죽은 개체 filter 뒤에서** 부른다. stepEntity 안에서 하면 앞쪽 개체만
+   * 이동을 마친 반쯤 갱신된 세계에서 "가장 가까운"을 재게 돼 순회 순서에 의존한다.
+   */
+  private syncLeader(): void {
+    const L = this.lead;
+    if (L.leaderId < 0) return;
+    for (const e of this.entities) if (e.id === L.leaderId) return; // 살아 있다
+    let best: Entity | null = null;
+    let bestD2 = Infinity;
+    for (const e of this.entities) {
+      if (!e.species.isPlayer) continue; // filter 뒤라 alive 는 전부 true
+      const d2 = (e.x - L.x) ** 2 + (e.y - L.y) ** 2;
+      if (d2 < bestD2 || (d2 === bestD2 && best !== null && e.id < best.id)) {
+        bestD2 = d2;
+        best = e;
+      }
+    }
+    // 이어받은 개체가 죽은 이의 마지막 명령으로 튀어나가지 않게 초기화한다.
+    // 손가락이 여전히 눌려 있으면 다음 프레임에 자연히 다시 켜진다.
+    // ⚠ L.commanded 는 **초기화하지 않는다.** "사람이 이 세계를 이미 몰았다"는 사실은 앞장선 개체가
+    //   바뀌어도 유효하고, 승계로 수풀 봉인이 풀리면 알파를 일부러 버리는 우회가 생긴다.
+    L.cmd = null;
+    L.followTicks = 0;
+    L.changedTick = this.tick;
+    if (best === null) {
+      L.leaderId = -1; // 내 종 전멸 — 패배 판정은 기존 그대로(game.ts)
+      return;
+    }
+    L.leaderId = best.id;
+    L.x = best.x;
+    L.y = best.y;
+  }
+
   step(): void {
     this.tick += 1;
     this.grid.rebuild(this.entities);
@@ -221,6 +337,8 @@ export class World {
       e.prevX = e.x;
       e.prevY = e.y;
     }
+    // 알파의 파생값을 틱 시작에 한 번 굳힌다(알파가 없으면 첫 줄에서 빠진다 = 기존과 동일).
+    this.syncLeadStart();
     if (this.boss) {
       this.boss.prevX = this.boss.x;
       this.boss.prevY = this.boss.y;
@@ -269,6 +387,9 @@ export class World {
       }
     }
     if (hasDead) this.entities = this.entities.filter((e) => e.alive);
+
+    // 알파가 이번 틱에 쓰러졌으면 옆에 있던 한 마리가 이어받는다(죽은 개체를 걸러낸 뒤라야 정확하다).
+    this.syncLeader();
 
     this.maybeImmigrate();
     this.maybeEvolveWild();

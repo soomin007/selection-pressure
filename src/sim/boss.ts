@@ -539,7 +539,17 @@ export function bossCanHunt(boss: Boss, e: Entity, world: World): boolean {
   const layer = entityLayer(e.genome.traits, world.terrain, e.x, e.y);
   if (!boss.huntLayers.includes(layer)) return false;
   // 하늘에서 내려다보는 보스(큰수리)는 수풀에 든 땅 개체를 못 본다. 하늘의 개체는 숨을 데가 없다.
-  if (boss.grassCover && layer === "land" && world.terrain.isGrass(e.x, e.y)) return false;
+  if (boss.grassCover && layer === "land" && world.terrain.isGrass(e.x, e.y)) {
+    // ⚠ 사람이 한 번이라도 몬 세계에서는 **내 종에게 수풀 엄폐가 통하지 않는다.** 수풀은 형질 없이
+    //   밟는 공짜 지형이라, 무리를 수풀에 세워 두면 이 보스의 카운터(시야 형질)를 통째로 무효화할
+    //   수 있다("주차 악용"). 야생은 그대로다.
+    //   게이트가 leaderId 가 아니라 commanded 인 이유가 핵심이다:
+    //   ① 알파를 **지정만** 하고 명령을 안 준 세계까지 봉인하면 "지정만 하면 기존과 완전히 동일"이라는
+    //      보장이 깨진다(실제로 큰수리 단계에서 개체 수·사망 수가 갈렸다).
+    //   ② 반대로 followTicks(손 떼면 1.5초 뒤 0) 로 걸면 "몰아넣고 손 떼기"로 우회된다.
+    //   commanded 는 끈끈해서(한 번 켜지면 안 꺼짐) 두 요구를 동시에 만족한다.
+    if (!world.lead.commanded || !e.species.isPlayer) return false;
+  }
   return true;
 }
 

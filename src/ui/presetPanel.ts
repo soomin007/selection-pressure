@@ -9,6 +9,7 @@ import { makeCreatureTexture } from "@/render/worldView";
 import { ABILITY_KEYS, abilityLevel, abilityFillPct, traitColor, traitWord } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { registerKeyLayer, keyChip } from "@/ui/keys";
+import { DEBUG } from "@/debug";
 import type { Renderer } from "pixi.js";
 
 /** 이번 판의 세계 요약 — 시작 종을 고르기 **전에** 보여준다(무엇이 기다리는지 알고 고르게). */
@@ -148,6 +149,11 @@ export function createPresetPanel(
   const hintEl = document.createElement("div");
   hintEl.textContent = "날렵한 몸은 빠른 발, 큰 눈은 넓은 시야. 등의 톱니 능선은 힘, 날카로운 주둥이는 사냥꾼입니다.";
   hintEl.style.cssText = "font-size:11px; color:var(--faint); line-height:1.55; margin-top:12px; word-break:keep-all;";
+  // 알파 조종 모드에서만 — 이 종으로 앞장서면 무리가 따라오는지 **고르기 전에** 알려 준다.
+  // 여덟 시작 종 중 다섯(사냥꾼·정찰자·바다·하늘·원거리)이 무리 성향 0 이라 아무도 안 따라온다.
+  const leadEl = document.createElement("div");
+  leadEl.style.cssText =
+    "font-size:11.5px; color:var(--sub); line-height:1.55; margin-top:8px; word-break:keep-all;";
 
   const selectBtn = document.createElement("button");
   selectBtn.textContent = "이 종으로 시작";
@@ -162,7 +168,7 @@ export function createPresetPanel(
   });
 
   detailView.style.cssText = "display:none; flex-direction:column; align-items:center;";
-  detailView.append(backBtn, catLabel, artRow, page, nameEl, featureEl, dietWrap, descEl, traitsEl, hintEl, selectBtn);
+  detailView.append(backBtn, catLabel, artRow, page, nameEl, featureEl, dietWrap, descEl, traitsEl, leadEl, hintEl, selectBtn);
 
   panel.append(catView, detailView);
 
@@ -283,6 +289,20 @@ export function createPresetPanel(
     dietEl.textContent = dietWord(g.traits.diet);
     dietEl.style.color = dietColor(g.traits.diet);
     descEl.textContent = card.desc;
+    // 조종 모드에서 "앞장서면 무리가 따라오는가"는 오직 무리 성향 형질이 정한다. 고르고 나서
+    // 알게 되면 늦다 — 카드 자리에서 미리 알린다(대백과에 기대지 않기).
+    if (DEBUG.leadControl) {
+      const h = g.traits.herding;
+      leadEl.textContent =
+        h <= 0
+          ? "따르는 무리: 없음. 무리 성향이 0 이라 앞장서도 아무도 따라오지 않습니다."
+          : h > 60
+            ? "따르는 무리: 많음. 앞장서면 무리가 통째로 휘어 따라옵니다."
+            : "따르는 무리: 조금. 앞장서면 일부만 따라오고 줄이 자꾸 끊깁니다.";
+      leadEl.style.display = "block";
+    } else {
+      leadEl.style.display = "none";
+    }
     traitsEl.replaceChildren();
     for (const key of TRAIT_KEYS) {
       const v = g.traits[key];

@@ -299,7 +299,6 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const t = e.genome.traits;
   // 형질은 0~100 자연수 저장 → 계수 계산은 0~1 로 정규화(÷TRAIT_MAX)해 해석한다(임계 비교는 0~100 그대로).
   const speed01 = t.speed / TRAIT_MAX;
-  const vision01 = t.vision / TRAIT_MAX;
   const metabolism01 = t.metabolism / TRAIT_MAX;
   const herding01 = t.herding / TRAIT_MAX;
   const fertility01 = t.fertility / TRAIT_MAX;
@@ -327,17 +326,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     SIM.maxSpeedBase * (0.4 + speed01) *
     (roughFree ? 1 : roughSpeedFactor(world, e.x, e.y, speed01)) * sprintFactor *
     sizeSpeedFactor(t.size);
-  // 밤엔 시야가 준다(낮=영향 없음). vision 형질이 높을수록 밤에도 잘 본다 → 야행성 틈새(큰 눈).
-  // 시야 반경 = visionBase × (시야/100). 하한이 없어 시야 0 이면 아무것도 못 본다(감각 형질의 대가).
-  // 비행 종은 높이 날아 시야가 넓다(× (1+flyVisionBonus)).
-  // **정점 시야(100)**: 어둠도 수풀도 눈을 가리지 못한다(밤·수풀 감쇠 완전 면제).
-  const apexEye = isApex(t.vision);
-  const vision =
-    SIM.visionBase *
-    vision01 *
-    (apexEye ? 1 : nightVisionFactor(world.daylight, vision01)) *
-    (apexEye ? 1 : grassVisionFactor(world, e.x, e.y, vision01)) *
-    (canFly ? 1 + SIM.flyVisionBonus : 1);
+  // 이 자리에서 실제로 보는 반경. 밤·수풀 감쇠, 비행 보너스, 정점 시야(100) 면제가 전부 visionRadius
+  // 안에 있다(렌더가 같은 함수로 안개 구멍을 뚫어 화면과 로직을 1:1 로 맞춘다).
+  const vision = visionRadius(t, world, e.x, e.y);
   // 큰 몸은 많이 먹는다(sizeDrainFactor — 몸집 50 이면 1.0). 대사(metabolism)가 "효율"이라면 몸집은
   // "총량"이다: 큰 몸은 효율이 좋아도 절대 소모가 크다.
   const drain =
@@ -400,12 +391,38 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     // 무리 안(comfort)에선 cohesion 0 — COM 이 격자 양자화로 매 틱 튀어, 늘 적용하면 무리 종이
     // 제자리에서 떤다. 벗어난 정도에 비례해 서서히 세져(램프) 경계에서의 떨림도 없앤다.
     if (nb && nb.count > 1) {
-      const hdx = nb.comX - e.x;
-      const hdy = nb.comY - e.y;
+      // 알파 조종: **최근에 조종 입력이 있었던 동안만**(followTicks>0) 내 종은 3×3 무게중심 대신
+      // 앞장선 개체를 목표로 삼는다. 명령이 한 번도 없으면 followTicks 가 영원히 0 이라 아래는
+      // 문자 그대로 기존 코드다(무입력 동일성의 유일한 근거 — leaderId 만 보고 갈아타면 안 된다).
+      //
+      // 가중치는 손대지 않는다 → herding 0 이면 w=0 이라 **아무도 안 따라온다**(형질이 곧 규칙).
+      // ⚠ nb.comX/comY 는 종을 안 가린 혼합 무게중심이다(SpatialGrid.neighborhood 는 근처 야생도
+      //   센다). 알파로 갈아타는 것은 "추종을 더한 것"인 동시에 "그 야생 혼입을 지운 것"이기도 하다.
+      //   ON/OFF 를 견줄 때 이 차이를 버그로 오해하지 말 것.
+      const L = world.lead;
+      const follow =
+        L.followTicks > 0 && L.leaderId >= 0 && e.species.isPlayer && e.id !== L.leaderId;
+      const ax = follow ? L.x : nb.comX;
+      const ay = follow ? L.y : nb.comY;
+      const hdx = ax - e.x;
+      const hdy = ay - e.y;
       const hd = Math.hypot(hdx, hdy);
-      // 무게중심이 벽 너머(직선으로 안 보임)면 cohesion 을 끈다 — 못 가는 무리를 쫓아 벽에 정지하지
-      // 않게(길찾기는 먹이 목표에만 적용되므로 cohesion 발 끼임은 여기서 막는다).
-      if (hd > SIM.herdComfortRadius && world.terrain.lineOfSight(e.x, e.y, nb.comX, nb.comY, canSwim)) {
+      // 목표가 벽 너머(직선으로 안 보임)면 cohesion 을 끈다 — 못 가는 무리를 쫓아 벽에 정지하지
+      // 않게(길찾기는 먹이 목표에만 적용되므로 cohesion 발 끼임은 여기서 막는다). 알파가 물 건너로
+      // 가면 육상 무리가 물가에 머리를 박고 서는 것도 같은 장치가 막는다.
+      // near/reach 로 쪼갠 것은 순수 정리다 — lineOfSight 는 예전과 똑같이 hd>comfort 일 때만 불린다.
+      const near = hd <= SIM.herdComfortRadius;
+      const reach = !near && world.terrain.lineOfSight(e.x, e.y, ax, ay, canSwim);
+      // HUD 의 "따르는 무리 N" 은 여기서, 규칙이 실제로 판정된 그 자리에서 센다. 바깥에서 조건을 다시
+      // 유도하면(예전 followsLead) 이 블록이 flee 의 else 안이라는 사실이 빠져 도망 중인 개체까지
+      // 세어 버렸다(실측 54%가 실제로는 도망 중이었다).
+      // 세는 조건 = "곁에 있거나(near) 실제로 끌려오는 중(reach)". 둘 다 아니면 산·물에 가려 알파
+      // 쪽으로 한 번도 안 당겨지는 개체다 — 그건 따라오는 게 아니라 못 오는 것이라 세지 않는다
+      // (안 그러면 실측 17%가 부풀었다). 나머지 조건(도망 아님·내 종·알파 본인 아님·herding>0·
+      // 이웃 있음·followTicks>0)은 여기 닿은 시점에 전부 통과돼 있다 = 정의상 정확하다.
+      // rng 를 안 건드리고 단순 합계라 개체 순회 순서와 무관하다.
+      if (follow && (near || reach)) L.followerCount += 1;
+      if (reach) {
         const pull = Math.min(1, (hd - SIM.herdComfortRadius) / SIM.herdComfortRamp);
         const w = SIM.herdCohesion * herding01 * pull;
         const herd = scaleTo(hdx, hdy, maxSpeed);
@@ -415,6 +432,29 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         };
       }
     }
+  }
+
+  // --- 알파 조종: 방향만 사람이 정한다 ---
+  // 위쪽 자율 판단(computeFlee·chooseGoal·navTo·wanderDesired·cohesion)은 **하나도 건너뛰지 않았다.**
+  // 배회 분기의 world.rng.range 한 번이 사라지면 난수 스트림이 통째로 밀린다(known_issues 의
+  // "쌍둥이" 함정과 같은 자리). 여기서는 결과값 desired·turn 만 덮어쓴다.
+  //
+  // maxSpeed 를 반드시 곱한다 — 속도 형질·몸집·험지 감속·비행·사냥 스퍼트가 전부 그 안에 있다.
+  // 상수 속도로 밀면 "형질이 손끝으로 읽힌다"는 목적 자체가 사라진다.
+  //
+  // turn 은 **기존 상수 SIM.fleeTurn 을 재사용**한다. 새 조향 상수를 만들지 않는 이유:
+  // 카드가 말하지 않는 물리(예: 몸집→회전반경)를 손끝에 지어내면 "표시와 실제가 다르다"와
+  // 같은 위반이다. 사람이 모는 개체는 도망칠 때처럼 즉각 반응한다 — 그게 이 값의 뜻이다.
+  //
+  // fleeing 플래그는 읽지도 쓰지도 않는다(끼임 감지·사냥·섭취 세 갈래가 거기 매달려 있어서,
+  // 알파만 예외로 만들면 "쫓기면서 먹는" 알파 전용 규칙이 생겨 권능이 는다).
+  // 덮어쓰기가 관성 앞에서 끝나야 아래 축분리 지형 차단과 경계 반사를 명령 벡터도 통과한다
+  // (수영 없이 물에 못 들어가고, 날개 없이 산을 못 넘고, 맵 밖으로 못 나간다).
+  const lcmd = world.lead.cmd;
+  if (lcmd !== null && lcmd.throttle > 0 && e.id === world.lead.leaderId) {
+    const push = maxSpeed * Math.min(1, lcmd.throttle);
+    desired = { x: lcmd.dx * push, y: lcmd.dy * push };
+    turn = SIM.fleeTurn;
   }
 
   // --- 관성: 현재 속도를 desired 로 부드럽게 (홱 꺾임/제자리 떨림 제거) ---
@@ -963,6 +1003,25 @@ export function grassVisionFactor(world: World, x: number, y: number, vision: nu
 }
 
 /**
+ * 이 형질이 이 자리에서 실제로 보는 반경(px). 밤·수풀 감쇠와 비행 보너스, 정점 시야(100) 면제가
+ * 전부 들어 있다. stepEntity 안에 있던 지역 계산을 **한 글자도 안 바꾸고** 뽑은 것이다.
+ * 따로 뽑은 이유: 렌더가 시야 안개 구멍을 정확히 같은 값으로 뚫어야 화면이 로직과 1:1 이 된다
+ * (보이는 범위와 아는 범위가 어긋나면 화면이 거짓말을 한다).
+ * ⚠ 곱셈 순서를 바꾸면 부동소수점 마지막 자리가 달라져 결정론 지문이 깨진다. 순서를 손대지 말 것.
+ */
+export function visionRadius(t: Traits, world: World, x: number, y: number): number {
+  const vision01 = t.vision / TRAIT_MAX;
+  const apexEye = isApex(t.vision);
+  return (
+    SIM.visionBase *
+    vision01 *
+    (apexEye ? 1 : nightVisionFactor(world.daylight, vision01)) *
+    (apexEye ? 1 : grassVisionFactor(world, x, y, vision01)) *
+    (t.wings >= SIM.flyThreshold ? 1 + SIM.flyVisionBonus : 1)
+  );
+}
+
+/**
  * 험지 이동 배율 — 험지 안이면 속도가 준다(speed 0 → roughSpeedFloor 배). speed 형질이 높을수록
  * 감속이 사라진다(speed 1 이면 거의 1.0). 험지 밖이면 1.0. 속도가 지형에서 가치를 갖게 하는 지점.
  * 인자 speed 는 0~1 정규화 값. (수풀 시야 grassVisionFactor 와 대칭.)
@@ -971,6 +1030,10 @@ export function roughSpeedFactor(world: World, x: number, y: number, speed: numb
   if (!world.terrain.isRough(x, y)) return 1;
   return Math.min(1, SIM.roughSpeedFloor + SIM.roughSpeedBonus * speed);
 }
+
+// (followsLead 는 삭제했다. 조건을 바깥에서 다시 유도하면 cohesion 블록이 "도망이 아닐 때"의
+//  else 안에 있다는 사실이 빠져 화면이 거짓 숫자를 띄웠다. 이제 world.lead.followerCount 를 읽는다 —
+//  세는 자리가 판정하는 자리와 같아서 어긋날 수가 없다.)
 
 /** (dx,dy) 를 길이 len 으로 정규화. 0 벡터는 0 그대로. */
 function scaleTo(dx: number, dy: number, len: number): Vec {

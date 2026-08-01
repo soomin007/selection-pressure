@@ -13,6 +13,7 @@ import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@
 import { GAME, SCHEDULE, eraDifficulty, eraScarcity, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
+import type { LeadCommand } from "@/sim/lead";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, bossEligible, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { pickMapType, mapKind, type MapKind, type MapType } from "@/sim/mapType";
 import { TILE } from "@/sim/terrain";
@@ -61,6 +62,14 @@ export interface RunHistory {
 /** 런 보고서 시계열 샘플 주기(스텝). 30 = 1초마다(sim 30스텝/초). 형질 추이는 완만해 이 정도면 충분. */
 const REPORT_SAMPLE_STEPS = 30;
 
+/**
+ * 수풀이 엄폐가 되는 보스(하늘에서 내려다보는 큰수리). 조종 모드에서는 이 엄폐가 내 종에게
+ * 통하지 않으므로(sim/boss.ts 의 bossCanHunt) 예고 문구에서 수풀 문장을 갈아 끼워야 한다.
+ * boss.ts 는 이 판별을 타입 단위로 내주지 않아(Boss 인스턴스의 grassCover 뿐) 여기서 타입으로 건다.
+ * ⚠ boss.ts 의 PRESETS 에 grassCover: true 인 보스를 추가하면 이 목록에도 더할 것.
+ */
+const GRASS_COVER_BOSSES: readonly BossType[] = ["raptor"];
+
 export class Game {
   readonly width: number;
   readonly height: number;
@@ -71,6 +80,10 @@ export class Game {
   world: World;
   phase: Phase = "lobby";
   paused = false; // 멈춤 버튼
+  /** 알파 조종 모드(?alpha). 기본 false → 켜지 않으면 관련 코드가 아예 안 돈다(기존 동작 100% 보존). */
+  leadEnabled = false;
+  /** 이번 단계에 이미 적립한 경험치(조종 모드 상한용). leadEnabled=false 면 아무 데도 안 쓰인다. */
+  private stageXp = 0;
   speed = 1; // 관전 배속 1/2/3
   result: RunResult | null = null;
   draftCards: Card[] = [];
@@ -327,6 +340,15 @@ export class Game {
     this.acc = 0;
   }
 
+  /**
+   * 입력 층이 매 프레임 부르는 조종 명령 세터. 관전 중·멈춤 아님일 때만 sim 에 닿는다.
+   * 드래프트·결과 화면에서 손가락이나 키가 눌린 채로 넘어가도 알파가 계속 달리지 않는다.
+   */
+  setLeadCommand(cmd: LeadCommand | null): void {
+    this.world.lead.cmd =
+      this.leadEnabled && this.phase === "watch" && !this.paused ? cmd : null;
+  }
+
   update(deltaMS: number): void {
     if (this.paused) return;
     const stepMs = 1000 / SIM.stepsPerSecond;
@@ -345,6 +367,8 @@ export class Game {
     }
 
     if (this.phase !== "watch") return;
+    // rng 미사용·멱등. 단계마다 새 월드가 생겨도 여기서 다시 앞장선다.
+    if (this.leadEnabled) this.world.armLead();
     this.acc += deltaMS;
     let guard = 0;
     while (this.acc >= stepMs && guard < 5) {
@@ -384,8 +408,16 @@ export class Game {
   /** 먹이 섭취 delta 를 경험치로 누적하고, 임계 도달 시 레벨업(형질 드래프트)한다. */
   private updateXp(): void {
     const eaten = this.world.playerFoodEaten;
-    this.xp += eaten - this.lastFoodEaten;
+    let gain = eaten - this.lastFoodEaten;
     this.lastFoodEaten = eaten;
+    // 조종 모드에서만: 단계당 경험치 상한. 무리를 먹이에 붙이는 실력이 곧 카드 장 수가 되면
+    // "카드가 결과를 좌우한다"는 명제가 뒤에서 무너진다(관전형의 '누가 해도 비슷한 곡선' 붕괴).
+    if (this.leadEnabled) {
+      const room = Math.max(0, GAME.leadStageXpCap - this.stageXp);
+      if (gain > room) gain = room;
+      this.stageXp += gain;
+    }
+    this.xp += gain;
     if (this.xp >= this.xpToNext) this.levelUp();
   }
 
@@ -530,7 +562,7 @@ export class Game {
     if (next === "boss") {
       const bt = this.peekBossType(); // 실제로 나올 보스(무의미 보스는 건너뛴 결과) — 예고가 진실이어야 한다
       // 카운터 힌트 + 만능 수단 안내: 공격력·원거리가 높으면 어떤 보스든 맞서 잡는다(원거리로 시작해도 보스전 가능).
-      if (bt) return { title: `곧 ${bossName(bt)}!`, sub: `${bossCounter(bt)} 공격력이나 원거리가 높으면 어떤 보스든 맞서 잡습니다.` };
+      if (bt) return { title: `곧 ${bossName(bt)}!`, sub: `${this.counterHint(bt)} 공격력이나 원거리가 높으면 어떤 보스든 맞서 잡습니다.` };
       return { title: "곧 위협이 닥칩니다", sub: "" };
     }
     if (next === "extinction") {
@@ -540,6 +572,24 @@ export class Game {
       return { title: "곧 대멸종이 닥칩니다", sub: "형태를 갖추고 수를 늘려 대비하세요" };
     }
     return null;
+  }
+
+  /**
+   * 이 보스의 대응 힌트 — **지금 이 판에서 실제로 통하는 것**만 말한다.
+   * 조종 모드에서는 내 종에게 수풀 엄폐가 통하지 않으므로(sim/boss.ts 의 bossCanHunt), 수풀에
+   * 숨으라고 권하는 문장을 지우고 조종 모드의 진실로 갈아 끼운다. 그대로 두면 등장 4초 전 예고와
+   * 등장 순간 배너가 정반대를 말한다(예고가 거짓말이 되면 "왜 졌는지 모르고 진다").
+   * 순수 조회 — rng·상태 불변.
+   */
+  private counterHint(bt: BossType): string {
+    const base = bossCounter(bt);
+    if (!this.leadEnabled || !GRASS_COVER_BOSSES.includes(bt)) return base;
+    const kept = (base.match(/[^.]+\.?/g) ?? [base])
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !s.includes("수풀"))
+      .join(" ");
+    const lead = "앞장서서 몰기 시작하면 수풀도 우리를 숨겨 주지 않습니다.";
+    return kept.length > 0 ? `${kept} ${lead}` : lead;
   }
 
   /** 렌더 보간 비율 [0,1) — 다음 스텝까지 얼마나 왔나(화면 60fps 가 sim 30/s 사이를 메운다). */
@@ -607,6 +657,7 @@ export class Game {
     this.xp = 0;
     this.xpToNext = GAME.xpBase;
     this.lastFoodEaten = 0;
+    this.stageXp = 0;
     this.draftRng = new Rng(`${this.currentSeed}-draft`);
     this.stageRng = new Rng(`${this.currentSeed}-stage`);
     this.extRng = new Rng(`${this.currentSeed}-ext`);
@@ -701,6 +752,7 @@ export class Game {
    * 레벨업으로만), 위협만 흐른다. 예고(preview)는 stageLabel 과 함께 main 이 하이라이트로 띄운다.
    */
   private beginStage(): void {
+    this.stageXp = 0; // 조종 모드 경험치 상한은 단계마다 새로 찬다(leadEnabled=false 면 안 읽힌다)
     this.phase = "watch";
     this.acc = 0;
     const kind = this.currentKind();
@@ -870,6 +922,7 @@ export class Game {
     // 게놈은 유지(성장 이어짐). xp/레벨도 유지하되, 새 월드라 먹이 누적 기준값만 리셋.
     this.world = this.makeWorld();
     this.lastFoodEaten = 0;
+    this.stageXp = 0;
     // 성장한 종의 색·형질을 새 초기 무리에 반영(프리셋 선택 때와 같은 처리).
     if (this.playerColor !== undefined) this.world.playerSpecies.color = this.playerColor;
     for (const e of this.world.entities) {

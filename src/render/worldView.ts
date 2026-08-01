@@ -35,6 +35,7 @@ export class WorldView {
   private readonly envG = new Graphics();
   private readonly foodG = new Graphics();
   private readonly playerG = new Graphics(); // 내 종 강조(스프라이트 아래 빛나는 고리)
+  private readonly leadG = new Graphics(); // 앞장선 개체(알파 조종) 지면 표식 — 스프라이트 아래
   private readonly creatureLayer = new Container();
   private readonly selectG = new Graphics(); // 탭으로 고른 개체 강조 고리(개인 카메라)
   private readonly favG = new Graphics(); // 즐겨찾기(단골) 개체 상시 마커(머리 위 금빛 별)
@@ -42,6 +43,7 @@ export class WorldView {
   private readonly overlayG = new Graphics();
   private selectedId: number | null = null; // 따라가며 관찰 중인 개체
   private favoriteId: number | null = null; // 즐겨찾기로 고정한 개체(선택과 무관하게 상시 표시)
+  private leadId: number | null = null; // 사람이 앞장세운 개체(?alpha). null 이면 표식을 아예 안 그린다
 
   private readonly pool: Sprite[] = [];
   // 생물 텍스처 캐시 — 키가 "내 종 세대별 게놈 서명" 또는 "야생 종 id". 내 종은 레벨업으로 게놈이
@@ -57,6 +59,8 @@ export class WorldView {
     this.container.addChild(this.envG);
     this.container.addChild(this.foodG);
     this.container.addChild(this.playerG);
+    // 알파 표식은 스프라이트 **아래**(지면에 눕는 표식) — 몸을 가리면 무슨 종인지가 안 읽힌다.
+    this.container.addChild(this.leadG);
     this.container.addChild(this.creatureLayer);
     this.container.addChild(this.selectG);
     this.container.addChild(this.favG);
@@ -72,6 +76,15 @@ export class WorldView {
   /** 즐겨찾기(단골) 개체 — 선택과 무관하게 상시 금빛 별로 표시해 무리 속에서 놓치지 않게. null 이면 해제. */
   setFavorite(id: number | null): void {
     this.favoriteId = id;
+  }
+
+  /**
+   * 사람이 앞장세운 개체(알파 조종 `?alpha`). null 이면 표식·시야 예외가 통째로 꺼져 기존 화면과 같다.
+   * main 이 매 프레임 `world.lead.leaderId`(승계로 바뀐다)를 그대로 넘긴다 — 여기서 상태를 안 들고 있으면
+   * 앞장서던 개체가 쓰러진 뒤에도 옛 자리에 표식이 남는다.
+   */
+  setLead(id: number | null): void {
+    this.leadId = id;
   }
 
   /** 개체의 렌더 표시 위치(저역통과된 부드러운 좌표). 카메라가 이 위치를 따라가면 떨림 없이 추적된다. */
@@ -264,7 +277,9 @@ export class WorldView {
       if (e.species.isPlayer) {
         // 시야(이 종이 먹이를 어느 방향·얼마나 멀리 보는지) — 보는 방향(진행방향) 기준 부채꼴로.
         // 정지(헤딩이 거의 0)면 두리번거리므로 원으로. 일부 개체에만 옅게(클러터 없이 시야각 감).
-        if (visionRings < 14) {
+        // 앞장선 개체(알파)는 **개수 제한의 예외**다. 알파가 열다섯 번째로 순회되면 그 한 마리의 부채꼴만
+        // 안 그려져, 사람이 "내가 어디까지 보는지"를 못 읽는다(조종 판단의 근거가 통째로 사라진다).
+        if (visionRings < 14 || e.id === this.leadId) {
           // behavior 의 시야 계산과 똑같이 개체별로 — 밤·수풀에서 줄어드는 실제 시야를 그대로 그린다
           // (시각=로직 1:1). 수풀에 든 개체는 부채꼴이 눈에 띄게 줄어 "시야가 가려짐"이 보인다.
           const v01 = e.genome.traits.vision / TRAIT_MAX;
@@ -458,10 +473,15 @@ export class WorldView {
       for (const id of this.dispPos.keys()) if (!live.has(id)) this.dispPos.delete(id);
     }
 
+    // 앞장선 개체(알파) 표식 — 개체 루프가 끝난 뒤에 그린다. 위치(dispPos)·진행방향(heading)이
+    // 이번 프레임 값으로 다 채워진 다음이라야 몸·부채꼴과 같은 자리를 가리킨다.
+    this.drawLead();
+
     // 선택 개체 강조 — 탭으로 고른 한 마리를 또렷한 고리로 표시(카메라가 이 아이를 따라간다).
     // 폰에서 한눈에 보이게 밝은 금빛 + 은은한 맥동. 위치는 렌더 표시 좌표(저역통과)라 떨지 않는다.
+    // 알파를 탭해 고른 경우엔 금빛 고리를 생략한다 — 흰 알파 표식과 겹쳐 둘 다 뭉개져 보인다.
     this.selectG.clear();
-    if (this.selectedId !== null) {
+    if (this.selectedId !== null && this.selectedId !== this.leadId) {
       const dp = this.dispPos.get(this.selectedId);
       if (dp) {
         const pulse = 0.5 + 0.5 * Math.sin((this.frame % 64) / 64 * Math.PI * 2);
@@ -563,6 +583,79 @@ export class WorldView {
     }
     if (tintAlpha > 0)
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });
+  }
+
+  /**
+   * 앞장선 개체(알파) 표식 — "지금 내 손이 미는 것은 이 한 마리"를 몸을 안 가리고 알린다.
+   *
+   * 머리 위는 이미 임자가 있다(단골 별 y-20 · 정복자 왕관 y-15) → 지면에 눕는 표식으로 그린다.
+   * **끊어진** 링인 이유: 이어진 링은 반경만 다를 뿐 내 종 고리(12.5)·무리 방패 링(17.5)과 같은 모양이라
+   * 폰 화면에서 한 덩어리로 뭉친다. 토막 링 + 진행 방향 쐐기는 형태부터 달라 겹쳐도 갈린다.
+   * 색은 청백 — 금빛(선택·단골)·초록(내 종)·보라(독)와 안 겹치고, 연파랑 방패보다 밝고 희다.
+   *
+   * 방향은 스프라이트 회전과 **같은** 평활 헤딩(this.heading)을 쓴다. 몸이 향한 쪽과 쐐기가 어긋나면
+   * "내가 미는 방향"이 화면에서 거짓말이 된다(시각=로직 1:1). 시야 부채꼴도 같은 값을 쓴다.
+   */
+  private drawLead(): void {
+    this.leadG.clear();
+    if (this.leadId === null) return;
+    const dp = this.dispPos.get(this.leadId);
+    if (!dp) return; // 방금 쓰러진 알파 — 승계가 끝나면 다음 프레임에 이어받은 개체 자리에 그려진다
+    const pulse = 0.5 + 0.5 * Math.sin(((this.frame % 60) / 60) * Math.PI * 2);
+    // 바닥 발광 — 열댓 마리가 겹친 무리 한복판에서도 "어느 놈이 나인가"를 찾게. 지형색을 안 죽일 만큼 옅게.
+    this.leadG
+      .circle(dp.x, dp.y, LEAD_RING_R)
+      .fill({ color: LEAD_COLOR, alpha: 0.06 + 0.03 * pulse });
+    // 끊어진 링 — 네 토막이 천천히 돈다(살아 있는 표적 마커).
+    // ⚠ 토막은 `arc()` 가 아니라 점을 직접 찍어 잇는다. Pixi 의 `stroke()` 는 직전 끝점을 현재 위치로
+    //   남기므로(GraphicsContext._initNextPathLocation) 바로 `arc()` 를 부르면 토막 사이가 직선으로
+    //   메워지고, 그걸 피하려 호 시작점으로 `moveTo` 하면 이번엔 같은 점이 연속 두 번 들어가 선 굵기
+    //   법선이 0 으로 나눠진다(buildLine → NaN 정점 = 그 도형이 통째로 안 그려진다).
+    //   기존 시야 부채꼴(위쪽)이 안전한 건 moveTo 대상이 호 시작점이 아니라 **중심**이기 때문이다.
+    const spin = ((this.frame % 300) / 300) * Math.PI * 2;
+    const seg = (Math.PI * 2) / 4;
+    const gap = 0.5; // 토막 사이 빈 각(rad). 이보다 좁으면 그냥 이어진 링으로 보인다
+    const steps = 7; // 토막 하나를 직선 7개로 — 반경 15px 에서 각진 게 안 보인다
+    for (let s = 0; s < 4; s++) {
+      const a0 = spin + s * seg + gap / 2;
+      const span = seg - gap;
+      const pts: number[] = [];
+      for (let k = 0; k <= steps; k++) {
+        const a = a0 + (span * k) / steps;
+        pts.push(dp.x + Math.cos(a) * LEAD_RING_R, dp.y + Math.sin(a) * LEAD_RING_R);
+      }
+      // 어두운 밑선을 먼저 깔고 그 위에 청백. 흰 선만 그으면 밝은 지형(사막·눈·마른 풀) 위에서
+      // 대비가 없어 표식이 사라진다 — 폰 화면에서 "내가 미는 놈"을 못 찾으면 조종 자체가 안 된다.
+      // 같은 점 배열을 poly 로 두 번 넘긴다(stroke 는 경로를 소비하므로 다시 그려 줘야 한다).
+      this.leadG.poly(pts, false).stroke({ color: LEAD_OUTLINE, width: 4.2, alpha: 0.3 });
+      this.leadG
+        .poly(pts, false)
+        .stroke({ color: LEAD_COLOR, width: 2.2, alpha: 0.55 + 0.3 * pulse });
+    }
+    // 진행 방향 쐐기 — 링 바깥으로 뾰족하게. 조향 입력이 실제로 몸에 먹혔는지가 여기서 읽힌다
+    // (미는 방향과 몸이 도는 방향이 다르면 그게 곧 "형질이 무거워 잘 안 돈다"는 정보다).
+    const hd = this.heading.get(this.leadId);
+    if (!hd) return;
+    const hm = Math.hypot(hd.x, hd.y);
+    if (hm <= 0.02) return; // 멈춰 있으면 방향이 노이즈다(시야 부채꼴과 같은 문턱) — 링만 남긴다
+    const ux = hd.x / hm;
+    const uy = hd.y / hm;
+    const px = -uy; // 진행 방향의 수직 — 쐐기 밑변 폭
+    const py = ux;
+    const tip = LEAD_RING_R + 9.5;
+    const base = LEAD_RING_R + 1.5;
+    const half = 5.2;
+    this.leadG
+      .poly([
+        dp.x + ux * tip,
+        dp.y + uy * tip,
+        dp.x + ux * base + px * half,
+        dp.y + uy * base + py * half,
+        dp.x + ux * base - px * half,
+        dp.y + uy * base - py * half,
+      ])
+      .fill({ color: LEAD_COLOR, alpha: 0.55 + 0.3 * pulse })
+      .stroke({ color: LEAD_OUTLINE, width: 1, alpha: 0.35 }); // 밝은 지형 위 대비(링과 같은 이유)
   }
 
   /**
@@ -922,6 +1015,15 @@ const NIGHT_COLOR = 0x0a1030;
 const NIGHT_MAX_ALPHA = 0.4;
 // 시야 부채꼴 반각(라디안) — sim 의 fovHalfCos 와 같은 각도로 표시(보는 방향 ± 이만큼).
 const VISION_FOV_HALF = Math.acos(SIM.fovHalfCos);
+
+// 앞장선 개체(알파 조종) 표식 색 — 청백. 금빛(선택·단골)·초록(내 종)·보라(독)와 안 겹치고,
+// 연파랑 무리 방패(0xcfe6ff)보다 희고 밝다. 조이스틱 표시(render/leadStick.ts)도 같은 색을 써서
+// "손끝의 스틱 = 저 개체"가 색으로 이어진다.
+const LEAD_COLOR = 0xf0f8ff;
+// 표식 밑에 까는 어두운 윤곽 — 사막·눈·마른 풀처럼 밝은 지형 위에서 흰 표식이 사라지는 걸 막는다.
+const LEAD_OUTLINE = 0x06080d;
+// 표식 링 반경(월드 px) — 내 종 초록 고리(12.5)와 무리 방패 링(17.5) 사이에 끼워 둘 다와 안 겹친다.
+const LEAD_RING_R = 15;
 
 // 회전 떨림 방지: 이만큼(px/스텝)보다 실제로 더 움직일 때만 진행 방향을 갱신한다.
 // (느린 종은 미세 변위의 방향이 노이즈라, 낮으면 제자리에서 몸이 떤다.)
