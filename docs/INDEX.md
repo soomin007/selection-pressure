@@ -11,6 +11,7 @@
 ## 작업 관리
 - [`design/backlog.md`](design/backlog.md) — **다음 작업의 단일 소스** (앞으로 할 일만)
 - [`design/known_issues.md`](design/known_issues.md) — 반복 금지 함정/오류 (증상→원인→방지책)
+- [`design/parked_ideas.md`](design/parked_ideas.md) — **보류 아이디어** (안 하기로 했지만 버리지 않은 방향. 실시간 카드 배틀러 등)
 - `../session_logs/YYYY-MM-DD.md` — 세션별 작업·결정·미해결 기록
 - `../ACTIVE_WORK.md` — 동시 세션 작업 조율판 (git 미추적, 있을 때만)
 
