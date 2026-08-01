@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "smoke": "npm run build && node scripts/smoke.mjs",
-    "boss-preview": "node scripts/boss-preview.mjs"
+    "boss-preview": "node scripts/boss-preview.mjs",
+    "overlap": "node scripts/overlap-check.mjs"
   },
   "dependencies": {
     "pixi.js": "^8.6.0"
