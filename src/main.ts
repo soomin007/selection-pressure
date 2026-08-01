@@ -759,13 +759,27 @@ async function boot(): Promise<void> {
     },
   );
 
+  // 손을 뗀 뒤 타력으로 나아가는 시간(ms). 0 이면 키를 떼는 그 순간 개체가 완전한 자율로 돌아가
+  // 도망 로직이 켜지는데, 방향을 바꾸려고 W 를 떼고 A 를 누르는 그 찰나에도 그렇게 된다 —
+  // 상어가 옆에 있으면 알파가 내 손을 벗어나 반대로 달아난다(실기 피드백 2026-08-01).
+  // 타력이 있으면 키를 갈아 쥐는 동안엔 계속 내 뜻대로 가고, 정말로 놓으면 서서히 자율로 돌아간다.
+  const COAST_MS = 420;
+  let coastMs = 0;
+  let coastDx = 0;
+  let coastDy = 0;
+
   /**
    * 이번 프레임의 조종 명령. **유지 입력(레벨)**이라 프레임률·배속과 무관하게 안전하다 —
    * 한 프레임이 0틱이든 15틱이든 같은 명령을 보므로 입력이 씹히지도 중복되지도 않는다.
    * 스틱이 우선(손가락을 대고 있으면 그게 뜻이다), 없으면 눌러 둔 방향키를 읽는다.
+   * 입력이 없으면 잠깐 타력으로 나아간다(COAST_MS). 한 번도 안 몰았으면 타력도 없어서
+   * 계속 null 이다 → "지정만 하면 기존과 동일"이 그대로 성립한다.
    */
-  function buildLeadCommand(): LeadCommand | null {
-    if (!leadMode || game.phase !== "watch" || game.paused) return null;
+  function buildLeadCommand(dtMS: number): LeadCommand | null {
+    if (!leadMode || game.phase !== "watch" || game.paused) {
+      coastMs = 0;
+      return null;
+    }
     let dx = 0;
     let dy = 0;
     let throttle = 0;
@@ -791,8 +805,18 @@ async function boot(): Promise<void> {
         throttle = 1; // 키보드는 세기 조절이 없다 — 누르면 전력
       }
     }
-    if (throttle <= 0) return null;
-    return { dx, dy, throttle };
+    if (throttle > 0) {
+      // 실제 입력이 있었다 — 타력을 만땅으로 채워 두고 방향을 기억한다.
+      coastMs = COAST_MS;
+      coastDx = dx;
+      coastDy = dy;
+      return { dx, dy, throttle };
+    }
+    // 입력 없음 — 남은 타력만큼 마지막 방향으로 힘이 빠지며 나아간다(1 → 0 선형).
+    if (coastMs <= 0) return null;
+    coastMs = Math.max(0, coastMs - dtMS);
+    if (coastMs <= 0) return null;
+    return { dx: coastDx, dy: coastDy, throttle: coastMs / COAST_MS };
   }
 
   app.ticker.add((ticker) => {
@@ -802,7 +826,7 @@ async function boot(): Promise<void> {
       heldDirs.clear();
       stick = null;
     }
-    game.setLeadCommand(buildLeadCommand()); // update 직전 — 이번 프레임의 모든 틱이 같은 명령을 본다
+    game.setLeadCommand(buildLeadCommand(ticker.deltaMS)); // update 직전 — 이번 프레임의 모든 틱이 같은 명령을 본다
     game.update(ticker.deltaMS);
     // 개인 카메라: 선택 개체를 해석(죽었으면 작별, 관전 아니면 해제) → 강조 고리·카드·카메라에 반영.
     resolveSelection();
