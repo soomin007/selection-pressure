@@ -2,7 +2,7 @@
 // DOM·Pixi 타입이 하나라도 들어오면 sim 순수성이 깨진다(CLAUDE.md 최상위 규칙).
 // 입력 장치(손가락·키보드)를 아는 것은 main/ui 층이고, sim 은 "방향과 세기"만 받는다.
 
-import { SIM } from "@/sim/params";
+import { SIM, LEAD } from "@/sim/params";
 
 /**
  * 유지 입력(레벨). 사람이 손가락·키를 누르고 있는 "상태"를 그대로 옮긴 값.
@@ -61,6 +61,12 @@ export interface LeadState {
    * 매 틱 syncLeadStart 에서 0 으로 초기화한다.
    */
   followerCount: number;
+  /**
+   * 앞장선 자를 따라갈 때의 뭉침 가중치(×무리 성향). 기본값은 LEAD.followCohesion 이고,
+   * 폰에서 `?follow=<수>` 로 덮어쓸 수 있다(배포를 다시 하지 않고 손끝 느낌을 튜닝하려고 — game 층이
+   * 매 프레임 세팅한다). 형질이 규칙이라는 원칙은 이 값과 무관하다: 무리 성향 0 이면 곱해서 0 이다.
+   */
+  followWeight: number;
   /** 알파의 틱 시작 위치. 무리 추종·승계·안개가 전부 이 값을 본다. */
   x: number;
   y: number;
@@ -84,6 +90,7 @@ export function createLeadState(): LeadState {
     followTicks: 0,
     commanded: false,
     followerCount: 0,
+    followWeight: LEAD.followCohesion,
     x: 0,
     y: 0,
     visionR: 0,

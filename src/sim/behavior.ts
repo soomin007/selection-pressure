@@ -229,6 +229,45 @@ export function biteOutcome(
   };
 }
 
+/** 앞장선 개체(알파)에서 본 다른 개체와의 관계. 화면 표시와 조종 능력이 **둘 다 이 하나를 읽는다.** */
+export interface LeadRelation {
+  /** 저쪽이 나를 잡아먹을 수 있다 — 사냥하는 식성이고, 나를 물면 이빨이 박힌다. */
+  threat: boolean;
+  /** 내가 저쪽을 잡아먹을 수 있다 — 내가 사냥하는 식성이고, 물면 이빨이 박힌다. */
+  prey: boolean;
+}
+
+/**
+ * 알파와 다른 개체의 관계 — **"쟤가 날 잡아먹나 / 내가 쟤를 잡아먹나"의 단일 진실.**
+ *
+ * 왜 여기 있나: 이 판정은 두 곳이 쓴다. ① 화면(누구에게 위험 표식을 붙일까) ② 조종 능력(물기 버튼이
+ * 저 개체에 통하나). 같은 규칙을 두 군데 적으면 조용히 어긋나고, 그러면 **화면이 거짓말한다** —
+ * 이 저장소는 방금 그 사고를 겪었다(known_issues "화면 숫자를 규칙에서 다시 유도하지 마라").
+ * herdShielded 를 렌더가 그대로 읽는 것과 같은 이유·같은 패턴이다.
+ *
+ * 판정은 시뮬이 실제로 쓰는 것 둘을 그대로 조합한다:
+ *  · 사냥하는 식성인가 — `diet > SIM.dietHuntMin` (stepEntity 의 canHunt 와 같은 식)
+ *  · 물면 박히는가 — `biteOutcome(...).ignored` 가 아닌가. **공격력 차와 몸집 차를 함께** 본다.
+ *    그래서 같은 종이라도 개체마다 갈릴 수 있다(큰 개체는 못 문다). 그게 화면에 그대로 보여야 한다.
+ *
+ * 같은 종·친화 진영(친척)은 둘 다 false 다 — 서로 안 잡아먹는다.
+ * ⚠ 무리 방어(herdShielded)는 **일부러 안 본다.** 그건 "AI 포식자가 표적으로 고르는가"의 규칙이지
+ *   "물면 박히는가"가 아니다. 사람이 몰고 들어가 무는 것까지 막지는 않는다.
+ * rng 미사용·순수 함수(테스트로 규칙을 못 박는다).
+ */
+export function leadRelation(lead: Entity, other: Entity): LeadRelation {
+  if (lead.species.id === other.species.id || areFriends(lead.species, other.species)) {
+    return { threat: false, prey: false };
+  }
+  const me = lead.genome.traits;
+  const it = other.genome.traits;
+  const threat =
+    it.diet > SIM.dietHuntMin && !biteOutcome(it.attack, me.attack, it.size, me.size).ignored;
+  const prey =
+    me.diet > SIM.dietHuntMin && !biteOutcome(me.attack, it.attack, me.size, it.size).ignored;
+  return { threat, prey };
+}
+
 /**
  * 무리 방어 규칙(순수 함수 — 테스트로 규칙을 못 박는다). 무리 성향이 임계를 넘고 곁에 같은 종이
  * 충분히 있으면 방패가 선다. 둘 다 있어야 한다: 형질만 높고 흩어져 있으면 방패가 없고(뭉쳐야 방어다),
@@ -424,7 +463,11 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       if (follow && (near || reach)) L.followerCount += 1;
       if (reach) {
         const pull = Math.min(1, (hd - SIM.herdComfortRadius) / SIM.herdComfortRamp);
-        const w = SIM.herdCohesion * herding01 * pull;
+        // 앞장선 자를 따라갈 때만 더 센 가중치를 쓴다(L.followWeight). 무게중심 뭉침은 그대로
+        // SIM.herdCohesion 이라 **기존 모드는 1비트도 안 바뀐다**. 왜 다른 값인지는 params.ts 의
+        // LEAD.followCohesion 주석에 있다(무게중심은 권위 없는 평균, 앞장선 자는 사람이 정한 방향).
+        // ⚠ herding01 은 그대로 곱한다 — 무리 성향 0 이면 여전히 아무도 안 따라온다(형질이 규칙).
+        const w = (follow ? L.followWeight : SIM.herdCohesion) * herding01 * pull;
         const herd = scaleTo(hdx, hdy, maxSpeed);
         desired = {
           x: desired.x * (1 - w) + herd.x * w,

@@ -82,6 +82,12 @@ export class Game {
   paused = false; // 멈춤 버튼
   /** 알파 조종 모드(?alpha). 기본 false → 켜지 않으면 관련 코드가 아예 안 돈다(기존 동작 100% 보존). */
   leadEnabled = false;
+  /**
+   * 무리가 앞장선 자를 따르는 세기(×무리 성향). null 이면 sim 기본값(LEAD.followCohesion).
+   * 폰에서 `?follow=<수>` 로 손끝 느낌을 배포 없이 튜닝하려고 열어 둔 구멍이다. 단계마다 새 월드가
+   * 생기므로 armLead 와 같은 자리에서 매번 다시 발라 준다.
+   */
+  leadFollowWeight: number | null = null;
   /** 이번 단계에 이미 적립한 경험치(조종 모드 상한용). leadEnabled=false 면 아무 데도 안 쓰인다. */
   private stageXp = 0;
   speed = 1; // 관전 배속 1/2/3
@@ -368,7 +374,10 @@ export class Game {
 
     if (this.phase !== "watch") return;
     // rng 미사용·멱등. 단계마다 새 월드가 생겨도 여기서 다시 앞장선다.
-    if (this.leadEnabled) this.world.armLead();
+    if (this.leadEnabled) {
+      this.world.armLead();
+      if (this.leadFollowWeight !== null) this.world.lead.followWeight = this.leadFollowWeight;
+    }
     this.acc += deltaMS;
     let guard = 0;
     while (this.acc >= stepMs && guard < 5) {

@@ -5,7 +5,7 @@
 
 import { Application, Container, Graphics } from "pixi.js";
 import { chooseLayout, COLORS, uiScale } from "@/config";
-import { DEBUG, DEBUG_ACTIVE, debugLabel } from "@/debug";
+import { DEBUG, DEBUG_ACTIVE, TUNE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
 import { createHudPanel } from "@/ui/hudPanel";
@@ -148,6 +148,9 @@ async function boot(): Promise<void> {
   // 전부 첫 줄에서 빠진다 = 지금까지의 관전 화면과 문자 그대로 동일하게 돈다.
   const leadMode = DEBUG.leadControl;
   game.leadEnabled = leadMode;
+  // ?follow=<수> 로 "무리가 얼마나 따라오는가"를 배포 없이 폰에서 바로 바꿔 본다. 안 붙이면 NaN 이라
+  // sim 기본값(LEAD.followCohesion)을 그대로 쓴다.
+  if (leadMode && Number.isFinite(TUNE.leadFollow)) game.leadFollowWeight = TUNE.leadFollow;
 
   // 개인 카메라(방향 전환 2단계) — 탭으로 고른 한 개체를 따라가며 클로즈업한다(소수 개체 애착의 핵심).
   let selectedId: number | null = null; // 따라가는 개체 id(없으면 무리 추적)
