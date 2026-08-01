@@ -7,6 +7,9 @@ import type { World } from "@/sim/world";
 import { TILE } from "@/sim/terrain";
 
 const MM_W = 100; // 미니맵 폭(px). 높이는 월드 종횡비로 결정.
+// 화면 위에서 미니맵까지의 거리(px, ui 배율 전). 상태 바(8)·타임라인(64~)과 노치(safe-area, 최대 ~50)를
+// 다 지나 서도록 넉넉히 잡았다. 겹치면 지도가 아니라 방해물이 된다.
+const MM_TOP = 150;
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
 
@@ -111,10 +114,14 @@ export class Minimap {
 
   /** 화면 우하단 등 모서리에 배치(여백 margin). 확대 배율만큼 커진 실제 크기로 계산한다. */
   place(screenW: number, screenH: number, margin = 10): void {
-    this.container.position.set(
-      screenW - (MM_W + margin) * this.ui,
-      screenH - (this.mmH + margin) * this.ui,
-    );
+    // **우상단.** 조종 모드가 생기면서 화면 아래 양쪽이 전부 엄지 자리가 됐다(왼쪽=조이스틱·조작 열,
+    // 오른쪽=사냥 버튼) — 미니맵이 아래 있으면 손에 가리거나 손이 미니맵을 누른다.
+    // 모바일 게임의 통상 자리는 위쪽이고, 이 게임은 상단 **왼쪽**을 상태 바·타임라인·정보 칩과 그
+    // 아래로 펼쳐지는 범례 패널이 이미 쓰므로 빈 쪽인 오른쪽에 둔다.
+    // 세로 오프셋은 노치(safe-area)까지 감안해 타임라인 아래로 넉넉히 — 겹치면 지도가 아니라 방해물이다.
+    // screenH 는 이제 안 쓰지만 호출부 시그니처를 유지한다(다른 배치로 되돌릴 때를 위해).
+    void screenH;
+    this.container.position.set(screenW - (MM_W + margin) * this.ui, MM_TOP * this.ui);
   }
 
   /** 화면 좌표(px)가 미니맵 패널 위인지 — 미니맵을 탭했을 때 뒤의 개체가 선택되지 않게 막는다. */

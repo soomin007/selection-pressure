@@ -235,6 +235,15 @@ export interface LeadRelation {
   threat: boolean;
   /** 내가 저쪽을 잡아먹을 수 있다 — 내가 사냥하는 식성이고, 물면 이빨이 박힌다. */
   prey: boolean;
+  /**
+   * 노릴 수는 있는데 **이빨이 안 박히는** 상대(사냥하는 식성이지만 체급이 크게 밀린다 — "코끼리는 못 문다").
+   * prey 와 배타적이다.
+   *
+   * 왜 따로 두나: 이게 없으면 못 무는 상대는 화면에도 안 뜨고 사냥 버튼도 안 겨눠서, 플레이어가
+   * **"왜 안 되는지"를 영영 못 배운다**(없다는 것으로 가르치는 건 가장 약한 가르침이다).
+   * 노릴 수 있게 두고 물었을 때 튕기게 해야 몸으로 안다(world 의 "block" 사건).
+   */
+  tough: boolean;
 }
 
 /**
@@ -257,15 +266,15 @@ export interface LeadRelation {
  */
 export function leadRelation(lead: Entity, other: Entity): LeadRelation {
   if (lead.species.id === other.species.id || areFriends(lead.species, other.species)) {
-    return { threat: false, prey: false };
+    return { threat: false, prey: false, tough: false };
   }
   const me = lead.genome.traits;
   const it = other.genome.traits;
   const threat =
     it.diet > SIM.dietHuntMin && !biteOutcome(it.attack, me.attack, it.size, me.size).ignored;
-  const prey =
-    me.diet > SIM.dietHuntMin && !biteOutcome(me.attack, it.attack, me.size, it.size).ignored;
-  return { threat, prey };
+  const canHunt = me.diet > SIM.dietHuntMin;
+  const lands = !biteOutcome(me.attack, it.attack, me.size, it.size).ignored;
+  return { threat, prey: canHunt && lands, tough: canHunt && !lands };
 }
 
 /**
@@ -371,8 +380,14 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
   // 독은 방어(삼킨 쪽이 중독)라 사냥 성공과 무관 — 물기 판정은 공격력 차와 **몸집 차**를 본다.
   // 큰 먹잇감은 잘 안 죽고, 아주 크면 이빨이 아예 안 박힌다(biteIgnoreDiff).
   const bite = biteOutcome(t.attack, prey.genome.traits.attack, t.size, prey.genome.traits.size);
-  // ignored 면 아무 일도 안 일어난다("일정 공격력 이하의 공격은 무시").
-  if (bite.ignored) return;
+  // 이빨이 안 박혔다("일정 공격력 이하의 공격은 무시"). 판정상 아무 일도 안 일어나지만 **화면에는
+  // 튕겨 나가는 게 보여야 한다** — 안 그러면 "왜 공격이 안 먹히는지"를 알 방법이 화면에 없다.
+  // 물린 쪽 자리에서, 문 쪽을 향해(tx,ty) 튕김을 그린다. rng 미사용이라 결정론·밸런스 불변이고,
+  // 쿨다운은 위에서 이미 소모됐으므로 헛물기에 대가도 그대로 있다.
+  if (bite.ignored) {
+    world.emit("block", prey.x, prey.y, e.x, e.y);
+    return;
+  }
   if (world.rng.chance(bite.killChance)) {
     devour(e, prey, world);
     return;
@@ -410,15 +425,24 @@ export function leadBiteTarget(lead: Entity, world: World): Entity | null {
     visionRadius(lt, world, lead.x, lead.y),
     SIM.echoBase * (lt.echo / TRAIT_MAX),
   );
+  // **물리는 상대를 늘 먼저 고른다.** 못 무는 거구(tough)는 근처에 진짜 먹잇감이 하나도 없을 때만
+  // 겨눈다 — 그래야 코앞의 코끼리 때문에 저쪽 토끼를 놓치는 일이 없고, 동시에 "왜 안 되는지"를
+  // 배울 기회(물었을 때의 튕김)는 남는다. 정렬 키는 (물리는가, 거리², id) 순의 전순서라 답이 하나다.
   let best: Entity | null = null;
   let bestId = -1;
   let bestD2 = Infinity;
+  let bestLands = false;
   world.grid.forEachMatching(lead.x, lead.y, r, (o) => {
     // 격자는 틱 시작에 만들어지므로 이번 틱에 이미 죽은 개체가 남아 있을 수 있다(AI 사냥도 alive 를 본다).
     if (o === lead || !o.alive) return;
-    if (!leadRelation(lead, o).prey) return;
+    const rel = leadRelation(lead, o);
+    if (!rel.prey && !rel.tough) return;
     const d2 = (o.x - lead.x) ** 2 + (o.y - lead.y) ** 2;
-    if (d2 < bestD2 || (d2 === bestD2 && bestId >= 0 && o.id < bestId)) {
+    const better =
+      best === null ||
+      (rel.prey !== bestLands ? rel.prey : d2 < bestD2 || (d2 === bestD2 && o.id < bestId));
+    if (better) {
+      bestLands = rel.prey;
       bestD2 = d2;
       bestId = o.id;
       best = o;

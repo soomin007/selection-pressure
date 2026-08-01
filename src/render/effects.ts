@@ -17,7 +17,8 @@ interface Particle {
   seed: number; // 0~1, 파편·반짝임 방향/속도 변주용(위치에서 파생 → 결정론)
 }
 
-const LIFE: Record<VisualEventKind, number> = { birth: 720, death: 820, kill: 620, bite: 240, spit: 200 };
+// block(튕김)은 짧고 단단해야 한다 — 길게 끌면 "막혔다"가 아니라 "뭔가 터졌다"로 읽힌다.
+const LIFE: Record<VisualEventKind, number> = { birth: 720, death: 820, kill: 620, bite: 240, spit: 200, block: 300 };
 const TAU = Math.PI * 2;
 
 // 위치 → [0,1) 결정론 해시(파티클 시드). 같은 자리 사건은 늘 같은 모양(재현성, Math.random 회피).
@@ -83,8 +84,45 @@ function drawParticle(g: Graphics, p: Particle, t: number): void {
     drawBite(g, x, y, e, fade, p.seed);
   } else if (p.kind === "spit") {
     drawSpit(g, x, y, p.tx, p.ty, p.age, p.life, p.seed);
+  } else if (p.kind === "block") {
+    drawBlock(g, x, y, p.tx, p.ty, t, fade, p.seed);
   } else {
     drawDeath(g, x, y, e, fade, p.seed);
+  }
+}
+
+/**
+ * 튕김 — 이빨이 안 박힌 물기(biteOutcome.ignored). 예전엔 이 경우 화면에 아무것도 안 나와서
+ * "왜 공격이 안 먹히지"를 알 방법이 없었다. **0.3초 안에 "막혔다"가 읽혀야 하므로 부드럽게 퍼지지
+ * 않고 딱 서 있다가 사라진다** — 퍼지면 막힘이 아니라 폭발로 읽힌다.
+ * (x,y)=물린 쪽, (tx,ty)=문 쪽. 단단한 호가 문 쪽을 향해 서고(방패), 불꽃이 문 쪽으로 되튄다(튕겨 나감).
+ */
+function drawBlock(
+  g: Graphics, x: number, y: number, tx: number, ty: number, t: number, fade: number, seed: number,
+): void {
+  const dx = tx - x;
+  const dy = ty - y;
+  const d = Math.hypot(dx, dy) || 1;
+  const ux = dx / d;
+  const uy = dy / d;
+  const ang = Math.atan2(uy, ux);
+  const snap = Math.min(1, t / 0.3); // 앞 30% 에 탁 서고 나머지는 자리만 지키며 옅어진다
+  const r = 7 + snap * 3.5;
+  const half = 0.95; // 호의 반각(rad) — 약 55도. 정면만 막는다는 게 보이게 좁게.
+  const cx = x + ux * 2.5;
+  const cy = y + uy * 2.5;
+  g.arc(cx, cy, r, ang - half, ang + half)
+    .stroke({ color: 0xdff0ff, width: 2.6 * fade + 0.6, alpha: 0.9 * fade, cap: "round" });
+  g.arc(cx, cy, Math.max(1, r - 2.6), ang - half * 0.7, ang + half * 0.7)
+    .stroke({ color: 0xffffff, width: 1.3 * fade + 0.3, alpha: 0.75 * fade, cap: "round" });
+  // 되튀는 불꽃 — 문 쪽으로 짧게 흩어진다.
+  for (let i = 0; i < 3; i++) {
+    const a = ang + (frand(seed, i) - 0.5) * 1.1;
+    const s0 = r + 1;
+    const s1 = s0 + (5 + frand(seed, i + 7) * 6) * (0.35 + snap * 0.65);
+    g.moveTo(cx + Math.cos(a) * s0, cy + Math.sin(a) * s0)
+      .lineTo(cx + Math.cos(a) * s1, cy + Math.sin(a) * s1)
+      .stroke({ color: 0xbfe4ff, width: 1.5 * fade + 0.2, alpha: 0.8 * fade, cap: "round" });
   }
 }
 

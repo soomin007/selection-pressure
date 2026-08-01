@@ -71,7 +71,10 @@ export function adaptWildTraits(t: Traits, p: WildPressure): void {
 
 /** 화면 연출용 1회성 사건(전 종, 위치 포함). 렌더가 매 프레임 읽고 비운다. rng 미사용 → 결정론 무관. */
 /** "bite" = 못 죽인 물기(기운만 깎였다). 즉사는 "kill". */
-export type VisualEventKind = "birth" | "death" | "kill" | "bite" | "spit";
+// "block" = 이빨이 안 박힌 물기(biteOutcome.ignored). 예전엔 **아무것도 안 일어나서** 화면상
+// "왜 공격이 안 먹히는지"를 알 방법이 없었다(CLAUDE.md 전달 규칙이 좋은 피드백의 예로 든 바로 그 자리:
+// "물기가 튕겨 나감"). 사거리·쿨다운은 그대로 소모되므로 헛손질에 대가도 있다.
+export type VisualEventKind = "birth" | "death" | "kill" | "bite" | "spit" | "block";
 export interface VisualEvent {
   kind: VisualEventKind;
   x: number;

@@ -10,8 +10,8 @@ import { World } from "@/sim/world";
 import { SIM, LEAD } from "@/sim/params";
 import { TILE } from "@/sim/terrain";
 import { createBoss, bossCanHunt, type BossType } from "@/sim/boss";
-import { defaultGenome, type Genome, type Traits } from "@/sim/genome";
-import { attackRangeOf, leadBiteTarget, leadRelation } from "@/sim/behavior";
+import { defaultGenome, cloneGenome, type Genome, type Traits } from "@/sim/genome";
+import { attackRangeOf, biteOutcome, leadBiteTarget, leadRelation } from "@/sim/behavior";
 import { areFriends } from "@/sim/species";
 import { createEntity } from "@/sim/entity";
 import type { LeadCommand } from "@/sim/lead";
@@ -823,13 +823,18 @@ describe("사람이 시킨 물기 — 권능이 없다", () => {
     expect(tank).toBeDefined();
     if (!tank) return;
     // 실험 전제 — 규칙이 실제로 "못 문다"라고 말하고 있다(안 그러면 아래 0 은 공허하다).
-    expect(leadRelation(lab.alpha, tank).prey).toBe(false);
+    const rel = leadRelation(lab.alpha, tank);
+    expect(rel.prey).toBe(false); // 먹잇감(물리는 것)이 아니다
+    expect(rel.tough).toBe(true); // 다만 **노릴 수는 있다** — 물어 보고 튕겨야 이유를 배운다
 
-    expect(holdAndStep(lab, BITE, 30)).toBe(0);
+    expect(holdAndStep(lab, BITE, 30)).toBe(0); // 피해 0
     expect(tank.alive).toBe(true);
     expect(tank.woundTicks).toBe(0);
-    expect(lab.w.lead.biteTargetId).toBe(-1); // 버튼도 안 켜진다 = 화면이 거짓말하지 않는다
-    expect(lab.alpha.attackCd).toBe(0); // 헛손질에는 쿨다운도 안 돈다
+    // 겨눌 수는 있다(버튼이 켜진다). 못 무는 상대를 화면에서 통째로 감추면 "왜 안 되는지"를
+    // 배울 길이 없다 — 노려서 튕기는 것이 이 게임이 체급을 가르치는 방식이다.
+    expect(lab.w.lead.biteTargetId).toBe(5000);
+    // 튕겼어도 쿨다운은 돈다 — 안 통하는 상대에게 달려든 대가는 있어야 한다.
+    expect(lab.alpha.attackCd).toBeGreaterThan(0);
   });
 
   it("사냥하는 식성이 아니면(초식) 이빨이 세도 아무도 못 문다", () => {
@@ -1001,5 +1006,75 @@ describe("사람이 시킨 물기 — 화면과 실제가 같다 / 결정론", (
     expect(a.armed).toBeGreaterThan(0);
     expect(a.bites).toBeGreaterThan(0);
     expect(run()).toEqual(a);
+  });
+});
+
+describe("튕김(block) — 이빨이 안 박히면 화면이 그렇게 말한다", () => {
+  it("체급이 크게 밀리는 상대를 물면 아무 피해도 없고 block 사건이 뜬다", () => {
+    const g = defaultGenome();
+    g.traits.diet = 80; // 사냥하는 식성
+    g.traits.attack = 10; // 아주 약한 이빨
+    g.traits.size = 30; // 작은 몸
+    g.traits.vision = 0; // 감지 범위를 사정거리로 좁힌다 — 딴 먹잇감이 안 끼어들게(격리)
+    g.traits.echo = 0;
+    const w = new World("block-1", 540, 960, g);
+    w.armLead();
+    const me = w.entities.find((e) => e.id === w.lead.leaderId);
+    expect(me).toBeDefined();
+    if (!me) return;
+    // 바로 옆에 "못 무는" 거구를 세운다 — 같은 종·친척이 아니어야 먹잇감 관계가 선다.
+    const target = w.entities.find((e) => !e.species.isPlayer && !e.species.friendly);
+    expect(target).toBeDefined();
+    if (!target) return;
+    target.genome = cloneGenome(target.genome);
+    target.genome.traits.size = 100; // 코끼리 — 이빨이 아예 안 박힌다
+    target.genome.traits.attack = 20;
+    target.genome.traits.diet = 10; // 초식 거구. 사냥을 안 하므로 나를 먼저 잡아먹지 않는다
+    target.energy = 999; // 굶어 죽지 않게(이 테스트는 물기 판정만 본다)
+    target.x = me.x + 4;
+    target.y = me.y;
+    for (const o of w.entities) if (o !== target && o !== me && !o.species.isPlayer) { o.x = 5; o.y = 5; }
+    const hpBefore = target.energy;
+
+    const rel = leadRelation(me, target);
+    expect(rel.tough).toBe(true); // 노릴 수는 있지만 이빨이 안 박히는 상대
+    expect(rel.prey).toBe(false); // 먹잇감(물리는 것)은 아니다 — 둘은 배타적이다
+    expect(biteOutcome(10, 20, 30, 100).ignored).toBe(true);
+
+    w.lead.cmd = { dx: 1, dy: 0, throttle: 1, bite: true };
+    w.events.length = 0;
+    w.step();
+
+    const blocked = w.events.filter((e) => e.kind === "block");
+    expect(blocked.length).toBeGreaterThan(0); // 튕김이 화면에 나간다
+    // 물기가 **먹힌** 적은 없다(bite 사건은 이빨이 박혔을 때만 뜬다). 기운이 조금 준 것은 제 대사다.
+    expect(w.events.filter((e) => e.kind === "bite").length).toBe(0);
+    expect(hpBefore - target.energy).toBeLessThan(1); // 물려서 깎인 게 아니다(물기 피해는 이보다 훨씬 크다)
+    expect(target.alive).toBe(true);
+  });
+
+  it("잘 박히는 상대에는 튕김이 안 뜬다 (대조군 — 항상 뜨는 게 아니다)", () => {
+    const g = defaultGenome();
+    g.traits.diet = 80;
+    g.traits.attack = 95; // 강한 이빨
+    g.traits.size = 80;
+    g.traits.vision = 0;
+    g.traits.echo = 0;
+    const w = new World("block-2", 540, 960, g);
+    w.armLead();
+    const me = w.entities.find((e) => e.id === w.lead.leaderId);
+    const target = w.entities.find((e) => !e.species.isPlayer && !e.species.friendly);
+    if (!me || !target) throw new Error("설정 실패");
+    target.genome = cloneGenome(target.genome);
+    target.genome.traits.size = 20;
+    target.genome.traits.attack = 10;
+    target.x = me.x + 4;
+    target.y = me.y;
+    for (const o of w.entities) if (o !== target && o !== me && !o.species.isPlayer) { o.x = 5; o.y = 5; }
+
+    w.lead.cmd = { dx: 1, dy: 0, throttle: 1, bite: true };
+    w.events.length = 0;
+    w.step();
+    expect(w.events.filter((e) => e.kind === "block").length).toBe(0);
   });
 });
