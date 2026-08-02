@@ -20,25 +20,23 @@ import { createLevelUpScreen } from "@/ui/levelUpScreen";
 import { createLobby } from "@/ui/lobby";
 import { createUnlockLadder } from "@/ui/unlockLadder";
 import { createControls } from "@/ui/controls";
-import { registerKeyLayer, keyChip } from "@/ui/keys";
+import { registerKeyLayer } from "@/ui/keys";
 import { createBuildPanel } from "@/ui/buildPanel";
 import { createGlossary } from "@/ui/glossary";
 import { equippedCosmetic, mythicNamesUnlocked } from "@/game/achievements";
 import { setMythicNames } from "@/ui/creatureName";
-import { createCreatureCard } from "@/ui/creatureCard";
-import { creatureName } from "@/ui/creatureName";
 import { describeSpecies } from "@/game/runReport";
 import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
 import { ThreatBanner } from "@/render/threatBanner";
 import { RaidBossBar } from "@/render/raidBossBar";
-import { sizeWord } from "@/render/creatureLook";
 import { TRAIT_LABELS } from "@/sim/genome";
 import { APEX_BOON } from "@/ui/traitDisplay";
 import { isPredatorBoss } from "@/sim/boss";
-import { SIM } from "@/sim/params";
-import { LeadStick } from "@/render/leadStick";
+// 탭 명령의 사냥 판정 — 화면에서 규칙을 다시 유도하지 않고 sim 의 판정 함수를 그대로 부른다(순수 질의).
+import { leadRelation } from "@/sim/behavior";
+import { leadCapsOf } from "@/render/leadVision";
 import type { LeadCommand } from "@/sim/lead";
 import type { Entity } from "@/sim/entity";
 
@@ -46,13 +44,16 @@ import type { Entity } from "@/sim/entity";
 // 우림)이 뚜렷한 구역으로 펼쳐지도록 넓게. 개체는 절대 수(소수)라 먹이 밀도·상한만 면적 비례(areaScale).
 const MAP_SCALE = 2.0;
 
-// --- 알파 조종(?alpha) 전용 화면·입력 상수. 밸런스가 아니라 "손끝 느낌"과 표시에만 쓰인다. ---
-const LEAD_ZOOM = 1.55; // 조종 중 카메라 줌(개체 추적 줌 2.6 은 앞이 안 보여 방향을 못 정한다)
+// --- 알파 조종(기본 모드) 전용 화면·입력 상수. 밸런스가 아니라 "손끝 느낌"과 표시에만 쓰인다. ---
+const LEAD_ZOOM = 2.2; // 조종 중 카메라 줌 — 항상 알파 고정이라 붙여 본다(탭 타깃이 손가락만큼 커진다)
 const LEAD_CAM_EASE = 9; // 조종 중 카메라 이징(기본 3.5 는 시상수 286ms 라 물먹은 느낌의 주범)
 const LEAD_SNAP_MS = 400; // 승계 직후 이 시간 동안은 기본 이징으로(화면이 홱 튀는 것 완화)
-const STICK_DEAD = 10; // 스틱 데드존(화면 px) — 이 안은 손 떨림으로 보고 무시
-const STICK_MAX = 64; // 스틱 최대 출력 반경(화면 px) — 여기까지 밀면 전력
 const LEAD_BANNER_DELAY_MS = 3000; // "아무도 안 따라옵니다" 안내까지의 유예(바로 띄우면 잔소리)
+const PEEK_RETURN_MS = 1500; // 훔쳐보기(드래그·미니맵·2손가락 팬) 입력이 끝나고 알파로 복귀까지의 시간
+const MOVE_ARRIVE_PX = 12; // 이동 명령 도착 판정 — 이 안이면 명령 완료(제자리 맴돌이 방지)
+const MOVE_SLOW_PX = 40; // 목표 이 거리 안부터 감속(급정거 대신 스르륵 도착)
+const MOVE_MIN_THROTTLE = 0.35; // 감속 하한 — 너무 늦으면 도착 직전에 기는 느낌이 든다
+const WAYPOINT_PX = 8; // 경로 웨이포인트 통과 판정 — 이 안이면 다음 웨이포인트로
 
 async function boot(): Promise<void> {
   const layout = chooseLayout();
@@ -112,13 +113,6 @@ async function boot(): Promise<void> {
   app.stage.addChild(threatBanner.container);
   const raidBossBar = new RaidBossBar(); // 레이드 격퇴 체력 바(화면 상단 글로벌 — 보스 이름 + 게이지)
   app.stage.addChild(raidBossBar.container);
-  // 알파 조종 스틱 — 손가락 바로 아래에 그려야 하므로 stage 의 맨 위(마지막 자식)에.
-  // UI 확대 배율(setUiScale)을 안 건다: 포인터 좌표(e.global)와 1:1 인 화면 픽셀이라 배율을 곱하면 어긋난다.
-  // eventMode "none" — 스틱이 탭 판정을 가로채면 개체 선택(e.target === app.stage)이 죽는다.
-  const leadStick = new LeadStick();
-  leadStick.container.eventMode = "none";
-  app.stage.addChild(leadStick.container);
-
   // 데스크톱 UI 확대 — 폰 기준 크기의 글자·패널이 큰 모니터에서 너무 작다(사용자 지적). 창 높이에 비례한
   // 배율(uiScale)을 DOM 오버레이엔 CSS zoom(--ui-zoom, panelStyles)으로, 화면 픽셀 Pixi UI(미니맵·하이라이트·
   // 위협 전광판·보스 바)엔 컨테이너 스케일로 똑같이 먹인다. update 호출부는 화면 크기를 배율로 나눠
@@ -143,26 +137,22 @@ async function boot(): Promise<void> {
   const seedParam = new URLSearchParams(window.location.search).get("seed");
   if (seedParam) game.fixedSeed = seedParam;
 
-  // 알파 조종(?alpha) — URL·DOM 은 여기까지만 읽고, sim 에는 불리언 하나만 넘어간다.
-  // 꺼져 있으면 game.leadEnabled 가 false 라 world.lead.leaderId 가 영영 -1 이고, 아래 조종 코드는
-  // 전부 첫 줄에서 빠진다 = 지금까지의 관전 화면과 문자 그대로 동일하게 돈다.
+  // 알파 조종(기본값) — URL·DOM 은 여기까지만 읽고, sim 에는 불리언 하나만 넘어간다.
+  // ?watch 로 끄면 game.leadEnabled 가 false 라 world.lead.leaderId 가 영영 -1 이고, 아래 조종 코드는
+  // 전부 첫 줄에서 빠진다 = 조작 없는 예전 관전 세계와 문자 그대로 동일하게 돈다(밸런스 비교용).
   const leadMode = DEBUG.leadControl;
   game.leadEnabled = leadMode;
   // ?follow=<수> 로 "무리가 얼마나 따라오는가"를 배포 없이 폰에서 바로 바꿔 본다. 안 붙이면 NaN 이라
   // sim 기본값(LEAD.followCohesion)을 그대로 쓴다.
   if (leadMode && Number.isFinite(TUNE.leadFollow)) game.leadFollowWeight = TUNE.leadFollow;
 
-  // 개인 카메라(방향 전환 2단계) — 탭으로 고른 한 개체를 따라가며 클로즈업한다(소수 개체 애착의 핵심).
-  let selectedId: number | null = null; // 따라가는 개체 id(없으면 무리 추적)
-  let favoriteId: number | null = null; // 즐겨찾기(단골)로 고정한 개체 id(선택과 무관, 월드에 별 마커)
-  let currentSelected: Entity | null = null; // 이번 프레임의 선택 개체(카메라가 읽음)
-  const INDIVIDUAL_ZOOM = 2.6; // 개체 추적 시 줌 배율(클로즈업)
-
-  // 미니맵 드래그 카메라 — 미니맵을 누르거나 끌면 그 지점으로 카메라를 수동 이동(맵 탐색·조망).
+  // 훔쳐보기 카메라 — 드래그·미니맵·2손가락 팬으로 잠깐 다른 곳을 본다. 입력이 끝나고
+  // PEEK_RETURN_MS 지나면 알파에게 자동 복귀한다(카메라는 기본이 "항상 알파 고정"이다).
   let manualCam: { x: number; y: number } | null = null;
+  let peekIdleMs = 0; // 마지막 훔쳐보기 입력 이후 지난 시간(ms) — 입력이 이어지는 동안 0 으로 되돌린다
   minimap.onPan = (wx, wy) => {
     manualCam = { x: wx, y: wy };
-    selectedId = null; // 수동 조망 중엔 개체 추적 해제
+    peekIdleMs = 0;
   };
 
   const buildPanel = createBuildPanel();
@@ -244,6 +234,7 @@ async function boot(): Promise<void> {
       reportScreen.hide();
       result.hide();
       applyCosmetics();
+      tapHintShown = false; // 새 런 = 탭 안내 다시 1회(선언은 위쪽 상태 블록 — 클릭 시점 실행이라 TDZ 무관)
       game.beginRun();
       refreshBuild();
       view.refreshSpecies(game.world);
@@ -266,6 +257,7 @@ async function boot(): Promise<void> {
     () => {
       lobby.hide();
       applyCosmetics(); // 방금 딴 꾸밈을 이번 판부터 적용
+      tapHintShown = false; // 새 런 = 탭 안내 다시 1회
       game.beginRun();
       refreshBuild();
       view.refreshSpecies(game.world);
@@ -292,6 +284,7 @@ async function boot(): Promise<void> {
     onRestart: (): void => {
       game.paused = false;
       controls.setPaused(false);
+      tapHintShown = false; // 새 런 = 탭 안내 다시 1회
       game.beginRun();
       view.refreshSpecies(game.world);
     },
@@ -360,6 +353,14 @@ async function boot(): Promise<void> {
   let prevLeadChanged = -1; // 직전 프레임의 world.lead.changedTick — 바뀌면 승계가 일어난 것
   let leadSnapMs = 0; // 승계 직후 카메라를 기본 이징으로 두는 남은 시간(ms)
   let prevCommanded = false; // 직전 프레임의 world.lead.commanded — false→true 가 "몰기 시작한 순간"
+  // 탭 명령 상태 — 동시에 하나만 산다(새 탭이 이전 명령을 대체). sim 은 이 상태의 존재를 모른다:
+  // 이동은 입력층이 매 프레임 LeadCommand{dx,dy,throttle} 로 번역하고, 사냥은 targetId 로만 흘려보낸다.
+  // ⚠ onWorldChanged 가 game.start() 에서 곧장 이 값들을 초기화하므로 그 콜백보다 먼저 선언한다(TDZ).
+  let moveOrder: { x: number; y: number } | null = null; // 이동 명령 목표(월드 좌표)
+  let huntOrder: { id: number } | null = null; // 사냥 명령(개체 잠금 — 대상 사망·길 끊김·새 탭까지 유지)
+  // 이동 경로 캐시 — (알파 타일, 목표 타일)이 같은 동안 BFS 를 다시 돌리지 않는다(매 프레임 호출이라).
+  let movePath: { key: string; tiles: number[]; idx: number } | null = null;
+  let tapHintShown = false; // "탭 = 명령" 안내(런당 1회) 표시 여부
 
   game.onWorldChanged = (world) => {
     view.drawEnvironment(world);
@@ -369,9 +370,11 @@ async function boot(): Promise<void> {
     moment.clear(); // 멸종 암전 등 남은 순간 연출을 지운다(새 월드 시작).
     levelScreen.clear(); // 진척도 화면도 닫는다(혹시 남아 있으면).
     reportScreen.hide(); // 이전 혈통의 보고서 화면이 남아 있으면 닫는다.
-    selectedId = null; // 새 월드 → 옛 선택(개체 id)은 무효
-    currentSelected = null;
-    manualCam = null; // 수동 조망도 초기화
+    // 새 월드 → 옛 명령(좌표·개체 id)은 무효. 훔쳐보기도 알파로 복귀.
+    moveOrder = null;
+    huntOrder = null;
+    movePath = null;
+    manualCam = null;
     // 알파 조종 표시 상태 초기화 — 새 월드에선 안내를 다시 한 번 띄울 수 있고, 승계 감지도 처음부터.
     leadZeroShown = false;
     leadZeroMs = 0;
@@ -487,37 +490,20 @@ async function boot(): Promise<void> {
   let prevLevel = game.level;
   let prevThreat: string | null = null;
 
-  // 선택 개체 정보 카드(좌하단). 닫기(✕)=선택 해제, ‹ ›=같은 무리의 다른 개체로 포커스 이동.
-  const creatureCard = createCreatureCard(app.renderer, {
-    onClose: () => {
-      selectedId = null;
-    },
-    onPrev: () => cycleSelection(-1),
-    onNext: () => cycleSelection(1),
-    // ★ 지금 보는 개체를 단골로 고정/해제 — 이미 이 개체가 단골이면 해제, 아니면 새로 지정.
-    onFavorite: () => {
-      if (currentSelected) favoriteId = favoriteId === currentSelected.id ? null : currentSelected.id;
-    },
-  });
-
-  // 월드 탭 → 가장 가까운 개체를 골라 따라간다. 같은 개체를 다시 탭하거나 빈 곳을 탭하면 선택 해제.
-  // 월드 레이어는 hit-test 에서 빼(none) 탭이 stage 까지 통과하게 한다 → 개체는 좌표로 직접 찾는다
-  // (스프라이트는 풀 재사용이라 개체와 1:1 이 아니므로 스프라이트 이벤트 대신 좌표 + 최근접 탐색).
+  // 월드 탭 = 명령. 월드 레이어는 hit-test 에서 빼(none) 탭이 stage 까지 통과하게 한다 →
+  // 개체는 좌표로 직접 찾는다(스프라이트는 풀 재사용이라 개체와 1:1 이 아니므로 좌표 + 최근접 탐색).
   view.container.eventMode = "none";
   app.stage.eventMode = "static";
   app.stage.hitArea = app.screen;
   // 브라우저 기본 제스처(스크롤·핀치 확대)를 막아 캔버스가 드래그·핀치를 직접 받게 한다.
   app.canvas.style.touchAction = "none";
 
-  // 카메라 수동 조작 — 드래그(1손가락)=자유 이동, 핀치(2손가락)/휠=줌. 탭(안 끌었을 때)=개체 선택.
+  // 카메라 수동 조작 — 드래그(1손가락)=훔쳐보기 팬, 핀치(2손가락)=줌+팬, 휠=줌. 탭(안 끌었을 때)=명령.
   const activePointers = new Map<number, { x: number; y: number }>();
   let dragStart: { sx: number; sy: number; camX: number; camY: number } | null = null;
   let dragging = false;
   let pinchDist = 0;
-  let pinchedThisGesture = false; // 이번 제스처에 핀치(2손가락)가 있었나 — 끝날 때 탭 선택을 막는다
-  // 알파 조종 — 플로팅 스틱(누른 자리에 생긴다). 손가락·펜 포인터에서만 켜진다:
-  // 데스크톱 마우스 드래그 = 카메라 팬을 그대로 살리기 위해서다(데스크톱 조향은 WASD·화살표가 맡는다).
-  let stick: { ox: number; oy: number; dx: number; dy: number } | null = null;
+  let pinchedThisGesture = false; // 이번 제스처에 핀치(2손가락)가 있었나 — 끝날 때 탭 명령을 막는다
   let pinchMid: { x: number; y: number } | null = null; // 2손가락 팬의 직전 중점
   const onCanvasUI = (x: number, y: number): boolean =>
     minimap.container.visible && minimap.containsScreenPoint(x, y);
@@ -533,8 +519,7 @@ async function boot(): Promise<void> {
       const pts = [...activePointers.values()];
       pinchDist = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y);
       pinchMid = { x: (pts[0]!.x + pts[1]!.x) / 2, y: (pts[0]!.y + pts[1]!.y) / 2 };
-      stick = null; // 두 번째 손가락이 닿는 순간 조향은 끝난다(그 손 방향으로 계속 달리지 않게)
-      dragStart = null; // 핀치 중엔 팬 중단
+      dragStart = null; // 핀치 중엔 1손가락 팬 중단
       pinchedThisGesture = true;
     }
   });
@@ -548,17 +533,15 @@ async function boot(): Promise<void> {
       const mx = (pts[0]!.x + pts[1]!.x) / 2;
       const my = (pts[0]!.y + pts[1]!.y) / 2;
       if (pinchDist > 0) userZoom = clampUserZoom(userZoom * (d / pinchDist));
-      // 조종 모드에서는 1손가락 드래그가 조향이 되므로, 2손가락 드래그가 조망 이동(팬)을 맡는다.
-      // (미니맵 드래그만 남기면 세로 폰에서 넓게 보고 판단하기가 구조적으로 불가능하다.)
-      if (leadMode && pinchMid) {
+      // 2손가락 드래그 = 조망 이동(팬). 미니맵 드래그만 남기면 세로 폰에서 넓게 보기가 어렵다.
+      if (pinchMid) {
         const bx = manualCam ? manualCam.x : camX;
         const by = manualCam ? manualCam.y : camY;
         manualCam = { x: bx - (mx - pinchMid.x) / camZoom, y: by - (my - pinchMid.y) / camZoom };
-        selectedId = null;
+        peekIdleMs = 0;
       }
       pinchMid = { x: mx, y: my };
       pinchDist = d;
-      stick = null;
       return;
     }
     if (dragStart) {
@@ -566,15 +549,9 @@ async function boot(): Promise<void> {
       const dy = e.global.y - dragStart.sy;
       if (!dragging && Math.hypot(dx, dy) > 8) dragging = true; // 탭/드래그 구분 임계
       if (dragging) {
-        selectedId = null;
-        // 조종 모드 + 손가락(터치/펜)일 때만 드래그가 조향이 된다. 마우스는 예전 그대로 팬이다.
-        if (leadMode && game.phase === "watch" && e.pointerType !== "mouse") {
-          manualCam = null; // 조향이 들어오면 조망을 풀고 카메라가 앞장선 개체로 돌아온다
-          stick = { ox: dragStart.sx, oy: dragStart.sy, dx, dy };
-        } else {
-          // 드래그 = 자유 이동(수동 시점). 손가락 아래 월드가 따라오게 카메라를 반대로 민다.
-          manualCam = { x: dragStart.camX - dx / camZoom, y: dragStart.camY - dy / camZoom };
-        }
+        // 드래그 = 훔쳐보기(마우스·손가락 공통). 손가락 아래 월드가 따라오게 카메라를 반대로 민다.
+        manualCam = { x: dragStart.camX - dx / camZoom, y: dragStart.camY - dy / camZoom };
+        peekIdleMs = 0;
       }
     }
   });
@@ -586,21 +563,88 @@ async function boot(): Promise<void> {
     if (activePointers.size > 0) return;
     dragStart = null;
     dragging = false;
-    stick = null; // 손을 뗀 방향으로 계속 달리는 사고 방지
     pinchMid = null;
     const hadPinch = pinchedThisGesture;
     pinchedThisGesture = false;
-    // 끌지 않은 단순 탭만 개체 선택으로 처리(드래그·핀치 끝은 선택 안 함).
+    // 끌지 않은 단순 탭만 명령으로 처리(드래그·핀치 끝은 명령 아님 — 훔쳐보기였다).
     if (!hadPointer || wasDragging || hadPinch) return;
-    if (game.phase !== "watch" && game.phase !== "draft") return;
+    // 미니맵 게이트 — 안 지키면 미니맵 탭이 이동 명령으로 샌다(조사에서 확인된 회귀 지점).
     if (e.target !== app.stage || onCanvasUI(e.global.x, e.global.y)) return;
+    // ?watch 관전 폴백: 탭 = 수동 조망 해제(예전 관전 동작). 자동 복귀 타이머가 없는 모드라
+    // 탭마저 없으면 드래그 한 번에 그 월드 내내 수동 카메라에 갇힌다(반박 검증에서 확인된 회귀).
+    if (!leadMode) {
+      manualCam = null;
+      return;
+    }
+    // 명령은 관전 단계 + 비멈춤에서만. 드래프트 중 탭은 카드 화면 몫이다(기존 phase 게이트).
+    if (game.phase !== "watch" || game.paused) return;
     const p = view.container.toLocal(e.global as { x: number; y: number });
-    const picked = pickEntity(p.x, p.y);
-    manualCam = null; // 탭 = 수동 조망 종료(개체 추적 또는 빈 곳이면 무리 복귀)
-    selectedId = !picked || picked.id === selectedId ? null : picked.id;
+    issueOrder(p.x, p.y);
   };
   app.stage.on("pointerup", endPointer);
   app.stage.on("pointerupoutside", endPointer);
+
+  /**
+   * 탭 지점을 명령으로 해석한다 — 동시에 하나만: 사냥할 수 있는 개체면 사냥 잠금, 그 외 전부
+   * (빈 땅·내 무리·못 사냥하는 상대)는 그 지점으로 이동. 목표가 못 가는 지형이거나 길이 없으면
+   * 명령을 바꾸지 않고 거부 핑만 띄운다(왜 안 가는지 그 자리에서 보이게).
+   */
+  function issueOrder(wx: number, wy: number): void {
+    const lead = findLeadEntity();
+    if (!lead) return;
+    const picked = pickEntity(wx, wy);
+    if (picked && picked.id !== lead.id) {
+      // 사냥 판정은 sim 의 leadRelation 그대로 — 화면에서 규칙을 다시 유도하면 브래킷과 어긋난다.
+      const rel = leadRelation(lead, picked);
+      if (rel.prey || rel.tough) {
+        // 대상까지 실제로 갈 수 있어야 잠근다 — 물 건너 물고기처럼 길이 없는 상대를 잠그면
+        // "명령이 걸렸는데 아무 일도 안 일어나는" 유령 잠금이 된다(반박 검증에서 확인된 사고).
+        if (!reachableFrom(lead, picked.x, picked.y)) {
+          effects.spawnPing(picked.x, picked.y, "deny");
+          return;
+        }
+        huntOrder = { id: picked.id };
+        moveOrder = null;
+        movePath = null;
+        return;
+      }
+    }
+    // 이동 명령 — 알파의 통행 능력으로 목표 지형과 길을 검사한다(불가능한 약속을 하지 않게).
+    if (!reachableFrom(lead, wx, wy)) {
+      effects.spawnPing(wx, wy, "deny");
+      return;
+    }
+    moveOrder = { x: wx, y: wy };
+    huntOrder = null;
+    movePath = null; // 경로 캐시는 실행부(steerToMoveOrder)가 필요할 때 다시 만든다
+    effects.spawnPing(wx, wy, "go");
+  }
+
+  /** 알파가 (gx, gy)까지 실제로 갈 수 있나 — 목표 지형 통행 + (직선 또는 BFS 길) 검사.
+   *  이동·사냥 명령이 같은 기준을 쓴다(한쪽만 조이면 두 명령의 약속이 서로 어긋난다). */
+  function reachableFrom(lead: Entity, gx: number, gy: number): boolean {
+    const caps = leadCapsOf(lead.genome);
+    const terrain = game.world.terrain;
+    if (!terrain.isPassable(gx, gy, caps.canSwim, caps.canLand, caps.canFly)) return false;
+    if (terrain.lineOfSight(lead.x, lead.y, gx, gy, caps.canSwim, caps.canLand, caps.canFly)) return true;
+    // 직선이 막혔으면 길이 실제로 있는지 BFS 로 확인. 같은 타일 안이면 길 확인이 필요 없다.
+    if (terrain.tileIndex(lead.x, lead.y) === terrain.tileIndex(gx, gy)) return true;
+    return terrain.findPath(lead.x, lead.y, gx, gy, caps.canSwim, caps.canLand, caps.canFly).length > 0;
+  }
+
+  /** 알파 개체를 찾는다(없으면 null — 승계 공백·관전 모드). 명령 해석과 조향이 같은 근거를 쓴다. */
+  function findLeadEntity(): Entity | null {
+    return findEntityById(game.world.lead.leaderId);
+  }
+
+  /** id 로 개체를 찾는다(선형 탐색 — 프레임당 몇 번뿐이라 충분). 죽어 정리됐으면 null. */
+  function findEntityById(id: number): Entity | null {
+    if (id < 0) return null;
+    for (const en of game.world.entities) {
+      if (en.id === id) return en;
+    }
+    return null;
+  }
 
   // 휠 줌(데스크톱).
   app.canvas.addEventListener(
@@ -612,41 +656,6 @@ async function boot(): Promise<void> {
     { passive: false },
   );
 
-  // 좌하단 컨트롤 열 — "내 애 보기"(내 종 한 마리 바로 클로즈업) + 줌 +/−. 폰에서 핀치 없이도 조작.
-  const zoomBar = document.createElement("div");
-  zoomBar.style.cssText =
-    "position:fixed; left:6px; bottom:52px; z-index:31; display:flex; flex-direction:column; align-items:flex-start; gap:6px;";
-  // 한 마리 관찰 — 내 종 한 개체를 바로 따라간다(반복 탭 = 다음 개체). 눈에 띄는 초록으로.
-  const focusBtn = document.createElement("button");
-  focusBtn.textContent = "◎ 한 마리 관찰";
-  focusBtn.appendChild(keyChip("F"));
-  focusBtn.title = "내 종 한 마리를 가까이 따라갑니다 (다시 누르면 다음 개체) (F)";
-  // 주요(입체 키) 버튼 — 3a 스펙상 "한 마리 관찰"은 화면당 하나의 lime 키 버튼.
-  focusBtn.style.cssText =
-    "height:44px; padding:0 16px; border:0; border-radius:var(--r-btn); background:var(--lime);" +
-    "color:#1B2A0A; font-family:var(--font-title); font-size:14.5px; line-height:1; cursor:pointer;" +
-    "white-space:nowrap; border-bottom:4px solid var(--limeD);";
-  focusBtn.addEventListener("click", () => focusMyCreature());
-  const mkZoom = (label: string, dz: number): HTMLButtonElement => {
-    const b = document.createElement("button");
-    b.textContent = label;
-    b.title = dz > 1 ? "확대 (+)" : "축소 (−)";
-    // 계측(알약) 버튼 — 줌 +/−.
-    b.style.cssText =
-      "width:44px; height:44px; border:1px solid var(--line); border-radius:999px;" +
-      "background:var(--panel); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);" +
-      "color:var(--ink); font-family:var(--font-mono); font-size:22px; line-height:1; cursor:pointer;";
-    b.addEventListener("click", () => {
-      userZoom = clampUserZoom(userZoom * dz);
-    });
-    return b;
-  };
-  const zoomRow = document.createElement("div");
-  zoomRow.style.cssText = "display:flex; gap:6px;";
-  zoomRow.append(mkZoom("+", 1.25), mkZoom("−", 1 / 1.25));
-  zoomBar.append(focusBtn, zoomRow);
-  document.body.appendChild(zoomBar);
-
   // "따르는 무리" 상시 표시(조종 모드에서만) — 무리 성향 형질이 몇 달째 화면에서 안 읽히던 것을 여기서 푼다.
   // 숫자는 sim 이 규칙을 판정한 그 자리에서 센 값(world.lead.followerCount)을 그대로 읽는다 → 표시 = 규칙.
   // 조건을 화면 쪽에서 다시 유도하면 규칙이 바뀔 때마다 조용히 어긋나 화면이 거짓말을 한다.
@@ -657,55 +666,9 @@ async function boot(): Promise<void> {
     "font-family:var(--font-mono); font-size:12.5px; pointer-events:none; display:none;";
   document.body.appendChild(leadChip);
 
-  // --- 상호작용 버튼(오른쪽 엄지) — 조종 모드의 "물기" ---
-  // 코어는 폰 기준 **스틱 1개 + 버튼 2개**로 성립해야 한다. 지금 만드는 건 그중 하나이고, 나머지
-  // 한 자리(대쉬)는 이 가로줄에 그대로 얹히도록 컨테이너로 잡아 둔다.
-  //
-  // 자리: 우하단 모서리는 미니맵(폭 100 + 여백 10)이 이미 쓰고 있다 → 그 **왼쪽**에 붙인다.
-  // 데스크톱은 body 직속 오버레이가 통째로 CSS zoom(--ui-zoom) 을 받으므로 미니맵(같은 배율로
-  // 커지는 Pixi 컨테이너)과 어긋나지 않는다.
-  const actionBar = document.createElement("div");
-  actionBar.style.cssText =
-    "position:fixed; right:114px; bottom:10px; z-index:31; display:none; gap:10px; align-items:flex-end;";
-  const biteBtn = document.createElement("button");
-  biteBtn.type = "button";
-  const biteLabel = document.createElement("span");
-  // 문구는 실제 동작과 같아야 한다. 누르면 **보이는 먹잇감을 노려 쫓고**(AI 사냥과 같은 질주가 붙는다)
-  // 닿는 순간 문다. "사거리 안의 것을 문다"가 아니다 — 그렇게 적으면 화면이 거짓말한다.
-  biteLabel.textContent = "사냥";
-  biteBtn.append(biteLabel, keyChip("E"));
-  biteBtn.title = "보이는 먹잇감을 노려 쫓습니다. 닿으면 뭅니다. 노릴 상대가 있을 때만 켜집니다 (E)";
-  // 색은 월드의 먹잇감 표식(호박빛 브래킷, render/leadVision 의 PREY_COLOR)과 같은 계열로 맞춘다 —
-  // "브래킷이 뜬 저 개체"와 "지금 켜진 이 버튼"이 같은 것을 가리킨다는 걸 색으로 잇는다.
-  // touch-action:none — 폰에서 버튼을 누른 채 손가락이 흔들려도 스크롤·제스처로 새지 않게.
-  biteBtn.style.cssText =
-    "width:78px; height:78px; border-radius:999px; border:2px solid var(--line);" +
-    "background:var(--panel); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);" +
-    "color:var(--ink); font-family:var(--font-title); font-size:16px; line-height:1.15; cursor:pointer;" +
-    "display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;" +
-    "touch-action:none; user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent;" +
-    "transition:opacity 0.12s ease, transform 0.08s ease, background 0.12s ease, border-color 0.12s ease;";
-  actionBar.appendChild(biteBtn);
-  document.body.appendChild(actionBar);
-
-  // 누르고 있는 동안만 물기 명령이 나간다(키·손가락 두 갈래). 방향 입력과 같은 "유지 입력"이라
-  // 프레임률·배속과 무관하고, 실제로 몇 번 무는지는 sim 의 쿨다운(AI 와 같은 값)이 정한다.
+  // E 키를 누르고 있는 동안만 자동 물기 명령이 나간다(유지 입력 — 프레임률·배속과 무관).
+  // 실제로 몇 번 무는지는 sim 의 쿨다운(AI 와 같은 값)이 정한다. 탭 사냥 명령과 별개의 보조 경로다.
   let biteKeyHeld = false;
-  let bitePointerHeld = false;
-  const releaseBite = (): void => {
-    bitePointerHeld = false;
-  };
-  biteBtn.addEventListener("pointerdown", (ev: PointerEvent) => {
-    ev.preventDefault(); // 포인터가 캔버스로 새서 조향 스틱이 서지 않게
-    bitePointerHeld = true;
-    // 손가락이 버튼 밖으로 미끄러져도 뗄 때까지 이 버튼이 이벤트를 받는다(안 걸면 영원히 눌린 상태로 남는다).
-    if (biteBtn.hasPointerCapture(ev.pointerId)) return;
-    biteBtn.setPointerCapture(ev.pointerId);
-  });
-  biteBtn.addEventListener("pointerup", releaseBite);
-  biteBtn.addEventListener("pointercancel", releaseBite);
-  biteBtn.addEventListener("lostpointercapture", releaseBite);
-  window.addEventListener("blur", releaseBite);
 
   // 눌러 유지하는 조향 — keys.ts 라우터는 keydown 전용이라 keyup 만 window 에서 따로 듣는다.
   // (새 키 레이어를 등록하면 열린 첫 레이어에서 무조건 return 하는 구조 탓에 기존 관전 키가 통째로 죽는다.)
@@ -753,14 +716,16 @@ async function boot(): Promise<void> {
             return true;
         }
       }
-      // 조종 모드에서만 방향키·WASD 가 조향이 된다. 플래그가 꺼지면 아래 switch 는 지금과 완전히 동일.
+      // 조종 모드에서만 방향키·WASD 가 조향이 된다. ?watch 에선 아래 switch 만 남는다.
       if (leadMode && DIR_CODES.has(e.code)) {
-        // 방향키가 **새로 눌리는 순간**에만 관찰 대상을 푼다(터치 조향과 대칭). 안 풀면 앞장선 개체는
-        // 움직이는데 카메라는 관찰 중이던 딴 개체를 보고 있다. 키 반복(e.repeat)마다 풀면 조향 중에는
-        // 한 마리 관찰로 아예 못 넘어가므로, 이미 눌려 있는 키는 건너뛴다.
-        if (!heldDirs.has(e.code)) selectedId = null;
+        // 손 조향이 새로 잡히는 순간 이동 명령은 취소한다(손이 명령보다 우선). 사냥 잠금은 유지 —
+        // 잠근 대상 쪽으로 직접 몰아가는 것이 자연스러운 사용법이기 때문이다.
+        if (!heldDirs.has(e.code)) {
+          moveOrder = null;
+          movePath = null;
+        }
         heldDirs.add(e.code);
-        manualCam = null; // 조향이 들어오면 조망을 풀고 카메라가 앞장선 개체로 돌아온다
+        manualCam = null; // 조향이 들어오면 훔쳐보기를 풀고 카메라가 알파로 돌아온다
         return true;
       }
       // 물기(E) — 조종 모드에서만. 누르고 있는 동안 계속 나가고, 떼는 것은 위 window keyup 이 받는다.
@@ -782,27 +747,6 @@ async function boot(): Promise<void> {
           game.speed = Number(e.code.slice(-1));
           controls.setSpeed(game.speed);
           return true;
-        case "KeyF":
-          focusMyCreature();
-          return true;
-        case "ArrowLeft":
-        case "ArrowRight":
-          // 개체를 보고 있으면 무리 안 이전/다음으로, 아니면 내 종 한 마리부터 관찰 시작.
-          if (selectedId === null) focusMyCreature();
-          else cycleSelection(e.code === "ArrowLeft" ? -1 : 1);
-          return true;
-        case "BracketLeft":
-        case "BracketRight":
-          // 조종 모드에서 화살표가 조향으로 넘어가므로 개체 순환은 [ ] 로도 받는다
-          // (관전 레이어에서 안 쓰던 키라 기존 조작을 뺏지 않는다).
-          if (selectedId === null) focusMyCreature();
-          else cycleSelection(e.code === "BracketLeft" ? -1 : 1);
-          return true;
-        case "KeyB":
-          // 지금 보는 개체를 단골(★)로 고정/해제 — 개체 카드의 별 버튼과 동일.
-          if (!e.repeat && currentSelected)
-            favoriteId = favoriteId === currentSelected.id ? null : currentSelected.id;
-          return true;
         case "Equal":
         case "NumpadAdd":
           userZoom = clampUserZoom(userZoom * 1.25);
@@ -812,9 +756,7 @@ async function boot(): Promise<void> {
           userZoom = clampUserZoom(userZoom / 1.25);
           return true;
         case "Escape":
-          // 보던 개체가 있으면 선택 해제, 없으면 멈춤 메뉴 열기.
-          if (selectedId !== null) selectedId = null;
-          else controlsCb.onPauseToggle();
+          controlsCb.onPauseToggle();
           return true;
         default:
           return false;
@@ -834,32 +776,24 @@ async function boot(): Promise<void> {
   /**
    * 이번 프레임의 조종 명령. **유지 입력(레벨)**이라 프레임률·배속과 무관하게 안전하다 —
    * 한 프레임이 0틱이든 15틱이든 같은 명령을 보므로 입력이 씹히지도 중복되지도 않는다.
-   * 스틱이 우선(손가락을 대고 있으면 그게 뜻이다), 없으면 눌러 둔 방향키를 읽는다.
-   * 입력이 없으면 잠깐 타력으로 나아간다(COAST_MS). 한 번도 안 몰았으면 타력도 없어서
-   * 계속 null 이다 → "지정만 하면 기존과 동일"이 그대로 성립한다.
    *
-   * 물기(bite)도 같은 유지 입력이다. 방향과 다른 점 하나: **가만히 서서도 물 수 있어야 하므로**,
-   * 이동 입력도 타력도 없을 때 물기만 눌려 있으면 throttle 0 짜리 명령을 낸다(sim 에서 throttle 0 은
-   * 이동·추종 분기를 전부 안 타므로 "제자리에서 물기"가 된다).
+   * 우선순위: 손 조향(WASD·화살표) > 이동 명령 조향 > 사냥 명령 조향 > 타력(coast — 손을 뗀 직후용).
+   * 사냥 명령(huntOrder)은 bite:true + targetId 를 매 프레임 다시 보내고(레벨 입력 — sim 은 저장하지
+   * 않는다), **추격의 이동도 여기(입력층)가 몰아간다.** sim 에 맡기면 두 가지가 어긋난다는 게 반박
+   * 검증에서 확인됐다: ① sim 은 겨눔 범위 안에서만 targetPrey 를 세운다(범위 밖 탭 = 유령 잠금)
+   * ② 범위 안이라도 더 가까운 먹잇감이 있으면 chooseGoal 히스테리시스가 이동 목표를 가로채
+   * 알파가 엉뚱한 놈 옆을 맴돈다. "물기"만은 여전히 sim 의 단일 경로(resolveBite)다.
+   * 아무 명령도 입력도 없으면 null → "명령이 전혀 없는 세계는 기존과 동일"이 그대로 성립한다.
    */
   function buildLeadCommand(dtMS: number): LeadCommand | null {
     if (!leadMode || game.phase !== "watch" || game.paused) {
       coastMs = 0;
       return null;
     }
-    const bite = biteKeyHeld || bitePointerHeld;
-    let dx = 0;
-    let dy = 0;
-    let throttle = 0;
-    if (stick !== null) {
-      const len = Math.hypot(stick.dx, stick.dy);
-      if (len > STICK_DEAD) {
-        // 데드존 밖부터 0→1 로 램프 — 살살 미는 것과 끝까지 미는 것이 실제로 갈린다.
-        throttle = Math.min(1, (len - STICK_DEAD) / (STICK_MAX - STICK_DEAD));
-        dx = stick.dx / len;
-        dy = stick.dy / len;
-      }
-    } else if (heldDirs.size > 0) {
+    const bite = biteKeyHeld;
+    // 1) 손 조향이 최우선 — 잡히는 순간 이동 명령을 밀어낸다(사냥 잠금은 유지: 잠근 상대 쪽으로
+    //    직접 몰아가는 것이 자연스러운 사용법이라서).
+    if (heldDirs.size > 0) {
       let kx = 0;
       let ky = 0;
       if (heldDirs.has("KeyA") || heldDirs.has("ArrowLeft")) kx -= 1;
@@ -868,27 +802,166 @@ async function boot(): Promise<void> {
       if (heldDirs.has("KeyS") || heldDirs.has("ArrowDown")) ky += 1;
       const len = Math.hypot(kx, ky);
       if (len > 0) {
-        dx = kx / len;
-        dy = ky / len;
-        throttle = 1; // 키보드는 세기 조절이 없다 — 누르면 전력
+        moveOrder = null;
+        movePath = null;
+        const dx = kx / len;
+        const dy = ky / len;
+        // 타력을 만땅으로 채워 두고 방향을 기억한다(키를 갈아 쥐는 찰나에 자율로 안 돌아가게).
+        coastMs = COAST_MS;
+        coastDx = dx;
+        coastDy = dy;
+        return huntOrder
+          ? { dx, dy, throttle: 1, bite: true, targetId: huntOrder.id }
+          : { dx, dy, throttle: 1, bite };
       }
     }
-    if (throttle > 0) {
-      // 실제 입력이 있었다 — 타력을 만땅으로 채워 두고 방향을 기억한다.
-      coastMs = COAST_MS;
-      coastDx = dx;
-      coastDy = dy;
-      return { dx, dy, throttle, bite };
+    // 2) 이동 명령 — 다음 웨이포인트 방향으로 번역한다(sim 은 이동 명령의 존재를 모른다).
+    //    이동과 사냥은 동시에 못 산다(issueOrder 가 보장) — 여기서 targetId 를 실을 일은 없다.
+    if (moveOrder) {
+      const steer = steerToMoveOrder();
+      if (steer) {
+        coastMs = 0; // 명령 조향은 타력을 안 남긴다 — 도착 지점을 지나쳐 밀리지 않게
+        return { dx: steer.dx, dy: steer.dy, throttle: steer.throttle, bite };
+      }
     }
-    // 입력 없음 — 남은 타력만큼 마지막 방향으로 힘이 빠지며 나아간다(1 → 0 선형).
+    // 3) 사냥 명령 — 잠근 대상의 현재 위치로 몰아간다(이동 명령과 같은 길찾기). 닿으면 sim 이 문다.
+    if (huntOrder) {
+      const steer = steerToHuntOrder();
+      if (steer) {
+        coastMs = 0;
+        return { dx: steer.dx, dy: steer.dy, throttle: steer.throttle, bite: true, targetId: huntOrder.id };
+      }
+      // 조향이 없어도(코앞 밀착 등) 명령이 살아 있으면 잠금만 흘려보낸다 — bite 가 함께 실리므로
+      // sim 의 무리 추종·수풀 봉인은 유지된다(사냥 중 대열이 끊기지 않게). steerToHuntOrder 가
+      // 명령을 접었을 수도 있어(대상 사망·길 끊김) 다시 확인한다.
+      if (huntOrder) return { dx: 0, dy: 0, throttle: 0, bite: true, targetId: huntOrder.id };
+    }
+    // 4) 입력 없음 — 남은 타력만큼 마지막 방향으로 힘이 빠지며 나아간다(1 → 0 선형. WASD 릴리즈용 —
+    //    방향을 바꾸려 키를 떼는 찰나에 알파가 자율로 돌아가 반대로 달아나는 사고를 막는다).
     if (coastMs > 0) {
       coastMs = Math.max(0, coastMs - dtMS);
-      if (coastMs > 0) return { dx: coastDx, dy: coastDy, throttle: coastMs / COAST_MS, bite };
+      if (coastMs > 0) {
+        const throttle = coastMs / COAST_MS;
+        return { dx: coastDx, dy: coastDy, throttle, bite };
+      }
     }
-    // 이동 입력도 타력도 없다. 물기를 누르고 있으면 그것만 담아 보낸다(제자리에서 무는 경우).
-    // throttle 0 이라 sim 쪽 이동·추종·수풀 봉인 분기는 전부 안 걸린다 = 이동으로는 무입력과 같다.
+    // 5) E 키 자동 물기 — 대상 지정 없이 가장 가까운 상대를 무는 기존 경로 그대로.
     if (!bite) return null;
     return { dx: 0, dy: 0, throttle: 0, bite: true };
+  }
+
+  /**
+   * 이동 명령을 이번 프레임의 조향으로 번역한다. 도착했거나(≤ MOVE_ARRIVE_PX) 길이 사라졌으면
+   * 명령을 스스로 거두고 null. terrain 길찾기는 순수 질의(rng 무관)라 입력층이 불러도 결정론과
+   * 무관하고, BFS 는 (알파 타일, 목표 타일)이 같은 동안 캐시로 아낀다.
+   */
+  function steerToMoveOrder(): { dx: number; dy: number; throttle: number } | null {
+    const mo = moveOrder;
+    if (!mo) return null;
+    const lead = findLeadEntity();
+    if (!lead) return null;
+    const distGoal = Math.hypot(mo.x - lead.x, mo.y - lead.y);
+    if (distGoal <= MOVE_ARRIVE_PX) {
+      moveOrder = null;
+      movePath = null;
+      return null;
+    }
+    const dir = steerToward(lead, mo.x, mo.y);
+    if (!dir) {
+      // 명령을 받을 땐 길이 있었는데 지금은 없다(승계로 통행 능력이 바뀐 경우 등). 못 지키는
+      // 명령은 접는다 — 벽에 머리를 박고 서 있는 것보다 낫다.
+      moveOrder = null;
+      movePath = null;
+      return null;
+    }
+    // 목표 근처에선 감속 — 급정거 대신 스르륵 도착(도착 판정 안은 위에서 이미 명령 완료로 접었다).
+    const throttle = distGoal < MOVE_SLOW_PX ? Math.max(MOVE_MIN_THROTTLE, distGoal / MOVE_SLOW_PX) : 1;
+    return { dx: dir.dx, dy: dir.dy, throttle };
+  }
+
+  /**
+   * 사냥 명령의 이동 — 잠근 대상의 **현재 위치**로 몰아간다(움직이는 목표라 매 프레임 다시 겨눈다).
+   * 대상이 죽었으면 명령을 접고, 길이 끊겼으면(물 건너 도망 등) 거부 핑과 함께 접는다 — 소리 없이
+   * 사라지는 유령 잠금을 만들지 않는다. 감속 없이 끝까지 미는 것이 사냥이다(물기는 sim 이 사거리에서).
+   */
+  function steerToHuntOrder(): { dx: number; dy: number; throttle: number } | null {
+    const ho = huntOrder;
+    if (!ho) return null;
+    const lead = findLeadEntity();
+    if (!lead) return null;
+    const target = findEntityById(ho.id);
+    if (!target || !target.alive) {
+      huntOrder = null;
+      movePath = null;
+      return null;
+    }
+    const dir = steerToward(lead, target.x, target.y);
+    if (!dir) {
+      effects.spawnPing(target.x, target.y, "deny");
+      huntOrder = null;
+      movePath = null;
+      return null;
+    }
+    return { dx: dir.dx, dy: dir.dy, throttle: 1 };
+  }
+
+  /**
+   * (공용) 알파에서 목표 지점으로의 이번 프레임 조향 방향. 직선이 뚫려 있으면 직진, 막혔으면 BFS
+   * 웨이포인트를 따른다. 길이 없으면 null — 호출한 명령이 스스로 접는다. terrain 질의는 전부
+   * 순수(rng 무관)라 입력층이 불러도 결정론과 무관하고, BFS 는 (알파 타일, 목표 타일)이 같은 동안
+   * 캐시로 아낀다. 이동·사냥 명령은 동시에 하나뿐이라 movePath 캐시를 공유해도 안전하다.
+   */
+  function steerToward(lead: Entity, gx: number, gy: number): { dx: number; dy: number } | null {
+    const caps = leadCapsOf(lead.genome);
+    const terrain = game.world.terrain;
+    // 웨이포인트: 직선이 뚫려 있으면 목표 그 자체, 막혔으면 BFS 경로의 다음 타일 중심.
+    let wpX = gx;
+    let wpY = gy;
+    if (!terrain.lineOfSight(lead.x, lead.y, gx, gy, caps.canSwim, caps.canLand, caps.canFly)) {
+      const startTile = terrain.tileIndex(lead.x, lead.y);
+      const goalTile = terrain.tileIndex(gx, gy);
+      const key = `${startTile}>${goalTile}`;
+      if (!movePath || movePath.key !== key) {
+        const tiles = terrain.findPath(lead.x, lead.y, gx, gy, caps.canSwim, caps.canLand, caps.canFly);
+        if (tiles.length === 0 && startTile !== goalTile) return null;
+        movePath = { key, tiles, idx: 0 };
+      }
+      // 이미 지난 웨이포인트(WAYPOINT_PX 안)는 건너뛰고 다음 것을 겨눈다. 경로 끝까지 지났으면
+      // 목표 지점으로 직진(마지막 타일과 목표는 같은 타일 안이다).
+      while (movePath.idx < movePath.tiles.length) {
+        const ti = movePath.tiles[movePath.idx]!;
+        const cx = terrain.tileCenterX(ti);
+        const cy = terrain.tileCenterY(ti);
+        if (Math.hypot(cx - lead.x, cy - lead.y) > WAYPOINT_PX) {
+          wpX = cx;
+          wpY = cy;
+          break;
+        }
+        movePath.idx += 1;
+      }
+    } else {
+      movePath = null;
+    }
+    const dxr = wpX - lead.x;
+    const dyr = wpY - lead.y;
+    const len = Math.hypot(dxr, dyr);
+    if (len < 1e-6) return null;
+    return { dx: dxr / len, dy: dyr / len };
+  }
+
+  /**
+   * 사냥 명령의 수명 — 대상이 죽어 사라지면 접는다. 추격은 매 프레임 조향(steerToHuntOrder)이
+   * 잠금을 유지한 채 책임지므로, "겨눔에서 벗어나면 시한 해제" 같은 유예는 더 없다. 취소는
+   * 새 탭·단계 전환·승계·길 끊김뿐이다.
+   */
+  function resolveHuntOrder(): void {
+    const ho = huntOrder;
+    if (!ho) return;
+    const target = findEntityById(ho.id);
+    if (!target || !target.alive) {
+      huntOrder = null;
+      if (!moveOrder) movePath = null;
+    }
   }
 
   app.ticker.add((ticker) => {
@@ -896,16 +969,19 @@ async function boot(): Promise<void> {
     // (안 비우면 카드를 고르는 동안 알파가 계속 한쪽으로 달린다.)
     if (leadMode && (game.phase !== "watch" || game.paused)) {
       heldDirs.clear();
-      stick = null;
       // 물기도 같이 푼다 — 카드를 고르는 동안 눌린 상태가 남으면 관전으로 돌아오는 순간 물어 버린다.
       biteKeyHeld = false;
-      bitePointerHeld = false;
+      // 탭 명령도 청소 — 단계를 넘거나 멈춘 순간, 낡은 좌표·개체 잠금이 다음 관전까지 살아남지 않게.
+      moveOrder = null;
+      huntOrder = null;
+      movePath = null;
     }
     game.setLeadCommand(buildLeadCommand(ticker.deltaMS)); // update 직전 — 이번 프레임의 모든 틱이 같은 명령을 본다
     game.update(ticker.deltaMS);
-    // 개인 카메라: 선택 개체를 해석(죽었으면 작별, 관전 아니면 해제) → 강조 고리·카드·카메라에 반영.
-    resolveSelection();
+    // 사냥 명령 수명 판정은 update 직후 — 방금 틱에 대상이 죽었으면 이번 프레임 안에 접는다.
+    resolveHuntOrder();
     view.sync(game.world, game.interpAlpha, ticker.deltaMS);
+    view.setMoveTarget(moveOrder); // 이동 명령 깃발(렌더) — 명령이 없으면 null 로 지운다
     // 사건 연출: sim 이 이번 프레임에 emit 한 사건(탄생/죽음/잡아먹힘)을 효과로 옮기고 비운다.
     for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y, ev.tx, ev.ty);
     game.world.events.length = 0;
@@ -923,11 +999,8 @@ async function boot(): Promise<void> {
     // 내 형질 패널은 관전 중 + 칩이 켜져 있을 때만 — 드래프트는 전체 화면이라 그 아래 깔린 UI 가
     // 뿌연 유리로 비쳐 보인다. 드래프트 중 내 종 정보는 헤더의 "내 종" 팝업이 대신한다(핸드오프 §9).
     buildPanel.setVisible(game.phase === "watch" && traitsOpen);
-    // 좌하단 조작 열(한 마리 관찰·줌)은 관전 중 + 개체 미선택일 때만 — 로비·드래프트·개체 정보 카드와
-    // 좌하단에서 겹치지 않게(known_issues: 좌하단 UI 셋이 한자리에 겹친다).
-    zoomBar.style.display = game.phase === "watch" && selectedId === null ? "flex" : "none";
 
-    // --- 알파 조종: 화면 안에서 알아채게 하는 것들(칩·안내·승계 알림·스틱) ---
+    // --- 알파 조종: 화면 안에서 알아채게 하는 것들(칩·안내·승계 알림) ---
     if (leadMode && game.phase === "watch") {
       // 따르는 수는 sim 이 규칙을 판정한 그 자리에서 센 값이다(마지막 틱 기준).
       const followers = game.world.lead.followerCount;
@@ -936,10 +1009,12 @@ async function boot(): Promise<void> {
         if (en.species.isPlayer) mine += 1;
       }
       leadChip.textContent = `따르는 무리 ${followers} / 내 무리 ${mine}`;
-      // 한 마리를 골라 관찰 중이면 칩을 접는다 — 개체 카드가 좌하단 같은 자리(left:8/bottom:8)를 쓰기
-      // 때문이다(known_issues 의 "좌하단 UI 겹침"). 확대 바가 같은 조건으로 접히는 것과 같은 규칙이고,
-      // 빈 곳을 탭해 선택을 풀면 곧바로 다시 보인다.
-      leadChip.style.display = selectedId === null ? "block" : "none";
+      leadChip.style.display = "block";
+      // 첫 관전 진입 안내(런당 1회) — 탭이 곧 명령이라는 것은 화면만 봐서는 알 수 없으니 한 번 알려 준다.
+      if (!tapHintShown) {
+        tapHintShown = true;
+        highlights.flash("땅을 탭하면 이동합니다 · 먹잇감을 탭하면 사냥합니다", 0xf0f8ff);
+      }
       // 조종 중인데 아무도 안 따라오면 잠시 뒤 한 번만 알려 준다. 시작 종 여덟 중 다섯이
       // 무리 성향 0 이라, 모르면 "조작은 되는데 왜 나 혼자지"로 끝난다.
       // ⚠ 원인을 단정하지 않는다 — 무리 성향이 0 일 때만 그것을 이유로 대고, 그 밖에는 본 대로만
@@ -964,25 +1039,17 @@ async function boot(): Promise<void> {
         if (prevLeadChanged >= 0) {
           highlights.flash("앞장서던 개체가 쓰러졌습니다. 옆에 있던 한 마리가 앞으로 나섭니다.", 0xf0f8ff);
           leadSnapMs = LEAD_SNAP_MS;
+          // 새 알파에게 옛 명령을 물려주지 않는다 — 위치·통행 능력이 달라 목표가 무의미할 수 있다.
+          moveOrder = null;
+          huntOrder = null;
+          movePath = null;
         }
       }
       view.setLead(game.world.lead.leaderId >= 0 ? game.world.lead.leaderId : null);
-      // 물기 버튼 — "지금 물 수 있나"를 그 자체로 보이게. 대상이 없으면 흐리게, 사거리 안에 물 수 있는
-      // 상대가 생기면 또렷하게 켜진다. 판단은 화면에서 다시 하지 않고 sim 이 규칙으로 고른 값
-      // (lead.biteTargetId)을 그대로 읽는다 — 그게 실제로 물리는 그 개체다.
-      actionBar.style.display = "flex";
-      const canBite = game.world.lead.biteTargetId >= 0;
-      const pressed = biteKeyHeld || bitePointerHeld;
-      biteBtn.style.opacity = canBite ? "1" : "0.34";
-      biteBtn.style.borderColor = canBite ? "#ffb43a" : "var(--line)";
-      biteBtn.style.background = canBite ? "rgba(255,180,58,0.20)" : "var(--panel)";
-      biteBtn.style.transform = pressed ? "scale(0.92)" : "scale(1)";
     } else {
       leadChip.style.display = "none";
-      actionBar.style.display = "none";
       view.setLead(null);
     }
-    leadStick.set(stick ? { x: stick.ox, y: stick.oy } : null, stick?.dx ?? 0, stick?.dy ?? 0, STICK_MAX);
 
     updateCamera(ticker.deltaMS);
     // 미니맵 — 관전 중에만. 드래프트에선 캔버스 전체가 블러라 뭉갠 미니맵이 남으면 지저분하다.
@@ -1008,35 +1075,31 @@ async function boot(): Promise<void> {
   });
 
   function updateCamera(dtMS: number): void {
-    const boss = game.world.boss;
-    const focusBoss = game.phase === "watch" && boss !== null;
-    // 우선순위: 고른 개체(클로즈업) > 보스 관전(줌인) > 평상시 내 무리 무게중심.
+    // 훔쳐보기 자동 복귀 — 입력(드래그·핀치·미니맵)이 끝나고 PEEK_RETURN_MS 지나면 알파로 돌아간다.
+    // 조종 모드에서만: ?watch 관전 세계에선 수동 조망을 그대로 두는 것이 관찰에 맞다.
+    if (leadMode && manualCam) {
+      // 손가락이 하나라도 화면에 붙어 있거나 미니맵을 쥐고 있으면 "보는 중"이다 — 핀치에서 한
+      // 손가락만 뗀 상태·미니맵을 가만히 누르고 있는 상태에서 카메라가 손 위에서 튀지 않게.
+      const peekHeld = activePointers.size > 0 || minimap.panHeld;
+      if (peekHeld) peekIdleMs = 0;
+      else peekIdleMs += dtMS;
+      if (peekIdleMs >= PEEK_RETURN_MS) manualCam = null;
+    }
+    // 우선순위: 훔쳐보기(manualCam) > 알파 고정(LEAD_ZOOM) > 내 무리 폴백(알파 공백·관전 세계).
     let tx: number;
     let ty: number;
     let tz: number;
-    if (currentSelected) {
-      // 개체의 부드러운 렌더 위치를 따라가 떨림 없이 클로즈업한다(sim 위치는 고주파 진동이 있다).
-      const dp = view.getDisplayPos(currentSelected.id);
-      tx = dp ? dp.x : currentSelected.x;
-      ty = dp ? dp.y : currentSelected.y;
-      tz = INDIVIDUAL_ZOOM;
-    } else if (leadMode && !manualCam && game.world.lead.leaderId >= 0) {
-      // 앞장선 개체를 따라간다. sim 위치(30Hz 계단)를 쓰면 화면이 떨리므로 스프라이트와 같은 렌더 위치를 쓴다.
-      // manualCam 을 먼저 존중하는 이유: 2손가락 팬으로 넓게 보는 동안엔 카메라가 알파에게 끌려가면 안 된다.
-      // 조향(스틱·방향키)이 들어오는 순간 manualCam 이 풀려 자동으로 알파에게 돌아온다.
+    if (manualCam) {
+      // 수동 조망(넓게 보도록 줌 1). 조종 모드에선 잠시 뒤 자동으로 풀린다(위).
+      tx = manualCam.x;
+      ty = manualCam.y;
+      tz = 1;
+    } else if (leadMode && game.world.lead.leaderId >= 0) {
+      // 알파를 따라간다. sim 위치(30Hz 계단)를 쓰면 화면이 떨리므로 스프라이트와 같은 렌더 위치를 쓴다.
       const dp = view.getDisplayPos(game.world.lead.leaderId);
       tx = dp ? dp.x : game.world.lead.x;
       ty = dp ? dp.y : game.world.lead.y;
       tz = LEAD_ZOOM;
-    } else if (manualCam) {
-      // 미니맵으로 옮긴 수동 조망 위치(넓게 보도록 줌 1). 개체·빈 곳 탭으로 해제된다.
-      tx = manualCam.x;
-      ty = manualCam.y;
-      tz = 1;
-    } else if (focusBoss && boss) {
-      tx = boss.x;
-      ty = boss.y;
-      tz = 1.35;
     } else {
       // 흩어진 낙오자 대신 "지금 시점 근처의 주 무리"를 부드럽게 따라간다(hint=현재 카메라). 번식으로 초점이
       // 홱 튀지 않게 가중 평균을 쓴다.
@@ -1050,7 +1113,7 @@ async function boot(): Promise<void> {
     // 조종 중엔 카메라가 몸에 붙는다(기본 3.5 는 시상수 286ms 라 조종이 물먹은 느낌의 진짜 주범이다).
     // 승계 직후 잠깐은 기본값으로 되돌려 다른 개체로 갈아탈 때 화면이 홱 튀는 것을 줄인다.
     if (leadSnapMs > 0) leadSnapMs = Math.max(0, leadSnapMs - dtMS);
-    const ease = leadMode && !currentSelected && leadSnapMs <= 0 ? LEAD_CAM_EASE : 3.5;
+    const ease = leadMode && leadSnapMs <= 0 ? LEAD_CAM_EASE : 3.5;
     const k = Math.min(1, (dtMS / 1000) * ease); // 시간 기반 이징
     camX += (tx - camX) * k;
     camY += (ty - camY) * k;
@@ -1075,102 +1138,6 @@ async function boot(): Promise<void> {
       }
     }
     return best;
-  }
-
-  // 카드의 ‹ › — 현재 선택 개체와 같은 무리(종) 안에서 이전/다음 개체로 포커스를 옮긴다(id 순환).
-  function cycleSelection(dir: number): void {
-    if (selectedId === null) return;
-    const cur = game.world.entities.find((en) => en.id === selectedId);
-    if (!cur) return;
-    const same = game.world.entities
-      .filter((en) => en.species.id === cur.species.id)
-      .sort((a, b) => a.id - b.id);
-    const idx = same.findIndex((en) => en.id === selectedId);
-    if (idx < 0) return;
-    const next = same[(idx + dir + same.length) % same.length];
-    if (next) {
-      selectedId = next.id;
-      manualCam = null; // 개체 추적으로 전환(수동 조망 해제)
-    }
-  }
-
-  // "내 애 보기" 버튼 — 내 종 한 마리를 바로 따라가며 클로즈업한다. 이미 내 개체를 따라가는 중이면 다음
-  // 개체로 넘겨(반복 탭 = 무리 둘러보기), 아니면 지금 카메라가 보는 곳에서 가장 가까운 내 개체를 고른다.
-  function focusMyCreature(): void {
-    if (game.phase !== "watch" && game.phase !== "draft") return;
-    const players = game.world.entities.filter((en) => en.species.isPlayer);
-    if (players.length === 0) return;
-    const cur = selectedId !== null ? game.world.entities.find((en) => en.id === selectedId) : null;
-    if (cur && cur.species.isPlayer) {
-      cycleSelection(1); // 이미 내 개체 추적 중 → 다음 개체
-      return;
-    }
-    let best = players[0]!;
-    let bestD = Infinity;
-    for (const e of players) {
-      const d = (e.x - camX) ** 2 + (e.y - camY) ** 2;
-      if (d < bestD) {
-        bestD = d;
-        best = e;
-      }
-    }
-    selectedId = best.id;
-    manualCam = null; // 개체 추적으로 전환(수동 조망 해제)
-  }
-
-  // 선택 개체를 매 프레임 해석한다 — 죽었으면 작별 인사 후 해제, 관전 단계가 아니면 해제.
-  // 그 결과를 강조 고리(view) · 정보 카드 · 카메라(currentSelected)에 일관되게 반영한다.
-  function resolveSelection(): void {
-    if (game.phase !== "watch" && game.phase !== "draft") {
-      selectedId = null;
-      manualCam = null;
-    }
-    currentSelected = null;
-    if (selectedId !== null) {
-      const found = game.world.entities.find((en) => en.id === selectedId) ?? null;
-      if (!found) {
-        // 따라가던 아이가 죽었다 — 작별 인사 한 번 띄우고 무리 시점으로 돌아간다(애착의 무게).
-        highlights.flash(`${creatureName(selectedId)} 떠남`, 0xffd089);
-        selectedId = null;
-      } else {
-        currentSelected = found;
-      }
-    }
-    view.setSelected(selectedId);
-    // 즐겨찾기(단골) 개체가 죽었으면 마커를 조용히 해제(작별 인사는 선택 개체에만). 살아있으면 상시 별 유지.
-    if (favoriteId !== null) {
-      let favAlive = false;
-      for (const en of game.world.entities) {
-        if (en.id === favoriteId) {
-          favAlive = true;
-          break;
-        }
-      }
-      if (!favAlive) favoriteId = null;
-    }
-    view.setFavorite(favoriteId);
-    // 개체 정보 카드는 관전 중일 때만 그린다 — 드래프트가 뜨면 숨겨 하단 카드와 좌하단에서 겹치지 않게
-    // (카메라 추적은 currentSelected 로 계속 유지). known_issues: 좌하단 UI 셋이 한자리에 겹친다.
-    if (currentSelected && game.phase === "watch") {
-      const en = currentSelected;
-      creatureCard.update({
-        id: en.id,
-        genome: en.genome,
-        name: creatureName(en.id),
-        speciesName: en.species.name,
-        isPlayer: en.species.isPlayer,
-        color: en.species.color,
-        energy: en.energy / SIM.maxEnergy,
-        ageSeconds: en.age / SIM.stepsPerSecond,
-        sizeText: sizeWord(en.id),
-        activity: en.targetPrey ? "사냥하는 중" : en.targetFood ? "먹이로 가는 중" : "돌아다니는 중",
-        descriptor: describeSpecies(en.genome),
-        traits: en.genome.traits,
-        isFavorite: favoriteId === en.id,
-      });
-    } else {
-      creatureCard.update(null);
-    }
   }
 
   function detectEvents(): void {

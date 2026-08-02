@@ -21,11 +21,19 @@ import {
   DEFAULT_LOOK,
   type CreatureLook,
 } from "@/render/creatureLook";
-import { grassVisionFactor, nightVisionFactor, sizeDev, effectiveCamo, herdShielded } from "@/sim/behavior";
+import {
+  grassVisionFactor,
+  nightVisionFactor,
+  sizeDev,
+  effectiveCamo,
+  herdShielded,
+  leadTargetRange,
+} from "@/sim/behavior";
 import type { CosmeticId } from "@/game/achievements";
 import {
   LeadTerrainLayer,
   bodyRadiusOf,
+  drawLockedPreyMark,
   drawPreyMark,
   drawThreatMark,
   leadCanEatFood,
@@ -50,6 +58,7 @@ export class WorldView {
   private readonly leadTerrain = new LeadTerrainLayer(); // 못 가는 지형(정적 — 통행 능력이 바뀔 때만 재생성)
   private readonly relG = new Graphics(); // 관계 고리(위험 톱니 링 / 먹잇감 브래킷) — 스프라이트 아래
   private readonly creatureLayer = new Container();
+  private readonly moveTargetG = new Graphics(); // 이동 명령 목표 깃발(탭 명령 조종) — 도착까지 서 있다
   private readonly selectG = new Graphics(); // 탭으로 고른 개체 강조 고리(개인 카메라)
   private readonly favG = new Graphics(); // 즐겨찾기(단골) 개체 상시 마커(머리 위 금빛 별)
   private readonly bossG = new Graphics();
@@ -57,6 +66,7 @@ export class WorldView {
   private selectedId: number | null = null; // 따라가며 관찰 중인 개체
   private favoriteId: number | null = null; // 즐겨찾기로 고정한 개체(선택과 무관하게 상시 표시)
   private leadId: number | null = null; // 사람이 앞장세운 개체(?alpha). null 이면 표식을 아예 안 그린다
+  private moveTarget: { x: number; y: number } | null = null; // 이동 명령 목표(월드 좌표). null = 명령 없음
 
   private readonly pool: Sprite[] = [];
   // 생물 텍스처 캐시 — 키가 "내 종 세대별 게놈 서명" 또는 "야생 종 id". 내 종은 레벨업으로 게놈이
@@ -84,6 +94,9 @@ export class WorldView {
     // 관계 고리도 스프라이트 아래 — 몸 바깥 반경에만 그리므로 안 가려지고, 몸(=무슨 종인지)을 안 덮는다.
     this.container.addChild(this.relG);
     this.container.addChild(this.creatureLayer);
+    // 이동 목표 깃발은 스프라이트 **위** — 무리가 목표 지점을 밟고 지나가도 깃발이 파묻히지 않아야
+    // "어디로 가는 중인가"를 잃지 않는다(작은 표식이라 몸을 가려도 한 마리 일부다).
+    this.container.addChild(this.moveTargetG);
     this.container.addChild(this.selectG);
     this.container.addChild(this.favG);
     this.container.addChild(this.bossG);
@@ -107,6 +120,15 @@ export class WorldView {
    */
   setLead(id: number | null): void {
     this.leadId = id;
+  }
+
+  /**
+   * 이동 명령의 목표 지점(월드 좌표). 탭 명령 조종에서 main 이 명령을 내릴 때 세우고, 도착·대체·취소 시
+   * null 로 지운다 — 렌더는 상태를 판단하지 않고 "지금 유효한 명령"을 그대로 그릴 뿐이다(단일 진실 = main
+   * 의 명령 상태). 깃발은 카메라와 함께 움직이고, 서 있는 동안 부드럽게 맥동한다.
+   */
+  setMoveTarget(p: { x: number; y: number } | null): void {
+    this.moveTarget = p;
   }
 
   /** 개체의 렌더 표시 위치(저역통과된 부드러운 좌표). 카메라가 이 위치를 따라가면 떨림 없이 추적된다. */
@@ -170,6 +192,9 @@ export class WorldView {
     this.angle.clear();
     this.heading.clear();
     this.dispPos.clear();
+    // 이전 런의 이동 명령 깃발이 새 월드에 남는 걸 막는 안전망(명령 상태 자체는 main 이 지운다).
+    this.moveTarget = null;
+    this.moveTargetG.clear();
   }
 
   /** 개체의 텍스처(캐시). 내 종은 세대별 게놈 서명으로, 야생은 종 id + 거친 게놈 서명으로 캐시한다.
@@ -274,6 +299,12 @@ export class WorldView {
     // lead 가 null 이면 아래 분기가 전부 기존 경로로 떨어진다 = 관전 화면은 문자 그대로 예전 그대로다.
     const lead = this.findLead(world);
     this.leadTerrain.update(world, lead ? lead.caps : null);
+    // 겨눔 반경 — sim 이 물기 대상 판정(leadBiteTarget)에 쓰는 **같은 함수**를 읽는다. 이 밖의 먹잇감
+    // 브래킷은 흐려진다("브래킷은 뜨는데 사냥은 안 되는" 어긋남 방지). 식을 렌더에 복제하지 않는다.
+    const aimR = lead ? leadTargetRange(lead.e, world) : 0;
+    // 사냥 잠금 대상 — 단일 진실은 sim 필드(world.lead.orderTargetId, 매 틱 명령 미러). main 에서
+    // 별도 setter 를 받지 않는다 — 화면의 잠금 표식과 실제로 물리는 대상이 정의상 어긋날 수 없게.
+    const orderId = lead ? world.lead.orderTargetId : -1;
     if (lead !== null) {
       this.relG.clear();
       this.relG.visible = true;
@@ -466,19 +497,35 @@ export class WorldView {
       // "쟤가 날 잡아먹나 / 내가 쟤를 잡아먹나"를 그 개체 위에 직접 칠한다. 무해한 개체는 **아무것도
       // 안 그린다** — 전부 칠하면 화면이 고리로 뒤덮여 정작 위험이 안 읽힌다(밀도가 이 작업의 핵심).
       // 화면 밖도 안 그리고, 개체 수 상한(안전장치)도 둔다. 내 종은 이미 초록 고리가 있어 제외한다.
-      if (lead && !e.species.isPlayer && relMarks < LEAD_MARK_CAP && this.inView(rx, ry, 56)) {
-        // 그릴지 말지는 sim 의 leadRelation 하나가 정한다(leadMarkWeights 안에서 부른다) —
-        // 화면에 먹잇감으로 표시된 개체 = 실제로 물리는 개체가 정의상 어긋날 수 없다.
-        const rel = leadMarkWeights(lead.e, e);
-        if (rel.threat || rel.prey) {
-          // 가까운 위협일수록 진하게(0.5~1.0). 먼 것은 "저기 있다" 정도만. 기준을 화면 크기가 아니라
-          // **월드 거리**로 잡는다 — 폰과 데스크톱에서 같은 거리가 같은 세기여야 감이 같아진다.
-          const dist = Math.hypot(rx - lead.e.x, ry - lead.e.y);
-          const prox = 0.5 + 0.5 * clamp01((REL_FAR - dist) / (REL_FAR - REL_NEAR));
-          const mr = bodyRadiusOf(e) + 5;
-          if (rel.threat) drawThreatMark(this.relG, rx, ry, mr, rel.threatPower, prox, threatPulse);
-          if (rel.prey) drawPreyMark(this.relG, rx, ry, mr, rel.preyPower, prox);
-          relMarks++;
+      if (lead && !e.species.isPlayer && this.inView(rx, ry, 56)) {
+        // 잠금 대상은 개수 상한의 예외 — 명령이 걸린 표적 하나가 상한에 밀려 안 그려지면 "명령이 사라졌다"
+        // 로 오독한다(어차피 한 마리라 비용도 없다).
+        const locked = e.id === orderId;
+        if (locked || relMarks < LEAD_MARK_CAP) {
+          // 그릴지 말지는 sim 의 leadRelation 하나가 정한다(leadMarkWeights 안에서 부른다) —
+          // 화면에 먹잇감으로 표시된 개체 = 실제로 물리는 개체가 정의상 어긋날 수 없다.
+          // 잠금 대상만은 rel 과 무관하게 그린다: 노릴 수 있지만 한 입엔 안 죽는 상대(tough)는 rel.prey
+          // 가 아니어도 사냥 명령이 걸릴 수 있고(sim 의 leadBiteTarget 이 prey|tough 를 받는다),
+          // 그때 표식이 없으면 명령이 화면에서 실종된다.
+          const rel = leadMarkWeights(lead.e, e);
+          if (locked || rel.threat || rel.prey) {
+            // 가까운 위협일수록 진하게(0.5~1.0). 먼 것은 "저기 있다" 정도만. 기준을 화면 크기가 아니라
+            // **월드 거리**로 잡는다 — 폰과 데스크톱에서 같은 거리가 같은 세기여야 감이 같아진다.
+            const dist = Math.hypot(rx - lead.e.x, ry - lead.e.y);
+            const prox = 0.5 + 0.5 * clamp01((REL_FAR - dist) / (REL_FAR - REL_NEAR));
+            const mr = bodyRadiusOf(e) + 5;
+            if (rel.threat) drawThreatMark(this.relG, rx, ry, mr, rel.threatPower, prox, threatPulse);
+            if (locked) {
+              // 잠금 브래킷 — 진한 호박빛·큰 반경·맥동(threatPulse: 빠른 맥동 = 진행 중인 사냥의 긴박함).
+              drawLockedPreyMark(this.relG, rx, ry, mr, rel.preyPower, threatPulse);
+            } else if (rel.prey) {
+              // 겨눔 범위 판정은 sim 좌표로(leadBiteTarget 의 거리식과 같은 값) — 렌더 평활 좌표(rx,ry)로
+              // 재면 경계 바로 앞뒤에서 화면과 실제 겨눔이 어긋난다.
+              const inAim = (e.x - lead.e.x) ** 2 + (e.y - lead.e.y) ** 2 <= aimR * aimR;
+              drawPreyMark(this.relG, rx, ry, mr, rel.preyPower, inAim ? prox : prox * PREY_OUT_OF_AIM_DIM);
+            }
+            relMarks++;
+          }
         }
       }
 
@@ -583,6 +630,9 @@ export class WorldView {
     // 앞장선 개체(알파) 표식 — 개체 루프가 끝난 뒤에 그린다. 위치(dispPos)·진행방향(heading)이
     // 이번 프레임 값으로 다 채워진 다음이라야 몸·부채꼴과 같은 자리를 가리킨다.
     this.drawLead();
+
+    // 이동 명령 목표 깃발 — 명령이 사는 동안(도착 전) 계속 서 있다.
+    this.drawMoveTarget();
 
     // 선택 개체 강조 — 탭으로 고른 한 마리를 또렷한 고리로 표시(카메라가 이 아이를 따라간다).
     // 폰에서 한눈에 보이게 밝은 금빛 + 은은한 맥동. 위치는 렌더 표시 좌표(저역통과)라 떨지 않는다.
@@ -763,6 +813,35 @@ export class WorldView {
       ])
       .fill({ color: LEAD_COLOR, alpha: 0.55 + 0.3 * pulse })
       .stroke({ color: LEAD_OUTLINE, width: 1, alpha: 0.35 }); // 밝은 지형 위 대비(링과 같은 이유)
+  }
+
+  /**
+   * 이동 명령 목표 깃발 — "지금 무리가 어디로 가는 중인가"가 도착까지 한 지점에 서 있다.
+   * 라임 계열인 이유: 명령 접수 파문(effects 의 go 핑)과 같은 계열이라 "파문이 남긴 깃발"로 이어지고,
+   * 위험 붉은빛·먹잇감 호박빛·알파 청백과 안 겹친다. 내 종 초록(0x6cff7a)보다 노랗게 틀어 무리 위에
+   * 깃발이 서도 색이 섞이지 않는다. 월드 좌표 레이어라 카메라와 함께 움직인다.
+   * 바닥 링이 부드럽게 맥동해 "아직 유효한 명령"임이 읽힌다(멎은 표식은 잔상으로 오독된다).
+   */
+  private drawMoveTarget(): void {
+    this.moveTargetG.clear();
+    const p = this.moveTarget;
+    if (!p) return;
+    const pulse = 0.5 + 0.5 * Math.sin(((this.frame % 66) / 66) * Math.PI * 2);
+    // 바닥 링 — 지면에 눕는 타원(깃발이 "이 지점 땅"에 꽂혔음을 보인다). 어두운 밑선 → 라임 순서로
+    // 두 번 — 밝은 지형(사막·눈) 위에서 표식이 사라지는 걸 막는다(LEAD_OUTLINE 과 같은 이유).
+    const rr = 5.5 + 1.5 * pulse;
+    this.moveTargetG.ellipse(p.x, p.y, rr + 1, (rr + 1) * 0.45).stroke({ color: LEAD_OUTLINE, width: 2.6, alpha: 0.3 });
+    this.moveTargetG.ellipse(p.x, p.y, rr, rr * 0.45).stroke({ color: FLAG_COLOR, width: 1.6, alpha: 0.55 + 0.25 * pulse });
+    this.moveTargetG.circle(p.x, p.y, 1.5).fill({ color: FLAG_LIGHT, alpha: 0.9 });
+    // 깃대 + 깃면 — 작은 삼각 페넌트. 폰 기본 줌(2.2)에서 화면 ~33px 높이라 손가락 옆에서도 읽히되
+    // 개체 몸(반지름 ~15)보다 작아 시야를 안 막는다.
+    const top = p.y - 15;
+    this.moveTargetG.moveTo(p.x, p.y).lineTo(p.x, top).stroke({ color: LEAD_OUTLINE, width: 3.4, alpha: 0.35 });
+    this.moveTargetG.moveTo(p.x, p.y).lineTo(p.x, top).stroke({ color: FLAG_LIGHT, width: 1.6, alpha: 0.9 });
+    this.moveTargetG
+      .poly([p.x, top, p.x + 8, top + 3.2, p.x, top + 6.4])
+      .fill({ color: FLAG_COLOR, alpha: 0.92 })
+      .stroke({ color: LEAD_OUTLINE, width: 1, alpha: 0.4 });
   }
 
   /**
@@ -1136,8 +1215,20 @@ const LEAD_RING_R = 15;
 const LEAD_MARK_CAP = 40;
 // 관계 고리 거리 감쇠(월드 px) — 이 안쪽은 최대 세기, 이 바깥은 바닥(0.5). 코앞의 위협이 저 멀리 것과
 // 같은 진하기면 "지금 급한 것"이 안 도드라진다.
-const REL_NEAR = 90;
-const REL_FAR = 420;
+// 기본 줌 1.55→2.2(탭 명령 조종) 재조정: 폰 논리 화면 540×~1170 에서 보이는 월드가 반폭 ~123px·
+// 반높이 ~265px(대각 반지름 ~292px)로 줄었다. 옛 값(90/420)은 FAR 가 화면 대각을 훌쩍 넘어 화면에
+// 든 표식 전부가 사실상 최대 진하기 = 감쇠가 없는 것과 같았다. FAR=300 은 화면 대각 반지름 바로
+// 바깥 — 화면에 들어오는 순간부터 감쇠가 걸린다. NEAR=70 은 몸(반지름 ~15) 서너 개 거리 = 정말
+// 코앞인 것만 최대 세기.
+const REL_NEAR = 70;
+const REL_FAR = 300;
+// 겨눔 범위(leadTargetRange) 밖 먹잇감 브래킷의 진하기 배율 — "표식은 뜨는데 지금은 못 겨눈다"를
+// 흐림으로 말한다(범위에 들면 원래 진하기로 돌아와 "지금 물 수 있다"가 켜진 것처럼 읽힌다).
+const PREY_OUT_OF_AIM_DIM = 0.35;
+// 이동 명령 깃발 색 — 명령 접수 파문(effects drawGoPing 0xbcf24e)과 같은 라임. 두 파일이 같은 값을
+// 들고 있으니 바꿀 땐 함께 바꾼다(색이 갈리면 "파문 → 깃발" 연결이 끊긴다).
+const FLAG_COLOR = 0xbcf24e;
+const FLAG_LIGHT = 0xe4ffb0; // 깃대·중심점(밝은 라임 — 어두운 지형 위 가독)
 
 // 회전 떨림 방지: 이만큼(px/스텝)보다 실제로 더 움직일 때만 진행 방향을 갱신한다.
 // (느린 종은 미세 변위의 방향이 노이즈라, 낮으면 제자리에서 몸이 떤다.)
@@ -1493,8 +1584,10 @@ export function makeCreatureTexture(
     }
   }
 
-  // 고해상도로 생성(작은 스프라이트가 뭉개지지 않게 슈퍼샘플).
-  const tex = renderer.generateTexture({ target: g, resolution: 3, antialias: true });
+  // 고해상도로 생성(작은 스프라이트가 뭉개지지 않게 슈퍼샘플). resolution 4: 기본 줌이 2.2 로 오르며
+  // 핀치/휠 확대(userZoom)나 데스크톱 UI 배율이 겹치면 총배율이 3 을 넘어 3 배 텍스처가 흐려진다.
+  // 텍스처는 캐시라 생성 1회 비용만 든다(런타임 프레임 비용 없음).
+  const tex = renderer.generateTexture({ target: g, resolution: 4, antialias: true });
   g.destroy();
   return tex;
 }

@@ -6,8 +6,13 @@
 import { Container, Graphics } from "pixi.js";
 import type { VisualEventKind } from "@/sim/world";
 
+// 탭 명령 피드백 핑 — **렌더 전용**이라 VisualEventKind(sim 타입)에 안 넣는다. 명령 접수/거부는
+// 세계에서 일어난 사건이 아니라 입력에 대한 화면의 응답이고, sim 에 렌더 사정이 새면 순수성이 깨진다.
+type PingKind = "go" | "deny";
+type ParticleKind = VisualEventKind | PingKind;
+
 interface Particle {
-  kind: VisualEventKind;
+  kind: ParticleKind;
   x: number;
   y: number;
   tx: number; // 방향성 사건(spit)의 목표점 — 없으면 x,y 와 같다
@@ -18,7 +23,10 @@ interface Particle {
 }
 
 // block(튕김)은 짧고 단단해야 한다 — 길게 끌면 "막혔다"가 아니라 "뭔가 터졌다"로 읽힌다.
-const LIFE: Record<VisualEventKind, number> = { birth: 720, death: 820, kill: 620, bite: 240, spit: 200, block: 300 };
+// go/deny(명령 핑)도 짧게 — 명령은 연달아 내리므로 오래 남으면 이전 핑이 다음 명령을 어지럽힌다.
+const LIFE: Record<ParticleKind, number> = {
+  birth: 720, death: 820, kill: 620, bite: 240, spit: 200, block: 300, go: 350, deny: 250,
+};
 const TAU = Math.PI * 2;
 
 // 위치 → [0,1) 결정론 해시(파티클 시드). 같은 자리 사건은 늘 같은 모양(재현성, Math.random 회피).
@@ -49,6 +57,15 @@ export class Effects {
   spawn(kind: VisualEventKind, x: number, y: number, tx?: number, ty?: number): void {
     if (this.particles.length > 220) return; // 과부하 방지(대량 사망 시)
     this.particles.push({ kind, x, y, tx: tx ?? x, ty: ty ?? y, age: 0, life: LIFE[kind], seed: seedAt(x, y) });
+  }
+
+  /**
+   * 탭 명령 피드백 핑(렌더 전용 — sim 사건이 아니라 main 이 직접 부른다). 월드 좌표.
+   * 'go' = 이동 명령 접수(차분한 라임 파문), 'deny' = 명령 거부(회청색 짧은 튕김 — 못 가는 곳).
+   */
+  spawnPing(x: number, y: number, kind: PingKind): void {
+    if (this.particles.length > 220) return;
+    this.particles.push({ kind, x, y, tx: x, ty: y, age: 0, life: LIFE[kind], seed: seedAt(x, y) });
   }
 
   /** 런/월드가 바뀌면 이전 사건 잔여를 지운다. */
@@ -86,9 +103,34 @@ function drawParticle(g: Graphics, p: Particle, t: number): void {
     drawSpit(g, x, y, p.tx, p.ty, p.age, p.life, p.seed);
   } else if (p.kind === "block") {
     drawBlock(g, x, y, p.tx, p.ty, t, fade, p.seed);
+  } else if (p.kind === "go") {
+    drawGoPing(g, x, y, e, fade);
+  } else if (p.kind === "deny") {
+    drawDenyPing(g, x, y, t, fade);
   } else {
     drawDeath(g, x, y, e, fade, p.seed);
   }
+}
+
+// 이동 명령 접수 — 차분한 라임 파문. 목표 깃발(worldView 의 이동 목표 표식)과 같은 라임 계열이라
+// "이 파문이 남긴 깃발"로 이어져 읽힌다. 파편 없이 고리만 — 명령 응답은 사건(탄생·사냥)보다 조용해야
+// 화면이 안 시끄럽다(이동 명령은 몇 초에 한 번씩 계속 내린다).
+function drawGoPing(g: Graphics, x: number, y: number, e: number, fade: number): void {
+  g.circle(x, y, 4 + e * 14).stroke({ color: 0xbcf24e, width: 2 * fade + 0.4, alpha: 0.7 * fade });
+  g.circle(x, y, 2 + e * 7).stroke({ color: 0xe4ffb0, width: 1.2 * fade + 0.3, alpha: 0.5 * fade });
+  g.circle(x, y, 1.8 * fade + 0.4).fill({ color: 0xe4ffb0, alpha: 0.8 * fade });
+}
+
+// 명령 거부 — 회청색 짧은 튕김. 링이 부풀다 도로 움츠러들어 "밀려났다(안 된다)"로 읽히고, 가로 빗장이
+// 진입 금지 표지를 만든다(X 는 죽음·삭제로 읽힐 수 있어 피했다). 색은 못 가는 지형 경계선
+// (leadVision BLOCK_EDGE 0xaebfd2)과 같은 회청 계열 — "거부 = 길이 없는 곳"이 색으로 이어진다.
+function drawDenyPing(g: Graphics, x: number, y: number, t: number, fade: number): void {
+  const bounce = t < 0.45 ? t / 0.45 : 1 - ((t - 0.45) / 0.55) * 0.45; // 0→1→0.55 (부풀다 되밀림)
+  const r = 3 + bounce * 8;
+  g.circle(x, y, r).stroke({ color: 0xaebfd2, width: 2 * fade + 0.5, alpha: 0.85 * fade });
+  g.moveTo(x - r * 0.7, y)
+    .lineTo(x + r * 0.7, y)
+    .stroke({ color: 0xcdd9e6, width: 1.8 * fade + 0.4, alpha: 0.8 * fade, cap: "round" });
 }
 
 /**

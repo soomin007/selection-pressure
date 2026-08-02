@@ -7,6 +7,7 @@ import { SIM, LEAD } from "@/sim/params";
 /**
  * 유지 입력(레벨). 사람이 손가락·키를 누르고 있는 "상태"를 그대로 옮긴 값.
  * 레벨 입력이라 한 프레임이 0틱이든 15틱이든 씹히지도 중복되지도 않는다.
+ * targetId(사냥 대상 지정)도 같은 레벨 입력이다 — 명령이 사는 동안 입력층이 매 프레임 다시 보낸다.
  */
 export interface LeadCommand {
   /** 진행 방향 단위 벡터. 카메라가 회전하지 않으므로 화면 축 = 월드 축이다. */
@@ -26,6 +27,16 @@ export interface LeadCommand {
    * **명령을 한 번도 안 준 세계가 기존과 1비트도 안 달라진다**는 보장을 그대로 지킨다.
    */
   readonly bite?: boolean;
+  /**
+   * 사냥 대상 지정(개체 id). 사람이 탭으로 "저 놈"을 잠갔을 때만 실린다. 없으면 자동 선택
+   * (가장 가까운 물 수 있는 상대 — 기존 E 키 경로 그대로)이라, 기존 호출부는 아무것도 안 바뀐다.
+   *
+   * 방향·bite 와 같은 **레벨 입력**이다: 명령이 사는 동안 입력층이 매 프레임 다시 보내고,
+   * sim 은 저장·기억하지 않는다(매 틱 미러만 — 다음 틱 명령에 없으면 그걸로 끝).
+   * ⚠ 지정이 무효(죽음·범위 밖)면 자동으로 딴 놈을 무는 게 아니라 **아무도 안 겨눈다** —
+   *   잠근 대상을 놓쳤는데 옆의 다른 개체를 무는 사고를 막는다(behavior.leadBiteTarget).
+   */
+  readonly targetId?: number;
 }
 
 /**
@@ -110,6 +121,14 @@ export interface LeadState {
    * (동률이면 작은 id 를 고르는 전순서라 답이 하나뿐이다).
    */
   biteTargetId: number;
+  /**
+   * 이번 틱 명령이 지정한 사냥 대상 id. -1 = 지정 없음(자동 선택).
+   * syncLeadStart 가 매 틱 cmd.targetId 를 **미러링만** 한다 — sim 이 저장·기억하지 않으므로
+   * (레벨 입력) 명령이 끊기면 다음 틱에 저절로 -1 로 돌아간다. leadBiteTarget 이 이 값을 읽어
+   * 유효(생존 + 물 수 있거나 노릴 수 있는 관계 + 겨눔 범위 안)하면 그 개체만 겨누고, 무효면
+   * 자동 대체 없이 null 을 낸다. 런타임 전용(직렬화 안 함).
+   */
+  orderTargetId: number;
 }
 
 export function createLeadState(): LeadState {
@@ -129,6 +148,7 @@ export function createLeadState(): LeadState {
     omni: true,
     changedTick: -1,
     biteTargetId: -1,
+    orderTargetId: -1,
   };
 }
 

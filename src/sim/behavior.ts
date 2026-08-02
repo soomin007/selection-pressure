@@ -400,9 +400,36 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
 }
 
 /**
- * 사람이 물기를 눌렀을 때 **누가 물리는가** — 사거리 안에서 `leadRelation(...).prey` 인 개체 중
- * 가장 가까운 것. 거리가 같으면 **작은 id**(id 는 유일값이라 동률이 원리적으로 없는 전순서다 →
- * 격자 순회 순서와 무관하게 답이 하나다. rng 로 고르면 결정론이 깨진다).
+ * 사람이 시킨 사냥의 **겨눔 반경**(px) — 사정거리와 감지 범위 중 넓은 쪽.
+ * 사정거리(12px)만 보면 근접 종은 버튼이 사실상 안 켜진다(실측: 90초 동안 한 번도. 먹잇감 최근접이
+ * 평균 90px 였다). 그러면 물기는 원거리 종만의 능력이 되고, 근접 종에겐 없는 기능이나 마찬가지다.
+ * "볼 수 있으면 노릴 수 있다"가 맞는 규칙이고, 그래서 **시야 형질이 사냥 가능 범위를 정한다** —
+ * 눈이 밝을수록 멀리서 표적을 잡는다(초음파 종은 사방으로). 노린다고 물리는 건 아니다: 실제 물기는
+ * 여전히 사정거리 안에서만, 같은 판정·같은 쿨다운으로 일어난다.
+ *
+ * 함수로 뽑은 까닭: 렌더가 같은 값을 읽어 "이 밖은 못 겨눈다"(브래킷 흐림)를 그린다 — 겨눔 규칙의
+ * 단일 진실이고, 식을 두 군데 적으면 화면과 실제가 조용히 어긋난다(복제 금지 원칙).
+ * ⚠ leadBiteTarget 안에 있던 계산을 **한 글자도 안 바꾸고** 옮겼다. max 비교 순서·수식을 바꾸면
+ *   부동소수점 마지막 자리가 달라져 golden 지문이 깨진다(attackRangeOf 의 주석과 같은 이유).
+ * rng 미사용·순수 읽기.
+ */
+export function leadTargetRange(lead: Entity, world: World): number {
+  const lt = lead.genome.traits;
+  return Math.max(
+    attackRangeOf(lt),
+    visionRadius(lt, world, lead.x, lead.y),
+    SIM.echoBase * (lt.echo / TRAIT_MAX),
+  );
+}
+
+/**
+ * 사람이 물기를 눌렀을 때 **누가 물리는가** — 겨눔 반경(leadTargetRange) 안에서
+ * `leadRelation(...).prey` 인 개체 중 가장 가까운 것. 거리가 같으면 **작은 id**(id 는 유일값이라
+ * 동률이 원리적으로 없는 전순서다 → 격자 순회 순서와 무관하게 답이 하나다. rng 로 고르면 결정론이 깨진다).
+ *
+ * **지정 사냥(world.lead.orderTargetId ≥ 0)이면 그 개체만 본다.** 유효(생존 + prey|tough +
+ * 겨눔 범위 안)하면 그것, 무효면 **null** — 자동 최근접으로 대체하지 않는다. 잠근 대상을 놓쳤는데
+ * 옆의 다른 개체를 무는 사고를 막기 위해서다(명령은 "그 놈"이지 "아무나"가 아니다).
  *
  * ⚠ 조건을 여기서 다시 유도하지 않는다. "내가 쟤를 잡아먹을 수 있나"는 `leadRelation` 하나가 정하고,
  *   화면의 호박빛 브래킷(render/leadVision)도 같은 함수를 읽는다 → **브래킷이 뜬 개체 = 물리는 개체**가
@@ -413,18 +440,23 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
  * rng 미사용·순수 읽기 — 그래서 화면 표시용으로 매 틱 불러도 세계가 안 갈린다.
  */
 export function leadBiteTarget(lead: Entity, world: World): Entity | null {
-  const lt = lead.genome.traits;
-  // **노릴 수 있는 거리 = 사정거리와 감지 범위 중 넓은 쪽.**
-  // 사정거리(12px)만 보면 근접 종은 버튼이 사실상 안 켜진다(실측: 90초 동안 한 번도. 먹잇감 최근접이
-  // 평균 90px 였다). 그러면 물기는 원거리 종만의 능력이 되고, 근접 종에겐 없는 기능이나 마찬가지다.
-  // "볼 수 있으면 노릴 수 있다"가 맞는 규칙이고, 그래서 **시야 형질이 사냥 가능 범위를 정한다** —
-  // 눈이 밝을수록 멀리서 표적을 잡는다(초음파 종은 사방으로). 노린다고 물리는 건 아니다: 실제 물기는
-  // 여전히 사정거리 안에서만, 같은 판정·같은 쿨다운으로 일어난다.
-  const r = Math.max(
-    attackRangeOf(lt),
-    visionRadius(lt, world, lead.x, lead.y),
-    SIM.echoBase * (lt.echo / TRAIT_MAX),
-  );
+  const r = leadTargetRange(lead, world);
+  // 지정 사냥 — 이 분기는 명령에 targetId 가 실렸을 때만 밟힌다(orderTargetId 는 매 틱 명령 미러라,
+  // 명령을 한 번도 안 준 세계는 늘 -1 → 아래 자동 선택이 문자 그대로 기존 코드다. rng 미사용).
+  const orderId = world.lead.orderTargetId;
+  if (orderId >= 0) {
+    for (const o of world.entities) {
+      if (o.id !== orderId) continue;
+      if (o === lead || !o.alive) return null;
+      const rel = leadRelation(lead, o);
+      if (!rel.prey && !rel.tough) return null;
+      const d2 = (o.x - lead.x) ** 2 + (o.y - lead.y) ** 2;
+      // 범위 밖이어도 null — 잠금이 풀린 게 아니라 "지금은 못 겨눈다"다(명령은 레벨 입력이라
+      // 다시 범위에 들면 다음 틱에 저절로 되잡힌다).
+      return d2 <= r * r ? o : null;
+    }
+    return null; // 지정한 개체가 세상에 없다(이미 걷혔다) — 역시 자동 대체 없음
+  }
   // **물리는 상대를 늘 먼저 고른다.** 못 무는 거구(tough)는 근처에 진짜 먹잇감이 하나도 없을 때만
   // 겨눈다 — 그래야 코앞의 코끼리 때문에 저쪽 토끼를 놓치는 일이 없고, 동시에 "왜 안 되는지"를
   // 배울 기회(물었을 때의 튕김)는 남는다. 정렬 키는 (물리는가, 거리², id) 순의 전순서라 답이 하나다.

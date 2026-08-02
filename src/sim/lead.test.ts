@@ -11,7 +11,7 @@ import { SIM, LEAD } from "@/sim/params";
 import { TILE } from "@/sim/terrain";
 import { createBoss, bossCanHunt, type BossType } from "@/sim/boss";
 import { defaultGenome, cloneGenome, type Genome, type Traits } from "@/sim/genome";
-import { attackRangeOf, biteOutcome, leadBiteTarget, leadRelation } from "@/sim/behavior";
+import { attackRangeOf, biteOutcome, leadBiteTarget, leadRelation, leadTargetRange } from "@/sim/behavior";
 import { areFriends } from "@/sim/species";
 import { createEntity } from "@/sim/entity";
 import type { LeadCommand } from "@/sim/lead";
@@ -1076,5 +1076,125 @@ describe("튕김(block) — 이빨이 안 박히면 화면이 그렇게 말한�
     w.events.length = 0;
     w.step();
     expect(w.events.filter((e) => e.kind === "block").length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 31~. 지정 사냥(탭 명령) — targetId 는 "그 놈" 잠금이지 권능이 아니다
+//
+// 계약 세 줄: ① 지정하면 더 가까운 다른 먹잇감이 있어도 그 개체만 겨눈다. ② 지정이 무효
+// (죽음·범위 밖)면 자동으로 딴 놈을 무는 게 아니라 아무도 안 겨눈다. ③ targetId 가 없으면
+// 기존 자동 선택(E 키 경로)이 문자 그대로 남는다.
+// ---------------------------------------------------------------------------
+
+/** 지정 사냥 명령 — 이동 없이 targetId 만 잠근 모양(잠금 효과만 따로 잰다). */
+function biteAt(targetId: number): LeadCommand {
+  return { dx: 0, dy: 0, throttle: 0, bite: true, targetId };
+}
+
+describe("지정 사냥 — 누구를 물지 사람이 정한다", () => {
+  it("더 가까운 먹잇감이 있어도 지정한 개체를 겨누고 문다", () => {
+    const lab = biteLab(HUNTER_WEAK, [
+      { id: 4000, dx: 4, dy: 0, traits: TOUGH }, // 더 가깝다 — 자동 선택이면 이쪽이 물린다
+      { id: 5000, dx: 9, dy: 0, traits: TOUGH }, // 지정 대상
+    ]);
+    expect(holdAndStep(lab, biteAt(5000), 6)).toBeGreaterThan(0);
+    expect(lab.w.lead.biteTargetId).toBe(5000); // 화면의 잠금 표시 = 실제 물리는 개체
+    expect(lab.targets[1]?.woundTicks).toBeGreaterThan(0); // 지정한 쪽이 물렸다
+    expect(lab.targets[0]?.woundTicks).toBe(0); // 더 가까운 쪽은 멀쩡하다
+  });
+
+  it("targetId 없는 bite:true 는 기존 자동 선택 그대로다 (가장 가까운 쪽)", () => {
+    // 위 테스트와 같은 배치에서 지정만 뺀 대조군 — 지정 분기가 자동 경로를 오염시키지 않았다는 증거.
+    const lab = biteLab(HUNTER_WEAK, [
+      { id: 4000, dx: 4, dy: 0, traits: TOUGH },
+      { id: 5000, dx: 9, dy: 0, traits: TOUGH },
+    ]);
+    expect(holdAndStep(lab, BITE, 6)).toBeGreaterThan(0);
+    expect(lab.w.lead.biteTargetId).toBe(4000);
+    expect(lab.targets[0]?.woundTicks).toBeGreaterThan(0);
+    expect(lab.targets[1]?.woundTicks).toBe(0);
+  });
+
+  it("지정한 개체가 죽으면 자동 대체 없이 -1 이다 (옆 놈을 물지 않는다)", () => {
+    const lab = biteLab(HUNTER_WEAK, [
+      { id: 4000, dx: 4, dy: 0, traits: TOUGH }, // 코앞의 대체 후보 — 물리면 잠금이 샌 것이다
+      { id: 5000, dx: 9, dy: 0, traits: TOUGH },
+    ]);
+    const mark = lab.targets[1];
+    expect(mark).toBeDefined();
+    if (!mark) return;
+    mark.alive = false; // 잠근 대상이 방금 쓰러졌다
+    expect(holdAndStep(lab, biteAt(5000), 6)).toBe(0); // 물기 자체가 안 나간다
+    expect(lab.w.lead.biteTargetId).toBe(-1);
+    expect(lab.targets[0]?.woundTicks).toBe(0);
+    expect(lab.targets[0]?.alive).toBe(true);
+  });
+
+  it("지정한 개체가 겨눔 범위 밖이면 -1 이다 (자동 대체 안 함)", () => {
+    const r = rangeOf(HUNTER_WEAK); // 실험대는 시야·초음파 0 → 겨눔 반경 = 사정거리
+    const lab = biteLab(HUNTER_WEAK, [
+      { id: 4000, dx: 4, dy: 0, traits: TOUGH },
+      { id: 5000, dx: r * 3, dy: 0, traits: TOUGH }, // 지정 대상은 저 멀리
+    ]);
+    expect(holdAndStep(lab, biteAt(5000), 6)).toBe(0);
+    expect(lab.w.lead.biteTargetId).toBe(-1);
+    expect(lab.targets[0]?.woundTicks).toBe(0);
+  });
+
+  it("bite:true 만으로도 무리 추종이 재충전되고 commanded 가 켜진다", () => {
+    // 사냥 명령 중에도 사람이 개입 중이다 — throttle 만 보면 이동 없이 잠금 사냥만 하는 동안
+    // 추종이 1.5초 만에 끊긴다(그 구멍을 world.syncLeadStart 가 봉합했다는 감지기).
+    const w = new World("golden-1", W, H, HERD92());
+    w.armLead();
+    expect(w.lead.followTicks).toBe(0);
+    expect(w.lead.commanded).toBe(false);
+    w.lead.cmd = BITE; // throttle 0 — 이동 없이 사냥 명령만
+    w.step();
+    expect(w.lead.followTicks).toBe(LEAD.followHoldTicks);
+    expect(w.lead.commanded).toBe(true);
+  });
+
+  it("leadTargetRange 가 겨눔 반경의 단일 진실이다 — 바로 안은 겨눠지고 바로 밖은 안 겨눠진다", () => {
+    // 같은 시드·같은 게놈이면 실험대 세계는 완전히 같다 — 첫 실험대에서 반경을 재고,
+    // 나머지 두 실험대에 그 반경 바로 안/밖으로 표적을 세운다(렌더가 흐림 경계를 그릴 바로 그 값).
+    const over: Partial<Traits> = { ...HUNTER, vision: 60 };
+    const probe = biteLab(over, []);
+    const r = leadTargetRange(probe.alpha, probe.w);
+    expect(r).toBeGreaterThan(rangeOf(HUNTER)); // 시야가 겨눔 반경을 실제로 넓혔다(전제)
+    const inside = biteLab(over, [{ id: 5000, dx: r * 0.95, dy: 0, traits: SOFT }]);
+    expect(leadBiteTarget(inside.alpha, inside.w)?.id).toBe(5000);
+    const outside = biteLab(over, [{ id: 5000, dx: r * 1.05, dy: 0, traits: SOFT }]);
+    expect(leadBiteTarget(outside.alpha, outside.w)).toBeNull();
+  });
+
+  it("지정 사냥 통합 — 몰아가며 잠근 그 개체만 물어 쓰러뜨린다 (추격 포함)", () => {
+    // 위치를 고정하지 않고 굴린다: 지정 표적은 제 규칙대로 움직이고(도망 포함), 각본은 표적 쪽으로
+    // 몰며 사냥 명령을 유지한다. 죽는 데까지 가야 잠금이 실전에서 성립한다는 증거고, 겨눔이 잡힌
+    // 모든 틱에 지정 id 였는지도 함께 못 박는다(잠금 불변식 — 한 틱이라도 딴 놈이면 실패).
+    const lab = biteLab({ ...HUNTER, speed: 85 }, [
+      { id: 4000, dx: 6, dy: 0, traits: TOUGH }, // 경로에 낀 미끼 — 잠금이 새면 얘가 물린다
+      { id: 5000, dx: 48, dy: 0, traits: SOFT }, // 지정 표적(멀리) — 추격해야 닿는다
+    ]);
+    const decoy = lab.targets[0];
+    const mark = lab.targets[1];
+    expect(decoy).toBeDefined();
+    expect(mark).toBeDefined();
+    if (!decoy || !mark) return;
+    let bites = 0;
+    let mislock = 0;
+    for (let i = 0; i < 900 && mark.alive; i++) {
+      const c = steerTo(lab.w, mark.x, mark.y);
+      lab.w.lead.cmd = c === null ? null : { ...c, bite: true, targetId: 5000 };
+      lab.w.events.length = 0;
+      lab.w.step();
+      if (lab.w.lead.biteTargetId >= 0 && lab.w.lead.biteTargetId !== 5000) mislock += 1;
+      for (const ev of lab.w.events) if (ev.kind === "bite" || ev.kind === "kill") bites += 1;
+    }
+    expect(mark.alive).toBe(false); // 잡았다
+    expect(bites).toBeGreaterThan(0); // 물어서다 — 이 세계의 사냥꾼은 알파뿐이라 사건 출처가 하나다
+    expect(mislock).toBe(0); // 잠금이 한 번도 새지 않았다
+    expect(decoy.alive).toBe(true); // 미끼는 안 물렸다
+    expect(decoy.woundTicks).toBe(0);
   });
 });

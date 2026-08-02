@@ -265,6 +265,11 @@ export class World {
     // 조준 대상도 매 틱 여기서 다시 잡는다. 먼저 비워 두면 알파가 없거나(leaderId<0) 이번 틱에
     // 쓰러진 경우(아래 조기 반환)에도 "물 수 있다"가 낡은 채로 남지 않는다.
     L.biteTargetId = -1;
+    // 지정 사냥 대상은 레벨 입력이다 — 매 틱 명령에서 그대로 베낄 뿐, sim 은 저장·기억하지 않는다
+    // (명령이 끊기면 다음 틱에 저절로 -1). 조기 반환들보다 위에 둬야 알파가 사라진 틱에도 낡은
+    // 지정이 안 남고, 아래 leadBiteTarget 호출보다 위에 둬야 이번 틱 겨눔이 이번 틱 명령을 본다.
+    const cmd = L.cmd;
+    L.orderTargetId = cmd !== null && cmd.targetId !== undefined ? cmd.targetId : -1;
     if (L.followTicks > 0) L.followTicks -= 1;
     if (L.leaderId < 0) return;
     let cur: Entity | null = null;
@@ -292,11 +297,12 @@ export class World {
     // (그래서 명령을 한 번도 안 준 세계의 지문·rng 상태가 그대로다).
     const aim = leadBiteTarget(cur, this);
     L.biteTargetId = aim === null ? -1 : aim.id;
-    const cmd = L.cmd;
     // ★ 명령이 있는 틱에만 추종이 켜진다. 명령을 한 번도 안 받으면 followTicks 는 영원히 0,
     //   commanded 는 영원히 false 라서 "알파를 지정만 한 세계"가 기존 세계와 부동소수점까지
     //   같다(게놈과 무관하게. 수풀 봉인도 commanded 를 보므로 여기서 함께 잠긴다).
-    if (cmd !== null && cmd.throttle > 0) {
+    //   bite(사냥 명령)도 개입이다 — 사냥 명령 중에도 사람이 개입 중이라, throttle 만 보면
+    //   이동 없이 잠금 사냥만 하는 동안 무리 추종이 1.5초 만에 끊긴다(그 구멍을 여기서 봉합).
+    if (cmd !== null && (cmd.throttle > 0 || cmd.bite === true)) {
       L.followTicks = LEAD.followHoldTicks;
       // 끈끈한 플래그 — 한 번 올라가면 이 세계가 끝날 때까지 안 내려간다(승계도 안 되돌린다).
       // 손을 떼면 되돌아가는 followTicks 로 수풀 봉인을 걸면 "몰아넣고 손 떼기"로 우회된다.

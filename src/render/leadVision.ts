@@ -29,6 +29,9 @@ import { personalityScale } from "@/render/creatureLook";
 const THREAT_COLOR = 0xff3b30;
 /** 먹잇감(내가 잡아먹을 수 있다) — 호박빛 **코너 브래킷(조준 표적)**. 게임의 어떤 표식도 브래킷을 안 쓴다. */
 const PREY_COLOR = 0xffb43a;
+/** 사냥 잠금(탭 명령으로 지정한 그 개체) — 기본 브래킷보다 진하고 뜨거운 호박빛. 같은 형태(브래킷)의
+ *  격상이라 "먹잇감 중에서 지금 명령이 걸린 놈"으로 이어져 읽힌다. */
+const LOCK_COLOR = 0xff9d14;
 /** 표식 밑에 까는 어두운 선 — 사막·눈처럼 밝은 지형 위에서 표식이 사라지는 걸 막는다(LEAD_OUTLINE 과 같은 이유). */
 const MARK_OUTLINE = 0x0a0508;
 /** 못 가는 곳 스크림 — 밤 오버레이(0x0a1030)보다 중립적인 먹빛. 지형색을 죽이되 물빛/바위는 남는다. */
@@ -194,24 +197,48 @@ export function drawPreyMark(
   prox: number,
 ): void {
   const h = r * 1.02;
-  const L = h * 0.46;
-  // 같은 경로를 두 번 만든다 — Pixi 의 stroke() 는 경로를 소비하므로 밑선·윗선을 각각 그려야 한다.
-  const build = (): void => {
-    for (const sx of [-1, 1]) {
-      for (const sy of [-1, 1]) {
-        const cx = x + sx * h;
-        const cy = y + sy * h;
-        g.moveTo(cx - sx * L, cy).lineTo(cx, cy).lineTo(cx, cy - sy * L);
-      }
-    }
-  };
   // 세기(내가 한 입에 죽일 확률)를 진하기에 크게 실어, "물 수는 있는데 잘 안 죽는 상대"와 "확실한 한 끼"가
   // 갈린다. 위험(붉은 톱니)보다 전체적으로 한 단계 연하게 둬 둘이 겹쳐도 위험이 먼저 눈에 든다.
   const w = 1.5 + 1.1 * strength;
-  build();
+  bracketPath(g, x, y, h, h * 0.46);
   g.stroke({ color: MARK_OUTLINE, width: w + 2, alpha: 0.3 * prox });
-  build();
+  bracketPath(g, x, y, h, h * 0.46);
   g.stroke({ color: PREY_COLOR, width: w, alpha: (0.26 + 0.58 * strength) * prox });
+}
+
+/**
+ * 사냥 잠금 표식 — 탭 명령이 지정한 그 개체(world.lead.orderTargetId)의 브래킷 격상판.
+ * 기본 브래킷과 같은 형태(코너 브래킷)라 "먹잇감"의 뜻은 그대로 이어받되, 진한 호박빛·굵은 선·
+ * 살짝 큰 반경·맥동으로 "지금 명령이 걸린 표적은 이 놈 하나"가 무리 속에서도 즉시 갈린다.
+ * 거리 감쇠(prox)를 **안 받는다** — 잠금은 명령 상태 표시라, 멀어졌다고 흐려지면 명령을 잃은 걸로 오독한다.
+ */
+export function drawLockedPreyMark(
+  g: Graphics,
+  x: number,
+  y: number,
+  r: number,
+  strength: number,
+  pulse: number,
+): void {
+  const h = r * 1.02 * (1.12 + 0.07 * pulse); // 기본 브래킷보다 살짝 크고, 맥동은 반경으로(살아 있는 잠금)
+  const L = h * 0.52;
+  const w = 2.4 + 1.1 * strength;
+  bracketPath(g, x, y, h, L);
+  g.stroke({ color: MARK_OUTLINE, width: w + 2.2, alpha: 0.5 });
+  bracketPath(g, x, y, h, L);
+  g.stroke({ color: LOCK_COLOR, width: w, alpha: 0.78 + 0.18 * pulse });
+}
+
+// 네 모서리 브래킷 경로. 같은 경로를 두 번 만들어야 한다 — Pixi 의 stroke() 는 경로를 소비하므로
+// 밑선·윗선을 각각 그려야 한다(기본/잠금 브래킷이 공유하는 유일한 형태 정의 — 모양은 여기 한 곳만 고친다).
+function bracketPath(g: Graphics, x: number, y: number, h: number, L: number): void {
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      const cx = x + sx * h;
+      const cy = y + sy * h;
+      g.moveTo(cx - sx * L, cy).lineTo(cx, cy).lineTo(cx, cy - sy * L);
+    }
+  }
 }
 
 /**

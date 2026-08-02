@@ -24,9 +24,10 @@ export const DEBUG = {
   showAlpha: params.has("showalpha"),
   // ?dev — 화면 하단에 위협 소환 버튼 패널(각 보스/시련/대멸종을 즉시 띄워 반복 없이 확인).
   devSummon: params.has("dev"),
-  // ?alpha — 알파 조종(앞장서기) 프로토타입. 꺼지면 sim 진입점(lead.leaderId)이 아예 안 열려
-  // 지금과 완전히 동일하게 돈다.
-  leadControl: params.has("alpha"),
+  // 알파 조종이 이제 기본값이다. ?watch = 조작 없는 예전 관전 세계(밸런스 비교용 임시 탈출구) —
+  // sim 진입점(lead.leaderId)이 아예 안 열려 조종 이전과 완전히 동일하게 돈다.
+  // (?alpha 는 이제 무의미하지만 붙여도 에러는 아니다 — 그냥 무시된다.)
+  leadControl: !params.has("watch"),
 } as const;
 
 // 회전 떨림 튜닝(폰에서 URL 로 즉시 조절 → 한 번 배포로 여러 값을 시험).

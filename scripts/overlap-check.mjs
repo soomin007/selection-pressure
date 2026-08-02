@@ -9,10 +9,12 @@
 // 사용: npm run overlap
 // 사전: npx playwright install chromium (최초 1회). 저장: screenshots/overlap/*.png (git 미추적)
 //
+// 화면 네 개: 조종(탭 명령)이 기본이고, `?watch` 는 조작 없는 관전 폴백이다(밸런스 비교용).
+//
 // 한계(알아 두고 쓸 것):
 // - DOM 만 잰다. Pixi(canvas) 로 그리는 것 중 자리가 고정된 미니맵만 배치 공식으로 넣어 함께 검사한다.
 //   배너·보스 바 같은 다른 Pixi UI 는 안 잡히므로, 그쪽을 옮겼다면 스크린샷을 눈으로도 봐야 한다.
-// - 지금 열려 있는 화면만 잰다. 패널을 펼쳤을 때·개체를 골랐을 때·긴 문구가 들어갔을 때는
+// - 지금 열려 있는 화면만 잰다. 패널을 펼쳤을 때·긴 문구가 들어갔을 때는
 //   SCENES 에 단계를 더해서 따로 재라.
 
 import { spawn } from "node:child_process";
@@ -29,10 +31,10 @@ const MM_TOP = 150;
 const MM_MARGIN = 10;
 
 const SCENES = [
-  { label: "phone-alpha", viewport: { width: 390, height: 844 }, query: "?alpha&seed=ov-1" },
-  { label: "desktop-alpha", viewport: { width: 1920, height: 1010 }, query: "?alpha&seed=ov-1" },
-  { label: "phone-plain", viewport: { width: 390, height: 844 }, query: "?seed=ov-1" },
-  { label: "desktop-plain", viewport: { width: 1920, height: 1010 }, query: "?seed=ov-1" },
+  { label: "phone-tap", viewport: { width: 390, height: 844 }, query: "?seed=ov-1" },
+  { label: "desktop-tap", viewport: { width: 1920, height: 1010 }, query: "?seed=ov-1" },
+  { label: "phone-watch", viewport: { width: 390, height: 844 }, query: "?watch&seed=ov-1" },
+  { label: "desktop-watch", viewport: { width: 1920, height: 1010 }, query: "?watch&seed=ov-1" },
 ];
 
 mkdirSync(OUT, { recursive: true });
@@ -99,7 +101,7 @@ async function checkScene(browser, scene) {
   page.on("pageerror", (e) => errs.push(e.message));
   await page.goto(BASE + scene.query, { waitUntil: "load", timeout: 30000 });
   await page.waitForTimeout(1500);
-  // 로비 → 갈래 → 세부 종 → 관전
+  // 로비 → 갈래 → 세부 종 → 게임 화면(로비는 이번 개편에서 안 바뀌어 문구 그대로 쓴다)
   await page.getByRole("button", { name: "게임 시작" }).first().click();
   await page.waitForTimeout(700);
   await page.getByRole("button", { name: /사냥꾼/ }).first().click();
