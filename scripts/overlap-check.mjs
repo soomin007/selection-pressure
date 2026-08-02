@@ -26,8 +26,8 @@ const BASE = `http://localhost:${PORT}/`;
 const OUT = "screenshots/overlap";
 
 // minimap.ts 와 같은 값 — 거기서 바꾸면 여기도 바꿔야 한다(캔버스라 DOM 으로 못 잰다).
-const MM_W = 100;
-const MM_TOP = 150;
+const MM_W = 84;
+const MM_TOP = 64;
 const MM_MARGIN = 10;
 
 const SCENES = [

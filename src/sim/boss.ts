@@ -738,14 +738,14 @@ function stepSingleBoss(boss: Boss, world: World): void {
           if (melee > 0 || raidRangedPower(e.genome.traits) > 0) {
             if (melee > 0) {
               dealRaidHit(boss, melee);
-              world.emit("bite", e.x, e.y); // 연출: 맞받아침(근접)
+              world.emit("bite", e.x, e.y, e.species.isPlayer); // 연출: 맞받아침(근접)
             }
             continue;
           }
         }
         e.alive = false;
         world.recordDeath(e.species, "boss");
-        world.emit("kill", e.x, e.y); // 연출: 보스 즉사 반경
+        world.emit("kill", e.x, e.y, e.species.isPlayer); // 연출: 보스 즉사 반경
       }
     }
   }
@@ -762,7 +762,7 @@ function stepSingleBoss(boss: Boss, world: World): void {
       if (rate > 0 && world.rng.unit() < rate) {
         e.alive = false;
         world.recordDeath(e.species, "boss");
-        world.emit("kill", e.x, e.y);
+        world.emit("kill", e.x, e.y, e.species.isPlayer);
       }
     }
   }
@@ -775,7 +775,7 @@ function stepSingleBoss(boss: Boss, world: World): void {
       if (e.energy <= 0) {
         e.alive = false;
         world.recordDeath(e.species, "boss");
-        world.emit("death", e.x, e.y); // 보스 기력 고갈 = 자연사 톤
+        world.emit("death", e.x, e.y, e.species.isPlayer); // 보스 기력 고갈 = 자연사 톤
       }
     }
   }
@@ -830,7 +830,7 @@ function stepMemberHorde(boss: Boss, world: World): void {
       if (dx * dx + dy * dy < killR2 && memberKills(e, boss, world)) {
         e.alive = false;
         world.recordDeath(e.species, "boss");
-        world.emit("kill", e.x, e.y); // 연출: 떼 개체가 문 자리
+        world.emit("kill", e.x, e.y, e.species.isPlayer); // 연출: 떼 개체가 문 자리
       }
     }
   }
@@ -851,7 +851,7 @@ function memberKills(e: Entity, boss: Boss, world: World): boolean {
     if (melee > 0 || raidRangedPower(t) > 0) {
       if (melee > 0) {
         dealRaidHit(boss, melee);
-        world.emit("bite", e.x, e.y); // 연출: 그 자리에서 맞받아침(근접)
+        world.emit("bite", e.x, e.y, e.species.isPlayer); // 연출: 그 자리에서 맞받아침(근접)
       }
       return false;
     }

@@ -319,7 +319,7 @@ function devour(e: Entity, prey: Entity, world: World): void {
   const preyVenom = prey.genome.traits.venom;
   prey.alive = false;
   world.recordDeath(prey.species, "predation");
-  world.emit("kill", prey.x, prey.y); // 연출: 잡아먹힘(빨강 터짐)
+  world.emit("kill", prey.x, prey.y, e.species.isPlayer || prey.species.isPlayer); // 연출: 잡아먹힘(빨강 터짐)
   if (preyVenom > 0) e.poison += SIM.venomOnHit * (preyVenom / TRAIT_MAX);
   const diet = e.genome.traits.diet;
   // 사냥 수입 = 기본 × 방어독 감쇠 × 식성 효율(육식 특화일수록 온전히, 잡식은 페널티) × 큰 사냥(순수 육식은
@@ -376,7 +376,7 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
   const t = e.genome.traits;
   e.attackCd = SIM.attackCooldownTicks;
   // 원거리 종은 발사체(spit)가 먹잇감으로 날아간다(레일건 조준선 대신 생물다운 뱉기/가시). 근접은 그 자리 물기.
-  if (ranged) world.emit("spit", e.x, e.y, prey.x, prey.y);
+  if (ranged) world.emit("spit", e.x, e.y, e.species.isPlayer || prey.species.isPlayer, prey.x, prey.y);
   // 독은 방어(삼킨 쪽이 중독)라 사냥 성공과 무관 — 물기 판정은 공격력 차와 **몸집 차**를 본다.
   // 큰 먹잇감은 잘 안 죽고, 아주 크면 이빨이 아예 안 박힌다(biteIgnoreDiff).
   const bite = biteOutcome(t.attack, prey.genome.traits.attack, t.size, prey.genome.traits.size);
@@ -385,7 +385,7 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
   // 물린 쪽 자리에서, 문 쪽을 향해(tx,ty) 튕김을 그린다. rng 미사용이라 결정론·밸런스 불변이고,
   // 쿨다운은 위에서 이미 소모됐으므로 헛물기에 대가도 그대로 있다.
   if (bite.ignored) {
-    world.emit("block", prey.x, prey.y, e.x, e.y);
+    world.emit("block", prey.x, prey.y, e.species.isPlayer || prey.species.isPlayer, e.x, e.y);
     return;
   }
   if (world.rng.chance(bite.killChance)) {
@@ -394,7 +394,7 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
   }
   prey.energy -= bite.damage;
   prey.woundTicks = SIM.woundTicks; // 다쳤다 — 이 동안 쓰러지면 "부상"이지 굶주림이 아니다
-  if (!ranged) world.emit("bite", prey.x, prey.y); // 근접만 그 자리 물기(원거리는 위 spit 이 명중 표현)
+  if (!ranged) world.emit("bite", prey.x, prey.y, e.species.isPlayer || prey.species.isPlayer); // 근접만 그 자리 물기
   // 여러 번 물려 기운이 다하면 그 자리에서 잡아먹힌다(사망 원인은 잡아먹힘 — 포식자가 먹는다).
   if (prey.energy <= 0) devour(e, prey, world);
 }
@@ -548,7 +548,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     if ((e.x - tgt.x) ** 2 + (e.y - tgt.y) ** 2 <= atkRange * atkRange && e.attackCd <= 0) {
       dealRaidHit(raidBoss, raidRangedPower(t) * SIM.raidRangedMul);
       e.attackCd = SIM.attackCooldownTicks;
-      world.emit("spit", e.x, e.y, tgt.x, tgt.y); // 연출: 발사체가 보스로 날아간다(원거리)
+      world.emit("spit", e.x, e.y, e.species.isPlayer, tgt.x, tgt.y); // 연출: 발사체가 보스로 날아간다(원거리)
     }
   }
   const flee = fighter ? null : computeFlee(e, world, t, maxSpeed, canSwim, canLand, canFly);
@@ -756,7 +756,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
           const by = e.y + world.rng.range(-12, 12);
           const spot = world.terrain.nearestPassable(bx, by, canSwim, canLand, canFly);
           newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, SIM.startEnergy));
-          world.emit("birth", spot.x, spot.y); // 연출: 대박 탄생(초록 반짝 여럿)
+          world.emit("birth", spot.x, spot.y, e.species.isPlayer); // 연출: 대박 탄생(초록 반짝 여럿)
         }
         food.regrowTimer = Math.round(
           SIM.foodRegrowTicks * world.foodRegrowMultiplier * SIM.mountainTreasureRegrow,
@@ -803,13 +803,13 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     else if (heatDrain > coldDrain && heatDrain > drain) cause = "heat";
     e.alive = false;
     world.recordDeath(e.species, cause);
-    world.emit("death", e.x, e.y); // 연출: 자연사(회색 흩어짐)
+    world.emit("death", e.x, e.y, e.species.isPlayer); // 연출: 자연사(회색 흩어짐)
     return;
   }
   if (e.age >= maxAge) {
     e.alive = false;
     world.recordDeath(e.species, "age");
-    world.emit("death", e.x, e.y);
+    world.emit("death", e.x, e.y, e.species.isPlayer);
     return;
   }
 
@@ -845,7 +845,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       ? mutateGenome(cloneGenome(e.genome), world.mutRng, SIM.mutationStrength)
       : undefined;
     newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, childEnergy, childGenome));
-    world.emit("birth", spot.x, spot.y); // 연출: 탄생(초록 반짝)
+    world.emit("birth", spot.x, spot.y, e.species.isPlayer); // 연출: 탄생(초록 반짝)
   }
 }
 

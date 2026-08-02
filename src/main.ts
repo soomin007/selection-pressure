@@ -8,7 +8,7 @@ import { chooseLayout, COLORS, uiScale } from "@/config";
 import { DEBUG, DEBUG_ACTIVE, TUNE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
-import { createHudPanel } from "@/ui/hudPanel";
+import { createGoalBar } from "@/ui/goalBar";
 import { Game, type ExtinctionType } from "@/game/game";
 import { BOSS_TYPES, bossName, type BossType } from "@/sim/boss";
 import { createDraftPanel } from "@/ui/draftPanel";
@@ -30,7 +30,6 @@ import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
 import { ThreatBanner } from "@/render/threatBanner";
-import { RaidBossBar } from "@/render/raidBossBar";
 import { TRAIT_LABELS } from "@/sim/genome";
 import { APEX_BOON } from "@/ui/traitDisplay";
 import { isPredatorBoss } from "@/sim/boss";
@@ -45,7 +44,9 @@ import type { Entity } from "@/sim/entity";
 const MAP_SCALE = 2.0;
 
 // --- 알파 조종(기본 모드) 전용 화면·입력 상수. 밸런스가 아니라 "손끝 느낌"과 표시에만 쓰인다. ---
-const LEAD_ZOOM = 2.2; // 조종 중 카메라 줌 — 항상 알파 고정이라 붙여 본다(탭 타깃이 손가락만큼 커진다)
+// 조종 중 카메라 줌. 2.2 로 올렸더니 "캐릭터가 너무 크고 밀도가 높다"(2026-08-02 폰 실기) — 한 단계
+// 내린다. 탭 판정 반경은 화면 픽셀 기준으로 일정해서(pickEntity) 줌을 내려도 조작감은 안 나빠진다.
+const LEAD_ZOOM = 1.8;
 const LEAD_CAM_EASE = 9; // 조종 중 카메라 이징(기본 3.5 는 시상수 286ms 라 물먹은 느낌의 주범)
 const LEAD_SNAP_MS = 400; // 승계 직후 이 시간 동안은 기본 이징으로(화면이 홱 튀는 것 완화)
 const LEAD_BANNER_DELAY_MS = 3000; // "아무도 안 따라옵니다" 안내까지의 유예(바로 띄우면 잔소리)
@@ -81,10 +82,9 @@ async function boot(): Promise<void> {
   const view = new WorldView(app.renderer);
   const effects = new Effects();
   view.container.addChild(effects.container); // 사건 연출(월드 좌표 → 카메라와 함께 움직임)
-  // 상단 HUD(시안 A "한 줄 상태 바") — 상태 바 + 타임라인 + 접힌 칩 2개(종 안내·내 형질).
-  // "내 형질" 칩은 buildPanel 을 토글한다(아래 ticker 에서 traitsOpen 반영).
+  // 상시 HUD 는 목표 한 줄(goalBar)뿐이다(2026-08-02 갈아엎기, 사용자 A안). 옛 상태 바·타임라인·
+  // 칩은 goalBar 의 접이식 패널로 흡수됐고, goalBar 자체는 콜백(멈춤·배속)이 준비된 뒤에 만든다.
   let traitsOpen = false;
-  const hud = createHudPanel({ onTraitsToggle: (open) => { traitsOpen = open; } });
   const highlights = new Highlights();
   root.addChild(view.container);
   // 월드를 논리 사각형으로 클리핑 — 가장자리 생물이 화면 밖으로 삐져나오지 않게.
@@ -109,10 +109,9 @@ async function boot(): Promise<void> {
   app.stage.addChild(highlights.container);
   const minimap = new Minimap(); // 큰 맵 조망 — 화면 픽셀 좌표(카메라 변환 밖, 모서리 고정)
   app.stage.addChild(minimap.container);
-  const threatBanner = new ThreatBanner(); // 위협 예고 전광판(최상단)
+  const threatBanner = new ThreatBanner(); // 위협 예고 전광판(그 순간에만 뜬다)
   app.stage.addChild(threatBanner.container);
-  const raidBossBar = new RaidBossBar(); // 레이드 격퇴 체력 바(화면 상단 글로벌 — 보스 이름 + 게이지)
-  app.stage.addChild(raidBossBar.container);
+  // 격퇴 체력 바는 이제 화면 상단 글로벌 위젯이 아니라 worldView 가 보스 몸 위에 그린다(HUD 갈아엎기).
   // 데스크톱 UI 확대 — 폰 기준 크기의 글자·패널이 큰 모니터에서 너무 작다(사용자 지적). 창 높이에 비례한
   // 배율(uiScale)을 DOM 오버레이엔 CSS zoom(--ui-zoom, panelStyles)으로, 화면 픽셀 Pixi UI(미니맵·하이라이트·
   // 위협 전광판·보스 바)엔 컨테이너 스케일로 똑같이 먹인다. update 호출부는 화면 크기를 배율로 나눠
@@ -124,7 +123,6 @@ async function boot(): Promise<void> {
     minimap.setUiScale(uiZoom);
     highlights.setUiScale(uiZoom);
     threatBanner.setUiScale(uiZoom);
-    raidBossBar.setUiScale(uiZoom);
   };
   applyUiScale();
   app.renderer.on("resize", applyUiScale);
@@ -272,18 +270,22 @@ async function boot(): Promise<void> {
     onPauseToggle: (): void => {
       game.paused = !game.paused;
       controls.setPaused(game.paused);
+      goalBar.setPaused(game.paused);
     },
     onSpeedCycle: (): void => {
       game.speed = game.speed >= 3 ? 1 : game.speed + 1;
       controls.setSpeed(game.speed);
+      goalBar.setSpeed(game.speed);
     },
     onResume: (): void => {
       game.paused = false;
       controls.setPaused(false);
+      goalBar.setPaused(false);
     },
     onRestart: (): void => {
       game.paused = false;
       controls.setPaused(false);
+      goalBar.setPaused(false);
       tapHintShown = false; // 새 런 = 탭 안내 다시 1회
       game.beginRun();
       view.refreshSpecies(game.world);
@@ -291,13 +293,24 @@ async function boot(): Promise<void> {
     onLobby: (): void => {
       game.paused = false;
       controls.setPaused(false);
+      goalBar.setPaused(false);
       controls.setVisible(false);
       game.toLobby();
       lobby.show();
     },
     onGlossary: (): void => glossary.show(),
   };
-  const controls = createControls(controlsCb);
+  // 우상단 배속·멈춤 바는 goalBar 가 대신한다(bar:false) — controls 는 멈춤 메뉴(전체 덮개)만 남는다.
+  const controls = createControls(controlsCb, { bar: false });
+  // 목표 한 줄 — 화면에 상시로 남는 유일한 HUD. 멈춤·배속·형질 패널·대백과가 전부 여기로 들어온다.
+  const goalBar = createGoalBar({
+    onPauseToggle: (): void => controlsCb.onPauseToggle(),
+    onSpeedCycle: (): void => controlsCb.onSpeedCycle(),
+    onTraitsToggle: (): void => {
+      traitsOpen = !traitsOpen;
+    },
+    onGlossary: (): void => glossary.show(),
+  });
 
   game.onDraft = (cards, preview) => {
     // 시작 프리셋 선택은 캐릭터 선택 창, 레벨업 형질은 일반 카드 창.
@@ -365,7 +378,7 @@ async function boot(): Promise<void> {
   game.onWorldChanged = (world) => {
     view.drawEnvironment(world);
     view.refreshSpecies(world);
-    hud.reset();
+    goalBar.collapse(); // 새 월드 = 상세 패널 접기(낡은 수치가 열린 채 남지 않게)
     effects.clear();
     moment.clear(); // 멸종 암전 등 남은 순간 연출을 지운다(새 월드 시작).
     levelScreen.clear(); // 진척도 화면도 닫는다(혹시 남아 있으면).
@@ -656,15 +669,8 @@ async function boot(): Promise<void> {
     { passive: false },
   );
 
-  // "따르는 무리" 상시 표시(조종 모드에서만) — 무리 성향 형질이 몇 달째 화면에서 안 읽히던 것을 여기서 푼다.
-  // 숫자는 sim 이 규칙을 판정한 그 자리에서 센 값(world.lead.followerCount)을 그대로 읽는다 → 표시 = 규칙.
-  // 조건을 화면 쪽에서 다시 유도하면 규칙이 바뀔 때마다 조용히 어긋나 화면이 거짓말을 한다.
-  const leadChip = document.createElement("div");
-  leadChip.style.cssText =
-    "position:fixed; left:6px; bottom:8px; z-index:30; padding:6px 10px; border-radius:999px;" +
-    "background:var(--panel); border:1px solid var(--line); color:var(--ink);" +
-    "font-family:var(--font-mono); font-size:12.5px; pointer-events:none; display:none;";
-  document.body.appendChild(leadChip);
+  // "따르는 무리" 수는 goalBar 상세 패널에 있다(HUD 갈아엎기로 좌하단 상시 칩 제거 — 하단은 월드 몫).
+  // 숫자의 단일 진실은 여전히 sim 이 판정 자리에서 센 world.lead.followerCount 다.
 
   // E 키를 누르고 있는 동안만 자동 물기 명령이 나간다(유지 입력 — 프레임률·배속과 무관).
   // 실제로 몇 번 무는지는 sim 의 쿨다운(AI 와 같은 값)이 정한다. 탭 사냥 명령과 별개의 보조 경로다.
@@ -746,6 +752,7 @@ async function boot(): Promise<void> {
         case "Numpad3":
           game.speed = Number(e.code.slice(-1));
           controls.setSpeed(game.speed);
+          goalBar.setSpeed(game.speed); // 표시 동기화 — 키로 바꿔도 goalBar 패널의 배속 버튼이 맞게
           return true;
         case "Equal":
         case "NumpadAdd":
@@ -986,30 +993,61 @@ async function boot(): Promise<void> {
     for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y, ev.tx, ev.ty);
     game.world.events.length = 0;
     effects.update(ticker.deltaMS);
-    hud.update({
-      world: game.world,
-      visible: game.phase !== "lobby",
-      stageText: game.phase === "watch" ? `${game.eraLabel ? `${game.eraLabel} · ` : ""}${game.stageLabel}` : "카드 선택",
-      timeText: game.phase === "watch" ? `${game.secondsLeft}초${game.paused ? " (멈춤)" : ""}` : "",
-      envText: game.environmentSummary(),
-      level: game.level,
-      xpProgress: game.xpProgress,
-      timeline: game.timeline,
-    });
+    // --- 목표 한 줄 — "지금 뭘 해야 하나"를 게임 상태에서 자동으로 뽑는다(상시 화면의 전부) ---
+    {
+      const gw = game.world;
+      let mineCount = 0;
+      let wildCount = 0;
+      for (const en of gw.entities) {
+        if (!en.alive) continue;
+        if (en.species.isPlayer) mineCount += 1;
+        else wildCount += 1;
+      }
+      const gBoss = gw.boss;
+      // 대멸종 판정은 detectEvents 의 플래시와 같은 근거를 읽는다(다른 조건으로 재유도하면 어긋난다).
+      const extName =
+        gw.globalCold > 0 ? "한파" : gw.heat > 0 ? "폭염" : gw.foodRegrowMultiplier > 1 ? "대가뭄" : gw.plagueRate > 0 ? "역병" : "";
+      let goalText: string;
+      let goalSub: string;
+      if (gBoss) {
+        goalText = `위협: ${gBoss.name}`;
+        goalSub =
+          gBoss.maxHp > 0 && gBoss.hp > 0
+            ? "몸 위의 체력 바를 다 깎으면 물리칩니다. 못 깎아도 버티면 통과합니다."
+            : "시간이 다 될 때까지 살아남으면 통과합니다.";
+      } else if (extName) {
+        goalText = `큰 시험: ${extName}`;
+        goalSub = "환경이 통째로 바뀌었습니다. 시간이 다 될 때까지 버티세요.";
+      } else {
+        goalText = "무리를 먹여 키우세요";
+        goalSub = `다음 진화 카드까지 ${Math.round(game.xpProgress * 100)}%`;
+      }
+      goalBar.update({
+        visible: game.phase === "watch",
+        text: goalText,
+        sub: goalSub,
+        stage: `${game.eraLabel ? `${game.eraLabel} · ` : ""}${game.stageLabel}`,
+        level: game.level,
+        xp01: game.xpProgress,
+        mine: mineCount,
+        wild: wildCount,
+        followers: leadMode ? gw.lead.followerCount : -1,
+        seconds: game.secondsLeft,
+        night: gw.daylight < 0.5,
+      });
+    }
     // 내 형질 패널은 관전 중 + 칩이 켜져 있을 때만 — 드래프트는 전체 화면이라 그 아래 깔린 UI 가
     // 뿌연 유리로 비쳐 보인다. 드래프트 중 내 종 정보는 헤더의 "내 종" 팝업이 대신한다(핸드오프 §9).
     buildPanel.setVisible(game.phase === "watch" && traitsOpen);
 
     // --- 알파 조종: 화면 안에서 알아채게 하는 것들(칩·안내·승계 알림) ---
     if (leadMode && game.phase === "watch") {
-      // 따르는 수는 sim 이 규칙을 판정한 그 자리에서 센 값이다(마지막 틱 기준).
+      // 따르는 수는 sim 이 규칙을 판정한 그 자리에서 센 값이다(마지막 틱 기준). 표시는 goalBar 패널.
       const followers = game.world.lead.followerCount;
       let mine = 0;
       for (const en of game.world.entities) {
         if (en.species.isPlayer) mine += 1;
       }
-      leadChip.textContent = `따르는 무리 ${followers} / 내 무리 ${mine}`;
-      leadChip.style.display = "block";
       // 첫 관전 진입 안내(런당 1회) — 탭이 곧 명령이라는 것은 화면만 봐서는 알 수 없으니 한 번 알려 준다.
       if (!tapHintShown) {
         tapHintShown = true;
@@ -1047,7 +1085,6 @@ async function boot(): Promise<void> {
       }
       view.setLead(game.world.lead.leaderId >= 0 ? game.world.lead.leaderId : null);
     } else {
-      leadChip.style.display = "none";
       view.setLead(null);
     }
 
@@ -1061,11 +1098,7 @@ async function boot(): Promise<void> {
     detectEvents();
     highlights.update(ticker.deltaMS, app.screen.width / uiZoom);
     threatBanner.update(ticker.deltaMS, app.screen.width / uiZoom, app.screen.height / uiZoom);
-    // 레이드 격퇴 체력 바(글로벌) — 관전 중 격퇴 체력이 있는 보스(레이드 켜짐)일 때 보스 이름 + 게이지를 상단에.
-    const rbBoss = game.world.boss;
-    const raidActive = game.phase === "watch" && rbBoss !== null && rbBoss.maxHp > 0 && rbBoss.hp > 0;
-    raidBossBar.set(raidActive && rbBoss ? rbBoss.name : null, raidActive && rbBoss ? rbBoss.hp / rbBoss.maxHp : 0, 0xff5a44, game.secondsLeft);
-    raidBossBar.update(ticker.deltaMS, app.screen.width / uiZoom);
+    // 격퇴 체력 바는 worldView 가 보스 몸 위에 그린다(상단 글로벌 바 제거 — HUD 갈아엎기).
 
     if (debugBadge) {
       let txt = `디버그: ${debugLabel()}`;

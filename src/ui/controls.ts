@@ -19,9 +19,12 @@ export interface Controls {
   setSpeed: (s: number) => void;
 }
 
-export function createControls(cb: ControlsCallbacks): Controls {
+export function createControls(cb: ControlsCallbacks, opts?: { bar?: boolean }): Controls {
   ensurePanelStyles();
 
+  // 우상단 멈춤/배속 바 — HUD 갈아엎기(2026-08-02, 목표 한 줄 안) 뒤로는 goalBar 가 그 역할을
+  // 대신하므로 bar:false 로 끈다. 멈춤 메뉴(전체 덮개)만 이 모듈의 몫으로 남는다.
+  const showBar = opts?.bar !== false;
   const bar = document.createElement("div");
   bar.className = "controls-bar";
   bar.style.display = "none";
@@ -40,7 +43,7 @@ export function createControls(cb: ControlsCallbacks): Controls {
 
   bar.appendChild(speedBtn);
   bar.appendChild(pauseBtn);
-  document.body.appendChild(bar);
+  if (showBar) document.body.appendChild(bar);
 
   // 멈춤 메뉴
   const menu = document.createElement("div");

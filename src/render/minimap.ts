@@ -6,10 +6,11 @@ import { Container, Graphics, Rectangle, type FederatedPointerEvent } from "pixi
 import type { World } from "@/sim/world";
 import { TILE } from "@/sim/terrain";
 
-const MM_W = 100; // 미니맵 폭(px). 높이는 월드 종횡비로 결정.
-// 화면 위에서 미니맵까지의 거리(px, ui 배율 전). 상태 바(8)·타임라인(64~)과 노치(safe-area, 최대 ~50)를
-// 다 지나 서도록 넉넉히 잡았다. 겹치면 지도가 아니라 방해물이 된다.
-const MM_TOP = 150;
+const MM_W = 84; // 미니맵 폭(px). 높이는 월드 종횡비로 결정. HUD 갈아엎기(2026-08-02)에서 한 단계 축소.
+// 화면 위에서 미니맵까지의 거리(px, ui 배율 전). 상단에는 이제 목표 한 줄(goalBar, ~54px)뿐이라
+// 그 바로 아래 선다. 노치(safe-area)는 goalBar 가 이미 지나 있다. ⚠ scripts/overlap-check.mjs 가
+// 이 상수들을 복제한다 — 바꾸면 거기도 같이.
+const MM_TOP = 64;
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
 

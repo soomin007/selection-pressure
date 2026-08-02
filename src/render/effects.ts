@@ -20,6 +20,7 @@ interface Particle {
   age: number; // 경과(ms)
   life: number; // 수명(ms)
   seed: number; // 0~1, 파편·반짝임 방향/속도 변주용(위치에서 파생 → 결정론)
+  dim: number; // 밝기 배율(1=내 무리 사건, <1=야생끼리 — 화면 소음 다이어트)
 }
 
 // block(튕김)은 짧고 단단해야 한다 — 길게 끌면 "막혔다"가 아니라 "뭔가 터졌다"로 읽힌다.
@@ -54,9 +55,16 @@ export class Effects {
     this.container.addChild(this.g);
   }
 
-  spawn(kind: VisualEventKind, x: number, y: number, tx?: number, ty?: number): void {
+  spawn(kind: VisualEventKind, x: number, y: number, tx?: number, ty?: number, mine = true): void {
     if (this.particles.length > 220) return; // 과부하 방지(대량 사망 시)
-    this.particles.push({ kind, x, y, tx: tx ?? x, ty: ty ?? y, age: 0, life: LIFE[kind], seed: seedAt(x, y) });
+    // 야생끼리의 사건은 다이어트한다(2026-08-02 사용자: 남의 연출이 정신사납다) — 탄생·자연사는
+    // 아예 생략(생태 배경 소음), 사냥·발사체 같은 격한 사건만 훨씬 옅게 남긴다(세계가 살아 있다는
+    // 감은 유지하되 시선은 안 뺏게). 내 무리가 얽힌 사건은 예전 그대로 또렷이.
+    if (!mine && (kind === "birth" || kind === "death")) return;
+    this.particles.push({
+      kind, x, y, tx: tx ?? x, ty: ty ?? y, age: 0, life: LIFE[kind], seed: seedAt(x, y),
+      dim: mine ? 1 : 0.3,
+    });
   }
 
   /**
@@ -65,7 +73,7 @@ export class Effects {
    */
   spawnPing(x: number, y: number, kind: PingKind): void {
     if (this.particles.length > 220) return;
-    this.particles.push({ kind, x, y, tx: x, ty: y, age: 0, life: LIFE[kind], seed: seedAt(x, y) });
+    this.particles.push({ kind, x, y, tx: x, ty: y, age: 0, life: LIFE[kind], seed: seedAt(x, y), dim: 1 });
   }
 
   /** 런/월드가 바뀌면 이전 사건 잔여를 지운다. */
@@ -89,18 +97,20 @@ export class Effects {
 }
 
 function drawParticle(g: Graphics, p: Particle, t: number): void {
-  const fade = 1 - t; // 1→0 으로 옅어짐
+  // dim 을 fade 에 실어 야생끼리 사건은 선 굵기·알파가 함께 준다(따로 알파만 줄이는 것보다 존재감이
+  // 확실히 작아진다). 내 무리 사건은 dim=1 이라 예전과 동일.
+  const fade = (1 - t) * p.dim; // 1→0 으로 옅어짐
   const e = 1 - (1 - t) * (1 - t); // easeOut — 처음 빠르게 퍼지고 끝에 느려짐(터지는 맛)
   const x = p.x;
   const y = p.y;
   if (p.kind === "kill") {
-    drawKill(g, x, y, t, e, fade, p.seed);
+    drawKill(g, x, y, t, e, fade, p.seed, p.dim);
   } else if (p.kind === "birth") {
     drawBirth(g, x, y, e, fade, p.seed);
   } else if (p.kind === "bite") {
     drawBite(g, x, y, e, fade, p.seed);
   } else if (p.kind === "spit") {
-    drawSpit(g, x, y, p.tx, p.ty, p.age, p.life, p.seed);
+    drawSpit(g, x, y, p.tx, p.ty, p.age, p.life, p.seed, p.dim);
   } else if (p.kind === "block") {
     drawBlock(g, x, y, p.tx, p.ty, t, fade, p.seed);
   } else if (p.kind === "go") {
@@ -171,7 +181,7 @@ function drawBlock(
 // 원거리 공격 — 뱉은 것/쏜 가시가 목표로 **빠르게 날아간다**(레일건 조준선 대신 생물다운 발사체). 비행은
 // **거리 기반이되 아주 짧게**(sim 은 즉시 명중·처치하므로, 발사체가 느리면 "닿기 전에 이미 죽는다" — 사용자
 // 지적). 짧은 꼬리 알갱이가 곧게 날아가 곧장 톡 튄다.
-function drawSpit(g: Graphics, sx: number, sy: number, tx: number, ty: number, ageMs: number, life: number, seed: number): void {
+function drawSpit(g: Graphics, sx: number, sy: number, tx: number, ty: number, ageMs: number, life: number, seed: number, dim: number): void {
   const dx = tx - sx;
   const dy = ty - sy;
   const dist = Math.hypot(dx, dy) || 1;
@@ -183,11 +193,13 @@ function drawSpit(g: Graphics, sx: number, sy: number, tx: number, ty: number, a
     const px = sx + dx * travel;
     const py = sy + dy * travel;
     const tail = 5 + seed * 3; // 꼬리 길이(개체마다 조금 다름)
-    g.moveTo(px - ux * tail, py - uy * tail).lineTo(px, py).stroke({ color: 0xd9c47e, width: 2, alpha: 0.72, cap: "round" });
-    g.circle(px, py, 2.2).fill({ color: 0xfff2c0, alpha: 0.95 });
+    // 비행 구간도 dim 을 먹인다 — 야생끼리의 발사체가 "정체 모를 흰 줄"로 시선을 뺏던 주범이다.
+    g.moveTo(px - ux * tail, py - uy * tail).lineTo(px, py)
+      .stroke({ color: 0xd9c47e, width: 2 * dim, alpha: 0.72 * dim, cap: "round" });
+    g.circle(px, py, 2.2 * dim).fill({ color: 0xfff2c0, alpha: 0.95 * dim });
   } else {
     const it = Math.min(1, (ageMs - flightMs) / Math.max(1, life - flightMs)); // 도착 후 진행 0→1
-    const fade = 1 - it;
+    const fade = (1 - it) * dim;
     // 명중 — 작은 튐(닿아 터진 자리). 작고 짧아 화면을 안 어지럽힌다.
     g.circle(tx, ty, 1.5 + it * 5).stroke({ color: 0xe6cf88, width: 1.6 * fade + 0.3, alpha: 0.8 * fade });
     g.circle(tx, ty, 1.6 * fade + 0.3).fill({ color: 0xfff2c0, alpha: 0.85 * fade });
@@ -195,9 +207,9 @@ function drawSpit(g: Graphics, sx: number, sy: number, tx: number, ty: number, a
 }
 
 // 잡아먹힘/즉사 — 가장 극적인 순간. 흰 섬광 → 붉은 충격파 고리 → 사방으로 튀는 핏빛 파편(길이·각도 제각각).
-function drawKill(g: Graphics, x: number, y: number, t: number, e: number, fade: number, seed: number): void {
-  // 흰 섬광(맨 처음 아주 짧게 번쩍) — 타격의 임팩트.
-  const flash = Math.max(0, 1 - t * 3.2);
+function drawKill(g: Graphics, x: number, y: number, t: number, e: number, fade: number, seed: number, dim: number): void {
+  // 흰 섬광(맨 처음 아주 짧게 번쩍) — 타격의 임팩트. 야생끼리는 옅게(dim — 흰 번쩍임이 제일 시끄럽다).
+  const flash = Math.max(0, 1 - t * 3.2) * dim;
   if (flash > 0) g.circle(x, y, 5 + e * 5).fill({ color: 0xffffff, alpha: 0.85 * flash });
   // 붉은 충격파 고리 — 빠르게 퍼지며 얇아진다.
   g.circle(x, y, 4 + e * 26).stroke({ color: 0xff4326, width: 3.2 * fade + 0.4, alpha: 0.92 * fade });

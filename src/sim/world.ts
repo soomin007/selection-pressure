@@ -79,6 +79,10 @@ export interface VisualEvent {
   kind: VisualEventKind;
   x: number;
   y: number;
+  /** 내 무리(플레이어 종)가 얽힌 사건인가 — 렌더가 야생끼리의 사건을 옅게/생략해 화면 소음을
+   *  줄이는 근거다(2026-08-02 사용자: 남의 사건 연출이 정신사납다). 판정은 emit 하는 자리(사건의
+   *  당사자를 아는 곳)에서만 한다 — 렌더가 좌표로 추정하면 화면이 거짓말하게 된다. */
+  mine: boolean;
   /** 방향성 사건(원거리 발사체 "spit")의 목표점 — (x,y)에서 여기로 날아간다. 없으면 제자리 사건. */
   tx?: number;
   ty?: number;
@@ -385,7 +389,7 @@ export class World {
         if (rate > 0 && this.rng.unit() < rate) {
           e.alive = false;
           this.recordDeath(e.species, "plague");
-          this.emit("death", e.x, e.y);
+          this.emit("death", e.x, e.y, e.species.isPlayer);
         }
       }
     }
@@ -500,7 +504,7 @@ export class World {
       const y = Math.max(0, Math.min(this.height, c.y + Math.sin(ang) * 20));
       const spot = this.snapSpawn(x, y, canSwim, canLand, canFly);
       this.entities.push(createEntity(this.nextId(), spot.x, spot.y, this.playerSpecies, SIM.startEnergy));
-      this.emit("birth", spot.x, spot.y); // 연출: 탄생 반짝임
+      this.emit("birth", spot.x, spot.y, true); // 연출: 탄생 반짝임(내 종 시작 무리)
     }
   }
 
@@ -510,10 +514,11 @@ export class World {
     this.deaths[cause] += 1;
   }
 
-  /** 연출용 사건 1건(전 종, 위치 포함). tx,ty 를 주면 방향성 사건(원거리 발사체). rng 미사용 → 결정론 무관. */
-  emit(kind: VisualEventKind, x: number, y: number, tx?: number, ty?: number): void {
+  /** 연출용 사건 1건(전 종, 위치 포함). mine=내 무리가 얽힌 사건(렌더의 소음 다이어트 근거).
+   *  tx,ty 를 주면 방향성 사건(원거리 발사체). rng 미사용 → 결정론 무관. */
+  emit(kind: VisualEventKind, x: number, y: number, mine: boolean, tx?: number, ty?: number): void {
     if (this.events.length >= 300) return;
-    this.events.push(tx !== undefined && ty !== undefined ? { kind, x, y, tx, ty } : { kind, x, y });
+    this.events.push(tx !== undefined && ty !== undefined ? { kind, x, y, mine, tx, ty } : { kind, x, y, mine });
   }
 
   get availableFood(): number {

@@ -335,12 +335,10 @@ export class WorldView {
       // 못 먹는 먹이는 흐리게 죽인다 — "가서 먹으면 되는 것"만 또렷이 남아야 한눈에 골라 간다.
       // 먹을 수 있는 것엔 옅은 흰 고리를 둘러 배경(초록 풀밭)에 묻히지 않게 한다.
       if (leadCanEatFood(f, lead.caps, leadKinds)) {
+        // 먹을 수 있는 먹이는 또렷한 점 하나면 충분하다. 흰 고리를 둘렀었는데(배경에 묻히지 말라고)
+        // 확대 화면에선 고리밭이 돼 "밀도가 너무 높다"(2026-08-02 사용자)의 한 축이었다 — 뺐다.
+        // 못 먹는 먹이가 흐려지는 대비만으로 "먹을 것"은 이미 갈린다.
         this.foodG.circle(f.x, f.y, 4.6).fill({ color, alpha: 1 });
-        // 흰 고리는 **가까운 것에만** 두른다. 멀리 있는 먹이까지 고리를 두르면 (ㄱ) 화면이 고리밭이 되고
-        // (ㄴ) 넓은 화면(데스크톱)에서 도형 수가 배로 뛴다. "지금 가서 먹을 만한 것"만 도드라지면 된다.
-        if (Math.abs(f.x - lead.e.x) < REL_FAR && Math.abs(f.y - lead.e.y) < REL_FAR) {
-          this.foodG.circle(f.x, f.y, 7.2).stroke({ color: 0xffffff, width: 1, alpha: 0.17 });
-        }
       } else {
         // 아주 지워 버리진 않는다 — 세계가 텅 빈 것처럼 보이면 "저기 먹이가 있긴 한데 내가 못 먹는다"는
         // 정보(예: 이 바다는 통째로 남의 밥상)까지 같이 사라진다.
@@ -394,10 +392,11 @@ export class WorldView {
       // 내 종 강조: 스프라이트 아래 은은한 고리(폰에서 "내 무리"가 한눈에).
       if (e.species.isPlayer) {
         // 시야(이 종이 먹이를 어느 방향·얼마나 멀리 보는지) — 보는 방향(진행방향) 기준 부채꼴로.
-        // 정지(헤딩이 거의 0)면 두리번거리므로 원으로. 일부 개체에만 옅게(클러터 없이 시야각 감).
-        // 앞장선 개체(알파)는 **개수 제한의 예외**다. 알파가 열다섯 번째로 순회되면 그 한 마리의 부채꼴만
-        // 안 그려져, 사람이 "내가 어디까지 보는지"를 못 읽는다(조종 판단의 근거가 통째로 사라진다).
-        if (visionRings < 14 || e.id === this.leadId) {
+        // 정지(헤딩이 거의 0)면 두리번거리므로 원으로.
+        // 조종 중(알파 있음)에는 **알파 한 마리에만** 그린다 — 무리 열넷의 부채꼴·초음파가 겹치면
+        // 확대 화면이 도형 밭이 된다(2026-08-02 사용자: 밀도가 너무 높다). 조종 판단의 근거는 알파의
+        // 감지 범위 하나면 충분하다. 관전(?watch)은 형질 관찰이 목적이라 예전대로 여럿(상한 14)에.
+        if (lead ? e.id === this.leadId : visionRings < 14) {
           // behavior 의 시야 계산과 똑같이 개체별로 — 밤·수풀에서 줄어드는 실제 시야를 그대로 그린다
           // (시각=로직 1:1). 수풀에 든 개체는 부채꼴이 눈에 띄게 줄어 "시야가 가려짐"이 보인다.
           const v01 = e.genome.traits.vision / TRAIT_MAX;
@@ -698,7 +697,9 @@ export class WorldView {
         this.drawLayerCue(boss.roam, p.x, p.y, 10);
         this.drawBossCreature(p.x, p.y, p.hx, p.hy, 10, boss.type, hc.dot, boss.killRadius, pulse);
       }
-      // 격퇴 체력 바는 보스 위가 아니라 화면 상단 글로벌 바(RaidBossBar)로 뜬다(사용자 방향, main.ts).
+      // 격퇴 체력 바 — 화면 상단 글로벌 바 대신 **떼의 무게중심 위**에 붙인다(2026-08-02 HUD 갈아엎기:
+      // 상시 상단 바가 정신사나웠다). 보스가 화면에 보일 때만 자연히 함께 보인다.
+      if (boss.maxHp > 0 && boss.hp > 0) this.drawRaidBar(cx, cy - maxR - 30, boss.hp / boss.maxHp);
     } else if (boss && boss.killRadius > 0) {
       const bx = boss.prevX + (boss.x - boss.prevX) * interp;
       const by = boss.prevY + (boss.y - boss.prevY) * interp;
@@ -706,6 +707,8 @@ export class WorldView {
       // 단일 추격자(치타·큰수리·상어) — 크게 그려 "한 마리 맹수가 돌진한다"를 강조.
       this.drawLayerCue(boss.roam, bx, by, 20);
       this.drawBossCreature(bx, by, boss.x - boss.prevX, boss.y - boss.prevY, 20, boss.type, hc.dot, boss.killRadius, pulse);
+      // 격퇴 체력 바 — 몸 위에(위 떼 분기와 같은 이유).
+      if (boss.maxHp > 0 && boss.hp > 0) this.drawRaidBar(bx, by - 36, boss.hp / boss.maxHp);
     }
 
     // 낮/밤 + 대멸종 화면 틴트 (둘 다 overlayG — 밤을 먼저 깔고 대멸종 틴트를 그 위에)
@@ -868,6 +871,16 @@ export class WorldView {
    * (시각=로직 1:1, known_issues). 하늘 보스는 아래로 어긋난 그림자(높이 떠 있다 → 물속은 못 건드린다),
    * 물 보스는 퍼지는 파문(물속을 가른다 → 뭍은 못 건드린다). 땅 보스는 땅에 붙어 있어 단서가 필요 없다.
    */
+  /** 격퇴 체력 바 — 보스 몸 위의 작은 바(월드 좌표라 카메라와 함께 움직인다). 줄어드는 것이 곧
+   *  "내 무리의 카운터가 통하고 있다"는 표시다. 값은 sim(boss.hp/maxHp)을 읽기만 한다. */
+  private drawRaidBar(x: number, y: number, ratio: number): void {
+    const w = 44;
+    const h = 5;
+    const r = Math.max(0, Math.min(1, ratio));
+    this.bossG.roundRect(x - w / 2 - 1.2, y - 1.2, w + 2.4, h + 2.4, 3.4).fill({ color: 0x0b0e14, alpha: 0.72 });
+    this.bossG.roundRect(x - w / 2, y, Math.max(1.5, w * r), h, 2.5).fill({ color: 0xff5a44, alpha: 0.95 });
+  }
+
   private drawLayerCue(roam: Layer, x: number, y: number, size: number): void {
     if (roam === "air") {
       this.bossG
@@ -1212,7 +1225,10 @@ const LEAD_OUTLINE = 0x06080d;
 const LEAD_RING_R = 15;
 // 한 프레임에 그릴 관계 고리 수 상한(안전장치). 화면 밖 컬링만으로도 보통 10~20 개라 실제로는 안 걸리지만,
 // 개체가 화면에 몰리는 최악(떼 시련이 한 화면에 들어옴)에도 프레임이 안 무너지게 못을 박아 둔다.
-const LEAD_MARK_CAP = 40;
+// 관계 표식(브래킷·톱니 링) 화면 동시 상한 — 40이었는데 확대 화면에선 표식이 세계를 덮었다
+// (2026-08-02 사용자: 밀도). 가까운 것부터 순회되는 게 아니라 "먼저 만난 12개"지만, 화면 안 개체가
+// 12를 넘는 일 자체가 드물고 잠금 대상은 상한 예외라 명령 표시는 절대 안 잘린다.
+const LEAD_MARK_CAP = 12;
 // 관계 고리 거리 감쇠(월드 px) — 이 안쪽은 최대 세기, 이 바깥은 바닥(0.5). 코앞의 위협이 저 멀리 것과
 // 같은 진하기면 "지금 급한 것"이 안 도드라진다.
 // 기본 줌 1.55→2.2(탭 명령 조종) 재조정: 폰 논리 화면 540×~1170 에서 보이는 월드가 반폭 ~123px·
