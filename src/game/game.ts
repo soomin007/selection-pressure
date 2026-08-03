@@ -435,10 +435,33 @@ export class Game {
   /**
    * 입력 층이 매 프레임 부르는 조종 명령 세터. 관전 중·멈춤 아님일 때만 sim 에 닿는다.
    * 드래프트·결과 화면에서 손가락이나 키가 눌린 채로 넘어가도 알파가 계속 달리지 않는다.
+   *
+   * ⚠ 알파 조종은 **더 이상 쓰지 않는다**(2026-08-04, 무리 지시로 전환). sim 의 능력은 남겨 두되
+   * main 이 이 세터를 안 부르므로 실제 게임에서는 한 번도 안 걸린다. 제거는 무리 지시가 폰에서
+   * 판정을 통과한 뒤에(backlog).
    */
   setLeadCommand(cmd: LeadCommand | null): void {
     this.world.lead.cmd =
       this.leadEnabled && this.phase === "watch" && !this.paused ? cmd : null;
+  }
+
+  /**
+   * 무리에게 뜻을 내린다(신탁). 월드 좌표 한 점. null 이면 지시를 거둔다 = 완전 자율(관전).
+   * 관전 중·멈춤 아님일 때만 닿는다 · 드래프트·결과 화면의 탭이 무리를 움직이지 않게.
+   */
+  setHerdOrder(x: number, y: number): void {
+    if (this.phase !== "watch" || this.paused) return;
+    this.world.herdOrder = { x, y };
+  }
+
+  /** 내려 둔 뜻을 거둔다(무리는 그 자리에서 자율로 산다). */
+  clearHerdOrder(): void {
+    this.world.herdOrder = null;
+  }
+
+  /** 지금 내려져 있는 뜻(화면에 표식을 그리는 데 쓴다). */
+  get herdOrder(): { x: number; y: number } | null {
+    return this.world.herdOrder;
   }
 
   update(deltaMS: number): void {
@@ -459,11 +482,8 @@ export class Game {
     }
 
     if (this.phase !== "watch") return;
-    // rng 미사용·멱등. 단계마다 새 월드가 생겨도 여기서 다시 앞장선다.
-    if (this.leadEnabled) {
-      this.world.armLead();
-      if (this.leadFollowWeight !== null) this.world.lead.followWeight = this.leadFollowWeight;
-    }
+    // 알파를 세우지 않는다 · 무리 지시로 전환하면서 "앞장선 한 마리"라는 개념 자체가 없어졌다.
+    // armLead 를 안 부르므로 lead.leaderId 는 -1 로 남고, sim 의 알파 분기는 한 번도 안 걸린다.
     this.acc += deltaMS;
     let guard = 0;
     while (this.acc >= stepMs && guard < 5) {
@@ -854,7 +874,7 @@ export class Game {
    */
   private beginStage(): void {
     this.stageXp = 0; // 조종 모드 경험치 상한은 단계마다 새로 찬다(leadEnabled=false 면 안 읽힌다)
-    this.world.resetRoundCounts(); // 새 단계 = 시험 계수 리셋
+    this.world.resetRoundCounts(); // 새 단계 = 시험 계수 리셋 (뜻은 clearStageState 가 이미 거뒀다)
     this.currentTrial = null;
     this.lastVerdictValue = null; // 새 라운드가 시작되면 지난 판정은 지운다
     this.phase = "watch";
@@ -958,6 +978,9 @@ export class Game {
     this.world.heat = 0;
     this.world.foodRegrowMultiplier = 1;
     this.world.plagueRate = 0;
+    // 내려 둔 뜻도 라운드와 함께 끝난다. beginStage 가 아니라 **여기서** 거두는 이유: 라운드가 끝나고
+    // 카드창이 열리는 동안 beginStage 는 아직 안 돈다 · 그 사이 낡은 좌표가 남아 있으면 안 된다.
+    this.world.herdOrder = null;
   }
 
   /** 저장본에서 메타(누적 경험치 → 레벨·리롤 해금)를 다시 읽어 필드에 반영. 런 시작·디버그 변경 시 호출. */

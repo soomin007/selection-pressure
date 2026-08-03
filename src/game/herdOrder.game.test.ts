@@ -1,23 +1,22 @@
-// 알파 조종의 **game 층 배선** 검증(스펙 §11-C-2). sim 쪽 격리·결정론은 src/sim/lead.test.ts 가 맡고,
-// 여기서는 "모드가 꺼져 있으면 진입점이 아예 안 열리는가 / 관전이 아닌 화면에서 명령이 새지 않는가 /
-// 조종 모드의 단계별 경험치 상한이 실제로 무는가"만 본다.
-// 기존 game.test.ts 는 한 글자도 안 건드린다 — 이 파일은 새로 더한 것뿐이다.
+// 무리 지시(신탁)의 **game 층 배선** 검증. sim 쪽 격리·결정론은 src/sim/herdOrder.test.ts 가 맡고,
+// 여기서는 "관전이 아닌 화면에서 뜻이 새지 않는가 / 단계가 바뀌면 거둬지는가 / 단계별 경험치 상한이
+// 실제로 무는가"만 본다.
+//
+// (이 파일은 `lead.game.test.ts` 를 대체한다. 알파 조종의 game 층 배선 — armLead 로 한 마리를
+//  세우던 것 — 은 2026-08-04 에 없어졌다. 경험치 상한 검증은 여전히 유효해 그대로 옮겨 왔다.)
 import { describe, it, expect } from "vitest";
 import { Game } from "@/game/game";
 import { GAME } from "@/game/config";
-import type { LeadCommand } from "@/sim/lead";
 
 /** 한 런을 시작해 첫 프리셋을 고른 상태(watch)로 만든다(game.test.ts 의 startRun 과 같은 절차). */
-function startRun(seed: string, leadEnabled: boolean): Game {
+function startRun(seed: string, commandEnabled: boolean): Game {
   const g = new Game(240, 400);
   g.fixedSeed = seed;
-  g.leadEnabled = leadEnabled; // 입력 층(main)이 URL 플래그를 읽어 넘기는 그 불리언
+  g.leadEnabled = commandEnabled; // 입력 층(main)이 URL 플래그를 읽어 넘기는 그 불리언(?watch 면 false)
   g.beginRun(); // draft(프리셋 선택)
   g.pickCard(0); // 첫 프리셋 → 첫 채집 단계 시작(watch)
   return g;
 }
-
-const PUSH: LeadCommand = { dx: 1, dy: 0, throttle: 1 };
 
 /**
  * 지금까지 이 런에서 쌓은 경험치 총량. 레벨업은 xp 를 깎아 가므로 현재 xp 만 보면 안 되고,
@@ -31,7 +30,7 @@ function accruedXp(g: Game): number {
 
 /**
  * 먹이를 인위로 밀어 넣으며 그 단계를 짧게 돌린다(경험치 경로만 보려는 것이므로 시뮬 운에 안 기댄다).
- * 레벨업 드래프트가 열리면 첫 카드로 넘겨 같은 단계를 이어 간다.
+ * 레벨업 카드가 열리면 첫 카드로 넘겨 이어 간다.
  */
 function farmXp(g: Game, ticks: number, perTick: number): void {
   for (let i = 0; i < ticks; i++) {
@@ -42,58 +41,63 @@ function farmXp(g: Game, ticks: number, perTick: number): void {
   }
 }
 
-describe("알파 조종 — game 층 배선", () => {
-  it("leadEnabled=false 면 armLead 가 안 불려 leaderId 가 끝까지 -1 이다", () => {
-    const g = startRun("lead-game-off", false);
-    for (let i = 0; i < 60; i++) {
-      g.setLeadCommand(PUSH); // 입력 층이 명령을 줘도
-      g.update(34);
-      if (g.phase !== "watch") break;
-    }
-    expect(g.world.lead.leaderId).toBe(-1); // 진입점이 아예 안 열린다
-    expect(g.world.lead.cmd).toBeNull(); // 명령도 sim 에 안 닿는다
-    expect(g.world.lead.followTicks).toBe(0);
+describe("무리 지시 — game 층 배선", () => {
+  it("관전 중에 내린 뜻은 sim 에 닿는다", () => {
+    const g = startRun("order-game-on", true);
+    g.setHerdOrder(120, 200);
+    expect(g.world.herdOrder).toEqual({ x: 120, y: 200 });
+    expect(g.herdOrder).toEqual({ x: 120, y: 200 });
   });
 
-  it("leadEnabled=true 면 관전에 들어간 뒤 알파가 한 마리 정해진다", () => {
-    const g = startRun("lead-game-on", true);
-    g.update(34);
-    expect(g.world.lead.leaderId).toBeGreaterThanOrEqual(0);
-    const first = g.world.lead.leaderId;
-    for (let i = 0; i < 20; i++) g.update(34);
-    // armLead 는 멱등 — 매 프레임 불려도 알파가 매번 갈아치워지지 않는다(살아 있는 한).
-    const still = g.world.entities.some((e) => e.id === first);
-    if (still) expect(g.world.lead.leaderId).toBe(first);
-  });
-
-  it("드래프트 중엔 명령을 줘도 세계가 안 돌고 명령이 sim 에 안 닿는다", () => {
+  it("드래프트 중에는 뜻이 안 닿는다(카드 고르다 화면을 탭해도 무리가 안 움직인다)", () => {
     const g = new Game(240, 400);
-    g.fixedSeed = "lead-game-draft";
+    g.fixedSeed = "order-game-draft";
     g.leadEnabled = true;
     g.beginRun(); // 프리셋 선택 드래프트 — 관전이 아니다
     expect(g.phase).toBe("draft");
-    const tick0 = g.world.tick;
-    for (let i = 0; i < 10; i++) {
-      g.setLeadCommand(PUSH);
-      g.update(34);
-    }
-    expect(g.world.tick).toBe(tick0);
-    expect(g.world.lead.cmd).toBeNull();
+    g.setHerdOrder(120, 200);
+    expect(g.world.herdOrder).toBeNull();
   });
 
-  it("멈춤 중엔 명령을 줘도 세계가 안 돌고 명령이 sim 에 안 닿는다", () => {
-    const g = startRun("lead-game-paused", true);
+  it("멈춤 중에는 뜻이 안 닿는다", () => {
+    const g = startRun("order-game-paused", true);
     g.paused = true;
-    const tick0 = g.world.tick;
-    for (let i = 0; i < 10; i++) {
-      g.setLeadCommand(PUSH);
-      g.update(34);
+    g.setHerdOrder(120, 200);
+    expect(g.world.herdOrder).toBeNull();
+  });
+
+  it("뜻을 거두면 무리는 완전히 자율로 돌아간다", () => {
+    const g = startRun("order-game-clear", true);
+    g.setHerdOrder(120, 200);
+    g.clearHerdOrder();
+    expect(g.world.herdOrder).toBeNull();
+  });
+
+  it("단계가 바뀌면 지난 라운드의 뜻은 거둬진다(낡은 좌표가 다음 라운드로 안 넘어간다)", () => {
+    const g = startRun("order-game-stage", true);
+    const start = g.stageNumber;
+    g.setHerdOrder(120, 200);
+    let guard = 0;
+    while (g.stageNumber === start && g.phase !== "result" && guard++ < 6000) {
+      if (g.phase === "draft") g.pickCard(0);
+      if (g.phase === "watch") g.update(34);
     }
-    expect(g.world.tick).toBe(tick0);
+    expect(g.phase).not.toBe("result"); // 도중에 런이 끝났으면 아무것도 못 잰다
+    expect(g.stageNumber).toBe(start + 1);
+    expect(g.world.herdOrder).toBeNull();
+  });
+
+  it("알파는 더 이상 세워지지 않는다(한 마리를 모는 개념이 없어졌다)", () => {
+    const g = startRun("order-game-noalpha", true);
+    for (let i = 0; i < 60; i++) {
+      g.update(34);
+      if (g.phase !== "watch") break;
+    }
+    expect(g.world.lead.leaderId).toBe(-1);
     expect(g.world.lead.cmd).toBeNull();
   });
 
-  it("leadEnabled=true 면 한 단계에 쌓이는 경험치가 leadStageXpCap 을 못 넘는다", () => {
+  it("지시 모드면 한 단계에 쌓이는 경험치가 leadStageXpCap 을 못 넘는다", () => {
     const g = startRun("lead-game-cap", true);
     farmXp(g, 30, 50); // 상한(80)보다 훨씬 많은 1500 을 밀어 넣는다
     expect(accruedXp(g)).toBeLessThanOrEqual(GAME.leadStageXpCap);
@@ -121,7 +125,7 @@ describe("알파 조종 — game 층 배선", () => {
     expect(accruedXp(g)).toBeLessThanOrEqual(GAME.leadStageXpCap * 3);
   });
 
-  it("leadEnabled=false 면 경험치 경로가 예전 그대로다(먹은 만큼 전부 들어온다)", () => {
+  it("?watch(지시 꺼짐)면 경험치 경로가 예전 그대로다(먹은 만큼 전부 들어온다)", () => {
     const g = startRun("lead-game-cap", false);
     const before = g.world.playerFoodEaten;
     farmXp(g, 30, 50);

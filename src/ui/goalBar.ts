@@ -24,7 +24,7 @@ export interface GoalData {
   xp01: number; // 다음 카드까지 진행(0~1)
   mine: number;
   wild: number;
-  followers: number; // 따르는 무리(조종 밖이면 -1 → 줄 숨김)
+  followers: number; // 지금 뜻을 향해 움직이는 수(뜻이 없으면 -1 → 줄 숨김)
   seconds: number;
   night: boolean;
 }
@@ -134,7 +134,7 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
       setText(
         countRow,
         d.followers >= 0
-          ? `내 종 ${d.mine} · 따르는 무리 ${d.followers} · 야생 ${d.wild}`
+          ? `내 종 ${d.mine} · 뜻을 따르는 중 ${d.followers} · 야생 ${d.wild}`
           : `내 종 ${d.mine} · 야생 ${d.wild}`,
       );
       setText(timeRow, `남은 시간 ${d.seconds}초 · ${d.night ? "밤" : "낮"}`);

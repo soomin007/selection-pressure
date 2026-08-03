@@ -18,6 +18,7 @@ import type { Biome } from "@/sim/environment";
 import { stepEntity, visionRadius, leadBiteTarget } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
 import { createLeadState, type LeadState } from "@/sim/lead";
+import type { HerdOrder } from "@/sim/herdOrder";
 import { SIM, LEAD } from "@/sim/params";
 
 /** 한 마리가 죽은 이유 (가독성 §7: "왜 내 종이 죽었나"). 사람이 읽는 한글 라벨은 game 층에서. */
@@ -138,6 +139,22 @@ export class World {
   /** 이번 단계(라운드)의 내 종 사건 계수 · 시험 판정용. game 이 beginStage 마다 resetRoundCounts 로
    * 비운다. 정수 증가만 한다(rng 미사용 → 결정론·밸런스 무관). */
   readonly roundCounts: RoundCounts = { hunts: 0, feeds: 0, births: 0 };
+
+  /**
+   * 무리에게 내린 뜻(신탁). null 이면 무리는 완전히 자율로 산다 = 관전.
+   * 입력층이 세팅하고 behavior 가 읽는다. 계약·설계 의도는 `sim/herdOrder.ts` 주석에 있다.
+   * rng 미소비 · null 이면 관련 분기가 통째로 안 돌아 기존 세계와 부동소수점까지 같다.
+   */
+  herdOrder: HerdOrder | null = null;
+
+  /**
+   * 이번 틱에 **실제로 뜻을 향해 움직인** 내 종 개체 수. 순종의 질을 화면에 보여 주는 유일한 숫자다
+   * ("12마리 중 8마리가 향하는 중"). 겁먹어 달아나거나, 가는 길에 먹느라 멈춘 개체는 안 세인다.
+   * ⚠ 세는 곳은 **규칙이 판정되는 그 자리 하나뿐**(behavior 의 지시 블록). 바깥에서 조건을 다시
+   * 유도하면 화면과 실제가 갈린다(known_issues 의 "따르는 무리" 오집계와 같은 함정).
+   * 매 틱 여기서 0 으로 되돌린다. rng 미사용·단순 합계라 순회 순서와 무관하다.
+   */
+  orderFollowers = 0;
 
   // Phase 5 단계 상태 (Game 이 설정/해제). 기본값은 평상시(영향 없음).
   boss: Boss | null = null;
@@ -276,6 +293,7 @@ export class World {
     const L = this.lead;
     // HUD 표시용 집계는 매 틱 여기서만 0 으로 되돌린다(세는 곳은 behavior 의 cohesion 한 자리뿐).
     L.followerCount = 0;
+    this.orderFollowers = 0; // 뜻을 향해 움직인 수도 같은 규칙으로 매 틱 리셋(세는 곳은 behavior 한 자리)
     // 조준 대상도 매 틱 여기서 다시 잡는다. 먼저 비워 두면 알파가 없거나(leaderId<0) 이번 틱에
     // 쓰러진 경우(아래 조기 반환)에도 "물 수 있다"가 낡은 채로 남지 않는다.
     L.biteTargetId = -1;

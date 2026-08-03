@@ -15,7 +15,7 @@ import { TRAIT_MAX, cloneGenome, mutateGenome } from "@/sim/genome";
 import { createEntity } from "@/sim/entity";
 import { areFriends } from "@/sim/species";
 import { bossCanHunt, isRaidFighter, isRaidRangedFighter, raidRangedPower, dealRaidHit, bossRaidTargetFor } from "@/sim/boss";
-import { SIM } from "@/sim/params";
+import { ORDER, SIM } from "@/sim/params";
 
 interface Vec {
   x: number;
@@ -644,6 +644,32 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     const push = maxSpeed * Math.min(1, lcmd.throttle);
     desired = { x: lcmd.dx * push, y: lcmd.dy * push };
     turn = SIM.fleeTurn;
+  }
+
+  // --- 무리 지시(신탁): 뜻은 분명하되 이행은 종의 천성이 정한다 (sim/herdOrder.ts) ---
+  // 위 자율 판단을 **하나도 건너뛰지 않는다** · 배회의 world.rng 소비가 사라지면 난수 스트림이 통째로
+  // 밀린다(known_issues 의 "쌍둥이" 함정). 여기서는 결과값 desired 만 섞는다. 지시가 없으면(null)
+  // 이 블록은 통째로 안 돌아, 명령을 한 번도 안 준 세계는 기존과 부동소수점까지 같다.
+  //
+  // 우선순위: 도망 > 사냥감 추적 > 먹이 추적 > **지시** > 배회. 그래서 겁먹은 개체는 안 오고,
+  // 배고픈 개체는 가는 길에 먹고 간다. 이게 "이행은 천성이 정한다"의 실체다(새 규칙이 아니다).
+  const order = world.herdOrder;
+  if (order !== null && e.species.isPlayer && !fleeing && e.targetPrey === null && e.targetFood === null) {
+    const odx = order.x - e.x;
+    const ody = order.y - e.y;
+    if (odx * odx + ody * ody > ORDER.arriveRadius * ORDER.arriveRadius) {
+      // 격자 길찾기를 태운다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러지기만 한다
+      // (known_issues "반응형 벽 회피는 진동을 만든다 · 격자 BFS 가 정답").
+      const nav = navTo(e, world, { x: order.x, y: order.y }, canSwim, canLand, canFly);
+      const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? ORDER.arriveRadius : 0);
+      desired = {
+        x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
+        y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
+      };
+      // 순종의 질을 화면에 보여 주는 숫자는 **여기서**, 규칙이 판정된 그 자리에서 센다.
+      // 밖에서 조건을 다시 유도하면 화면과 실제가 갈린다(known_issues).
+      world.orderFollowers += 1;
+    }
   }
 
   // --- 관성: 현재 속도를 desired 로 부드럽게 (홱 꺾임/제자리 떨림 제거) ---
