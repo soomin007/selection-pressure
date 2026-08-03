@@ -9,7 +9,8 @@ import { DEBUG, DEBUG_ACTIVE, TUNE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
 import { createGoalBar } from "@/ui/goalBar";
-import { Game, type ExtinctionType } from "@/game/game";
+import { Game, type ExtinctionType, type TrialKind } from "@/game/game";
+import { GAME } from "@/game/config";
 import { BOSS_TYPES, bossName, type BossType } from "@/sim/boss";
 import { createDraftPanel } from "@/ui/draftPanel";
 import { createPresetPanel } from "@/ui/presetPanel";
@@ -233,6 +234,8 @@ async function boot(): Promise<void> {
       result.hide();
       applyCosmetics();
       tapHintShown = false; // 새 런 = 탭 안내 다시 1회(선언은 위쪽 상태 블록 — 클릭 시점 실행이라 TDZ 무관)
+      emberHintShown = false; // 불씨 첫 안내도 다시 1회
+      emberHintMs = 0;
       game.beginRun();
       refreshBuild();
       view.refreshSpecies(game.world);
@@ -256,6 +259,8 @@ async function boot(): Promise<void> {
       lobby.hide();
       applyCosmetics(); // 방금 딴 꾸밈을 이번 판부터 적용
       tapHintShown = false; // 새 런 = 탭 안내 다시 1회
+      emberHintShown = false; // 불씨 첫 안내도 다시 1회
+      emberHintMs = 0;
       game.beginRun();
       refreshBuild();
       view.refreshSpecies(game.world);
@@ -287,6 +292,8 @@ async function boot(): Promise<void> {
       controls.setPaused(false);
       goalBar.setPaused(false);
       tapHintShown = false; // 새 런 = 탭 안내 다시 1회
+      emberHintShown = false; // 불씨 첫 안내도 다시 1회
+      emberHintMs = 0;
       game.beginRun();
       view.refreshSpecies(game.world);
     },
@@ -327,7 +334,29 @@ async function boot(): Promise<void> {
         population: game.world.playerPopulation,
         pickedCardNames: game.pickedCardNames,
         canReroll: game.canReroll,
+        forecast: draftForecast(),
+        notice: game.draftNotice,
       });
+  };
+  /** 드래프트 예고 줄: 진행 중 라운드의 시험(레벨업) 또는 곧 시작할 단계의 시험(시대 보상).
+   *  시대 보상 쪽은 game 이 얼려 둔 확정 시험이라(예고=실물) 그대로 시작된다. 라운드 전이라 진행 숫자만 뺀다. */
+  function draftForecast(): string {
+    const t = game.trial;
+    if (t) return `이번 시험: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`;
+    const nt = game.upcomingTrial;
+    return nt ? `다음 시험: ${nt.label}` : "";
+  }
+  // 라운드 시험 판정 플래시: 합격은 라임, 불합격은 호박에 이유(진행/목표)와 대가(불씨)를 한 줄로.
+  const TRIAL_WORD: Record<TrialKind, string> = { hunt: "사냥", feed: "먹이", birth: "새끼", pop: "무리" };
+  // priority=true: 같은 프레임에 다음 단계(보스) 등장 플래시가 이어져도 판정이 덮이지 않고 끝까지 보인다.
+  game.onTrialVerdict = (v) => {
+    if (v.passed) highlights.flash(`시험 합격 · ${v.trial.label}`, 0x8fd14f, true);
+    else
+      highlights.flash(
+        `시험 불합격 · ${TRIAL_WORD[v.trial.kind]} ${Math.min(v.progress, v.trial.target)}/${v.trial.target} · 불씨 1을 잃었습니다`,
+        0xffba3a,
+        true,
+      );
   };
   // 승리·정복·멸종 순간 연출 — 결과 패널 직전에 전역 화면 클라이맥스를 얹는다.
   const moment = createMomentOverlay();
@@ -341,7 +370,8 @@ async function boot(): Promise<void> {
       // 순간 연출(멸종 비네트·"멸종" 글자 등)을 걷어낸 뒤 결과 화면 → 월드를 정상 밝기로 보여주고,
       // 결과 패널 제목의 "멸종"과 순간 연출 글자가 겹쳐 두 번 보이던 문제를 없앤다.
       moment.clear();
-      result.show(res === "win", summary, canContinue);
+      // 불씨 소진 패배는 제목·큰 글자를 "불씨 꺼짐"으로 나눈다. 개체가 살아 있는데 "멸종"은 거짓이다.
+      result.show(res === "win", summary, canContinue, game.lostByEmbers ? "불씨 꺼짐" : undefined);
     };
     moment.play(kind, () => {
       // 런이 진짜 끝났으면(progress 있음) 진척도 화면을 먼저, 그 뒤 결과 화면. 중간 시대 승리(이어감)면 바로 결과.
@@ -349,7 +379,7 @@ async function boot(): Promise<void> {
       // "정점 등극" 같은 과제는 거기서 열리므로 과제만 있어도 화면을 띄운다.
       if (progress || achievements.length > 0) levelScreen.play(progress, achievements, showResult);
       else showResult();
-    });
+    }, game.lostByEmbers ? "불씨 꺼짐" : undefined);
   };
   // 카메라 상태 — onWorldChanged 가 game.start()에서 곧장 호출돼 camX/camY 를 스냅하므로, 그 콜백보다
   // 반드시 먼저 선언한다. (전엔 아래쪽에 뒀다가 TDZ ReferenceError 로 부팅이 통째로 죽었다 — known_issues.)
@@ -374,6 +404,8 @@ async function boot(): Promise<void> {
   // 이동 경로 캐시 — (알파 타일, 목표 타일)이 같은 동안 BFS 를 다시 돌리지 않는다(매 프레임 호출이라).
   let movePath: { key: string; tiles: number[]; idx: number } | null = null;
   let tapHintShown = false; // "탭 = 명령" 안내(런당 1회) 표시 여부
+  let emberHintShown = false; // "불씨 = 남은 기회" 첫 안내(런당 1회) 표시 여부
+  let emberHintMs = 0; // 관전 진입 후 그 안내까지의 대기 시간(탭 안내 플래시를 덮지 않게 늦춘다)
 
   game.onWorldChanged = (world) => {
     view.drawEnvironment(world);
@@ -1019,8 +1051,16 @@ async function boot(): Promise<void> {
         goalText = `큰 시험: ${extName}`;
         goalSub = "환경이 통째로 바뀌었습니다. 시간이 다 될 때까지 버티세요.";
       } else {
-        goalText = "무리를 먹여 키우세요";
-        goalSub = `다음 진화 카드까지 ${Math.round(game.xpProgress * 100)}%`;
+        // 라운드 시험: "이번 관전 16초가 답해야 할 질문"을 목표 줄로. 진행 숫자는 sim 계수기 그대로.
+        // 불씨 점은 sub 맨 앞에 둔다(.goal-sub 가 nowrap+ellipsis 라 끝에 두면 폰에서 잘린다).
+        const t = game.trial;
+        if (t) {
+          goalText = `이번 시험: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`;
+          goalSub = `불씨 ${emberDots(game.embers)} · 다음 카드까지 ${Math.round(game.xpProgress * 100)}%`;
+        } else {
+          goalText = "무리를 먹여 키우세요";
+          goalSub = `다음 진화 카드까지 ${Math.round(game.xpProgress * 100)}%`;
+        }
       }
       goalBar.update({
         visible: game.phase === "watch",
@@ -1035,6 +1075,15 @@ async function boot(): Promise<void> {
         seconds: game.secondsLeft,
         night: gw.daylight < 0.5,
       });
+    }
+    // 불씨 첫 안내(런당 1회): "불씨"라는 말은 처음 나올 때 한 번 풀이한다(UI 문구 규칙).
+    if (game.phase === "watch" && game.trial && !emberHintShown) {
+      emberHintMs += ticker.deltaMS;
+      if (emberHintMs >= 3500) { // 탭 안내 플래시(2200ms)와 겹쳐 덮어쓰지 않게 뒤로 미룬다
+        emberHintShown = true;
+        // priority: "불씨"의 유일한 첫 풀이라 레벨업·위협 플래시가 끼어들어도 끝까지 읽혀야 한다.
+        highlights.flash("불씨는 이 혈통의 남은 기회입니다. 시험에 지면 하나 꺼집니다.", 0xf0f8ff, true);
+      }
     }
     // 내 형질 패널은 관전 중 + 칩이 켜져 있을 때만 — 드래프트는 전체 화면이라 그 아래 깔린 UI 가
     // 뿌연 유리로 비쳐 보인다. 드래프트 중 내 종 정보는 헤더의 "내 종" 팝업이 대신한다(핸드오프 §9).
@@ -1226,6 +1275,12 @@ async function boot(): Promise<void> {
     prevThreat = threatKey;
   }
 
+}
+
+/** 불씨 점 5칸: 남은 만큼 ●, 꺼진 만큼 ○. */
+function emberDots(n: number): string {
+  const k = Math.max(0, Math.min(GAME.emberMax, n));
+  return "●".repeat(k) + "○".repeat(GAME.emberMax - k);
 }
 
 boot().catch((err: unknown) => {

@@ -90,6 +90,8 @@ export interface DraftContext {
   population: number;
   pickedCardNames: readonly string[];
   canReroll: boolean;
+  forecast: string; // 예고 줄("이번 시험: ..."). 빈 문자열이면 숨김
+  notice: string; // 안내 줄(진행 중인 위협 · 시대 보상 설명). 빈 문자열이면 숨김
 }
 
 export interface DraftPanelCallbacks {
@@ -128,6 +130,14 @@ export function createDraftPanel(
   mineBtn.append(mineThumb, mineLabel, keyChip("M"));
   mineBtn.title = "내 종 정보 열기/닫기 (M)";
   hd.append(levelText, title, mineBtn);
+  // 예고 줄: 진행 중 라운드의 시험(레벨업) 또는 곧 시작할 단계의 시험 예상(시대 보상).
+  // .draft-hd 는 가운데 정렬 블록이라 그냥 아래 줄로 붙고, 헤더가 한 줄 늘면 fitHero 가 히어로를 줄인다.
+  const forecastEl = el("div", "draft-forecast");
+  hd.appendChild(forecastEl);
+  // 안내 줄: 지금 도는 위협("다가오는 위협. …")이나 시대 보상 설명. 카드를 고르는 동안 화면이 통째로
+  // 덮이므로, 무엇과 싸우는 중인지·왜 이 카드가 센지를 여기서 알려 준다.
+  const noticeEl = el("div", "draft-notice");
+  hd.appendChild(noticeEl);
   shell.appendChild(hd);
 
   // ── 히어로 미리보기 (맨 마지막 등장 — 스포일러 방지) ──
@@ -602,6 +612,10 @@ export function createDraftPanel(
     cardEls.length = 0;
 
     levelText.textContent = `레벨 ${nextCtx.level} 달성`;
+    forecastEl.textContent = nextCtx.forecast;
+    forecastEl.style.display = nextCtx.forecast ? "" : "none";
+    noticeEl.textContent = nextCtx.notice;
+    noticeEl.style.display = nextCtx.notice ? "" : "none";
     mineThumb.style.backgroundImage = `url("${currentSpriteUrl(renderer, nextCtx)}")`;
     rerollBtn.style.display = nextCtx.canReroll ? "inline-flex" : "none";
 

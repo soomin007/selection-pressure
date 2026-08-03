@@ -29,6 +29,13 @@ export function emptyDeathTally(): DeathTally {
   return { starve: 0, cold: 0, heat: 0, age: 0, boss: 0, predation: 0, plague: 0, venom: 0, wound: 0 };
 }
 
+/** 라운드(단계) 계수기 · 내 종의 사건만 센다. game 이 시험 판정에 읽는다(§round_verdict_spec B). */
+export interface RoundCounts {
+  hunts: number; // 내 종이 잡아먹은 수(알파든 무리든, 잡아먹힌 쪽은 아님)
+  feeds: number; // 내 종의 채집 섭취 확정 수(산 보물 제외)
+  births: number; // 내 종 새끼 탄생 수(일반 번식 + 산 보물 대박. 드래프트 스킵 brood 는 제외)
+}
+
 /** 형질(0~100) 클램프 + 반올림. */
 const clampTrait = (v: number): number => {
   const n = Math.round(v);
@@ -128,6 +135,9 @@ export class World {
   tick = 0;
   /** 내 종이 먹은 먹이 누적 수 — 레벨업 경험치의 소스. rng 미사용 → 결정론·밸런스 무관(game 이 delta 로 XP). */
   playerFoodEaten = 0;
+  /** 이번 단계(라운드)의 내 종 사건 계수 · 시험 판정용. game 이 beginStage 마다 resetRoundCounts 로
+   * 비운다. 정수 증가만 한다(rng 미사용 → 결정론·밸런스 무관). */
+  readonly roundCounts: RoundCounts = { hunts: 0, feeds: 0, births: 0 };
 
   // Phase 5 단계 상태 (Game 이 설정/해제). 기본값은 평상시(영향 없음).
   boss: Boss | null = null;
@@ -506,6 +516,13 @@ export class World {
       this.entities.push(createEntity(this.nextId(), spot.x, spot.y, this.playerSpecies, SIM.startEnergy));
       this.emit("birth", spot.x, spot.y, true); // 연출: 탄생 반짝임(내 종 시작 무리)
     }
+  }
+
+  /** 라운드 계수기를 0 으로 되돌린다 · game.beginStage() 가 단계마다 호출한다. */
+  resetRoundCounts(): void {
+    this.roundCounts.hunts = 0;
+    this.roundCounts.feeds = 0;
+    this.roundCounts.births = 0;
   }
 
   /** 죽음 1건 집계. 정산은 "왜 내 종이 죽었나"가 핵심이라 내 종만 센다. (rng 미사용 → 결정론 유지) */

@@ -320,6 +320,7 @@ function devour(e: Entity, prey: Entity, world: World): void {
   prey.alive = false;
   world.recordDeath(prey.species, "predation");
   world.emit("kill", prey.x, prey.y, e.species.isPlayer || prey.species.isPlayer); // 연출: 잡아먹힘(빨강 터짐)
+  if (e.species.isPlayer) world.roundCounts.hunts += 1; // 시험 계수: 내 종의 사냥 성공(잡은 쪽만, 잡아먹힌 쪽 아님)
   if (preyVenom > 0) e.poison += SIM.venomOnHit * (preyVenom / TRAIT_MAX);
   const diet = e.genome.traits.diet;
   // 사냥 수입 = 기본 × 방어독 감쇠 × 식성 효율(육식 특화일수록 온전히, 잡식은 페널티) × 큰 사냥(순수 육식은
@@ -757,6 +758,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
           const spot = world.terrain.nearestPassable(bx, by, canSwim, canLand, canFly);
           newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, SIM.startEnergy));
           world.emit("birth", spot.x, spot.y, e.species.isPlayer); // 연출: 대박 탄생(초록 반짝 여럿)
+          if (e.species.isPlayer) world.roundCounts.births += 1; // 시험 계수: 산 보물 대박 탄생도 새끼로 센다
         }
         food.regrowTimer = Math.round(
           SIM.foodRegrowTicks * world.foodRegrowMultiplier * SIM.mountainTreasureRegrow,
@@ -766,6 +768,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy * grazeEfficiency(t.diet));
         // 시대가 지날수록(foodScarcity) 먹힌 풀이 더 느리게 자란다 — 큰 무리일수록 고갈이 빨라 회복이 억제된다.
         food.regrowTimer = Math.round(SIM.foodRegrowTicks * world.foodRegrowMultiplier * world.foodScarcity);
+        if (e.species.isPlayer) world.roundCounts.feeds += 1; // 시험 계수: 채집 섭취 확정(산 보물은 births 로 센다)
       }
       food.available = false;
       e.targetFood = null;
@@ -846,6 +849,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       : undefined;
     newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, childEnergy, childGenome));
     world.emit("birth", spot.x, spot.y, e.species.isPlayer); // 연출: 탄생(초록 반짝)
+    if (e.species.isPlayer) world.roundCounts.births += 1; // 시험 계수: 내 종 새끼 탄생
   }
 }
 

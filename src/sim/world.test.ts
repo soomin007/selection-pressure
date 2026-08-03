@@ -1297,3 +1297,73 @@ describe("무리 방어 (herding 이 초식의 생존 레버 — 뭉친 무리�
     expect(eatenWith(SHIELD_THR + 7)).toBeLessThan(eatenWith(SHIELD_THR - 25));
   });
 });
+
+describe("라운드 계수기 (roundCounts · 시험 판정의 눈금)", () => {
+  // sim 은 세기만 하고 판정은 game 이 한다. 여기서는 "내 종의 사건만, 빠짐없이, 다시 0 으로"를 본다.
+  it("resetRoundCounts 는 세 계수를 전부 0 으로 되돌린다", () => {
+    const w = new World("rc-reset", W, H, defaultGenome());
+    w.roundCounts.hunts = 3;
+    w.roundCounts.feeds = 11;
+    w.roundCounts.births = 2;
+    w.resetRoundCounts();
+    expect(w.roundCounts).toEqual({ hunts: 0, feeds: 0, births: 0 });
+  });
+
+  it("같은 시드면 계수도 똑같다(정수 증가라 rng 를 안 건드린다)", () => {
+    const a = new World("env-1", W, H, defaultGenome());
+    const b = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 600; i++) {
+      a.step();
+      b.step();
+    }
+    expect(a.roundCounts).toEqual(b.roundCounts);
+  });
+
+  it("채집·번식이 실제로 세어진다(feeds 는 먹이 누적 수를 넘지 않는다)", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 1500; i++) w.step();
+    expect(w.roundCounts.feeds).toBeGreaterThan(0);
+    expect(w.roundCounts.births).toBeGreaterThan(0);
+    // 산 보물은 playerFoodEaten 만 크게 올리고 feeds 엔 안 잡히므로 이 부등식은 늘 성립한다.
+    expect(w.roundCounts.feeds).toBeLessThanOrEqual(w.playerFoodEaten);
+  });
+
+  it("야생의 사건은 안 센다 · 내 종을 치우면 계수가 멈춘다", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 900; i++) w.step();
+    const before = { ...w.roundCounts };
+    expect(before.feeds).toBeGreaterThan(0); // 멈추기 전에는 실제로 세고 있었다
+    w.entities = w.entities.filter((e) => !e.species.isPlayer); // 내 종만 사라진 세계(야생은 계속 먹고 낳는다)
+    for (let i = 0; i < 600; i++) w.step();
+    expect(w.roundCounts).toEqual(before);
+  });
+
+  it("드래프트 스킵 보상 새끼는 births 에 안 잡힌다(스킵이 곧 합격이 되면 안 된다)", () => {
+    const w = new World("rc-brood", W, H, defaultGenome());
+    const before = w.entities.filter((e) => e.species.isPlayer).length;
+    w.spawnPlayerBrood(5);
+    expect(w.entities.filter((e) => e.species.isPlayer).length).toBe(before + 5); // 개체는 늘었지만
+    expect(w.roundCounts.births).toBe(0); // 시험 계수는 그대로
+  });
+
+  it("사냥은 잡은 쪽만 센다 · 육식 종은 hunts 가 오르고, 잡아먹히기만 하는 초식은 0 이다", () => {
+    // 개체 시뮬은 단일 시드 조우가 노이즈라 여러 시드를 합산해 방향만 본다(known_issues).
+    let carnivoreHunts = 0;
+    for (const seed of ["rc-h1", "rc-h2", "rc-h3"]) {
+      const w = new World(seed, W, H, tune({ diet: 100, attack: 70, speed: 65, vision: 70 }));
+      for (let i = 0; i < 1500; i++) w.step();
+      carnivoreHunts += w.roundCounts.hunts;
+    }
+    expect(carnivoreHunts).toBeGreaterThan(0);
+
+    // 순수 초식(사냥 못 하는 식성)은 잡아먹히기만 한다 · 그건 내 종의 사냥이 아니다.
+    let eaten = 0;
+    for (const seed of ["rc-h1", "rc-h2", "rc-h3"]) {
+      const w = new World(seed, W, H, tune({ diet: 10, attack: 20 }));
+      for (let i = 0; i < 1500; i++) w.step();
+      expect(w.roundCounts.hunts).toBe(0);
+      eaten += w.deaths.predation;
+    }
+    expect(eaten).toBeGreaterThan(0); // 실제로 잡아먹히는 세계였는데도 hunts 는 0
+  });
+});

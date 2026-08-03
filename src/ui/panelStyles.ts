@@ -226,6 +226,12 @@ export function ensurePanelStyles(): void {
   .draft-mine-thumb { width: 22px; height: 20px; border-radius: 8px; flex: none;
     background-color: #141B28; background-position: center; background-size: 125%; background-repeat: no-repeat; }
   .draft-mine-label { font-size: 11px; }
+  .draft-forecast { margin-top: 7px; font-family: var(--font-body); font-size: 12.5px;
+    color: var(--amber); text-shadow: 0 2px 8px rgba(0,0,0,0.6); }
+  /* 안내 줄은 예고보다 한 단계 낮은 목소리로(흐린 본문색). 시선은 시험 예고가 먼저 받는다.
+     keep-all: 한글이 낱말 중간에서 끊기지 않게(기본값은 "넓어/야"처럼 아무 데서나 자른다). */
+  .draft-notice { margin-top: 4px; font-family: var(--font-body); font-size: 11.5px; line-height: 1.45;
+    color: var(--sub); text-shadow: 0 2px 8px rgba(0,0,0,0.6); word-break: keep-all; }
 
   /* §5 히어로 미리보기 */
   .draft-hero { grid-area: hero; position: relative; min-height: 0;

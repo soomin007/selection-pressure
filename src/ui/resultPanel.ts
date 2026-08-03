@@ -18,7 +18,8 @@ const DEATH_COLOR: Record<string, string> = {
 
 export interface ResultPanel {
   // 해금 하이라이트는 직전 진척도 화면(levelUpScreen)이 담당 — 여기선 결과 요약 + 다음 행동만.
-  show: (win: boolean, summary: string, canContinue: boolean) => void;
+  // loseTitle: 패배 제목 치환("불씨 꺼짐" 등). 개체가 살아 있는데 "멸종" 제목은 거짓이라 사유별로 나눈다.
+  show: (win: boolean, summary: string, canContinue: boolean, loseTitle?: string) => void;
   hide: () => void;
 }
 
@@ -91,9 +92,9 @@ export function createResultPanel(
   root.appendChild(newRunBtn);
   document.body.appendChild(root);
 
-  const show = (win: boolean, text: string, canContinue: boolean): void => {
+  const show = (win: boolean, text: string, canContinue: boolean, loseTitle?: string): void => {
     cosmetics.refresh(); // 그동안 딴 꾸밈이 바로 보이게(하나도 없으면 스스로 숨는다)
-    heading.textContent = win ? "승리" : "멸종";
+    heading.textContent = win ? "승리" : (loseTitle ?? "멸종");
     heading.style.color = win ? "var(--lime)" : "var(--red)";
     // 본문은 빈 줄(\n\n)로 나뉜 문단들. 사망 원인 문단은 막대로, 나머지는 텍스트로 그린다.
     summary.replaceChildren();

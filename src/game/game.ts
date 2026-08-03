@@ -13,6 +13,7 @@ import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@
 import { GAME, SCHEDULE, eraDifficulty, eraScarcity, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
+import { grazeEfficiency } from "@/sim/behavior";
 import type { LeadCommand } from "@/sim/lead";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, bossEligible, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { pickMapType, mapKind, type MapKind, type MapType } from "@/sim/mapType";
@@ -32,6 +33,24 @@ export interface RunTimeline {
   markers: TimelineMarker[];
 }
 export type ExtinctionType = "cold" | "famine" | "heat" | "plague";
+
+/** 라운드 시험의 종류. */
+export type TrialKind = "hunt" | "feed" | "birth" | "pop";
+
+/** 이번 채집 단계의 시험 · UI 는 label 로 문구를 조립한다(숫자 포함, 표시=실물). */
+export interface Trial {
+  kind: TrialKind;
+  target: number; // 합격선
+  label: string; // "사냥 2회"·"먹이 12회"·"새끼 2마리"·"무리 9마리"
+}
+
+/** 라운드 시험 판정 결과 · main 이 플래시로 띄운다. */
+export interface TrialVerdict {
+  passed: boolean;
+  trial: Trial;
+  progress: number; // 판정 시점 달성치
+  embersLeft: number; // 판정 반영 후 남은 불씨
+}
 
 const EXTINCTION_TYPES: readonly ExtinctionType[] = ["cold", "famine", "heat", "plague"];
 
@@ -108,6 +127,61 @@ export class Game {
   preview = "";
   /** 관전 중 상단에 표시할 현재 단계 라벨. */
   stageLabel = "";
+
+  /** 지금 진행 중인 위협의 예고 문구(채집 라운드면 빈 문자열). `preview` 는 레벨업 안내로 덮이므로
+   * 위협 문구는 따로 보관한다 · 드래프트가 화면을 덮어도 "무엇과 싸우는 중인지"가 읽혀야 한다. */
+  private threatText = "";
+
+  /** 혈통의 불씨 · 남은 기회. 시험 불합격 -1, 보스 격퇴 +1, 시대 진입 +1(상한 emberMax), 0 = 패배.
+   * 바깥에서는 읽기만 할 것(증감은 finishStage·continueToNextEra·setupRun 만). */
+  embers: number = GAME.emberStart;
+
+  private currentTrial: Trial | null = null;
+  /** 시대 보상 드래프트가 예고한 시험 · beginStage 가 그대로 채택한다. 예고 시점과 시작 시점의 게놈·
+   * 개체 수가 달라도(카드 ×2 강화·스킵 새끼) 예고한 시험이 그대로 걸린다(예고=실물). */
+  private pendingTrial: Trial | null = null;
+  /** 이 런에서 드래프트 스킵 보상으로 낳은 새끼 누계(정수 계수 · rng 불변). */
+  private skipBroodTotal = 0;
+  /** 지금 시험을 만들 때의 스킵 보상 누계 스냅샷 · pop 진행도는 그 뒤 스킵 새끼를 뺀 값이다
+   * ("스킵이 곧 합격"이 되면 시험이 카드 선택을 뒤틀어 버린다 · §round_verdict_spec B). */
+  private trialSkipBroodBase = 0;
+  private loseReason: "embers" | null = null;
+
+  /** 지금 단계의 시험. 채집(forage) 관전·그 중간 드래프트에서만 non-null. */
+  get trial(): Trial | null {
+    return this.currentTrial;
+  }
+
+  /** 시험 달성치 · goalBar 가 매 프레임 읽는다. 시험이 없으면 0. */
+  get trialProgress(): number {
+    const t = this.currentTrial;
+    if (!t) return 0;
+    if (t.kind === "hunt") return this.world.roundCounts.hunts;
+    if (t.kind === "feed") return this.world.roundCounts.feeds;
+    if (t.kind === "birth") return this.world.roundCounts.births;
+    // pop: 시험이 걸린 뒤 스킵 보상으로 낳은 새끼는 뺀다. goalBar 표시와 판정이 같은 식을 쓴다(표시=실물).
+    return Math.max(0, this.world.playerPopulation - (this.skipBroodTotal - this.trialSkipBroodBase));
+  }
+
+  /** 단계 시작 직전 드래프트(시대 보상)에서, 곧 시작할 채집 단계의 시험. 그 외엔 null.
+   * 드래프트를 열 때 얼려 둔 시험(pendingTrial)을 그대로 보여준다 · beginStage 도 같은 것을 쓴다.
+   * (그때그때 pickTrial 로 다시 계산하면, 고른 카드가 후보 수를 3↔4 로 바꿔 예고가 거짓말이 된다.) */
+  get upcomingTrial(): Trial | null {
+    if (this.phase !== "draft" || !this.eraReward) return null;
+    return this.pendingTrial;
+  }
+
+  /** 이번 패배가 불씨 소진인가 · 결과 화면 제목·연출 분기용(개체 0 멸종과 구분). */
+  get lostByEmbers(): boolean {
+    return this.loseReason === "embers";
+  }
+
+  /** 카드를 고르는 동안에도 보여야 할 안내 한 줄. 시대 보상이면 왜 이 카드가 센지, 위협이 도는
+   * 중이면 무엇과 싸우는 중인지. 채집 라운드 중 평범한 레벨업이면 빈 문자열(헤더와 중복 제거). */
+  get draftNotice(): string {
+    if (this.phase !== "draft") return "";
+    return this.eraReward ? this.preview : this.threatText;
+  }
 
   private stageIndex = 0;
   private stageTicksLeft = 0;
@@ -190,6 +264,8 @@ export class Game {
 
   // main 이 설정하는 훅
   onDraft: ((cards: Card[], preview: string) => void) | null = null;
+  /** 라운드 시험 판정 알림(합·불 모두) · main 이 플래시로 배선한다. */
+  onTrialVerdict: ((v: TrialVerdict) => void) | null = null;
   // canContinue = 승리라서 "다음 시대로" 이어갈 수 있는가(패배는 false). progress = 런이 진짜 끝났을 때(멸종·정복)의
   // 메타 진척도(경험치·레벨업·레벨별 해금) — 종료 화면 애니메이션용. 이어가는 중간 시대 승리면 null.
   onResult:
@@ -334,6 +410,7 @@ export class Game {
   skipDraft(): void {
     if (this.phase !== "draft" || this.firstChoice) return;
     this.world.spawnPlayerBrood(SIM.draftSkipBrood);
+    this.skipBroodTotal += SIM.draftSkipBrood; // pop 시험 진행도에서 빼는 계수(스킵이 곧 합격이 되지 않게)
     this.pickedCardNames.push("건너뜀");
     this.logEvent("card", `레벨 ${this.level} · 건너뜀(새끼)`);
     if (this.eraReward) {
@@ -517,11 +594,13 @@ export class Game {
       this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff, true); // 레이드 첫 시대부터
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협. ${bossPreview(bt)}`;
+      this.threatText = `지금 위협 「${bossName(bt)}」 · ${bossCounter(bt)}`;
     } else {
       const et = kind as ExtinctionType;
       applyExtinction(this.world, et, diff);
       this.stageLabel = `대멸종 · ${extinctionName(et)}`;
       this.preview = `대멸종. ${extinctionPreview(et)}`;
+      this.threatText = `지금 위협 「${extinctionName(et)}」 · ${extinctionCounter(et)}`;
     }
     this.stageTicksLeft = 99999; // 관찰용 — 타이머 만료로 통과 판정이 나지 않게
   }
@@ -660,6 +739,13 @@ export class Game {
     this.runSteps = 0;
     this.stageIndex = 0;
     this.result = null;
+    this.embers = GAME.emberStart; // 새 혈통 = 불씨 가득
+    this.loseReason = null;
+    this.threatText = "";
+    this.currentTrial = null;
+    this.pendingTrial = null;
+    this.skipBroodTotal = 0;
+    this.trialSkipBroodBase = 0;
     this.firstChoice = true;
     this.lineage = null; // 새 혈통 — 갈래는 시작 프리셋을 고를 때 다시 정해진다
     this.level = 1;
@@ -756,12 +842,35 @@ export class Game {
     return bt;
   }
 
+  /** 이번 채집 단계의 시험을 시드 파생 해시로 뽑는다. 어떤 기존 rng 스트림도 소비하지 않는 순수
+   * 계산(새 Rng 인스턴스)이라 같은 시드·같은 단계·같은 게놈이면 항상 같은 시험이다. currentSeed 에는
+   * 시대 접미사가 이미 붙어 있어(era 1+ 는 `-eraN`) 시대가 다르면 해시도 다르다. 후보는 지금 게놈으로
+   * 할 수 있는 것만 담는다(못 하는 시험을 내면 안 된다 · §round_verdict_spec A). */
+  private pickTrial(): Trial {
+    const t = this.genome.traits;
+    const candidates: Trial[] = [];
+    if (t.diet > SIM.dietHuntMin)
+      candidates.push({ kind: "hunt", target: GAME.trialHuntN, label: `사냥 ${GAME.trialHuntN}회` });
+    if (grazeEfficiency(t.diet) > SIM.grazeMinEff)
+      candidates.push({ kind: "feed", target: GAME.trialFeedN, label: `먹이 ${GAME.trialFeedN}회` });
+    candidates.push({ kind: "birth", target: GAME.trialBirthN, label: `새끼 ${GAME.trialBirthN}마리` });
+    // 「무리」는 붕괴를 잡는 시험이라 목표가 **지금 무리보다 클 수 없다.** 하한(8)만 걸면 2마리로 들어온
+    // 라운드에서 목표가 8 이 되어 "지키기"가 "4배로 불리기"로 뒤집힌다(못 하는 시험을 내면 안 된다).
+    const pop = this.world.playerPopulation;
+    const popTarget = Math.min(pop, Math.max(GAME.trialPopFloor, pop - GAME.trialPopSlack));
+    candidates.push({ kind: "pop", target: popTarget, label: `무리 ${popTarget}마리` });
+    const idx = new Rng(`${this.currentSeed}-trial-s${this.stageIndex}`).int(0, candidates.length - 1);
+    return candidates[idx] as Trial;
+  }
+
   /**
    * 단계 시작 — 위협(보스/대멸종)을 직접 정한다. 하이브리드: 단계 전환에는 드래프트가 붙지 않고(형질은
    * 레벨업으로만), 위협만 흐른다. 예고(preview)는 stageLabel 과 함께 main 이 하이라이트로 띄운다.
    */
   private beginStage(): void {
     this.stageXp = 0; // 조종 모드 경험치 상한은 단계마다 새로 찬다(leadEnabled=false 면 안 읽힌다)
+    this.world.resetRoundCounts(); // 새 단계 = 시험 계수 리셋(레벨업 드래프트 복귀는 이 함수를 안 거친다)
+    this.currentTrial = null;
     this.phase = "watch";
     this.acc = 0;
     const kind = this.currentKind();
@@ -774,6 +883,9 @@ export class Game {
       // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협. ${bossPreview(bt)}`;
+      // 드래프트가 화면을 덮어도 무엇과 싸우는 중인지 보이게, 대응 힌트만 짧게 붙들어 둔다.
+      // 전문(preview)은 배너가 이미 띄웠고, 카드 고르는 자리에서 필요한 건 "무엇을 키워야 하나"다.
+      this.threatText = `지금 위협 「${bossName(bt)}」 · ${bossCounter(bt)}`;
       this.stageTicksLeft = GAME.bossSeconds * SIM.stepsPerSecond;
     } else if (kind === "extinction") {
       // 예고와 실제가 일치하도록 미리 정해 둔 큐에서 꺼낸다(peek 로 예고한 종류 == 여기서 shift 되는 종류).
@@ -781,11 +893,22 @@ export class Game {
       applyExtinction(this.world, et, diff);
       this.stageLabel = `대멸종 · ${extinctionName(et)}`;
       this.preview = `대멸종. ${extinctionPreview(et)}`;
+      this.threatText = `지금 위협 「${extinctionName(et)}」 · ${extinctionCounter(et)}`;
       this.stageTicksLeft = GAME.extinctionSeconds * SIM.stepsPerSecond;
     } else {
       this.stageLabel = "채집";
       this.preview = "";
+      this.threatText = ""; // 채집 라운드에는 도는 위협이 없다
       this.stageTicksLeft = GAME.roundSeconds * SIM.stepsPerSecond;
+      // 시대 보상 드래프트가 예고한 시험이 있으면 그대로 쓴다(예고=실물). pop 기준점은 시험을
+      // 만든 순간의 것을 유지한다(드래프트에서 스킵으로 낳은 새끼도 pop 점수에서 빠지게).
+      if (this.pendingTrial) {
+        this.currentTrial = this.pendingTrial;
+        this.pendingTrial = null;
+      } else {
+        this.currentTrial = this.pickTrial();
+        this.trialSkipBroodBase = this.skipBroodTotal; // 이 시험의 pop 기준점(이후 스킵 새끼는 제외)
+      }
     }
   }
 
@@ -810,9 +933,25 @@ export class Game {
       return;
     }
 
+    // 라운드 시험 판정(채집 단계만) · 불합격은 런을 끊지 않고 불씨 하나를 대가로 치른다. 불씨 0 = 패배.
+    const trial = kind === "forage" ? this.currentTrial : null;
+    if (trial) {
+      const prog = this.trialProgress;
+      const trialPassed = prog >= trial.target;
+      if (!trialPassed) this.embers -= 1;
+      this.onTrialVerdict?.({ passed: trialPassed, trial, progress: prog, embersLeft: this.embers });
+      if (this.embers <= 0) {
+        this.loseReason = "embers";
+        this.endRun("lose");
+        return;
+      }
+    }
+
     // 보고서: 위협을 넘긴 순간(연대기). stageLabel 은 "보스 · 약탈자" · "대멸종 · 혹독한 추위" 형태.
-    if (kind === "boss") this.logEvent("boss", bossDefeated ? `${this.stageLabel} 처치` : `${this.stageLabel} 버팀`);
-    else if (kind === "extinction") this.logEvent("extinction", `${this.stageLabel} 견딤`);
+    if (kind === "boss") {
+      if (bossDefeated) this.embers = Math.min(GAME.emberMax, this.embers + 1); // 격퇴 보상: 불씨 하나 회복
+      this.logEvent("boss", bossDefeated ? `${this.stageLabel} 처치` : `${this.stageLabel} 버팀`);
+    } else if (kind === "extinction") this.logEvent("extinction", `${this.stageLabel} 견딤`);
 
     this.stageIndex += 1;
     if (this.stageIndex >= SCHEDULE.length) {
@@ -841,7 +980,16 @@ export class Game {
     this.result = result;
     // 보고서: 종료 시점 최종 샘플(멸종이면 개체 수가 0으로 떨어지는 게 그래프에 남는다) + 끝 사건.
     this.sampleRun();
-    this.logEvent("end", result === "win" ? (this.isFinalEra ? "정복" : "정점 등극") : "멸종");
+    this.logEvent(
+      "end",
+      result === "win"
+        ? this.isFinalEra
+          ? "정복"
+          : "정점 등극"
+        : this.loseReason === "embers"
+          ? "불씨 꺼짐"
+          : "멸종",
+    );
     // 런이 진짜 끝났을 때만(멸종 또는 정복) 메타 경험치 적립 + 해금. 중간 시대 승리는 "다음 시대로"
     // 이어지므로 적립하지 않는다(그때는 endRun 이 canContinue=true 로 뜨지만 런은 계속된다 → progress=null).
     const conquered = result === "win" && this.isFinalEra;
@@ -916,6 +1064,8 @@ export class Game {
   continueToNextEra(): void {
     if (this.result !== "win") return; // 승리 직후에만 유효
     this.era += 1;
+    this.embers = Math.min(GAME.emberMax, this.embers + 1); // 시대를 넘긴 보상: 불씨 하나 회복
+    this.currentTrial = null;
     this.logEvent("era", `시대 ${this.era + 1} 진입`);
     this.paused = false;
     this.result = null;
@@ -950,6 +1100,14 @@ export class Game {
   private beginEraRewardDraft(): void {
     this.phase = "draft";
     this.eraReward = true;
+    // 곧 시작할 단계가 채집이면 시험을 **지금** 뽑아 얼려 둔다 · upcomingTrial 예고와 beginStage 실물이
+    // 같은 객체다. pickTrial 은 전용 해시 Rng 라 어떤 기존 스트림도 소비하지 않는다(결정론 불변).
+    if ((SCHEDULE[this.stageIndex] ?? "forage") === "forage") {
+      this.pendingTrial = this.pickTrial();
+      this.trialSkipBroodBase = this.skipBroodTotal; // pop 기준점: 이 순간의 개체 수(스킵 새끼 이전)
+    } else {
+      this.pendingTrial = null;
+    }
     const rng = new Rng(`${this.currentSeed}-erareward`);
     const drawn = drawCards(
       rng,
@@ -1033,6 +1191,8 @@ export class Game {
       if (this.era > 0) return `${this.era + 1}번째 시대의 대멸종까지 견뎌내고 정점을 지켰습니다.`;
       return "대멸종을 견뎌내고 정점에 올랐습니다. 더 험한 다음 시대로 나아갈 수 있습니다.";
     }
+    if (this.loseReason === "embers")
+      return "혈통의 불씨가 꺼졌습니다. 시험에 거듭 져 남은 기회를 모두 잃었습니다.";
     const kind = this.currentKind();
     if (kind === "boss") return `${this.stageLabel} 관문을 넘지 못했습니다.`;
     if (kind === "extinction") return "대멸종을 견디지 못했습니다.";

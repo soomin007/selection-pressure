@@ -1,8 +1,8 @@
 // 대멸종 종류 예고 검증 — 미리 정해 둔 큐(extinctionQueue)에서 예고와 실제가 같은 값을 봐야 한다.
 // Game 은 순수 TS(Pixi 무관)라 headless 로 런을 끝까지 돌려 관찰할 수 있다.
 import { describe, it, expect } from "vitest";
-import { Game, type RunHistory } from "@/game/game";
-import { eraDifficulty, eraScarcity } from "@/game/config";
+import { Game, type RunHistory, type Trial, type TrialVerdict } from "@/game/game";
+import { GAME, eraDifficulty, eraScarcity } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { CARD_POOL, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
 import { Rng } from "@/sim/rng";
@@ -411,6 +411,183 @@ describe("날개 강화 카드의 전제 조건(드래프트 후보 필터)", ()
     }
     expect(strong).toBeGreaterThan(0);
     expect(gateway).toBe(0); // 이미 나는 종에게 관문 카드는 무의미(cardRedundant)
+  });
+});
+
+describe("라운드 시험과 혈통의 불씨", () => {
+  /** private 멤버 접근용 캐스팅(기존 extinctionQueue 패턴). finishStage 로 단계를 즉시 끝낸다. */
+  type GamePriv = {
+    stageIndex: number;
+    currentTrial: Trial | null;
+    finishStage(a: boolean, b?: boolean): void;
+    beginStage(): void;
+    pickTrial(): Trial;
+  };
+
+  /** 첫 채집 단계의 시험이 pop(무리)이 아닌 시드를 찾는다 · 계수기 조작만으로 합·불을 강제할 수 있는 시험. */
+  function startWithCountTrial(prefix: string): Game {
+    for (let s = 0; s < 40; s++) {
+      const g = startRun(`${prefix}-${s}`);
+      if (g.trial && g.trial.kind !== "pop") return g;
+    }
+    throw new Error("계수형 시험(hunt·feed·birth)이 걸리는 시드를 찾지 못했습니다");
+  }
+
+  it("같은 시드면 같은 시험이 나온다(시드 파생 해시 · 기존 rng 스트림 미소비)", () => {
+    const a = startRun("trial-same").trial;
+    const b = startRun("trial-same").trial;
+    expect(a).not.toBeNull(); // 채집 단계에는 시험이 항상 있다
+    expect(a).toEqual(b);
+    // 다른 시드에서는 시험이 갈린다 · 여러 시드를 모으면 적어도 두 종류 이상 나와야 한다.
+    const labels = new Set<string>();
+    for (let s = 0; s < 16; s++) {
+      const t = startRun(`trial-vary-${s}`).trial;
+      if (t) labels.add(t.label);
+    }
+    expect(labels.size).toBeGreaterThan(1);
+  });
+
+  it("순수 초식(diet 0)에게 사냥 시험이, 완전 육식(diet 100)에게 먹이 시험이 안 나온다(후보 필터)", () => {
+    for (let s = 0; s < 20; s++) {
+      const g = startRun(`filter-${s}`);
+      const priv = g as unknown as GamePriv;
+      for (let k = 0; k < 3; k++) {
+        priv.stageIndex = k; // pickTrial 은 순수 계산이라 단계만 바꿔 여러 번 물어도 안전
+        g.genome.traits.diet = 0; // 순수 초식 → 사냥 못 함
+        expect(priv.pickTrial().kind).not.toBe("hunt");
+        g.genome.traits.diet = 100; // 완전 육식 → 채집 효율 0
+        expect(priv.pickTrial().kind).not.toBe("feed");
+      }
+    }
+  });
+
+  it("보스 단계에는 시험이 없다(그 단계 자체가 시험)", () => {
+    const g = startRun("no-trial-boss");
+    const priv = g as unknown as GamePriv;
+    priv.stageIndex = 2; // SCHEDULE[2] = "boss"
+    priv.beginStage();
+    expect(g.trial).toBeNull();
+  });
+
+  it("합격: 불씨 유지 · 다음 단계 진행 · 계수 리셋", () => {
+    const g = startWithCountTrial("trial-pass");
+    const verdicts: TrialVerdict[] = [];
+    g.onTrialVerdict = (v) => verdicts.push(v);
+    // 계수형 시험이므로 계수기를 목표 이상으로 채우면 무조건 합격.
+    g.world.roundCounts.hunts = 99;
+    g.world.roundCounts.feeds = 99;
+    g.world.roundCounts.births = 99;
+    const stageBefore = g.stageNumber;
+    (g as unknown as GamePriv).finishStage(true);
+    expect(g.embers).toBe(GAME.emberStart); // 합격은 불씨를 안 건드린다
+    expect(g.stageNumber).toBe(stageBefore + 1); // 다음 단계로 정상 진행
+    expect(g.phase).toBe("watch");
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]?.passed).toBe(true);
+    expect(g.world.roundCounts).toEqual({ hunts: 0, feeds: 0, births: 0 }); // beginStage 가 리셋
+  });
+
+  it("불합격: 불씨 -1 인데 런은 계속된다(부분 패배)", () => {
+    const g = startWithCountTrial("trial-fail");
+    const verdicts: TrialVerdict[] = [];
+    g.onTrialVerdict = (v) => verdicts.push(v);
+    // 계수기를 0 으로 두면 계수형 시험은 반드시 불합격.
+    g.world.roundCounts.hunts = 0;
+    g.world.roundCounts.feeds = 0;
+    g.world.roundCounts.births = 0;
+    (g as unknown as GamePriv).finishStage(true);
+    expect(g.embers).toBe(GAME.emberStart - 1); // 불씨 하나를 잃는다
+    expect(g.phase).toBe("watch"); // 결과 화면이 아니라 다음 단계로(런은 계속)
+    expect(g.result).toBeNull();
+    expect(verdicts[0]?.passed).toBe(false);
+    expect(verdicts[0]?.embersLeft).toBe(GAME.emberStart - 1);
+  });
+
+  it("불씨 0 = 패배 · 사유가 개체 0 멸종과 구분된다", () => {
+    const g = startWithCountTrial("trial-last-ember");
+    g.embers = 1; // 마지막 불씨
+    let summary = "";
+    g.onResult = (_result, s) => {
+      summary = s;
+    };
+    g.world.roundCounts.hunts = 0;
+    g.world.roundCounts.feeds = 0;
+    g.world.roundCounts.births = 0;
+    (g as unknown as GamePriv).finishStage(true);
+    expect(g.result).toBe("lose");
+    expect(g.lostByEmbers).toBe(true); // 개체 0 멸종이 아니라 불씨 소진
+    expect(summary).toContain("불씨");
+  });
+
+  it("보스 격퇴는 불씨를 1 회복하되 상한을 넘지 않는다", () => {
+    const g = startRun("boss-ember");
+    const priv = g as unknown as GamePriv;
+    priv.stageIndex = 2; // SCHEDULE[2] = "boss"
+    g.embers = 3;
+    priv.finishStage(true, true); // 격퇴
+    expect(g.embers).toBe(4);
+    const g2 = startRun("boss-ember-cap");
+    const priv2 = g2 as unknown as GamePriv;
+    priv2.stageIndex = 2;
+    expect(g2.embers).toBe(GAME.emberMax); // 시작 = 상한
+    priv2.finishStage(true, true);
+    expect(g2.embers).toBe(GAME.emberMax); // 가득이면 그대로
+  });
+
+  it("레벨업 드래프트 복귀(pickCard)는 계수를 지우지 않는다(라운드가 이어진다)", () => {
+    const g = runToDraft("trial-keep-counts");
+    expect(g).not.toBeNull();
+    if (!g) return;
+    g.world.roundCounts.feeds = 7;
+    g.pickCard(0);
+    expect(g.phase).toBe("watch");
+    expect(g.world.roundCounts.feeds).toBe(7); // beginStage 를 안 거쳤으니 그대로
+  });
+
+  it("시대 진입은 불씨를 1 회복하되 상한을 넘지 않고, 시대 보상 드래프트에 다음 시험 예상이 뜬다", () => {
+    const g = startRun("era-ember");
+    g.result = "win"; // 승리 직후 상태를 흉내(continueToNextEra 의 가드)
+    g.embers = 3;
+    g.continueToNextEra();
+    expect(g.embers).toBe(4);
+    // 시대 보상 드래프트 중에는 곧 시작할 채집 단계의 시험 예상을 미리 볼 수 있다.
+    expect(g.phase).toBe("draft");
+    expect(g.upcomingTrial).not.toBeNull();
+    const g2 = startRun("era-ember-cap");
+    g2.result = "win";
+    expect(g2.embers).toBe(GAME.emberMax);
+    g2.continueToNextEra();
+    expect(g2.embers).toBe(GAME.emberMax); // 상한 클램프
+  });
+
+  it("시대 보상 드래프트의 예고 시험이 어떤 선택을 해도 그대로 시작된다(예고=실물)", () => {
+    // 예고를 읽고 고른 카드(×2 강화)가 식성·무리 수를 바꿔도 시험이 안 바뀌어야 한다.
+    // 얼리기 전에는 카드가 후보 수를 3↔4 로 바꿔 예고와 실제가 어긋났다(적대적 검증: 640건 중 9%).
+    for (let s = 0; s < 6; s++) {
+      for (const choice of [0, 1, 2, -1]) {
+        const g = startRun(`era-freeze-${s}`);
+        g.result = "win"; // 승리 직후 상태를 흉내(continueToNextEra 의 가드)
+        g.continueToNextEra();
+        const promised = g.upcomingTrial;
+        expect(promised).not.toBeNull();
+        if (choice < 0) g.skipDraft();
+        else g.pickCard(choice);
+        expect(g.phase).toBe("watch");
+        expect(g.trial).toEqual(promised); // 예고한 그 시험이 그대로 걸린다
+      }
+    }
+  });
+
+  it("드래프트 스킵 보상 새끼는 pop 시험 점수에 안 들어간다(스킵이 곧 합격 금지)", () => {
+    const g = runToDraft("skip-pop");
+    expect(g).not.toBeNull();
+    if (!g) return;
+    (g as unknown as GamePriv).currentTrial = { kind: "pop", target: 10, label: "무리 10마리" };
+    const popBefore = g.world.playerPopulation;
+    const progBefore = g.trialProgress;
+    g.skipDraft(); // 새끼 +SIM.draftSkipBrood
+    expect(g.world.playerPopulation).toBe(popBefore + SIM.draftSkipBrood); // 개체는 실제로 늘었지만
+    expect(g.trialProgress).toBe(progBefore); // 시험 점수는 그대로(표시=판정 같은 식)
   });
 });
 

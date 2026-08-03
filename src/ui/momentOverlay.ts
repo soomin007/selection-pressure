@@ -7,8 +7,9 @@
 export type MomentKind = "win" | "conquest" | "lose";
 
 export interface MomentOverlay {
-  /** 연출을 재생하고, 결과 패널을 띄울 시점에 onDone 을 부른다(연출이 살짝 겹치며 넘어간다). */
-  play: (kind: MomentKind, onDone: () => void) => void;
+  /** 연출을 재생하고, 결과 패널을 띄울 시점에 onDone 을 부른다(연출이 살짝 겹치며 넘어간다).
+   * loseWord: 패배 큰 글자 치환("불씨 꺼짐" 등). 개체가 살아 있는데 "멸종" 글자는 거짓이라 사유별로 나눈다. */
+  play: (kind: MomentKind, onDone: () => void, loseWord?: string) => void;
   /**
    * **정점(만렙) 도달** — 형질 하나가 100 에 닿는 순간의 금빛 축하. 런을 끊지 않는다(월드는 계속 돌고
    * onDone 도 없다). 승리·멸종과 달리 "지나가는" 순간이라 별도 레이어에서 짧게 피고 진다.
@@ -54,7 +55,7 @@ export function createMomentOverlay(): MomentOverlay {
     return d;
   };
 
-  const play = (kind: MomentKind, onDone: () => void): void => {
+  const play = (kind: MomentKind, onDone: () => void, loseWord?: string): void => {
     root.replaceChildren();
     root.style.display = "block";
 
@@ -105,7 +106,7 @@ export function createMomentOverlay(): MomentOverlay {
         ),
       );
       root.appendChild(
-        wordLayer("멸종", "#E85C43", "0 3px 20px rgba(0,0,0,0.8)", "moment-word-dim 1.6s ease-out forwards"),
+        wordLayer(loseWord ?? "멸종", "#E85C43", "0 3px 20px rgba(0,0,0,0.8)", "moment-word-dim 1.6s ease-out forwards"),
       );
       window.setTimeout(onDone, 1250);
       // lose 는 오버레이를 안 숨긴다 — 결과 패널 뒤로 어둠 유지. clear() 에서 지운다.
