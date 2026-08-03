@@ -15,6 +15,8 @@ export function createLobby(
   onGlossary: () => void,
   onCosmetic: () => void,
   onLadder: () => void,
+  /** 저장 데이터(레벨·해금·도전 과제·챔피언)를 전부 지운다. 두 번 눌러야 실행된다. */
+  onResetData: () => void,
 ): Lobby {
   ensurePanelStyles();
 
@@ -50,11 +52,11 @@ export function createLobby(
   };
   const glossaryBtn = linkBtn("대백과", onGlossary);
   glossaryBtn.appendChild(keyChip("G"));
-  const ladderBtn = linkBtn("진화 갈래", onLadder);
+  const ladderBtn = linkBtn("열리는 것들", onLadder);
   ladderBtn.appendChild(keyChip("L"));
   secondaryRow.append(glossaryBtn, ladderBtn);
 
-  // 키보드 조작 — 로비가 보일 때만. 대백과·진화 갈래 오버레이가 열리면 그쪽(높은 우선순위)이 키를 가져간다.
+  // 키보드 조작 · 로비가 보일 때만. 대백과·해금 오버레이가 열리면 그쪽(높은 우선순위)이 키를 가져간다.
   registerKeyLayer(
     5,
     () => root.style.display !== "none",
@@ -87,12 +89,39 @@ export function createLobby(
   const cosmetics = createCosmeticPicker(onCosmetic);
   cosmetics.el.style.marginTop = "16px";
 
-  root.append(title, sub, start, secondaryRow, cosmetics.el, hint);
+  // 저장 데이터 지우기 · 되돌릴 수 없으므로 **두 번 눌러야** 실행된다(브라우저 확인창은 폰에서
+  // 흐름을 끊고 자동 검증도 막으므로 안 쓴다). 다른 곳으로 갔다 오면 확인 상태는 풀린다.
+  const RESET_IDLE = "저장 데이터 지우기";
+  const RESET_ARMED = "정말 지울까요? 한 번 더 누르면 지워집니다";
+  const resetBtn = document.createElement("button");
+  resetBtn.className = "lobby-reset";
+  resetBtn.textContent = RESET_IDLE;
+  let armed = false;
+  const disarm = (): void => {
+    armed = false;
+    resetBtn.textContent = RESET_IDLE;
+    resetBtn.classList.remove("armed");
+  };
+  resetBtn.addEventListener("click", () => {
+    if (!armed) {
+      armed = true;
+      resetBtn.textContent = RESET_ARMED;
+      resetBtn.classList.add("armed");
+      return;
+    }
+    disarm();
+    onResetData();
+    resetBtn.textContent = "지웠습니다. 첫 플레이 상태입니다.";
+    setTimeout(disarm, 2600);
+  });
+
+  root.append(title, sub, start, secondaryRow, cosmetics.el, hint, resetBtn);
   document.body.appendChild(root);
 
   return {
     show: () => {
       cosmetics.refresh(); // 방금 딴 꾸밈이 바로 보이게 열 때마다 다시 읽는다
+      disarm(); // 지우기 확인 상태는 로비를 다시 열 때마다 푼다(실수로 두 번째 탭이 눌리지 않게)
       root.style.display = "flex";
       // 타이틀 화면에선 ?dev 패널을 숨긴다(첫 화면이 개발용 버튼으로 어지럽지 않게 — panelStyles 규칙).
       document.body.classList.add("lobby-open");

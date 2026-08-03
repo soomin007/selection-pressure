@@ -180,8 +180,10 @@ function ensureGoalStyles(): void {
     color: var(--ink); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
   .goal-text { font-family: var(--font-title); font-size: 14.5px; line-height: 1.25;
     overflow: hidden; text-overflow: ellipsis; }
+  /* nowrap 이면 긴 안내가 "..."로 잘려 나간다(사용자 지적). 두 줄까지 접히게 두고, 그걸 넘기면
+     그때만 자른다. 문구 자체를 한 줄에 들어오게 짧게 쓰는 게 먼저다(main 의 goalSub 참고). */
   .goal-sub { font-family: var(--font-mono); font-size: 11.5px; opacity: 0.75; margin-top: 2px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .goal-pause { pointer-events: auto; width: 42px; border-radius: 12px; cursor: pointer;
     background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: 15px;
     backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); flex: none; }

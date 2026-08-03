@@ -119,7 +119,7 @@ export function pickMapType(rng: Rng, playerLevel = 99): MapType {
   return rng.pick(pool.length > 0 ? pool : ["continent"]);
 }
 
-/** 이 레벨에서 나올 수 있는 세계들(진화 갈래 화면에 "무엇이 열렸는지" 보여주는 데도 쓴다). */
+/** 이 레벨에서 나올 수 있는 세계들("레벨마다 열리는 것" 화면에도 쓴다). */
 export function unlockedMapTypes(playerLevel: number): MapType[] {
   return MAP_TYPES.filter((t) => MAP_KINDS[t].unlockLevel <= playerLevel);
 }

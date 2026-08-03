@@ -92,6 +92,12 @@ export function ensurePanelStyles(): void {
      보조 텍스트 색 + 그림자로 올렸다(폰 실측). */
   .lobby-hint { font-size: 12.5px; color: var(--sub); margin-top: 6px; line-height: 1.55; max-width: 440px;
     text-shadow: 0 2px 10px rgba(0,0,0,0.85); }
+  /* 저장 데이터 지우기 · 되돌릴 수 없는 동작이라 눈에 안 띄게 두되, 한 번 누르면(armed) 붉게 경고한다. */
+  .lobby-reset { margin-top: 18px; padding: 6px 10px; border: 0; background: transparent; cursor: pointer;
+    color: var(--faint); font-family: var(--font-body); font-size: 11.5px; line-height: 1.5;
+    max-width: 440px; text-decoration: underline; text-underline-offset: 3px;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.85); }
+  .lobby-reset.armed { color: var(--red); }
 
   /* 인게임 컨트롤 바(우상단) — 계측 알약 세그먼트 */
   .controls-bar {

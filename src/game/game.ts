@@ -9,7 +9,7 @@ import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, isApexTrait, MUTABLE_TRAITS, TRAIT_CEILING, TRAIT_KEYS, type Genome, type MutableTrait, type Traits } from "@/sim/genome";
 import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, PRESET_CARDS, PRESET_LINEAGE, type Card, type Lineage } from "@/game/cards";
-import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
+import { cardAvailable, debugResetAchievements, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
 import { GAME, SCHEDULE, eraDifficulty, eraScarcity, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
@@ -1042,8 +1042,20 @@ export class Game {
 
   /** 디버그 전용(?dev) — 저장된 진행도(레벨·챔피언)를 전부 지우고 첫 플레이 상태로(즉시 이 런에 반영). */
   debugReset(): void {
-    debugResetProgress();
-    this.reloadMeta(); // 메타 레벨·리롤 잠금 반영
+    this.resetSavedProgress();
+  }
+
+  /**
+   * 저장 데이터를 전부 지운다 · 첫 플레이 상태로. 로비의 "저장 데이터 지우기"가 부른다.
+   * 쌓인 해금 때문에 새 기능을 첫 플레이 조건에서 시험할 수 없다는 문제(2026-08-03 사용자)의 답이다.
+   *
+   * ⚠ 네 곳을 다 지워야 한다: 메타 경험치·정복 / 챔피언 / 도전 과제 / 꾸밈.
+   * 예전 `debugReset` 은 앞의 둘만 지워 도전 과제와 꾸밈이 살아남았다.
+   */
+  resetSavedProgress(): void {
+    debugResetProgress(); // 메타 경험치·정복 + 챔피언(명예의 전당)
+    debugResetAchievements(); // 도전 과제 + 그것으로 연 꾸밈
+    this.reloadMeta(); // 메타 레벨·리롤 잠금을 이번 런에 즉시 반영
     this.champions = loadChampions(); // 비워진 챔피언(다음 런부터 안 나온다)
   }
 

@@ -41,12 +41,12 @@ export function createUnlockLadder(onClose: () => void): UnlockLadder {
     "overflow-y:auto; user-select:none;";
 
   const title = document.createElement("div");
-  title.textContent = "진화 갈래";
+  title.textContent = "레벨마다 열리는 것";
   title.style.cssText =
     "color:#ffe08a; font-family:'Black Han Sans',sans-serif; font-size:26px; letter-spacing:0.02em; margin-top:6px;";
 
   const sub = document.createElement("div");
-  sub.textContent = "레벨이 오를수록 새 갈래와 카드가 열립니다. 레벨은 런을 마칠 때마다 쌓입니다.";
+  sub.textContent = "레벨이 오를수록 새 시작 종과 카드가 열립니다. 레벨은 판을 마칠 때마다 쌓입니다.";
   sub.style.cssText =
     "color:var(--sub); font-size:12.5px; line-height:1.5; text-align:center; max-width:330px; margin-top:8px;";
 

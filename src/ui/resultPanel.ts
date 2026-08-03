@@ -52,7 +52,7 @@ export function createResultPanel(
     "padding-top:16px; border-top:1px solid var(--line);";
   const cosmetics = createCosmeticPicker(onCosmeticChange);
   const ladderBtn = document.createElement("button");
-  ladderBtn.textContent = "진화 갈래 보기";
+  ladderBtn.textContent = "열리는 것들 보기";
   ladderBtn.appendChild(keyChip("L"));
   ladderBtn.style.cssText =
     "padding:6px 4px 3px; border:0; background:transparent; color:var(--ink);" +
@@ -131,7 +131,7 @@ export function createResultPanel(
     root.style.display = "none";
   };
 
-  // 키보드 조작 — 우선순위 20 = .ui-root 의 z-index. 보고서(41)·진화 갈래(42)가 열리면 그쪽이 먼저 받는다.
+  // 키보드 조작 · 우선순위 20 = .ui-root 의 z-index. 보고서(41)·해금 화면(42)이 열리면 그쪽이 먼저 받는다.
   registerKeyLayer(
     20,
     () => root.style.display !== "none",

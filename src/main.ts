@@ -269,6 +269,13 @@ async function boot(): Promise<void> {
     () => glossary.show(),
     applyCosmetics, // 로비에서 꾸밈을 바꾸면 배경 생태계에 즉시 반영
     () => unlockLadder.show(), // 로비에서 해금 사다리 열기
+    () => {
+      // 저장 데이터 전부 지우기(로비에서 두 번 눌러야 실행된다). 지운 결과가 지금 화면에도 바로
+      // 보이게 꾸밈과 배경 생태계를 다시 읽는다.
+      game.resetSavedProgress();
+      applyCosmetics();
+      view.refreshSpecies(game.world);
+    },
   );
   // 버튼(controls)과 키보드(아래 관전 키 레이어)가 같은 콜백을 쓰도록 이름을 붙여 둔다.
   const controlsCb = {
@@ -1043,26 +1050,31 @@ async function boot(): Promise<void> {
       // 대멸종 판정은 detectEvents 의 플래시와 같은 근거를 읽는다(다른 조건으로 재유도하면 어긋난다).
       const extName =
         gw.globalCold > 0 ? "한파" : gw.heat > 0 ? "폭염" : gw.foodRegrowMultiplier > 1 ? "대가뭄" : gw.plagueRate > 0 ? "역병" : "";
+      // sub 줄은 **기한이 먼저**다. "시험에 기한이 있는지, 언제 불씨가 꺼지는지 알 수가 없다"(2026-08-03
+      // 사용자)가 이 자리의 문제였다: 남은 시간이 펼쳐야 보이는 상세 패널에만 있었다. 한 줄에 들어가도록
+      // 안내 문구는 짧게 자른다(예전 보스 문구는 한 줄을 넘겨 "..."로 잘려 나갔다).
+      const left = `${game.secondsLeft}초 남음`;
       let goalText: string;
       let goalSub: string;
       if (gBoss) {
         goalText = `위협: ${gBoss.name}`;
         goalSub =
           gBoss.maxHp > 0 && gBoss.hp > 0
-            ? "몸 위의 체력 바를 다 깎으면 물리칩니다. 못 깎아도 버티면 통과합니다."
-            : "시간이 다 될 때까지 살아남으면 통과합니다.";
+            ? `${left} · 체력 바를 깎아 물리치거나 버티세요`
+            : `${left} · 끝까지 살아남으면 통과합니다`;
       } else if (extName) {
-        goalText = `큰 시험: ${extName}`;
-        goalSub = "환경이 통째로 바뀌었습니다. 시간이 다 될 때까지 버티세요.";
+        goalText = `대멸종: ${extName}`;
+        goalSub = `${left} · 환경이 바뀌었습니다. 버티세요`;
       } else {
         // 라운드 시험: "이번 16초가 답해야 할 질문"을 목표 줄로. 진행 숫자는 sim 계수기 그대로.
-        // sub 는 **불씨 하나만** 싣는다. 예전엔 "다음 카드까지 %"를 같이 실었는데, 그 값은 펼침 패널에
-        // 막대와 함께 또 있어 같은 것을 두 번 보여줬다(상시 화면에 진척 지표가 셋이라 어수선했다).
+        // 기한(남은 시간)과 대가(불씨)를 나란히 둔다 · 시험이 걸린 판돈이 한눈에 읽혀야 한다.
         const t = game.trial;
         goalText = t
           ? `이번 시험: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`
           : "무리를 먹여 키우세요";
-        goalSub = `불씨 ${emberDots(game.embers)}`;
+        goalSub = t
+          ? `${game.secondsLeft}초 안에 채우세요 · 불씨 ${emberDots(game.embers)}`
+          : left;
       }
       goalBar.update({
         visible: game.phase === "watch",
@@ -1084,7 +1096,9 @@ async function boot(): Promise<void> {
       if (emberHintMs >= 3500) { // 탭 안내 플래시(2200ms)와 겹쳐 덮어쓰지 않게 뒤로 미룬다
         emberHintShown = true;
         // priority: "불씨"의 유일한 첫 풀이라 레벨업·위협 플래시가 끼어들어도 끝까지 읽혀야 한다.
-        highlights.flash("불씨는 이 혈통의 남은 기회입니다. 시험에 지면 하나 꺼집니다.", 0xf0f8ff, true);
+        // 기한을 먼저 말한다("시험에 기한이 있는지 알 수가 없다" 2026-08-03 사용자). 다만 이 배너는
+        // 화면 한복판을 덮으므로 두 문장을 넘기지 않는다 · 길면 세계가 통째로 가린다.
+        highlights.flash("라운드가 끝날 때 시험을 판정합니다. 못 채우면 남은 기회(불씨)가 하나 꺼집니다.", 0xf0f8ff, true);
       }
     }
     // 내 형질 패널은 관전 중 + 칩이 켜져 있을 때만 — 드래프트는 전체 화면이라 그 아래 깔린 UI 가
