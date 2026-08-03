@@ -39,6 +39,11 @@ export function ensurePanelStyles(): void {
     --r-chip: 8px;   --r-btn: 14px;  --r-card: 16px;  --r-panel: 18px;  --r-focus: 20px;
   }
 
+  /* 한글 줄바꿈 · 브라우저 기본값은 낱말 한가운데서 자른다("통과하/세요"). keep-all 로 띄어쓰기
+     경계에서만 넘기고, 그래도 상자를 넘치는 긴 토막(영문·숫자)만 break-word 로 예외 처리한다.
+     (전역 글쓰기 규칙: 줄바꿈은 구·절 경계에서. 조사나 낱말 중간에서 끊지 않는다.) */
+  body { word-break: keep-all; overflow-wrap: break-word; }
+
   /* 하단 시트(드래프트·결과) — 유리 패널, 크게 둥근 위 모서리, 세이프에어리어 존중 */
   .ui-root {
     position: fixed; left: 50%; bottom: 0; transform: translateX(-50%);
@@ -52,28 +57,6 @@ export function ensurePanelStyles(): void {
     z-index: 10; touch-action: auto; user-select: none;
     animation: sheet-rise 0.32s ease-out;
   }
-  /* 안내·예고 배너 — 따뜻한 호박빛 유리 */
-  .ui-preview {
-    font-family: var(--font-body); font-size: 12.5px; line-height: 1.5; color: #EAD9B8;
-    background: rgba(245, 195, 59, 0.08); border: 1px solid rgba(245, 195, 59, 0.22);
-    border-radius: 12px; padding: 9px 12px; margin-bottom: 10px;
-  }
-  .ui-title { font-family: var(--font-title); font-size: 16px; color: var(--ink); margin-bottom: 10px; text-align: center; }
-
-  .ui-cards { display: flex; flex-direction: column; gap: 9px; }
-  /* 유리 카드 + 왼쪽 휜 색 액센트(border-left, 둥근 모서리를 따라 색이 휜다) */
-  .ui-card {
-    text-align: left; width: 100%; box-sizing: border-box;
-    padding: 10px 13px 10px 11px;
-    border: 1px solid var(--line); border-left: 4px solid var(--lime);
-    border-radius: var(--r-card); background: var(--panelSolid); color: var(--ink);
-    cursor: pointer; touch-action: auto; transition: transform 0.07s ease;
-  }
-  .ui-card:active { transform: translateY(2px); }
-  .ui-card-name { font-family: var(--font-title); font-size: 15.5px; color: var(--ink); }
-  .ui-card-desc { font-size: 12px; color: var(--sub); margin-top: 3px; line-height: 1.4; }
-  .ui-card-eff { font-family: var(--font-mono); font-size: 11px; color: var(--lime); margin-top: 4px; font-variant-numeric: tabular-nums; }
-
   .ui-result { text-align: center; }
   .ui-result-heading { font-family: var(--font-display); font-size: 40px; margin-bottom: 6px; letter-spacing: 0.02em; }
   .ui-result-summary { font-family: var(--font-body); font-size: 14.5px; color: var(--sub); margin-bottom: 16px; line-height: 1.55; }
@@ -105,7 +88,10 @@ export function ensurePanelStyles(): void {
     transition: transform 0.07s ease, border-bottom-width 0.07s ease;
   }
   .lobby-start:active { transform: translateY(4px); border-bottom-width: 1px; }
-  .lobby-hint { font-size: 12.5px; color: var(--faint); margin-top: 6px; line-height: 1.55; max-width: 440px; }
+  /* 로비 힌트는 살아 움직이는 배경 위에 얹힌다. --faint 로는 생물·지형에 묻혀 안 읽혀서
+     보조 텍스트 색 + 그림자로 올렸다(폰 실측). */
+  .lobby-hint { font-size: 12.5px; color: var(--sub); margin-top: 6px; line-height: 1.55; max-width: 440px;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.85); }
 
   /* 인게임 컨트롤 바(우상단) — 계측 알약 세그먼트 */
   .controls-bar {
@@ -152,12 +138,10 @@ export function ensurePanelStyles(): void {
      vh/vw 를 쓰면 var(--ui-zoom) 로 나눠 보정할 것(.draft-popup 데스크톱 규칙 참고). */
   body[data-layout="desktop"] > :not(#app) { zoom: var(--ui-zoom, 1); }
 
-  /* 데스크톱: 가로 레이아웃 — 카드를 한 줄로, 패널은 떠 있는 넓은 바. */
+  /* 데스크톱: 가로 레이아웃. 패널은 떠 있는 넓은 바. */
   body[data-layout="desktop"] .ui-root {
     width: min(88%, 760px); bottom: 16px; border-radius: var(--r-panel); padding: 14px 18px;
   }
-  body[data-layout="desktop"] .ui-cards { flex-direction: row; }
-  body[data-layout="desktop"] .ui-card { flex: 1 1 0; min-width: 0; }
   body[data-layout="desktop"] .ui-result { width: min(520px, 90%); }
 
   /* 키 안내 칩 — 버튼 옆의 <kbd> 모양 표식. 키보드가 없는 모바일에선 통째로 숨긴다.
@@ -188,8 +172,7 @@ export function ensurePanelStyles(): void {
   }
   /* 드래프트 중에는 관전용 UI 를 숨긴다 — 반투명 유리 아래로 비쳐 보이면 안 된다.
      내 종 정보는 헤더의 "내 종" 팝업이 대신한다(§9).
-     !important 필수: hudPanel·controls 가 display 를 인라인으로 쓴다(그냥 두면 이 규칙이 진다). */
-  body.draft-open .hud-root,
+     !important 필수: controls 가 display 를 인라인으로 쓴다(그냥 두면 이 규칙이 진다). */
   body.draft-open .controls-bar,
   body.draft-open .dev-overlay { display: none !important; }
 

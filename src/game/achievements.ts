@@ -164,10 +164,6 @@ export function loadAchievements(): Set<string> {
   return new Set(readUnlocked());
 }
 
-export function isAchievementUnlocked(id: string): boolean {
-  return readUnlocked().has(id);
-}
-
 /**
  * 한 판의 성적으로 새로 열린 업적을 판정하고 저장한다. **새로 열린 것만** 돌려준다(종료 화면이 그것만 알린다).
  * 이미 열린 업적은 다시 안 뜬다.

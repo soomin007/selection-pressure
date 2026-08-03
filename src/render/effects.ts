@@ -55,7 +55,10 @@ export class Effects {
     this.container.addChild(this.g);
   }
 
-  spawn(kind: VisualEventKind, x: number, y: number, tx?: number, ty?: number, mine = true): void {
+  // 인자 순서는 `world.emit` 과 **똑같이** 맞춘다(kind, x, y, mine, tx, ty). 예전엔 mine 이 맨 뒤 기본값
+  // 인자라, 호출부가 그걸 안 넘겨도 컴파일이 통과했다. 실제로 그래서 아래 다이어트가 통째로 죽어 있었다
+  // (2026-08-03 발견: 야생 사건이 예전처럼 다 튀고 있었다). 필수 인자로 바꿔 컴파일러가 잡게 한다.
+  spawn(kind: VisualEventKind, x: number, y: number, mine: boolean, tx?: number, ty?: number): void {
     if (this.particles.length > 220) return; // 과부하 방지(대량 사망 시)
     // 야생끼리의 사건은 다이어트한다(2026-08-02 사용자: 남의 연출이 정신사납다) — 탄생·자연사는
     // 아예 생략(생태 배경 소음), 사냥·발사체 같은 격한 사건만 훨씬 옅게 남긴다(세계가 살아 있다는

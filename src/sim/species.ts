@@ -32,10 +32,6 @@ export interface Species {
   //  개체별 게놈 값이라 같은 종 안에서도 큰 놈·작은 놈이 갈린다. 외형과 시뮬이 한 값에서 나온다.)
 }
 
-export function isCarnivore(genome: Genome): boolean {
-  return genome.traits.diet > 50;
-}
-
 /** 챔피언(비동기 생물) 스폰에 필요한 최소 데이터 — sim 이 game/meta 에 의존하지 않도록 sim 계층에 둔다. */
 export interface ChampionSeed {
   genome: Genome;

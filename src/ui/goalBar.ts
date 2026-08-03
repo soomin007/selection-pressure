@@ -34,6 +34,9 @@ export interface GoalBar {
   setPaused: (p: boolean) => void;
   setSpeed: (s: number) => void;
   collapse: () => void; // 상세 패널 접기(단계 전환·드래프트 진입 때 main 이 부른다)
+  /** 상세 패널이 펼쳐져 있는가. 펼치면 우상단 미니맵을 덮으므로 main 이 미니맵을 숨기는 데 쓴다
+   *  (같은 모서리를 쓰는 위젯은 동시에 두지 않고 상태로 나눠 쓴다 · known_issues). */
+  isOpen: () => boolean;
 }
 
 export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
@@ -143,6 +146,7 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
       speedBtn.textContent = `${s}x`;
     },
     collapse: hidePanel,
+    isOpen: () => open,
   };
 }
 

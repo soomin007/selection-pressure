@@ -113,9 +113,3 @@ export function personalityTint(id: number): number {
   const b = clamp255((lum - warm) * 255);
   return (r << 16) | (g << 8) | b;
 }
-
-/** 덩치 한 단어(정보 카드 표시용) — personalityScale 경계와 맞춘다. */
-export function sizeWord(id: number): string {
-  const s = personalityScale(id);
-  return s < 0.93 ? "작은 몸" : s > 1.07 ? "큰 몸집" : "보통 몸집";
-}

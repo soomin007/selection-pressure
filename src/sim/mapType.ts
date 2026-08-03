@@ -109,10 +109,6 @@ export function mapKind(type: MapType): MapKind {
   return MAP_KINDS[type];
 }
 
-export function mapName(type: MapType): string {
-  return MAP_KINDS[type].name;
-}
-
 /**
  * 이번 판의 세계를 뽑는다(판마다 무작위). 전용 rng 로 뽑아 메인 동역학 스트림을 안 건드린다.
  * 아직 안 열린 세계(unlockLevel > 지금 레벨)는 후보에서 뺀다 — 헤엄칠 갈래도 없는데 대양이 뜨면

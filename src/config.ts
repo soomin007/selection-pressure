@@ -44,10 +44,6 @@ export function uiScale(isDesktop: boolean, screenW: number, screenH: number): n
   return Math.min(1.7, Math.max(1, Math.min(screenH / 750, screenW / 900)));
 }
 
-// 하위 호환용 기본값(모바일).
-export const LOGICAL_WIDTH = MOBILE.width;
-export const LOGICAL_HEIGHT = MOBILE.height;
-
 export const COLORS = {
   bg: 0x0b0e14,
   text: 0xe6e6e6,

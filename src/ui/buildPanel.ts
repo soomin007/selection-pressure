@@ -23,7 +23,7 @@ export function createBuildPanel(): BuildPanel {
   ensurePanelStyles(); // :root 토큰 보장
   const isDesktop = document.body?.dataset.layout === "desktop";
   const root = document.createElement("div");
-  // HUD 칩("내 형질") 아래 자리 — hudPanel 의 .hud-legend 와 같은 슬롯(둘은 배타적으로 열린다).
+  // 화면 상단 왼쪽, 목표 한 줄 아래로 펼쳐지는 자리.
   // 형질·카드가 쌓이면 길어지므로 최대 높이를 고정 px 로 가두고 안에서 스크롤(vh 는 데스크톱
   // UI 확대 zoom 아래에서 배율만큼 커져 화면을 넘친다 — panelStyles 주석 참고).
   root.style.cssText =

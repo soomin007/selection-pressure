@@ -8,7 +8,7 @@
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, isApexTrait, MUTABLE_TRAITS, TRAIT_CEILING, TRAIT_KEYS, type Genome, type MutableTrait, type Traits } from "@/sim/genome";
-import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, PRESET_CARDS, PRESET_LINEAGE, LINEAGE_NAME, type Card, type Lineage } from "@/game/cards";
+import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, PRESET_CARDS, PRESET_LINEAGE, type Card, type Lineage } from "@/game/cards";
 import { cardAvailable, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
 import { GAME, SCHEDULE, eraDifficulty, eraScarcity, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
@@ -23,15 +23,6 @@ import { buildRunReport } from "@/game/runReport";
 export type Phase = "lobby" | "draft" | "watch" | "result";
 export type RunResult = "win" | "lose";
 
-/** 런 전체 진행 타임라인 — 하나의 긴 막대(진행률) + 보스/대멸종 시점 마커. */
-export interface TimelineMarker {
-  kind: StageKind; // "boss" | "extinction"
-  at: number; // 막대상 위치 0~1
-}
-export interface RunTimeline {
-  progress: number; // 전체 진행 0~1(왼→오 차오름)
-  markers: TimelineMarker[];
-}
 export type ExtinctionType = "cold" | "famine" | "heat" | "plague";
 
 /** 라운드 시험의 종류. */
@@ -99,7 +90,7 @@ export class Game {
   world: World;
   phase: Phase = "lobby";
   paused = false; // 멈춤 버튼
-  /** 알파 조종 모드(?alpha). 기본 false → 켜지 않으면 관련 코드가 아예 안 돈다(기존 동작 100% 보존). */
+  /** 알파 조종 모드. 기본 켜짐(main 이 true 로 세운다). `?watch` 관전 폴백에서만 false. */
   leadEnabled = false;
   /**
    * 무리가 앞장선 자를 따르는 세기(×무리 성향). null 이면 sim 기본값(LEAD.followCohesion).
@@ -296,16 +287,6 @@ export class Game {
   /** 이번 런/로비의 시드(재현용으로 복사 가능). */
   get seed(): string {
     return this.currentSeed;
-  }
-
-  /** 이 런의 갈래 이름(「날쌘 육식 사냥꾼」 등). 아직 시작 종을 안 골랐으면 null. */
-  get lineageName(): string | null {
-    return this.lineage ? LINEAGE_NAME[this.lineage] : null;
-  }
-
-  /** 이 카드가 내 갈래 **전용** 카드인가 — 드래프트에서 배지로 알린다(공통 카드와 구분). */
-  isLineageCard(card: Card): boolean {
-    return card.lineage !== undefined && card.lineage === this.lineage;
   }
 
   /** 부트 시 1회 — 로비 화면. 배경 월드만 보여준다. */
@@ -615,29 +596,6 @@ export class Game {
     return this.phase === "draft" && this.firstChoice;
   }
 
-  /** 런 전체 진행 타임라인(HUD 막대) — 완료 단계 + 현재 단계 경과. 레벨업으로 멈추면 진행도 멈춘다. */
-  get timeline(): RunTimeline {
-    const durs = SCHEDULE.map(stageDuration);
-    const total = durs.reduce((a, b) => a + b, 0) || 1;
-    let elapsed = 0;
-    for (let i = 0; i < this.stageIndex; i++) elapsed += durs[i] ?? 0;
-    if (this.phase === "watch" || this.phase === "draft") {
-      const curDur = durs[this.stageIndex] ?? 0;
-      elapsed += curDur - this.stageTicksLeft / SIM.stepsPerSecond;
-    } else if (this.phase === "result" && this.result === "win") {
-      elapsed = total; // 승리 = 끝까지 완주
-    }
-    const progress = Math.max(0, Math.min(1, elapsed / total));
-    const markers: TimelineMarker[] = [];
-    let acc = 0;
-    for (let i = 0; i < SCHEDULE.length; i++) {
-      const kind = SCHEDULE[i] as StageKind;
-      if (kind === "boss" || kind === "extinction") markers.push({ kind, at: acc / total });
-      acc += durs[i] ?? 0;
-    }
-    return { progress, markers };
-  }
-
   /**
    * 현재 단계 끝 무렵, 다음이 위협이면 예고(전광판 제목 + 대응 힌트 부제). 아니면 null.
    * 보스는 다음 종류가 정해져 있어(bossQueue peek) 무엇이 오는지·어떻게 버티는지 미리 알린다.
@@ -689,28 +647,6 @@ export class Game {
 
   get stageNumber(): number {
     return this.stageIndex + 1;
-  }
-
-  get totalStages(): number {
-    return SCHEDULE.length;
-  }
-
-  /** 현재 환경을 쉬운 말로 요약 (가독성 §4.2/§7). */
-  environmentSummary(): string {
-    const env = this.world.environment;
-    let c = 0;
-    let f = 0;
-    const n = env.coldness.length;
-    for (let i = 0; i < n; i++) {
-      c += env.coldness[i] ?? 0;
-      f += env.fertility[i] ?? 0;
-    }
-    c /= n;
-    f /= n;
-    const temp = c > 0.58 ? "추운 땅" : c < 0.42 ? "따뜻한 땅" : "온화한 땅";
-    const fert = f > 0.55 ? "비옥함" : f < 0.4 ? "척박함" : "보통";
-    // 세계 종류를 맨 앞에 — 관전 중에도 "여긴 군도다"가 늘 보여야 형질 선택이 이해된다.
-    return `${this.mapKindNow.name} · ${temp} · 먹이 ${fert}`;
   }
 
   /** 시작 종을 고르기 전에 보여줄 이번 세계 요약 — "군도 · 바다 57% · 잘게 쪼개진 섬…". */
@@ -1244,14 +1180,6 @@ function championName(g: Genome, conquered: boolean): string {
   const titles = conquered ? CHAMPION_CONQUEROR : CHAMPION_SURVIVOR;
   const title = titles[Math.floor(Math.random() * titles.length)] ?? (conquered ? "정복자" : "생존자");
   return `${epithet}의 ${title}`;
-}
-
-
-/** 단계 종류별 길이(초) — 타임라인 진행·마커 계산용. */
-function stageDuration(kind: StageKind): number {
-  if (kind === "boss") return GAME.bossSeconds;
-  if (kind === "extinction") return GAME.extinctionSeconds;
-  return GAME.roundSeconds;
 }
 
 // 런 시드를 무작위로 하나 뽑는다(게임 층이라 Math.random 사용 가능 — sim 결정론과 무관).

@@ -20,7 +20,6 @@
 import type { World } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
 import type { Terrain } from "@/sim/terrain";
-import type { Rng } from "@/sim/rng";
 import type { Traits } from "@/sim/genome";
 import { TRAIT_MAX } from "@/sim/genome";
 import { SIM } from "@/sim/params";
@@ -106,7 +105,6 @@ export interface Boss extends Mover {
   killRadius: number; // 닿으면 즉사하는 반경 (0 = 없음)
   visionFlee: number; // 도망 반경에 시야를 곱해 더하는 정도(시야가 카운터인 보스: 일찍 보고 피한다)
   auraRadius: number; // 시각용 위험 반경(독 안개)
-  globalKillRate: number; // 매 틱 개체가 솎일 확률(현재 미사용 — 떼로 실재화됨)
   globalDrain: number; // 매 틱 전역 에너지 흡수 (×(0.3+metabolism)) (poison)
   cullAttackResist: number; // 솎기를 공격력으로 저항(raider): kill = rng >= this×attack
   cullGroupResist: number; // 솎기를 무리 성향으로 저항(isolation)
@@ -159,7 +157,6 @@ const PRESETS: Record<BossType, Preset> = {
     killRadius: 16,
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0,
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0,
@@ -175,7 +172,6 @@ const PRESETS: Record<BossType, Preset> = {
     killRadius: 68,
     visionFlee: 150, // 시야가 높으면 훨씬 일찍 도망친다
     auraRadius: 0,
-    globalKillRate: 0,
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0,
@@ -193,7 +189,6 @@ const PRESETS: Record<BossType, Preset> = {
     killRadius: 4, // 각 떼 개체의 즉사 반경(무리 대형으로 겹쳐 다녀 작게 — 총 위협은 수·응집으로)
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0, // 전역 솎기 제거 — 이제 실제 떼 개체(members)가 쫓아와 문다(시각=로직 1:1)
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0,
@@ -210,7 +205,6 @@ const PRESETS: Record<BossType, Preset> = {
     killRadius: 0,
     visionFlee: 0,
     auraRadius: 0, // 독은 전역(위치 없음) — 국소 원 대신 화면 전체 안개로 표현(worldView). 보스 점도 안 그린다.
-    globalKillRate: 0,
     globalDrain: 0.5, // ×(0.3+metabolism): 대사 높을수록 더 빨림. 길찾기로 채집·개체수↑ 만큼 압박도 키워 저대사 우위를 드러냄(0.3→0.5, 프로브: 저대사15통과·기본5탈락)
     cullAttackResist: 0,
     cullGroupResist: 0,
@@ -229,7 +223,6 @@ const PRESETS: Record<BossType, Preset> = {
     killRadius: 8,
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0,
     globalDrain: 0,
     cullAttackResist: 0.9, // 근접 시 공격력 높으면 반격해 생존(확률: kill = rng < 1 - this×attack)
     cullGroupResist: 0,
@@ -246,7 +239,6 @@ const PRESETS: Record<BossType, Preset> = {
     killRadius: 8,
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0,
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0.9, // 근접 시 무리 성향 높으면 함께 뭉쳐 생존(확률: kill = rng < 1 - this×herding)
@@ -263,7 +255,6 @@ const PRESETS: Record<BossType, Preset> = {
     killRadius: 10,
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0,
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0,
@@ -288,7 +279,6 @@ const PRESETS: Record<BossType, Preset> = {
     // 뒤집힌다: 도망 반경이 너무 넓어 시야 큰 종이 내내 달아나느라 못 먹고 굶는다(공황 아사).
     visionFlee: 60,
     auraRadius: 0,
-    globalKillRate: 0,
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0,
@@ -310,7 +300,6 @@ const PRESETS: Record<BossType, Preset> = {
     killRadius: 7,
     visionFlee: 0,
     auraRadius: 0,
-    globalKillRate: 0,
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0,
@@ -332,7 +321,6 @@ const PRESETS: Record<BossType, Preset> = {
     killRadius: 18,
     visionFlee: 70, // 시야가 넓으면 일찍 보고 물 밖으로 달아난다
     auraRadius: 0,
-    globalKillRate: 0,
     globalDrain: 0,
     cullAttackResist: 0,
     cullGroupResist: 0,
@@ -358,11 +346,6 @@ export const BOSS_TYPES: readonly BossType[] = [
   "hornet",
   "shark",
 ];
-
-/** 이 보스가 사냥하는 층들. */
-export function bossHuntLayers(type: BossType): readonly Layer[] {
-  return PRESETS[type].huntLayers;
-}
 
 /**
  * 이 맵에 "충분히 큰 바다"가 있는가 — 물 보스(상어)를 띄울 수 있는지 판정. 웅덩이뿐인 맵에
@@ -458,7 +441,6 @@ export function createBoss(
     killRadius: p.killRadius * diffMul, // 즉사 반경 — 시대가 오를수록 넓어진다
     visionFlee: p.visionFlee,
     auraRadius: p.auraRadius,
-    globalKillRate: p.globalKillRate,
     globalDrain: p.globalDrain * diffMul, // 에너지 흡수(독 안개) — 시대가 오를수록 세진다
     cullAttackResist: p.cullAttackResist,
     cullGroupResist: p.cullGroupResist,
@@ -524,10 +506,6 @@ export function isPredatorBoss(type: BossType): boolean {
 /** 위협 대응 힌트(예고 부제) — 이 형질을 키우면 버틴다. */
 export function bossCounter(type: BossType): string {
   return PRESETS[type].counter;
-}
-
-export function pickBossType(rng: Rng): BossType {
-  return rng.pick(BOSS_TYPES);
 }
 
 /**
@@ -746,23 +724,6 @@ function stepSingleBoss(boss: Boss, world: World): void {
         e.alive = false;
         world.recordDeath(e.species, "boss");
         world.emit("kill", e.x, e.y, e.species.isPlayer); // 연출: 보스 즉사 반경
-      }
-    }
-  }
-
-  if (boss.globalKillRate > 0) {
-    for (const e of world.entities) {
-      if (!e.alive) continue;
-      if (!bossCanHunt(boss, e, world)) continue;
-      let rate = boss.globalKillRate;
-      // (전역 솎기 시련은 개체 떼로 실재화됨 — 이 분기는 globalKillRate>0 시련이 없어 현재 미사용.)
-      if (boss.cullAttackResist > 0) rate *= 1 - boss.cullAttackResist * (e.genome.traits.attack / TRAIT_MAX);
-      if (boss.cullGroupResist > 0) rate *= 1 - boss.cullGroupResist * (e.genome.traits.herding / TRAIT_MAX);
-      if (boss.cullVisionResist > 0) rate *= 1 - boss.cullVisionResist * (e.genome.traits.vision / TRAIT_MAX);
-      if (rate > 0 && world.rng.unit() < rate) {
-        e.alive = false;
-        world.recordDeath(e.species, "boss");
-        world.emit("kill", e.x, e.y, e.species.isPlayer);
       }
     }
   }

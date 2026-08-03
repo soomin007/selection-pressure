@@ -2,7 +2,7 @@
 // DOM·Pixi 타입이 하나라도 들어오면 sim 순수성이 깨진다(CLAUDE.md 최상위 규칙).
 // 입력 장치(손가락·키보드)를 아는 것은 main/ui 층이고, sim 은 "방향과 세기"만 받는다.
 
-import { SIM, LEAD } from "@/sim/params";
+import { LEAD } from "@/sim/params";
 
 /**
  * 유지 입력(레벨). 사람이 손가락·키를 누르고 있는 "상태"를 그대로 옮긴 값.
@@ -150,20 +150,4 @@ export function createLeadState(): LeadState {
     biteTargetId: -1,
     orderTargetId: -1,
   };
-}
-
-/**
- * 알파가 지금 이 지점을 감지하는가 — 전방위 초음파 원 또는 진행 방향 부채꼴 시야.
- * chooseGoal 이 먹이를 찾을 때 쓰는 판정과 같은 식이고, 화면의 안개 구멍도 이 식으로 뚫는다
- * (감지 범위 = 안개가 걷힌 범위. 어긋나면 화면이 거짓말이 된다).
- * 굳힌 스냅샷만 읽으므로 순수·순회 순서 무관·rng 미사용.
- */
-export function leadSenses(L: LeadState, tx: number, ty: number): boolean {
-  const dx = tx - L.x;
-  const dy = ty - L.y;
-  const d = Math.hypot(dx, dy);
-  if (d <= L.echoR) return true;
-  if (d > L.visionR) return false;
-  if (L.omni || d < 1e-6) return true;
-  return (L.fx * dx + L.fy * dy) / d >= SIM.fovHalfCos;
 }

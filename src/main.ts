@@ -1022,7 +1022,7 @@ async function boot(): Promise<void> {
     view.sync(game.world, game.interpAlpha, ticker.deltaMS);
     view.setMoveTarget(moveOrder); // 이동 명령 깃발(렌더) — 명령이 없으면 null 로 지운다
     // 사건 연출: sim 이 이번 프레임에 emit 한 사건(탄생/죽음/잡아먹힘)을 효과로 옮기고 비운다.
-    for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y, ev.tx, ev.ty);
+    for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y, ev.mine, ev.tx, ev.ty);
     game.world.events.length = 0;
     effects.update(ticker.deltaMS);
     // --- 목표 한 줄 — "지금 뭘 해야 하나"를 게임 상태에서 자동으로 뽑는다(상시 화면의 전부) ---
@@ -1051,16 +1051,14 @@ async function boot(): Promise<void> {
         goalText = `큰 시험: ${extName}`;
         goalSub = "환경이 통째로 바뀌었습니다. 시간이 다 될 때까지 버티세요.";
       } else {
-        // 라운드 시험: "이번 관전 16초가 답해야 할 질문"을 목표 줄로. 진행 숫자는 sim 계수기 그대로.
-        // 불씨 점은 sub 맨 앞에 둔다(.goal-sub 가 nowrap+ellipsis 라 끝에 두면 폰에서 잘린다).
+        // 라운드 시험: "이번 16초가 답해야 할 질문"을 목표 줄로. 진행 숫자는 sim 계수기 그대로.
+        // sub 는 **불씨 하나만** 싣는다. 예전엔 "다음 카드까지 %"를 같이 실었는데, 그 값은 펼침 패널에
+        // 막대와 함께 또 있어 같은 것을 두 번 보여줬다(상시 화면에 진척 지표가 셋이라 어수선했다).
         const t = game.trial;
-        if (t) {
-          goalText = `이번 시험: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`;
-          goalSub = `불씨 ${emberDots(game.embers)} · 다음 카드까지 ${Math.round(game.xpProgress * 100)}%`;
-        } else {
-          goalText = "무리를 먹여 키우세요";
-          goalSub = `다음 진화 카드까지 ${Math.round(game.xpProgress * 100)}%`;
-        }
+        goalText = t
+          ? `이번 시험: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`
+          : "무리를 먹여 키우세요";
+        goalSub = `불씨 ${emberDots(game.embers)}`;
       }
       goalBar.update({
         visible: game.phase === "watch",
@@ -1139,7 +1137,12 @@ async function boot(): Promise<void> {
 
     updateCamera(ticker.deltaMS);
     // 미니맵 — 관전 중에만. 드래프트에선 캔버스 전체가 블러라 뭉갠 미니맵이 남으면 지저분하다.
-    minimap.container.visible = game.phase === "watch";
+    // 목표 줄 상세를 펼쳤을 때도 숨긴다: 그 패널이 미니맵 자리를 덮어 조각만 삐져나와 지저분했다.
+    minimap.container.visible = game.phase === "watch" && !goalBar.isOpen();
+    // 미니맵은 캔버스에 그려 DOM 으로 못 잰다. 겹침 검사기(scripts/overlap-check.mjs)가 "지금 떠 있나"를
+    // 알 수 있게 body 에 표식만 남긴다(값이 바뀔 때만 쓴다 · 매 프레임 DOM 쓰기 아님).
+    const mmFlag = minimap.container.visible ? "on" : "off";
+    if (document.body.dataset["minimap"] !== mmFlag) document.body.dataset["minimap"] = mmFlag;
     if (minimap.container.visible) {
       minimap.sync(game.world, camX, camY, camZoom, layout.width, layout.height);
       minimap.place(app.screen.width, app.screen.height);

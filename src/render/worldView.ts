@@ -59,13 +59,9 @@ export class WorldView {
   private readonly relG = new Graphics(); // 관계 고리(위험 톱니 링 / 먹잇감 브래킷) — 스프라이트 아래
   private readonly creatureLayer = new Container();
   private readonly moveTargetG = new Graphics(); // 이동 명령 목표 깃발(탭 명령 조종) — 도착까지 서 있다
-  private readonly selectG = new Graphics(); // 탭으로 고른 개체 강조 고리(개인 카메라)
-  private readonly favG = new Graphics(); // 즐겨찾기(단골) 개체 상시 마커(머리 위 금빛 별)
   private readonly bossG = new Graphics();
   private readonly overlayG = new Graphics();
-  private selectedId: number | null = null; // 따라가며 관찰 중인 개체
-  private favoriteId: number | null = null; // 즐겨찾기로 고정한 개체(선택과 무관하게 상시 표시)
-  private leadId: number | null = null; // 사람이 앞장세운 개체(?alpha). null 이면 표식을 아예 안 그린다
+  private leadId: number | null = null; // 사람이 앞장세운 개체(알파). null 이면 표식을 아예 안 그린다
   private moveTarget: { x: number; y: number } | null = null; // 이동 명령 목표(월드 좌표). null = 명령 없음
 
   private readonly pool: Sprite[] = [];
@@ -97,24 +93,12 @@ export class WorldView {
     // 이동 목표 깃발은 스프라이트 **위** — 무리가 목표 지점을 밟고 지나가도 깃발이 파묻히지 않아야
     // "어디로 가는 중인가"를 잃지 않는다(작은 표식이라 몸을 가려도 한 마리 일부다).
     this.container.addChild(this.moveTargetG);
-    this.container.addChild(this.selectG);
-    this.container.addChild(this.favG);
     this.container.addChild(this.bossG);
     this.container.addChild(this.overlayG);
   }
 
-  /** 따라가며 관찰할 개체를 정한다(탭 선택). null 이면 선택 해제. 강조 고리를 그릴 대상. */
-  setSelected(id: number | null): void {
-    this.selectedId = id;
-  }
-
-  /** 즐겨찾기(단골) 개체 — 선택과 무관하게 상시 금빛 별로 표시해 무리 속에서 놓치지 않게. null 이면 해제. */
-  setFavorite(id: number | null): void {
-    this.favoriteId = id;
-  }
-
   /**
-   * 사람이 앞장세운 개체(알파 조종 `?alpha`). null 이면 표식·시야 예외가 통째로 꺼져 기존 화면과 같다.
+   * 사람이 앞장세운 개체(알파 조종). null 이면 표식·시야 예외가 통째로 꺼져 관전 화면과 같다.
    * main 이 매 프레임 `world.lead.leaderId`(승계로 바뀐다)를 그대로 넘긴다 — 여기서 상태를 안 들고 있으면
    * 앞장서던 개체가 쓰러진 뒤에도 옛 자리에 표식이 남는다.
    */
@@ -632,31 +616,6 @@ export class WorldView {
 
     // 이동 명령 목표 깃발 — 명령이 사는 동안(도착 전) 계속 서 있다.
     this.drawMoveTarget();
-
-    // 선택 개체 강조 — 탭으로 고른 한 마리를 또렷한 고리로 표시(카메라가 이 아이를 따라간다).
-    // 폰에서 한눈에 보이게 밝은 금빛 + 은은한 맥동. 위치는 렌더 표시 좌표(저역통과)라 떨지 않는다.
-    // 알파를 탭해 고른 경우엔 금빛 고리를 생략한다 — 흰 알파 표식과 겹쳐 둘 다 뭉개져 보인다.
-    this.selectG.clear();
-    if (this.selectedId !== null && this.selectedId !== this.leadId) {
-      const dp = this.dispPos.get(this.selectedId);
-      if (dp) {
-        const pulse = 0.5 + 0.5 * Math.sin((this.frame % 64) / 64 * Math.PI * 2);
-        const r = 17 + pulse * 3;
-        this.selectG.circle(dp.x, dp.y, r).stroke({ color: 0xffe08a, width: 2.4, alpha: 0.9 });
-        this.selectG.circle(dp.x, dp.y, r + 3).stroke({ color: 0xffe08a, width: 1.2, alpha: 0.3 });
-      }
-    }
-
-    // 즐겨찾기(단골) 마커 — 선택과 무관하게 상시. 머리 위 금빛 별 + 은은한 고리로 무리 속에서 바로 찾는다.
-    this.favG.clear();
-    if (this.favoriteId !== null) {
-      const dp = this.dispPos.get(this.favoriteId);
-      if (dp) {
-        const twinkle = 0.72 + 0.28 * Math.sin((this.frame % 90) / 90 * Math.PI * 2);
-        this.favG.circle(dp.x, dp.y, 15).stroke({ color: 0xffd24a, width: 1.4, alpha: 0.4 });
-        drawStar(this.favG, dp.x, dp.y - 20, 6, 0xffd24a, twinkle);
-      }
-    }
 
     // 보스 시각은 로직과 1:1 (known_issues). 실제로 쫓아와 무는 개체만 점 + 물기 반경 + 주목 펄스로
     // 그린다(도망 대상): 단일 추격자(chaser) 또는 사나운 무리(members 여러 마리가 사방에서 몰려온다).
@@ -1215,9 +1174,8 @@ const NIGHT_MAX_ALPHA = 0.4;
 // 시야 부채꼴 반각(라디안) — sim 의 fovHalfCos 와 같은 각도로 표시(보는 방향 ± 이만큼).
 const VISION_FOV_HALF = Math.acos(SIM.fovHalfCos);
 
-// 앞장선 개체(알파 조종) 표식 색 — 청백. 금빛(선택·단골)·초록(내 종)·보라(독)와 안 겹치고,
-// 연파랑 무리 방패(0xcfe6ff)보다 희고 밝다. 조이스틱 표시(render/leadStick.ts)도 같은 색을 써서
-// "손끝의 스틱 = 저 개체"가 색으로 이어진다.
+// 앞장선 개체(알파 조종) 표식 색: 청백. 초록(내 종)·보라(독)와 안 겹치고,
+// 연파랑 무리 방패(0xcfe6ff)보다 희고 밝다.
 const LEAD_COLOR = 0xf0f8ff;
 // 표식 밑에 까는 어두운 윤곽 — 사막·눈·마른 풀처럼 밝은 지형 위에서 흰 표식이 사라지는 걸 막는다.
 const LEAD_OUTLINE = 0x06080d;
@@ -1422,17 +1380,6 @@ function drawPattern(g: Graphics, look: CreatureLook, len: number, wid: number, 
   for (const sp of look.spots) {
     g.ellipse(sp.x * len, sp.y * wid, sp.r * len * 0.5, sp.r * wid * 0.72).fill({ color: pc });
   }
-}
-
-/** 작은 5각 별(즐겨찾기 마커). cx,cy=중심, r=바깥 반지름. alpha 로 은은히 반짝인다. */
-function drawStar(g: Graphics, cx: number, cy: number, r: number, color: number, alpha = 1): void {
-  const pts: number[] = [];
-  for (let k = 0; k < 10; k++) {
-    const rad = k % 2 === 0 ? r : r * 0.45; // 바깥 꼭짓점/안쪽 오목
-    const a = -Math.PI / 2 + (k / 10) * Math.PI * 2;
-    pts.push(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
-  }
-  g.poly(pts).fill({ color, alpha }).stroke({ color: 0x5a3d08, width: 1, alpha: alpha * 0.9 });
 }
 
 // 게놈에서 한 종의 생물 스프라이트 텍스처를 만든다(앞쪽 = +x). 형질이 형태로 드러난다.
