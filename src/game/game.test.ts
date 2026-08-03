@@ -534,14 +534,26 @@ describe("라운드 시험과 혈통의 불씨", () => {
     expect(g2.embers).toBe(GAME.emberMax); // 가득이면 그대로
   });
 
-  it("레벨업 드래프트 복귀(pickCard)는 계수를 지우지 않는다(라운드가 이어진다)", () => {
-    const g = runToDraft("trial-keep-counts");
+  it("레벨업 카드는 라운드 도중에 끼어들지 않고 라운드 경계에서 열린다", () => {
+    // 예전엔 레벨이 오르는 즉시 전체 화면 카드창이 떴다(실측: 드래프트의 100%가 라운드 도중).
+    // 지금은 레벨만 오르고 카드는 밀어 뒀다가 판정 뒤에 연다.
+    const g = runToDraft("trial-draft-boundary");
+    expect(g).not.toBeNull();
+    if (!g) return;
+    expect(g.level).toBeGreaterThan(1); // 레벨은 라운드 도중에 올랐고
+    expect(g.secondsLeft).toBe(0); // 카드창은 타이머가 다 된 뒤에야 열렸다
+  });
+
+  it("경계 드래프트에서 카드를 고르면 다음 라운드가 시작되고 시험 계수가 리셋된다", () => {
+    const g = runToDraft("trial-draft-next");
     expect(g).not.toBeNull();
     if (!g) return;
     g.world.roundCounts.feeds = 7;
-    g.pickCard(0);
+    let guard = 0;
+    while (g.phase === "draft" && guard++ < 8) g.pickCard(0); // 한 라운드에 두 번 올랐으면 이어서 한 장 더
     expect(g.phase).toBe("watch");
-    expect(g.world.roundCounts.feeds).toBe(7); // beginStage 를 안 거쳤으니 그대로
+    expect(g.world.roundCounts.feeds).toBe(0); // 새 라운드라 계수는 0 부터
+    expect(g.secondsLeft).toBeGreaterThan(0); // 새 라운드 타이머가 채워졌다
   });
 
   it("시대 진입은 불씨를 1 회복하되 상한을 넘지 않고, 시대 보상 드래프트에 다음 시험 예상이 뜬다", () => {

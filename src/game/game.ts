@@ -127,6 +127,20 @@ export class Game {
    * 바깥에서는 읽기만 할 것(증감은 finishStage·continueToNextEra·setupRun 만). */
   embers: number = GAME.emberStart;
 
+  /** 직전 라운드의 판정. 판정 직후에 카드창이 열리면 화면의 판정 플래시가 그 창에 가려지므로,
+   *  카드창이 맨 위에서 다시 말해 준다("왜 졌는지 모르는데 졌다"를 막는다). 새 라운드가 시작되면 비운다. */
+  private lastVerdictValue: TrialVerdict | null = null;
+
+  /** 직전 라운드 판정(카드창이 제목 자리에 싣는다). 새 라운드가 시작되면 null. */
+  get lastVerdict(): TrialVerdict | null {
+    return this.lastVerdictValue;
+  }
+
+  /** 아직 카드를 안 고른 레벨업 수. 라운드 경계에서 한 장씩 푼다(라운드 도중엔 안 끊는다). */
+  private pendingLevels = 0;
+  /** 지금 드래프트가 라운드 경계에서 열린 것인가. 고르고 나면 관전 복귀가 아니라 다음 단계로 간다. */
+  private boundaryDraft = false;
+
   private currentTrial: Trial | null = null;
   /** 시대 보상 드래프트가 예고한 시험 · beginStage 가 그대로 채택한다. 예고 시점과 시작 시점의 게놈·
    * 개체 수가 달라도(카드 ×2 강화·스킵 새끼) 예고한 시험이 그대로 걸린다(예고=실물). */
@@ -380,10 +394,25 @@ export class Game {
         }
         this.logEvent("card", `레벨 ${this.level} · ${card.name}`);
       }
-      // 진행 중이던 단계로 복귀(단계 타이머·보스 상태는 그대로 보존).
-      this.phase = "watch";
-      this.acc = 0;
+      this.afterDraftPick();
     }
+  }
+
+  /**
+   * 레벨업 드래프트를 하나 처리한 뒤 어디로 갈지 정한다.
+   * 라운드 경계에서 열린 드래프트면 남은 카드를 마저 고르고 다음 단계로, 아니면 관전 복귀.
+   * (지금은 레벨업 카드가 전부 경계에서 열리므로 관전 복귀 갈래는 프리셋 이후엔 거의 안 쓰인다.)
+   */
+  private afterDraftPick(): void {
+    if (this.boundaryDraft) {
+      if (this.openPendingDraft()) return; // 한 라운드에 두 번 올랐다: 다음 장을 이어서
+      this.boundaryDraft = false;
+      this.beginStage();
+      return;
+    }
+    // 진행 중이던 단계로 복귀(단계 타이머·보스 상태는 그대로 보존).
+    this.phase = "watch";
+    this.acc = 0;
   }
 
   /** 레벨업 드래프트를 스킵 — 3장이 다 별로면 형질 대신 소소한 보상(새끼 몇 마리)을 받고 관전으로 복귀한다.
@@ -400,8 +429,7 @@ export class Game {
       this.beginStage();
       return;
     }
-    this.phase = "watch";
-    this.acc = 0;
+    this.afterDraftPick();
   }
 
   /**
@@ -488,15 +516,33 @@ export class Game {
     if (this.xp >= this.xpToNext) this.levelUp();
   }
 
-  /** 레벨업 — 진행 중이던 단계를 멈추고 형질 카드 3장 중 하나를 고르게 한다(레벨=세대). */
+  /**
+   * 레벨업 · 레벨과 경험치만 올리고, **카드는 라운드가 끝난 뒤에 고르게 미룬다.**
+   *
+   * 예전엔 여기서 곧장 드래프트를 띄웠다. 그런데 실측하면 드래프트의 **100%가 라운드 도중**에 떴고
+   * (프리셋 4시드, 단계당 0.8회), 16초짜리 시험을 보는 중에 전체 화면 카드창이 끼어들어 흐름이
+   * 매번 끊겼다. 라운드 판정 루프가 생긴 뒤로는 라운드 경계가 이미 정지점이므로, 카드도 그 자리에서
+   * 고르게 모아 준다: 판정 → 카드 → 다음 라운드.
+   */
   private levelUp(): void {
     this.level += 1;
     this.xp -= this.xpToNext;
     if (this.xp < 0) this.xp = 0;
     this.xpToNext = GAME.xpBase + (this.level - 1) * GAME.xpPerLevel;
+    this.pendingLevels += 1;
+  }
+
+  /**
+   * 밀어 둔 레벨업 카드를 한 장 연다(라운드 경계에서만 부른다). 열었으면 true.
+   * 한 라운드에 두 번 오른 경우에도 한 장씩 차례로 고르게 한다.
+   */
+  private openPendingDraft(): boolean {
+    if (this.pendingLevels <= 0) return false;
+    this.pendingLevels -= 1;
+    this.boundaryDraft = true;
     this.phase = "draft";
     // 메타 언락: 열린 카드만 드래프트 풀에(잠긴 특화 카드는 런을 거듭해 해금).
-    // 언락된 카드 중, 이 종에 이미 무의미한 카드(예: 이미 나는데 날개 카드)는 뺀다 — "손해 카드" 방지(폰 피드백).
+    // 언락된 카드 중, 이 종에 이미 무의미한 카드(예: 이미 나는데 날개 카드)는 뺀다 · "손해 카드" 방지(폰 피드백).
     this.draftCards = drawCards(
       this.draftRng,
       3,
@@ -511,6 +557,7 @@ export class Game {
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
     this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (무리 전체에 퍼지고, 새끼는 부모를 닮아 조금씩 달라집니다)`;
     this.onDraft?.(this.draftCards, this.preview);
+    return true;
   }
 
   /**
@@ -682,6 +729,8 @@ export class Game {
     this.pendingTrial = null;
     this.skipBroodTotal = 0;
     this.trialSkipBroodBase = 0;
+    this.pendingLevels = 0;
+    this.boundaryDraft = false;
     this.firstChoice = true;
     this.lineage = null; // 새 혈통 — 갈래는 시작 프리셋을 고를 때 다시 정해진다
     this.level = 1;
@@ -805,8 +854,9 @@ export class Game {
    */
   private beginStage(): void {
     this.stageXp = 0; // 조종 모드 경험치 상한은 단계마다 새로 찬다(leadEnabled=false 면 안 읽힌다)
-    this.world.resetRoundCounts(); // 새 단계 = 시험 계수 리셋(레벨업 드래프트 복귀는 이 함수를 안 거친다)
+    this.world.resetRoundCounts(); // 새 단계 = 시험 계수 리셋
     this.currentTrial = null;
+    this.lastVerdictValue = null; // 새 라운드가 시작되면 지난 판정은 지운다
     this.phase = "watch";
     this.acc = 0;
     const kind = this.currentKind();
@@ -875,7 +925,9 @@ export class Game {
       const prog = this.trialProgress;
       const trialPassed = prog >= trial.target;
       if (!trialPassed) this.embers -= 1;
-      this.onTrialVerdict?.({ passed: trialPassed, trial, progress: prog, embersLeft: this.embers });
+      const verdict: TrialVerdict = { passed: trialPassed, trial, progress: prog, embersLeft: this.embers };
+      this.lastVerdictValue = verdict; // 곧 열릴 카드창이 제목 자리에 싣는다(플래시는 그 창에 가린다)
+      this.onTrialVerdict?.(verdict);
       if (this.embers <= 0) {
         this.loseReason = "embers";
         this.endRun("lose");
@@ -894,7 +946,10 @@ export class Game {
       this.endRun("win");
       return;
     }
-    this.beginStage(); // 다음 단계 바로 시작 — 형질 드래프트는 단계 전환이 아니라 레벨업으로만.
+    // 라운드 도중에 오른 레벨의 카드를 여기서 고른다(판정 → 카드 → 다음 라운드).
+    // 고르고 나면 afterDraftPick 이 beginStage 로 잇는다.
+    if (this.openPendingDraft()) return;
+    this.beginStage();
   }
 
   private clearStageState(): void {

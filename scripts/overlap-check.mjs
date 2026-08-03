@@ -102,8 +102,11 @@ const SCREENS = {
       await page.waitForTimeout(2600);
       // 실제로 나올 수 있는 **가장 긴** 문구를 넣어 최악을 잰다(평균 길이만 보면 사고를 놓친다).
       await page.evaluate(() => {
+        const t = document.querySelector(".draft-title");
         const f = document.querySelector(".draft-forecast");
         const n = document.querySelector(".draft-notice");
+        // 제목 자리에는 판정이 들어온다. 가장 긴 형태(불합격 + 진행/목표 + 불씨)로 잰다.
+        if (t) t.textContent = "시험 불합격 · 무리 14/18 · 불씨 하나가 꺼졌습니다";
         if (f) {
           f.textContent = "이번 시험: 먹이 45회 (12/45)";
           f.style.display = "";

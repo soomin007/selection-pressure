@@ -9,7 +9,7 @@ import { DEBUG, DEBUG_ACTIVE, TUNE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
 import { createGoalBar } from "@/ui/goalBar";
-import { Game, type ExtinctionType, type TrialKind } from "@/game/game";
+import { Game, type ExtinctionType, type TrialKind, type TrialVerdict } from "@/game/game";
 import { GAME } from "@/game/config";
 import { BOSS_TYPES, bossName, type BossType } from "@/sim/boss";
 import { createDraftPanel } from "@/ui/draftPanel";
@@ -336,6 +336,10 @@ async function boot(): Promise<void> {
         canReroll: game.canReroll,
         forecast: draftForecast(),
         notice: game.draftNotice,
+        // 판정 직후에 열린 카드창이면 제목 자리에 판정을 싣는다(플래시는 이 창에 가려 안 보인다).
+        verdict: game.lastVerdict
+          ? { text: verdictLine(game.lastVerdict), passed: game.lastVerdict.passed }
+          : null,
       });
   };
   /** 드래프트 예고 줄: 진행 중 라운드의 시험(레벨업) 또는 곧 시작할 단계의 시험(시대 보상).
@@ -349,14 +353,14 @@ async function boot(): Promise<void> {
   // 라운드 시험 판정 플래시: 합격은 라임, 불합격은 호박에 이유(진행/목표)와 대가(불씨)를 한 줄로.
   const TRIAL_WORD: Record<TrialKind, string> = { hunt: "사냥", feed: "먹이", birth: "새끼", pop: "무리" };
   // priority=true: 같은 프레임에 다음 단계(보스) 등장 플래시가 이어져도 판정이 덮이지 않고 끝까지 보인다.
+  /** 판정 한 줄 · 화면 플래시와 카드창 제목이 **같은 문구**를 쓴다(둘이 갈리면 화면이 거짓말한다). */
+  function verdictLine(v: TrialVerdict): string {
+    return v.passed
+      ? `시험 합격 · ${v.trial.label}`
+      : `시험 불합격 · ${TRIAL_WORD[v.trial.kind]} ${Math.min(v.progress, v.trial.target)}/${v.trial.target} · 불씨 하나가 꺼졌습니다`;
+  }
   game.onTrialVerdict = (v) => {
-    if (v.passed) highlights.flash(`시험 합격 · ${v.trial.label}`, 0x8fd14f, true);
-    else
-      highlights.flash(
-        `시험 불합격 · ${TRIAL_WORD[v.trial.kind]} ${Math.min(v.progress, v.trial.target)}/${v.trial.target} · 불씨 1을 잃었습니다`,
-        0xffba3a,
-        true,
-      );
+    highlights.flash(verdictLine(v), v.passed ? 0x8fd14f : 0xffba3a, true);
   };
   // 승리·정복·멸종 순간 연출 — 결과 패널 직전에 전역 화면 클라이맥스를 얹는다.
   const moment = createMomentOverlay();

@@ -92,6 +92,9 @@ export interface DraftContext {
   canReroll: boolean;
   forecast: string; // 예고 줄("이번 시험: ..."). 빈 문자열이면 숨김
   notice: string; // 안내 줄(진행 중인 위협 · 시대 보상 설명). 빈 문자열이면 숨김
+  /** 직전 라운드 판정. 있으면 제목 자리를 대신 차지한다(기본 제목은 아무 정보가 없는 문구라
+   *  판정으로 바꾸는 편이 낫다). null 이면 기본 제목. */
+  verdict: { text: string; passed: boolean } | null;
 }
 
 export interface DraftPanelCallbacks {
@@ -612,6 +615,11 @@ export function createDraftPanel(
     cardEls.length = 0;
 
     levelText.textContent = `레벨 ${nextCtx.level} 달성`;
+    // 제목 자리: 직전 판정이 있으면 그것을 싣는다. 판정 플래시는 이 카드창에 가려 안 보이므로,
+    // 여기서 말하지 않으면 불씨가 왜 하나 줄었는지 알 길이 없다.
+    const v = nextCtx.verdict;
+    title.textContent = v ? v.text : "새 형질이 무리에 퍼져요";
+    title.style.color = v ? (v.passed ? "var(--lime)" : "var(--amber)") : "";
     forecastEl.textContent = nextCtx.forecast;
     forecastEl.style.display = nextCtx.forecast ? "" : "none";
     noticeEl.textContent = nextCtx.notice;
