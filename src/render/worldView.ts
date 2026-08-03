@@ -591,11 +591,15 @@ export class WorldView {
         sp.rotation = ang;
       }
       const energy = Math.max(0, Math.min(1, e.energy / SIM.maxEnergy));
-      // 은신(v7) — 숨는 종은 흐릿하게 보인다. 포식자가 "못 보는" 규칙이 화면에서도 읽혀야 한다.
-      // 단 **완전히 투명하게는 안 한다** — 플레이어는 자기 무리를 봐야 하니까(최대 45%까지만 흐려진다).
+      // 은신(v7) · 숨는 종은 흐릿하게 보인다. 포식자가 "못 보는" 규칙이 화면에서도 읽혀야 한다.
       // 큰 몸은 못 숨으므로(effectiveCamo) 커진 종은 흐려지지도 않는다.
       const hide = effectiveCamo(e.genome.traits.camouflage, e.genome.traits.size);
-      sp.alpha = (0.5 + 0.5 * energy) * (1 - 0.45 * hide);
+      // ⚠ 불투명도는 **가독성과 직접 맞바꾸는 채널**이다. 예전엔 기력을 여기에 실어(0.5~1.0) 배고픈
+      // 개체가 늘 반투명했고, 짙은 지형 위에서 생물이 안 보였다(2026-08-03 사용자: "배경은 진한데
+      // 캐릭터들은 반투명해서 가시성이 떨어진다"). 기력은 미세한 차이로만 남기고(0.88~1.0) 바닥을
+      // 올린다. 은신도 내 무리는 덜 흐려지게 한다 · 내 애들은 어떤 경우에도 보여야 한다.
+      const hideFade = (e.species.isPlayer ? 0.16 : 0.3) * hide;
+      sp.alpha = (0.88 + 0.12 * energy) * (1 - hideFade);
       sp.visible = true;
       i++;
     }
