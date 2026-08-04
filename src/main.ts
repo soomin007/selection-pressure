@@ -33,7 +33,8 @@ import { Minimap } from "@/render/minimap";
 import { ThreatBanner } from "@/render/threatBanner";
 import { TRAIT_LABELS } from "@/sim/genome";
 import { APEX_BOON } from "@/ui/traitDisplay";
-import { isPredatorBoss } from "@/sim/boss";
+import { isPredatorBoss, bossRaidable } from "@/sim/boss";
+import { ORDER } from "@/sim/params";
 import { leadCapsOf } from "@/render/leadVision";
 
 // 맵 배율 — 월드를 화면의 이 배수만큼 크게. 소수 개체(한 무리)를 카메라가 따라가며 탐험. 바이옴(사막·빙하·
@@ -42,9 +43,10 @@ const MAP_SCALE = 2.0;
 
 // --- 무리 지시(기본 모드) 전용 화면 상수. 밸런스가 아니라 카메라·안내 표시에만 쓰인다. ---
 const LEAD_CAM_EASE = 9; // 지시 모드 카메라 이징(기본 3.5 는 시상수 286ms 라 물먹은 느낌의 주범)
-const LEAD_SNAP_MS = 400; // 승계 직후 이 시간 동안은 기본 이징으로(화면이 홱 튀는 것 완화)
 const LEAD_BANNER_DELAY_MS = 3000; // "아무도 안 따라옵니다" 안내까지의 유예(바로 띄우면 잔소리)
 const PEEK_RETURN_MS = 1500; // 훔쳐보기(드래그·미니맵·2손가락 팬) 입력이 끝나고 무리로 복귀까지의 시간
+const ORDER_DENY_MS = 1800; // 갈 수 없는 곳을 탭했을 때 목표 줄에 그 사실을 남겨 두는 시간
+const ORDER_ARRIVED_PAD = 60; // 도착 판정 여유(무리는 한 점에 겹치지 않는다) · 기준 반경은 sim 과 공유
 
 async function boot(): Promise<void> {
   const layout = chooseLayout();
@@ -332,6 +334,9 @@ async function boot(): Promise<void> {
         canReroll: game.canReroll,
         forecast: draftForecast(),
         notice: game.draftNotice,
+        // 다음 관문이 때려서 물리칠 수 있는 보스면 그 이름. 카드가 "고르면 맞설 수 있는가"를
+        // 그 자리에서 말한다(형질을 키울 이유는 고르는 순간에 보여야 한다).
+        raidBoss: game.upcomingRaidBoss,
         // 판정 직후에 열린 카드창이면 제목 자리에 판정을 싣는다(플래시는 이 창에 가려 안 보인다).
         verdict: game.lastVerdict
           ? { text: verdictLine(game.lastVerdict), passed: game.lastVerdict.passed }
@@ -393,9 +398,7 @@ async function boot(): Promise<void> {
   // 그 콜백보다 반드시 먼저 선언한다(아래쪽에 두면 TDZ ReferenceError 로 부팅이 죽는다 — known_issues).
   let leadZeroMs = 0; // 아무도 안 따라오는 상태가 이어진 시간(ms)
   let leadZeroShown = false; // 그 안내를 이번 월드에서 이미 띄웠나(한 번만)
-  let prevLeadChanged = -1; // 직전 프레임의 world.lead.changedTick — 바뀌면 승계가 일어난 것
-  let leadSnapMs = 0; // 승계 직후 카메라를 기본 이징으로 두는 남은 시간(ms)
-  let prevCommanded = false; // 직전 프레임의 world.lead.commanded — false→true 가 "몰기 시작한 순간"
+  let denyMs = 0; // "그곳으로는 갈 수 없습니다"를 목표 줄에 남겨 둘 남은 시간(ms)
   let tapHintShown = false; // "탭 = 명령" 안내(런당 1회) 표시 여부
   let emberHintShown = false; // "불씨 = 남은 기회" 첫 안내(런당 1회) 표시 여부
   let emberHintMs = 0; // 관전 진입 후 그 안내까지의 대기 시간(탭 안내 플래시를 덮지 않게 늦춘다)
@@ -410,11 +413,10 @@ async function boot(): Promise<void> {
     reportScreen.hide(); // 이전 혈통의 보고서 화면이 남아 있으면 닫는다.
     // 새 월드 → 훔쳐보기를 풀고 카메라가 무리로 복귀.
     manualCam = null;
-    // 무리 지시 표시 상태 초기화 · 새 월드에선 안내를 다시 한 번 띄울 수 있고, 승계 감지도 처음부터.
+    // 무리 지시 표시 상태 초기화 · 새 월드에선 안내를 다시 한 번 띄울 수 있다.
     leadZeroShown = false;
     leadZeroMs = 0;
-    prevLeadChanged = -1;
-    prevCommanded = false; // 새 월드 = commanded 도 false 로 다시 시작(단계마다 새 월드다)
+    denyMs = 0;
     // 새 월드의 내 무리로 카메라를 즉시 스냅(hint 가 엉뚱한 데서 시작해 첫 프레임에 휙 도는 걸 방지).
     const c0 = world.playerCentroid();
     camX = c0.x;
@@ -524,6 +526,10 @@ async function boot(): Promise<void> {
   let prevLowWarn = false;
   let prevLevel = game.level;
   let prevThreat: string | null = null;
+  // 보스가 나타난 틱. 등장 배너를 **한 틱 늦춰** 띄우기 위한 것 · 보스는 라운드 전환 안에서 만들어지고
+  // 그 틱에는 stepBoss 가 아직 안 돌아 전사 수가 0 이다. 그대로 띄우면 셀 수 있는 종에게도
+  // "맞설 수 있는 개체가 없습니다"라고 말해 버린다(≈33ms 뒤라 눈에는 즉시로 보인다).
+  let bossBannerTick = -1;
 
   // 월드 탭 = 명령. 월드 레이어는 hit-test 에서 빼(none) 탭이 stage 까지 통과하게 한다 →
   // 개체는 좌표로 직접 찾는다(스프라이트는 풀 재사용이라 개체와 1:1 이 아니므로 좌표 + 최근접 탐색).
@@ -629,10 +635,26 @@ async function boot(): Promise<void> {
     // 무엇을 탭했는지는 상관없다(생물 위를 탭해도 그 자리로 간다).
     if (!herdCanReach(wx, wy)) {
       effects.spawnPing(wx, wy, "deny"); // 왜 안 가는지 그 자리에서 보이게(못 가는 지형·길 없음)
+      // 0.25초짜리 핑만으로는 "탭이 먹기는 했는지"조차 안 읽힌다(실측: 탭 여섯 번 중 한 번이 조용히
+      // 거부됐다). 새 줄을 만들지 않고 이미 있는 목표 줄에 잠깐 말로 남긴다.
+      denyMs = ORDER_DENY_MS;
       return;
     }
     game.setHerdOrder(wx, wy);
     effects.spawnPing(wx, wy, "go");
+    denyMs = 0; // 새 지시가 먹혔다 · 거부 안내는 그 자리에서 걷는다
+  }
+
+  /**
+   * 무리가 내려 둔 뜻에 사실상 도착했나. 도착한 개체는 sim 이 순종 수(orderFollowers)에서 빼므로,
+   * 이걸 안 가르면 "다 왔다"가 "아무도 안 따른다"로 표시된다(화면이 거짓말한다).
+   * 기준 반경은 sim 과 **같은 상수**(ORDER.arriveRadius)에서 끌어와 둘이 갈라질 수 없게 한다.
+   */
+  function herdArrived(): boolean {
+    const o = game.world.herdOrder;
+    if (o === null) return false;
+    const c = game.world.playerCentroid();
+    return Math.hypot(c.x - o.x, c.y - o.y) <= ORDER.arriveRadius + ORDER_ARRIVED_PAD;
   }
 
   /**
@@ -731,17 +753,22 @@ async function boot(): Promise<void> {
     for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y, ev.mine, ev.tx, ev.ty);
     game.world.events.length = 0;
     effects.update(ticker.deltaMS);
+    if (denyMs > 0) denyMs = Math.max(0, denyMs - ticker.deltaMS);
+    const gw = game.world;
+    const gBoss = gw.boss;
+    let mineCount = 0;
+    let wildCount = 0;
+    for (const en of gw.entities) {
+      if (!en.alive) continue;
+      if (en.species.isPlayer) mineCount += 1;
+      else wildCount += 1;
+    }
+    // "지금 이 보스에 맞설 수 있는 수" · sim 이 판정한 그 자리에서 센 값을 그대로 읽는다. 화면에서
+    // 조건을 다시 유도하면 화면과 실제가 갈리고(known_issues), 매 프레임 전 개체를 다시 도는 비용도 든다.
+    // 보스가 없는 틱에는 sim 이 0 으로 되돌리므로 낡은 수가 남지 않는다.
+    const raidFighters = gw.raidMeleeFighters + gw.raidRangedFighters;
     // --- 목표 한 줄 — "지금 뭘 해야 하나"를 게임 상태에서 자동으로 뽑는다(상시 화면의 전부) ---
     {
-      const gw = game.world;
-      let mineCount = 0;
-      let wildCount = 0;
-      for (const en of gw.entities) {
-        if (!en.alive) continue;
-        if (en.species.isPlayer) mineCount += 1;
-        else wildCount += 1;
-      }
-      const gBoss = gw.boss;
       // 대멸종 판정은 detectEvents 의 플래시와 같은 근거를 읽는다(다른 조건으로 재유도하면 어긋난다).
       const extName =
         gw.globalCold > 0 ? "한파" : gw.heat > 0 ? "폭염" : gw.foodRegrowMultiplier > 1 ? "대가뭄" : gw.plagueRate > 0 ? "역병" : "";
@@ -753,10 +780,13 @@ async function boot(): Promise<void> {
       let goalSub: string;
       if (gBoss) {
         goalText = `위협: ${gBoss.name}`;
-        goalSub =
-          gBoss.maxHp > 0 && gBoss.hp > 0
-            ? `${left} · 체력 바를 깎아 물리치거나 버티세요`
-            : `${left} · 끝까지 살아남으면 통과합니다`;
+        // 깎을 수 없는 판에서 "깎으세요"라고 말하는 것이 이 화면의 가장 큰 거짓말이었다. 판단 근거를
+        // 격퇴 체력(있기만 하면 참)에서 **맞설 수 있는 개체 수**로 바꾼다 · 0 이면 그렇다고 말한다.
+        goalSub = !bossRaidable(gBoss)
+          ? `${left} · 끝까지 살아남으면 통과합니다`
+          : raidFighters === 0
+            ? `${left} · 맞설 수 있는 개체가 없습니다. 끝까지 버티세요`
+            : `${left} · 맞서는 개체 ${raidFighters}마리 · 체력 바를 깎으세요`;
       } else if (extName) {
         goalText = `대멸종: ${extName}`;
         goalSub = `${left} · 환경이 바뀌었습니다. 버티세요`;
@@ -771,6 +801,18 @@ async function boot(): Promise<void> {
           ? `${game.secondsLeft}초 안에 채우세요 · 불씨 ${emberDots(game.embers)}`
           : left;
       }
+      // 갈 수 없는 곳을 탭했으면 이 줄의 뒷말만 잠깐 바꾼다(기한은 그대로 남긴다 · 새 줄을 안 만든다).
+      if (denyMs > 0) goalSub = `${left} · 그곳으로는 갈 수 없습니다`;
+      // 접힌 기본 상태에서 순종을 알리는 표시가 하나도 없었다 → 명령이 먹혔는지 알 방법이 없으니
+      // "말을 안 듣는다"로 읽힌다. 도착한 개체는 sim 이 순종 수에서 빼므로 도착을 따로 말한다.
+      const follow =
+        gw.herdOrder === null || mineCount === 0
+          ? ""
+          : gw.orderFollowers > 0
+            ? `따르는 중 ${gw.orderFollowers}/${mineCount}`
+            : herdArrived()
+              ? "무리 도착"
+              : `따르는 중 0/${mineCount}`;
       goalBar.update({
         visible: game.phase === "watch",
         text: goalText,
@@ -783,6 +825,7 @@ async function boot(): Promise<void> {
         // 순종의 질 · 지금 뜻을 향해 움직이는 수. sim 이 규칙을 판정한 그 자리에서 센 값을 그대로 읽는다.
         // 뜻을 안 내렸으면 셀 것이 없으므로 줄을 숨긴다(-1).
         followers: gw.herdOrder !== null ? gw.orderFollowers : -1,
+        follow, // 접힌 알약에 상시로 붙는 짧은 칩(빈 문자열이면 숨김)
         seconds: game.secondsLeft,
         night: gw.daylight < 0.5,
       });
@@ -802,49 +845,32 @@ async function boot(): Promise<void> {
     // 뿌연 유리로 비쳐 보인다. 드래프트 중 내 종 정보는 헤더의 "내 종" 팝업이 대신한다(핸드오프 §9).
     buildPanel.setVisible(game.phase === "watch" && traitsOpen);
 
-    // --- 무리 지시: 화면 안에서 알아채게 하는 것들(안내·승계 알림) ---
+    // --- 무리 지시: 화면 안에서 알아채게 하는 것들 ---
+    // ⚠ 여기 있던 안내 넷은 전부 `world.lead.*`(알파 조종 시절 필드)를 읽었는데, 무리 지시로 갈아탄 뒤로
+    //   armLead()·setLeadCommand() 호출부가 0 건이라 leaderId 는 영영 -1, followTicks 는 영영 0,
+    //   commanded 는 영영 false 였다 = **한 번도 뜬 적이 없는 안내**. 하필 "지금은 아무도 따라오지
+    //   않습니다"가 사용자가 실제로 겪은 상황의 설명인데 그게 죽은 코드였다. 근거를 지금 살아 있는 값
+    //   (world.herdOrder · world.orderFollowers)으로 다시 잡는다.
     if (leadMode && game.phase === "watch") {
-      // 따르는 수는 sim 이 규칙을 판정한 그 자리에서 센 값이다(마지막 틱 기준). 표시는 goalBar 패널.
-      const followers = game.world.lead.followerCount;
-      let mine = 0;
-      for (const en of game.world.entities) {
-        if (en.species.isPlayer) mine += 1;
-      }
       // 첫 관전 진입 안내(런당 1회) — 탭이 곧 명령이라는 것은 화면만 봐서는 알 수 없으니 한 번 알려 준다.
       if (!tapHintShown) {
         tapHintShown = true;
         highlights.flash("화면을 탭하면 무리가 그곳으로 갑니다", 0xf0f8ff);
       }
-      // 지시를 내리는데 아무도 안 따라오면 잠시 뒤 한 번만 알려 준다. 시작 종 여덟 중 다섯이
-      // 무리 성향 0 이라, 모르면 "조작은 되는데 왜 나 혼자지"로 끝난다.
-      // ⚠ 원인을 단정하지 않는다 — 무리 성향이 0 일 때만 그것을 이유로 대고, 그 밖에는 본 대로만
-      //   말한다(형질이 있어도 달아나는 중이거나 흩어져 있으면 따르는 수가 0 으로 나온다).
-      if (followers === 0 && mine > 1 && game.world.lead.followTicks > 0) {
+      // 뜻을 내렸는데 아무도 그쪽으로 안 움직이면 잠시 뒤 한 번만 알린다.
+      // ⚠ 원인을 단정하지 않는다 · 도망·눈앞의 먹이·막힌 길이 다 같은 0 으로 나온다. 그리고 이미
+      //   도착해 모여 있는 것도 0 이므로(도착한 개체는 안 센다) 거리로 갈라야 거짓말이 안 된다.
+      if (gw.herdOrder !== null && gw.orderFollowers === 0 && mineCount > 1 && !herdArrived()) {
         leadZeroMs += ticker.deltaMS;
         if (leadZeroMs >= LEAD_BANNER_DELAY_MS && !leadZeroShown) {
-          highlights.flash(
-            game.world.genome.traits.herding <= 0
-              ? "무리 성향이 0 입니다. 앞장서도 아무도 따라오지 않습니다."
-              : "지금은 아무도 따라오지 않습니다. 무리가 흩어져 있거나 달아나는 중입니다.",
-            0xffba3a,
-          );
+          highlights.flash("지금은 아무도 뜻을 따르지 않습니다. 달아나는 중이거나 눈앞의 일에 붙들려 있습니다.", 0xffba3a);
           leadZeroShown = true;
         }
       } else {
         leadZeroMs = 0;
       }
-      // 승계 알림 — sim 의 사건 배열은 안 늘렸다(렌더가 changedTick 변화를 감지한다).
-      if (game.world.lead.changedTick !== prevLeadChanged) {
-        prevLeadChanged = game.world.lead.changedTick;
-        if (prevLeadChanged >= 0) {
-          highlights.flash("앞장서던 개체가 쓰러졌습니다. 옆에 있던 한 마리가 앞으로 나섭니다.", 0xf0f8ff);
-          leadSnapMs = LEAD_SNAP_MS;
-        }
-      }
-      view.setLead(game.world.lead.leaderId >= 0 ? game.world.lead.leaderId : null);
-    } else {
-      view.setLead(null);
     }
+    view.setLead(null); // 앞장선 한 마리를 표시하던 자리 · 무리 지시에는 그런 개체가 없다
 
     updateCamera(ticker.deltaMS);
     // 미니맵 — 관전 중에만. 드래프트에선 캔버스 전체가 블러라 뭉갠 미니맵이 남으면 지저분하다.
@@ -858,7 +884,7 @@ async function boot(): Promise<void> {
       minimap.sync(game.world, camX, camY, camZoom, layout.width, layout.height);
       minimap.place(app.screen.width, app.screen.height);
     }
-    detectEvents();
+    detectEvents(raidFighters);
     highlights.update(ticker.deltaMS, app.screen.width / uiZoom);
     threatBanner.update(ticker.deltaMS, app.screen.width / uiZoom, app.screen.height / uiZoom);
     // 격퇴 체력 바는 worldView 가 보스 몸 위에 그린다(상단 글로벌 바 제거 — HUD 갈아엎기).
@@ -903,9 +929,7 @@ async function boot(): Promise<void> {
     // 사용자 줌을 모든 모드의 목표 줌에 곱한다(자동/수동 무관). 최종 줌은 안전 범위로 클램프.
     tz = Math.max(0.5, Math.min(5, tz * userZoom));
     // 지시 모드에선 카메라가 무리에 바짝 붙는다(기본 3.5 는 시상수 286ms 라 화면이 물먹은 느낌이 된다).
-    // 승계 직후 잠깐은 기본값으로 되돌려 초점이 다른 자리로 옮겨갈 때 화면이 홱 튀는 것을 줄인다.
-    if (leadSnapMs > 0) leadSnapMs = Math.max(0, leadSnapMs - dtMS);
-    const ease = leadMode && leadSnapMs <= 0 ? LEAD_CAM_EASE : 3.5;
+    const ease = leadMode ? LEAD_CAM_EASE : 3.5;
     const k = Math.min(1, (dtMS / 1000) * ease); // 시간 기반 이징
     camX += (tx - camX) * k;
     camY += (ty - camY) * k;
@@ -914,32 +938,29 @@ async function boot(): Promise<void> {
     view.setCamera(camX, camY, camZoom, game.width, game.height, layout.width, layout.height);
   }
 
-  function detectEvents(): void {
+  function detectEvents(fighters: number): void {
     const w = game.world;
     const bossNow = w.boss !== null;
-    if (bossNow && !prevBoss && w.boss) {
+    if (bossNow && !prevBoss) bossBannerTick = w.tick;
+    if (!bossNow) bossBannerTick = -1; // 뜨기도 전에 사라졌으면 예약을 거둔다
+    if (bossBannerTick >= 0 && w.tick > bossBannerTick && w.boss) {
+      bossBannerTick = -1;
+      const b = w.boss;
       // 개체형=보스, 전역 재난=시련으로 알린다(시각·용어 일치).
-      const kind = isPredatorBoss(w.boss.type) ? "보스" : "시련";
-      highlights.flash(`${kind} · ${w.boss.name}`, 0xff6a4a);
+      const kind = isPredatorBoss(b.type) ? "보스" : "시련";
+      // "이 판은 잡는 판인가 버티는 판인가"를 등장하는 그 순간에 정해 준다. 지금까지는 40초 내내
+      // 같은 문구만 돌고 대응법이 한 번도 안 나왔다. ⚠ 배너를 두 번 띄우면 뒤엣것이 앞엣것을
+      // 덮는다(단일 슬롯 · known_issues) → 한 줄로 합친다.
+      const how = !bossRaidable(b)
+        ? ""
+        : fighters > 0
+          ? ` · 맞서는 개체 ${fighters}마리`
+          : " · 맞설 수 있는 개체가 없습니다. 버티세요";
+      highlights.flash(`${kind} · ${b.name}${how}`, 0xff6a4a);
     }
-    // 지시 모드 전용 규칙 예고 · 하늘에서 내려다보는 보스에게는 수풀이 내 무리를 안 숨겨 준다.
-    // (무리를 수풀에 세워 두면 이 보스의 카운터인 시야 형질이 통째로 무의미해지기 때문이다.)
-    // ⚠ 봉인은 **한 번이라도 몰았을 때**(lead.commanded) 켜진다. 아직 한 번도 안 몰았으면 지금
-    //   이 순간에는 수풀이 아직 숨겨 주므로, 문구를 그 사실에 맞춰 나눈다(화면이 거짓말하지 않게).
-    if (leadMode && bossNow && !prevBoss && w.boss?.grassCover) {
-      highlights.flash(
-        w.lead.commanded
-          ? "이 보스에게는 수풀이 우리를 숨겨 주지 않습니다. 눈이 밝아야 삽니다."
-          : "앞장서서 몰기 시작하면 수풀이 우리를 숨겨 주지 않습니다. 눈이 밝아야 삽니다.",
-        0xffba3a,
-      );
-    }
-    // 안 몰고 있다가 몰기 시작한 순간 — 그 자리에서 규칙이 바뀐다(수풀 엄폐가 풀린다). commanded 는
-    // 한 번 켜지면 안 꺼지므로 이 알림은 단계당 최대 한 번이다.
-    if (leadMode && bossNow && w.boss?.grassCover && w.lead.commanded && !prevCommanded) {
-      highlights.flash("몰기 시작했습니다. 이제 수풀이 우리를 숨겨 주지 않습니다.", 0xffba3a);
-    }
-    prevCommanded = w.lead.commanded;
+    // ⚠ 여기 있던 "몰기 시작하면 수풀이 우리를 숨겨 주지 않습니다" 안내 둘을 지웠다. 그 규칙은
+    //   world.lead.commanded 로 켜지는데 그 값이 구조적으로 영영 false 라(무리 지시에는 모는 개체가
+    //   없다) 실제로는 한 번도 안 걸린다 = 화면이 없는 규칙을 설명하고 있었다.
     // 위협(보스/시련)이 사라진 순간 = 넘긴 것(단계 전환에 드래프트가 없으니 phase 대신 boss 유무로).
     if (prevBoss && !bossNow) highlights.flash("위협을 넘겼습니다", 0x6cc24a);
     prevBoss = bossNow;

@@ -3,10 +3,16 @@
 //   몸 길쭉함=속도, 눈 크기=시야, 등가시=공격력, 앞주둥이/이빨=식성. 진행 방향으로 회전.
 // 배경=환경, 먹이=초록 점, 보스=빨강+위험 반경, 대멸종=화면 틴트.
 
-import { Container, Graphics, Sprite, Texture, type Renderer } from "pixi.js";
+import { Container, Graphics, Sprite, Text, TextStyle, Texture, type Renderer } from "pixi.js";
 import type { World } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
-import type { BossType, Layer } from "@/sim/boss";
+import type { Boss, BossType, Layer } from "@/sim/boss";
+// ⚠ "누가 맞설 수 있는가"·"이 보스를 깎을 수 있는가"는 **sim 이 판정한다.** 렌더는 조건식을 다시
+//   쓰지 않고 sim 의 그 함수(isRaidFighter · bossRaidable)를 그대로 부른다 · 층위·수풀 엄폐·형질
+//   문턱이 전부 그 안에 있어서, 표식이 붙은 개체 = 실제로 때리는 개체가 정의상 어긋날 수 없다.
+//   (world.entities 는 매 스텝 끝에 산 개체만 남게 걸러지므로 sim 쪽 alive 검사와도 결과가 같다.)
+//   비용: 내 종 개체(수십 마리)에 프레임당 한 번이라 폰에서도 무시할 수준이다.
+import { bossRaidable, isRaidFighter } from "@/sim/boss";
 import { TILE, type TileKind } from "@/sim/terrain";
 import type { Biome } from "@/sim/environment";
 import { TRAIT_KEYS, TRAIT_MAX, type Genome } from "@/sim/genome";
@@ -58,11 +64,24 @@ export class WorldView {
   private readonly leadTerrain = new LeadTerrainLayer(); // 못 가는 지형(정적 — 통행 능력이 바뀔 때만 재생성)
   private readonly relG = new Graphics(); // 관계 고리(위험 톱니 링 / 먹잇감 브래킷) — 스프라이트 아래
   private readonly creatureLayer = new Container();
+  // 맞서는 개체(전사) 표식 · 스프라이트 **위** 레이어. 아래에 깔면 몸에 가려 "누가 싸우는가"가 사라진다.
+  private readonly fighterG = new Graphics();
   private readonly moveTargetG = new Graphics(); // 이동 명령 목표 깃발(탭 명령 조종) — 도착까지 서 있다
   private readonly bossG = new Graphics();
   private readonly overlayG = new Graphics();
+  // 격퇴 바 옆 남은 체력 숫자. 밤·대멸종 틴트(overlayG) **위**에 둔다 · 이 숫자는 어떤 조명에서도
+  // 읽혀야 한다(바 1픽셀이 6HP 라 숫자가 유일하게 정직한 눈금이다).
+  private readonly raidTextC = new Container();
+  private raidText: Text | null = null;
   private leadId: number | null = null; // 사람이 앞장세운 개체(알파). null 이면 표식을 아예 안 그린다
   private moveTarget: { x: number; y: number } | null = null; // 이동 명령 목표(월드 좌표). null = 명령 없음
+  // ── 격퇴 바를 "사건"으로 그리기 위한 렌더 전용 상태 ─────────────────────────────────────────
+  // 값은 오직 sim 의 boss.hp 에서 읽는다. "언제 깎였나"도 **바가 가리키는 그 값이 줄어든 것**으로만
+  // 안다 · 판정을 렌더에서 새로 만들지 않았으므로 번쩍임·잔상이 숫자와 어긋날 수 없다.
+  private raidBossRef: Boss | null = null; // 보스가 바뀌면(새 라운드) 아래 상태를 통째로 리셋
+  private raidHpPrev = 0;
+  private raidGhostHp = 0; // 잔상 기준(최근에 깎이기 전 체력) · 바 뒤에 옅게 남는다
+  private raidHitAge = RAID_FLASH_MS; // 마지막으로 깎인 뒤 지난 ms (처음엔 "방금 아님")
 
   private readonly pool: Sprite[] = [];
   // 생물 텍스처 캐시 — 키가 "내 종 세대별 게놈 서명" 또는 "야생 종 id". 내 종은 레벨업으로 게놈이
@@ -77,6 +96,7 @@ export class WorldView {
   private viewCY = 0;
   private viewHalfW = 1e9;
   private viewHalfH = 1e9;
+  private viewZoom = 1; // 월드px ↔ 화면px 환산(화면px = 월드px × zoom). 화면 고정 UI 를 피할 때 쓴다.
 
   constructor(renderer: Renderer) {
     this.renderer = renderer;
@@ -90,11 +110,14 @@ export class WorldView {
     // 관계 고리도 스프라이트 아래 — 몸 바깥 반경에만 그리므로 안 가려지고, 몸(=무슨 종인지)을 안 덮는다.
     this.container.addChild(this.relG);
     this.container.addChild(this.creatureLayer);
+    // 전사 표식도 스프라이트 위 · 몸 아래(바깥)에 그리므로 몸을 안 덮으면서 절대 안 가려진다.
+    this.container.addChild(this.fighterG);
     // 이동 목표 깃발은 스프라이트 **위** — 무리가 목표 지점을 밟고 지나가도 깃발이 파묻히지 않아야
     // "어디로 가는 중인가"를 잃지 않는다(작은 표식이라 몸을 가려도 한 마리 일부다).
     this.container.addChild(this.moveTargetG);
     this.container.addChild(this.bossG);
     this.container.addChild(this.overlayG);
+    this.container.addChild(this.raidTextC); // 밤 틴트 위 · 남은 체력 숫자만은 늘 또렷하게
   }
 
   /**
@@ -164,6 +187,7 @@ export class WorldView {
     this.viewCY = cy;
     this.viewHalfW = halfW;
     this.viewHalfH = halfH;
+    this.viewZoom = zoom > 0 ? zoom : 1;
     this.container.scale.set(zoom);
     this.container.pivot.set(cx, cy);
     this.container.position.set(screenW / 2, screenH / 2);
@@ -179,6 +203,13 @@ export class WorldView {
     // 이전 런의 이동 명령 깃발이 새 월드에 남는 걸 막는 안전망(명령 상태 자체는 main 이 지운다).
     this.moveTarget = null;
     this.moveTargetG.clear();
+    // 격퇴 바 상태도 런 단위로 리셋 · 안 그러면 지난 런의 잔상·번쩍임이 새 보스의 첫 프레임에 뜬다.
+    this.fighterG.clear();
+    this.raidBossRef = null;
+    this.raidHpPrev = 0;
+    this.raidGhostHp = 0;
+    this.raidHitAge = RAID_FLASH_MS;
+    if (this.raidText) this.raidText.visible = false;
   }
 
   /** 개체의 텍스처(캐시). 내 종은 세대별 게놈 서명으로, 야생은 종 id + 거친 게놈 서명으로 캐시한다.
@@ -289,6 +320,12 @@ export class WorldView {
     // 사냥 잠금 대상 — 단일 진실은 sim 필드(world.lead.orderTargetId, 매 틱 명령 미러). main 에서
     // 별도 setter 를 받지 않는다 — 화면의 잠금 표식과 실제로 물리는 대상이 정의상 어긋날 수 없게.
     const orderId = lead ? world.lead.orderTargetId : -1;
+    // ── 격퇴(보스에게 맞서기) 준비 ────────────────────────────────────────────────
+    // "지금 이 보스를 깎을 수 있는가"는 sim 의 bossRaidable 하나가 정한다. 못 깎는 보스(독 안개·격퇴
+    // 없음)면 아래가 전부 꺼져 예전 화면과 같다.
+    const boss = world.boss;
+    const raidBoss: Boss | null = boss !== null && bossRaidable(boss) ? boss : null;
+    this.trackRaidHp(raidBoss, dtMS);
     if (lead !== null) {
       this.relG.clear();
       this.relG.visible = true;
@@ -332,9 +369,15 @@ export class WorldView {
 
     // 생물 스프라이트 풀 — sim(30/s)과 화면(60fps) 사이를 prev→현재로 보간해 드득거림을 없앤다.
     this.playerG.clear();
+    this.fighterG.clear();
     const ringPulse = 0.5 + 0.5 * Math.sin((this.frame % 70) / 70 * Math.PI * 2);
     // 위험 표식용 맥동 — 다른 고리들(70프레임)보다 빨라 "급하다"로 읽힌다. 조종 모드에서만 쓴다.
     const threatPulse = 0.5 + 0.5 * Math.sin((this.frame % 44) / 44 * Math.PI * 2);
+    // 전사 표식용 맥동 · 가장 빠르다(36프레임 ≈ 0.6초). "지금 싸우는 중"이 다른 고리들과 리듬으로도 갈린다.
+    const fightPulse = 0.5 + 0.5 * Math.sin((this.frame % 36) / 36 * Math.PI * 2);
+    // 이번 프레임에 **맞설 수 있는** 내 종 개체 수(아래 개체 루프에서 sim 판정으로 센다).
+    // 이 수가 0 이면 격퇴 바를 아예 안 그린다 · 못 깎는 판에 가득 찬 바를 띄우는 건 화면의 거짓말이다.
+    let raidFighters = 0;
     let relMarks = 0;
     const nbWindow = 2.4 * SIM.stepsPerSecond; // 신생아 강조 지속(스텝)
     const nbPeriod = 0.8 * SIM.stepsPerSecond; // nb-pulse 반복 주기(스텝)
@@ -436,6 +479,14 @@ export class WorldView {
           this.playerG
             .circle(rx, ry, 17.5)
             .stroke({ color: 0xcfe6ff, width: 2, alpha: 0.38 + 0.28 * sh });
+        }
+        // **맞서는 개체(전사) 표식** · 보스가 떠 있는 동안, 이 개체가 지금 보스를 때릴 수 있는가.
+        // 판정은 sim 의 isRaidFighter 그대로다 · 여기서 조건을 다시 쓰면 "표식은 있는데 안 때린다"가
+        // 된다. 이게 없으면 전사가 0인 종으로 플레이할 때 아무 단서 없이 체력이 1도 안 깎이는 것만
+        // 겪는다(사용자가 겪은 그것). 물에 든 개체에 표식이 없는 것도 그대로 정보다(층이 달라 못 친다).
+        if (raidBoss !== null && isRaidFighter(raidBoss, e, world)) {
+          raidFighters++;
+          drawFighterMark(this.fighterG, rx, ry, fightPulse);
         }
         // 도전 과제 꾸밈 — 효과는 전혀 없다. 무지갯빛은 몸 색이라 아래 sp.tint 에서 처리한다.
         this.drawCosmetic(rx, ry, e.id);
@@ -625,7 +676,7 @@ export class WorldView {
     // 그린다(도망 대상): 단일 추격자(chaser) 또는 사나운 무리(members 여러 마리가 사방에서 몰려온다).
     // 전역 솎기/흡수 시련(위치 무관)은 개체가 없으므로 여기서 안 그리고 아래 전체 화면 틴트로만 표현한다.
     this.bossG.clear();
-    const boss = world.boss;
+    // (boss 는 위 "격퇴 준비" 에서 이미 꺼내 뒀다 · 전사 수를 개체 루프에서 세야 해서 앞으로 옮겼다.)
     // 주목 펄스(가독성 §7) — 부드러운 sin(0→1→0). 톱니(frame%60/60)는 매 2초 1→0 으로 뚝 끊겨 링·오라가
     // 번쩍여 "화면 깜빡임"으로 보였다(특히 그림자 매복자=여러 멤버+밝은 눈). sin 으로 매끄럽게 맥동시킨다.
     const pulse = 0.5 + 0.5 * Math.sin((this.frame % 72) / 72 * Math.PI * 2);
@@ -660,9 +711,10 @@ export class WorldView {
         this.drawLayerCue(boss.roam, p.x, p.y, 10);
         this.drawBossCreature(p.x, p.y, p.hx, p.hy, 10, boss.type, hc.dot, boss.killRadius, pulse);
       }
-      // 격퇴 체력 바 — 화면 상단 글로벌 바 대신 **떼의 무게중심 위**에 붙인다(2026-08-02 HUD 갈아엎기:
-      // 상시 상단 바가 정신사나웠다). 보스가 화면에 보일 때만 자연히 함께 보인다.
-      if (boss.maxHp > 0 && boss.hp > 0) this.drawRaidBar(cx, cy - maxR - 30, boss.hp / boss.maxHp);
+      // 격퇴 체력 바 · 떼의 무게중심 위에 붙인다(2026-08-02 HUD 갈아엎기에서 상시 상단 바를 걷어냈다).
+      // 떼가 화면 밖이면 가장자리 안쪽으로 밀어 붙인다(drawRaidBar 안) · 카메라는 내 무리를 따라가므로
+      // 둘이 갈리면 바가 아무 데도 없어서 "안 움직인다"가 아니라 **본 적이 없다**가 된다.
+      this.drawRaidBar(raidBoss, raidFighters, cx, cy - maxR - 30, cx, cy);
     } else if (boss && boss.killRadius > 0) {
       const bx = boss.prevX + (boss.x - boss.prevX) * interp;
       const by = boss.prevY + (boss.y - boss.prevY) * interp;
@@ -671,7 +723,10 @@ export class WorldView {
       this.drawLayerCue(boss.roam, bx, by, 20);
       this.drawBossCreature(bx, by, boss.x - boss.prevX, boss.y - boss.prevY, 20, boss.type, hc.dot, boss.killRadius, pulse);
       // 격퇴 체력 바 — 몸 위에(위 떼 분기와 같은 이유).
-      if (boss.maxHp > 0 && boss.hp > 0) this.drawRaidBar(bx, by - 36, boss.hp / boss.maxHp);
+      this.drawRaidBar(raidBoss, raidFighters, bx, by - 36, bx, by);
+    } else {
+      // 격퇴 대상이 없는 프레임(보스 없음·독 안개) · 남은 숫자를 지운다.
+      this.hideRaidText();
     }
 
     // 낮/밤 + 대멸종 화면 틴트 (둘 다 overlayG — 밤을 먼저 깔고 대멸종 틴트를 그 위에)
@@ -830,20 +885,158 @@ export class WorldView {
   }
 
   /**
+   * 격퇴 체력의 변화를 좇는다(렌더 전용 상태 갱신). **판정을 만들지 않는다** · sim 의 boss.hp 가
+   * 줄었다는 사실 하나만 본다. 그래서 번쩍임·잔상이 바가 가리키는 값과 정의상 어긋날 수 없다.
+   * 보스가 바뀌면(라운드 교체) 통째로 리셋해 지난 보스의 잔상이 새 바에 남지 않게 한다.
+   */
+  private trackRaidHp(boss: Boss | null, dtMS: number): void {
+    if (boss === null) {
+      this.raidBossRef = null;
+      return;
+    }
+    if (this.raidBossRef !== boss) {
+      this.raidBossRef = boss;
+      this.raidHpPrev = boss.hp;
+      this.raidGhostHp = boss.hp;
+      this.raidHitAge = RAID_FLASH_MS;
+      return;
+    }
+    this.raidHitAge += dtMS;
+    if (boss.hp < this.raidHpPrev) this.raidHitAge = 0; // 방금 깎였다
+    this.raidHpPrev = boss.hp;
+    // 잔상 · 깎인 자리를 잠깐 붙들고 있다가 천천히 따라 내려온다. 한 번의 반격이 바를 0.4px 밖에
+    // 못 움직여도, 잠깐 쌓인 몫은 눈에 보이는 폭이 된다("최근에 이만큼 깎았다").
+    if (boss.hp > this.raidGhostHp) this.raidGhostHp = boss.hp; // 새 라운드·회복 시 위로는 즉시 맞춘다
+    else if (this.raidHitAge > RAID_GHOST_HOLD_MS) {
+      const k = 1 - Math.pow(1 - RAID_GHOST_EASE, dtMS / (1000 / 60));
+      this.raidGhostHp += (boss.hp - this.raidGhostHp) * k;
+      if (this.raidGhostHp - boss.hp < 0.02) this.raidGhostHp = boss.hp;
+    }
+  }
+
+  /** 남은 체력 숫자(Pixi Text)를 처음 쓸 때 한 번 만든다. 화면 밖에 두는 대신 visible 로 껐다 켠다. */
+  private ensureRaidText(): Text {
+    if (this.raidText === null) {
+      const t = new Text({
+        text: "",
+        style: new TextStyle({
+          fill: 0xfff2ec,
+          fontSize: RAID_TEXT_SIZE,
+          fontWeight: "800",
+          // 굵은 어두운 테두리 · 사막·눈·풀 어디 위에 떠도 숫자가 안 사라진다(표식 밑선과 같은 이유).
+          stroke: { color: 0x0b0e14, width: 4 },
+        }),
+      });
+      t.anchor.set(0, 0.5);
+      // 월드 레이어는 카메라 줌으로 확대되므로 화면 배율만큼 높은 해상도로 구워 흐림을 막는다.
+      // 매 프레임 바꾸면 텍스처를 다시 굽는다 → 만들 때 한 번만 정한다.
+      t.resolution = Math.min(4, (typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1) * 2);
+      this.raidTextC.addChild(t);
+      this.raidText = t;
+    }
+    return this.raidText;
+  }
+
+  private hideRaidText(): void {
+    if (this.raidText) this.raidText.visible = false;
+  }
+
+  /**
+   * 격퇴 체력 바 · "얼마나 남았나"가 아니라 **"방금 깎였다"** 를 보이는 표시다.
+   * 바 1픽셀이 6HP 가 넘는데 근접 반격 한 번은 1.2HP 가 상한이라, 폭만으로는 사건을 원리적으로 못
+   * 보여 준다(공격력 100 이어도 한 방이 1픽셀에 못 미친다). 그래서 셋을 함께 쓴다:
+   *   ① 남은 체력을 소수점 한 자리까지 **숫자로** 적는다(유일하게 정직한 눈금).
+   *   ② 깎인 순간 바 끝이 희게 번쩍인다.
+   *   ③ 최근에 깎인 몫이 옅은 잔상으로 남아 "이만큼 줄였다"가 폭으로 보인다.
+   * 그리고 **맞설 수 있는 개체가 하나도 없으면 바를 아예 안 그린다** · 못 깎는 판에 가득 찬 바를
+   * 띄우는 것은 화면이 하는 거짓말이다(known_issues: 수치가 화면 표시와 다르면 그건 거짓말이다).
+   * (ax,ay)=붙이고 싶은 자리, (fx,fy)=보스가 실제로 있는 자리(화면 밖일 때 가리킬 방향).
+   */
+  private drawRaidBar(
+    boss: Boss | null, fighters: number, ax: number, ay: number, fx: number, fy: number,
+  ): void {
+    if (boss === null || fighters <= 0 || boss.maxHp <= 0) {
+      this.hideRaidText();
+      return;
+    }
+    const g = this.bossG;
+    const w = RAID_BAR_W;
+    const h = RAID_BAR_H;
+    const ratio = clamp01(boss.hp / boss.maxHp);
+    const ghost = clamp01(this.raidGhostHp / boss.maxHp);
+    // 화면 밖이면 가장자리 안쪽으로 밀어 붙인다. 카메라는 내 무리를 따라가는데 바는 보스 위에만 있어서,
+    // 둘이 갈리는 순간 바가 화면 어디에도 없었다(보스전 자동 표본에서 한 번도 안 잡혔다).
+    let x = ax;
+    let y = ay;
+    let clamped = false;
+    if (this.viewHalfW < 1e8) {
+      // 위아래 여백은 **화면 고정 UI** 를 피해야 하므로 화면px 기준으로 잡고 월드px 로 환산한다
+      // (목표 줄은 top 8px 에 살고 상세 패널이 62px 에서 열린다 → 그 아래로 내려야 안 가린다).
+      const padTop = Math.max(RAID_PAD_Y, RAID_TOP_CSS / this.viewZoom);
+      const padBottom = Math.max(RAID_PAD_Y, RAID_BOTTOM_CSS / this.viewZoom);
+      const nx = clampRange(x, this.viewCX - this.viewHalfW + RAID_PAD_L, this.viewCX + this.viewHalfW - RAID_PAD_R);
+      const ny = clampRange(y, this.viewCY - this.viewHalfH + padTop, this.viewCY + this.viewHalfH - padBottom);
+      if (Math.abs(nx - x) > 0.5 || Math.abs(ny - y) > 0.5) clamped = true;
+      x = nx;
+      y = ny;
+    }
+    // 바탕 판 · 어떤 지형 위에서도 바가 뜨게.
+    g.roundRect(x - w / 2 - 1.6, y - 1.6, w + 3.2, h + 3.2, 4).fill({ color: 0x0b0e14, alpha: 0.78 });
+    // ③ 잔상(최근에 깎은 몫) · 남은 체력과 잔상 사이 구간을 옅은 금빛으로. 이 폭이 "내가 지금 깎고 있는 양"이다.
+    if (ghost > ratio + 0.0005) {
+      g.roundRect(x - w / 2 + w * ratio, y, Math.max(1, w * (ghost - ratio)), h, 2)
+        .fill({ color: 0xffd76a, alpha: 0.55 });
+    }
+    g.roundRect(x - w / 2, y, Math.max(1.5, w * ratio), h, 2.5).fill({ color: 0xff5a44, alpha: 0.95 });
+    // ② 깎인 순간의 번쩍임 · 남은 체력의 끝(줄어드는 그 지점)에서 흰빛이 짧게 터진다.
+    if (this.raidHitAge < RAID_FLASH_MS) {
+      const f = 1 - this.raidHitAge / RAID_FLASH_MS;
+      const ex = x - w / 2 + w * ratio;
+      g.roundRect(ex - 1.5, y - 1.5 - f * 1.5, 3, h + 3 + f * 3, 1.6).fill({ color: 0xffffff, alpha: 0.9 * f });
+      g.circle(ex, y + h / 2, 3 + f * 5).stroke({ color: 0xfff4c8, width: 1.6 * f + 0.3, alpha: 0.8 * f });
+    }
+    // 화면 밖으로 밀렸으면 보스가 있는 쪽을 가리키는 쐐기를 함께 · "저쪽에 있다"가 없으면 바가 유령이 된다.
+    if (clamped) {
+      const dx = fx - x;
+      const dy = fy - y;
+      const d = Math.hypot(dx, dy);
+      if (d > 1) {
+        const ux = dx / d;
+        const uy = dy / d;
+        const bx = x + ux * (w / 2 + 9);
+        const by = y + h / 2 + uy * (h / 2 + 9);
+        const px = -uy;
+        const py = ux;
+        g.poly([
+          bx + ux * 7, by + uy * 7,
+          bx - ux * 2 + px * 5, by - uy * 2 + py * 5,
+          bx - ux * 2 - px * 5, by - uy * 2 - py * 5,
+        ])
+          .fill({ color: 0xff5a44, alpha: 0.95 })
+          .stroke({ color: 0x0b0e14, width: 1.4, alpha: 0.75 });
+      }
+    }
+    // ① 남은 체력 숫자 · **소수점 한 자리**. 정수로 반올림하면 199.6/200 이 "100%" 로 찍혀,
+    //    실제로 깎이고 있는데 화면은 안 깎였다고 말하게 된다(그게 이번 사건의 핵심 거짓말이다).
+    //    내림이라 꽉 찼을 때만 100.0% 다.
+    const t = this.ensureRaidText();
+    t.text = (Math.floor(ratio * 1000) / 10).toFixed(1) + "%";
+    t.x = x + w / 2 + 5;
+    t.y = y + h / 2;
+    // 오른쪽 여백(RAID_PAD_R)은 "100.0%" 기준의 어림이라, 글자 폭이 그보다 넓어지는 화면에서는 숫자가
+    // 잘린다. 실제 글자 폭(t.width)으로 한 번 더 확인해 넘치면 바 **왼쪽**으로 넘긴다 · 화면 끝에
+    // 붙어 잘린 숫자는 없는 것만 못하다.
+    if (this.viewHalfW < 1e8 && t.x + t.width > this.viewCX + this.viewHalfW - 4) {
+      t.x = x - w / 2 - 5 - t.width;
+    }
+    t.visible = true;
+  }
+
+  /**
    * 보스가 **어느 층에서** 사냥하는지의 단서. 화면만 보고 "왜 저게 날 못 잡지?"를 알 수 있어야 한다
    * (시각=로직 1:1, known_issues). 하늘 보스는 아래로 어긋난 그림자(높이 떠 있다 → 물속은 못 건드린다),
    * 물 보스는 퍼지는 파문(물속을 가른다 → 뭍은 못 건드린다). 땅 보스는 땅에 붙어 있어 단서가 필요 없다.
    */
-  /** 격퇴 체력 바 — 보스 몸 위의 작은 바(월드 좌표라 카메라와 함께 움직인다). 줄어드는 것이 곧
-   *  "내 무리의 카운터가 통하고 있다"는 표시다. 값은 sim(boss.hp/maxHp)을 읽기만 한다. */
-  private drawRaidBar(x: number, y: number, ratio: number): void {
-    const w = 44;
-    const h = 5;
-    const r = Math.max(0, Math.min(1, ratio));
-    this.bossG.roundRect(x - w / 2 - 1.2, y - 1.2, w + 2.4, h + 2.4, 3.4).fill({ color: 0x0b0e14, alpha: 0.72 });
-    this.bossG.roundRect(x - w / 2, y, Math.max(1.5, w * r), h, 2.5).fill({ color: 0xff5a44, alpha: 0.95 });
-  }
-
   private drawLayerCue(roam: Layer, x: number, y: number, size: number): void {
     if (roam === "air") {
       this.bossG
@@ -859,6 +1052,31 @@ export class WorldView {
       }
     }
   }
+}
+
+/**
+ * 맞서는 개체(전사) 표식 · 몸 **아래**에 눕는 짧은 밑줄 + 위로 향한 쐐기. "이 놈은 지금 보스를 칠 수 있다"를
+ * 그 자체로 보이게 한다(전달 규칙 1순위). 표식이 하나도 없으면 그게 곧 "아무도 못 맞선다"는 답이다.
+ *
+ * 형태를 고리로 안 한 이유: 내 종 초록 고리(12.5)·무리 방패 링(17.5)·독 오라가 전부 동심원이라
+ * 폰 화면에서 한 덩어리로 뭉친다. 몸 아래 가로선 + 쐐기는 형태부터 달라 겹쳐도 갈린다.
+ * 그리는 자리는 몸(반지름 ~15) 바깥이라 스프라이트 위 레이어여도 몸을 안 덮는다.
+ */
+function drawFighterMark(g: Graphics, x: number, y: number, pulse: number): void {
+  const y0 = y + 20 + pulse * 1.2; // 맥동으로 살짝 오르내려 "살아 있는 표식"으로 읽힌다
+  // 짧은 받침선 · 길게 그으면 생물이 금빛 받침대 위에 선 것처럼 보인다(초기 시안의 문제). 쐐기를
+  // 떠받칠 만큼만 짧게 두고, 진짜 의미는 위로 솟은 쐐기가 진다.
+  const half = 5.8;
+  g.moveTo(x - half, y0)
+    .lineTo(x + half, y0)
+    .stroke({ color: FIGHT_OUTLINE, width: 4.6, alpha: 0.45, cap: "round" });
+  g.moveTo(x - half, y0)
+    .lineTo(x + half, y0)
+    .stroke({ color: FIGHT_COLOR, width: 2.2, alpha: 0.85 + 0.15 * pulse, cap: "round" });
+  // 위로 솟은 쐐기(칼끝) · 받침선만 있으면 다른 지면 표식과 헷갈린다. 뾰족한 게 "친다"로 읽힌다.
+  g.poly([x, y0 - 10.5, x - 4.6, y0 - 1.2, x + 4.6, y0 - 1.2])
+    .fill({ color: FIGHT_COLOR, alpha: 0.78 + 0.22 * pulse })
+    .stroke({ color: FIGHT_OUTLINE, width: 1.2, alpha: 0.55 });
 }
 
 /**
@@ -1207,6 +1425,30 @@ const PREY_OUT_OF_AIM_DIM = 0.35;
 // 들고 있으니 바꿀 땐 함께 바꾼다(색이 갈리면 "파문 → 깃발" 연결이 끊긴다).
 const FLAG_COLOR = 0xbcf24e;
 const FLAG_LIGHT = 0xe4ffb0; // 깃대·중심점(밝은 라임 — 어두운 지형 위 가독)
+
+// ── 격퇴 체력 바 ────────────────────────────────────────────────────────────────────────
+// 폭 44 → 72 월드px. 다만 폭을 키우는 것만으로는 절대 안 된다 · 근접 반격 한 번(최대 1.2HP)이 200HP
+// 바에서 차지하는 몫은 0.43px 라, 사건 단위가 표시 단위보다 작다. 숫자·번쩍임·잔상이 그래서 필요하다.
+const RAID_BAR_W = 72;
+const RAID_BAR_H = 6;
+const RAID_TEXT_SIZE = 12; // 월드px = 기본 줌(1)에서 화면 12px. 굵은 어두운 테두리로 대비를 벌었다.
+// 바를 화면 안으로 밀어 넣을 때 가장자리에서 남길 여백(월드px). 오른쪽은 숫자("100.0%") 폭까지 뺀다.
+const RAID_PAD_L = 46;
+const RAID_PAD_R = 106;
+const RAID_PAD_Y = 22; // 최소 여백(월드px)
+// 위아래는 화면px 기준(줌으로 나눠 월드px 로 환산). 위는 목표 줄(top 8px, 상세 패널이 62px 에서
+// 열린다)을 피하고, 아래는 미니맵·조작 열 위로 뜨게 한다. 값이 어긋나면 바가 UI 뒤로 숨는다.
+const RAID_TOP_CSS = 66;
+const RAID_BOTTOM_CSS = 34;
+const RAID_FLASH_MS = 260; // 깎인 순간 흰 번쩍임이 사는 시간
+const RAID_GHOST_HOLD_MS = 700; // 잔상이 그 자리에 머무는 시간(이 뒤로 천천히 따라 내려온다)
+const RAID_GHOST_EASE = 0.06; // 잔상이 따라 내려오는 세기(60fps 1프레임 기준)
+
+// 맞서는 개체(전사) 표식 색 · 반격 스파크(effects drawCounter 0xffb524)와 같은 금빛 계열이다.
+// "금빛 표식이 붙은 놈 = 치는 놈, 금빛 스파크 = 방금 쳤다" 로 색이 이어져 읽힌다.
+// 붉은 계열을 안 쓴 이유: 보스·물기·즉사 반경이 전부 붉은색이라 내 편 표식이 위협으로 오독된다.
+const FIGHT_COLOR = 0xffb02e;
+const FIGHT_OUTLINE = 0x1a0c00; // 밝은 지형(사막·눈) 위에서 표식이 사라지는 걸 막는 밑선
 
 // 회전 떨림 방지: 이만큼(px/스텝)보다 실제로 더 움직일 때만 진행 방향을 갱신한다.
 // (느린 종은 미세 변위의 방향이 노이즈라, 낮으면 제자리에서 몸이 떤다.)

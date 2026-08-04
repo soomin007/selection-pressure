@@ -72,14 +72,6 @@ export interface RunHistory {
 /** 런 보고서 시계열 샘플 주기(스텝). 30 = 1초마다(sim 30스텝/초). 형질 추이는 완만해 이 정도면 충분. */
 const REPORT_SAMPLE_STEPS = 30;
 
-/**
- * 수풀이 엄폐가 되는 보스(하늘에서 내려다보는 큰수리). 조종 모드에서는 이 엄폐가 내 종에게
- * 통하지 않으므로(sim/boss.ts 의 bossCanHunt) 예고 문구에서 수풀 문장을 갈아 끼워야 한다.
- * boss.ts 는 이 판별을 타입 단위로 내주지 않아(Boss 인스턴스의 grassCover 뿐) 여기서 타입으로 건다.
- * ⚠ boss.ts 의 PRESETS 에 grassCover: true 인 보스를 추가하면 이 목록에도 더할 것.
- */
-const GRASS_COVER_BOSSES: readonly BossType[] = ["raptor"];
-
 export class Game {
   readonly width: number;
   readonly height: number;
@@ -675,7 +667,7 @@ export class Game {
     if (next === "boss") {
       const bt = this.peekBossType(); // 실제로 나올 보스(무의미 보스는 건너뛴 결과) — 예고가 진실이어야 한다
       // 카운터 힌트 + 만능 수단 안내: 공격력·원거리가 높으면 어떤 보스든 맞서 잡는다(원거리로 시작해도 보스전 가능).
-      if (bt) return { title: `곧 ${bossName(bt)}!`, sub: `${this.counterHint(bt)} 공격력이나 원거리가 높으면 어떤 보스든 맞서 잡습니다.` };
+      if (bt) return { title: `곧 ${bossName(bt)}!`, sub: `${bossCounter(bt)} 공격력이나 원거리가 높으면 어떤 보스든 맞서 잡습니다.` };
       return { title: "곧 위협이 닥칩니다", sub: "" };
     }
     if (next === "extinction") {
@@ -688,21 +680,20 @@ export class Game {
   }
 
   /**
-   * 이 보스의 대응 힌트 — **지금 이 판에서 실제로 통하는 것**만 말한다.
-   * 조종 모드에서는 내 종에게 수풀 엄폐가 통하지 않으므로(sim/boss.ts 의 bossCanHunt), 수풀에
-   * 숨으라고 권하는 문장을 지우고 조종 모드의 진실로 갈아 끼운다. 그대로 두면 등장 4초 전 예고와
-   * 등장 순간 배너가 정반대를 말한다(예고가 거짓말이 되면 "왜 졌는지 모르고 진다").
-   * 순수 조회 — rng·상태 불변.
+   * 다음 관문이 **때려서 물리칠 수 있는 보스**면 그 이름, 아니면 null. 드래프트가 "이 카드를 고르면
+   * 맞설 수 있는가"를 카드 자리에서 말하는 데 쓴다(형질을 키울 이유는 고르는 순간에 보여야 한다).
+   * 전역 시련(독 안개)은 때릴 대상이 없어 제외한다 · 없는 격퇴를 예고하면 그게 거짓말이다.
+   * 순수 조회 · rng·상태 불변. (stageIndex 는 라운드가 끝날 때 이미 +1 된 뒤라 곧 시작할 단계를 가리킨다.)
+   *
+   * ⚠ 여기 있던 counterHint 를 지웠다. 그것은 "앞장서서 몰기 시작하면 수풀도 우리를 숨겨 주지
+   *   않습니다"를 예고에 끼워 넣었는데, 그 규칙은 world.lead.commanded 로 켜지고 그 값은 무리 지시로
+   *   갈아탄 뒤로 구조적으로 영영 false 다 = 실제로는 안 걸리는 규칙을 예고가 말하고 있었다.
    */
-  private counterHint(bt: BossType): string {
-    const base = bossCounter(bt);
-    if (!this.leadEnabled || !GRASS_COVER_BOSSES.includes(bt)) return base;
-    const kept = (base.match(/[^.]+\.?/g) ?? [base])
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0 && !s.includes("수풀"))
-      .join(" ");
-    const lead = "앞장서서 몰기 시작하면 수풀도 우리를 숨겨 주지 않습니다.";
-    return kept.length > 0 ? `${kept} ${lead}` : lead;
+  get upcomingRaidBoss(): string | null {
+    if (this.phase !== "draft") return null;
+    if ((SCHEDULE[this.stageIndex] ?? "forage") !== "boss") return null;
+    const bt = this.peekBossType();
+    return bt !== undefined && isPredatorBoss(bt) ? bossName(bt) : null;
   }
 
   /** 렌더 보간 비율 [0,1) — 다음 스텝까지 얼마나 왔나(화면 60fps 가 sim 30/s 사이를 메운다). */

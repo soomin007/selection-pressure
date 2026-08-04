@@ -17,11 +17,26 @@ import {
   type BossType,
 } from "@/sim/boss";
 import { defaultGenome, type Genome, type Traits } from "@/sim/genome";
+import { PRESET_CARDS, applyCard } from "@/game/cards";
 import type { Entity } from "@/sim/entity";
 
 const W = 540;
 const H = 960;
 const SEEDS = ["env-1", "env-2", "env-3", "env-4"];
+
+/**
+ * **실제 플레이 세계 치수** · main.ts 는 `new Game(layout.width × MAP_SCALE, layout.height × MAP_SCALE,
+ * MAP_SCALE²)` 로 만든다(폰 레이아웃 540x960 · MAP_SCALE 2.0). 위의 W/H(540x960 · areaScale 1)는
+ * 층위 규칙처럼 치수와 무관한 검증에만 쓴다.
+ *
+ * 왜 나눠 두나: "테스트 434개 통과"가 "균형 잡식으로 약탈자를 깎을 수 있다"를 전혀 보증하지 못했던
+ * 구조적 이유가 이것이다 · 같은 게놈이 작은 월드에선 격퇴하고 게임 월드에선 못 한다(월드가 4배 넓으면
+ * 떼가 무리에 닿기까지 걸리는 시간이 라운드의 절반을 먹는다). 격퇴·밸런스를 묻는 테스트는 반드시
+ * 아래 치수로 잰다.
+ */
+const GAME_W = 1080;
+const GAME_H = 1920;
+const GAME_AREA = 4;
 
 function tune(over: Partial<Traits>): Genome {
   const g = defaultGenome();
@@ -215,23 +230,68 @@ describe("보스 층위 — 실제로 그렇게 굴러간다", () => {
 });
 
 describe("보스 레이드 1단계 — 공격 카운터 보스(약탈자)를 전사가 반격으로 격퇴", () => {
-  /** 약탈자 레이드 결과 — era 1+ 에서 공격형이 격퇴하는가(격퇴 시드 수 + 체력 남음). */
-  function raidResult(genome: Genome, diffMul: number, raidEnabled: boolean): { defeats: number; hpLeft: number } {
+  /**
+   * 약탈자 레이드 결과 · era 1+ 에서 공격형이 격퇴하는가.
+   * **실제 플레이 세계 치수**로 잰다(위 GAME_W/GAME_H 주석 참조). 면적이 4배라 느려서 시드를 3개로
+   * 줄였다 · 판정은 "매칭 빌드 > 미스매치"라는 방향과 "미스매치는 정확히 0"으로 본다(소수 시드의
+   * 절대 개체수는 노이즈다 · known_issues).
+   * hpLeft 대신 **최소 체력 비율**을 함께 낸다: 사용자가 화면에서 보는 것은 "바가 얼마나 내려갔나"이지
+   * 처치/버팀 이진이 아니다(2026-08-04 사건의 핵심).
+   */
+  function raidResult(
+    genome: Genome,
+    diffMul: number,
+    raidEnabled: boolean,
+  ): { defeats: number; hpLeft: number; untouched: number; seeds: number } {
     let defeats = 0;
     let hpLeft = 0;
-    for (const seed of SEEDS) {
-      const w = new World(seed, W, H, genome);
-      for (let i = 0; i < 750; i++) w.step();
-      w.boss = createBoss("raider", W, H, w.terrain, diffMul, raidEnabled);
+    let untouched = 0;
+    const seeds = SEEDS.slice(0, 3);
+    for (const seed of seeds) {
+      const w = new World(seed, GAME_W, GAME_H, genome, GAME_AREA);
+      for (let i = 0; i < 600; i++) w.step();
+      w.boss = createBoss("raider", GAME_W, GAME_H, w.terrain, diffMul, raidEnabled);
+      const maxHp = w.boss.maxHp;
+      let minRatio = 1;
       let killed = false;
       for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) {
         w.step();
-        if (w.boss && w.boss.maxHp > 0 && w.boss.hp <= 0) { killed = true; break; }
+        if (w.boss === null) break;
+        if (maxHp > 0) minRatio = Math.min(minRatio, Math.max(0, w.boss.hp) / maxHp);
+        if (w.boss.maxHp > 0 && w.boss.hp <= 0) { killed = true; break; }
       }
       if (killed) defeats += 1;
+      if (maxHp > 0 && minRatio >= 0.99) untouched += 1;
       hpLeft += Math.max(0, w.boss?.hp ?? 0);
     }
-    return { defeats, hpLeft };
+    return { defeats, hpLeft, untouched, seeds: seeds.length };
+  }
+
+  /**
+   * 이 게놈이 약탈자를 **격퇴하기까지 걸린 틱**(못 잡으면 라운드 길이. 여러 시드 평균).
+   * 작은 월드(W/H)로 잰다 · 형질이 세기에 비례하는가라는 메커니즘 질문이라 치수와 무관하고 빠르다.
+   * 왜 "남은 체력"이 아니라 시간인가: 작은 월드에서는 공격력 58 도 85 도 결국 다 격퇴해 남은 체력이
+   * 둘 다 0 으로 **포화**된다. 포화된 지표로는 "더 세다"를 못 잰다 · 세기는 그때 **속도**로 나타난다.
+   */
+  function raidKillTicks(genome: Genome): number {
+    const round = GAME.bossSeconds * SIM.stepsPerSecond;
+    let sum = 0;
+    for (const seed of SEEDS) {
+      const w = new World(seed, W, H, genome);
+      for (let i = 0; i < 750; i++) w.step();
+      w.boss = createBoss("raider", W, H, w.terrain, 1, true);
+      let ticks = round;
+      for (let i = 1; i <= round; i++) {
+        w.step();
+        if (w.boss === null) break;
+        if (w.boss.maxHp > 0 && w.boss.hp <= 0) {
+          ticks = i;
+          break;
+        }
+      }
+      sum += ticks;
+    }
+    return sum / SEEDS.length;
   }
 
   it("raidEnabled 파라미터가 격퇴 체력을 켠다(false=버티기 · true=격퇴). 게임은 첫 시대부터 true 를 넘긴다", () => {
@@ -258,22 +318,29 @@ describe("보스 레이드 1단계 — 공격 카운터 보스(약탈자)를 전
     }
   });
 
-  it("공격형(전사)은 약탈자를 격퇴하고, 초식(공격력 낮음)은 못 잡는다", () => {
+  it("공격형(전사)은 약탈자를 격퇴하고, 초식(공격력 낮음)은 흠집조차 못 낸다", () => {
     const hunter = tune({ diet: 68, attack: 64, speed: 68, vision: 62 }); // 육식 사냥꾼
     const herb = tune({ diet: 20, attack: 44, fertility: 88, herding: 92 }); // 다산 초식(공격력<문턱)
     const hunterR = raidResult(hunter, 1, true);
     const herbR = raidResult(herb, 1, true);
-    // 공격형은 대부분 시드에서 격퇴(전사 반격이 체력을 깎는다).
-    expect(hunterR.defeats, "공격형이 약탈자를 못 잡았다").toBeGreaterThanOrEqual(SEEDS.length - 1);
-    // 초식은 공격력이 문턱 미만이라 전사가 없어 거의 못 잡는다(자기 카운터가 아니다 → 버티기).
-    expect(herbR.defeats, "초식이 약탈자를 잡아 버렸다").toBeLessThan(hunterR.defeats);
+    // 공격형은 시드 대부분에서 격퇴한다(전사 반격이 체력을 깎는다).
+    expect(hunterR.defeats, "공격형이 약탈자를 못 잡았다").toBeGreaterThanOrEqual(hunterR.seeds - 1);
+    // 초식은 공격력이 문턱 미만이라 전사가 **한 명도 없다** → 체력이 정확히 그대로다.
+    // "덜 깎는다"가 아니라 "한 톨도 못 깎는다"로 못박는다 · 사용자가 폰에서 본 것이 정확히 이것이고,
+    // 화면(격퇴 바·문구)이 그 사실을 말해야 하는 근거가 이 단언이다.
+    expect(herbR.defeats, "초식이 약탈자를 잡아 버렸다").toBe(0);
+    expect(herbR.untouched, "초식인데 격퇴 바가 움직였다").toBe(herbR.seeds);
     expect(herbR.hpLeft, "초식이 체력을 많이 깎았다").toBeGreaterThan(hunterR.hpLeft);
   });
 
   it("공격력이 높을수록 더 많이 깎는다(반격 = 공격력 비례)", () => {
+    // 지표를 **격퇴까지 걸린 시간**으로 바꿨다. 예전 hpLeft(남은 체력 합)는 격퇴한 시드가 0 으로
+    // 들어가 "격퇴했나"의 이진과 뒤섞이는데, 소수 시드에서는 그 이진이 접촉 운에 지배당해 방향이
+    // 뒤집힌다(실측: 게임 치수 3시드에서 공격력 85 의 hpLeft 가 58 보다 컸다 · 형질이 약해서가
+    // 아니라 85 쪽 시드 하나가 떼와 아예 안 만나서다). 남은 체력은 작은 월드에서 둘 다 0 으로 포화된다.
     const strong = tune({ attack: 85, speed: 66, vision: 62 });
     const mild = tune({ attack: 58, speed: 66, vision: 62 }); // 문턱 바로 위
-    expect(raidResult(strong, 1, true).hpLeft).toBeLessThanOrEqual(raidResult(mild, 1, true).hpLeft);
+    expect(raidKillTicks(strong), "공격력 85 가 58 보다 느리게 격퇴했다").toBeLessThan(raidKillTicks(mild));
   });
 
   it("상어는 물에 든 종만 솎는다 — 육상 종은 손도 못 댄다", () => {
@@ -303,7 +370,7 @@ describe("보스 레이드 1단계 — 공격 카운터 보스(약탈자)를 전
 });
 
 describe("보스 레이드 2단계 — 초식 카운터(속도·무리·시야·번식)가 격퇴 체력을 깎는다", () => {
-  /** era 1+ 에서 이 게놈이 이 보스를 격퇴한 시드 수(매 틱 무리 충족도가 hp 를 깎아 0 이 되는가). */
+  /** era 1+ 에서 이 게놈이 이 보스를 격퇴한 시드 수(반격이 hp 를 깎아 0 이 되는가). */
   function defeats(genome: Genome, type: BossType): number {
     let count = 0;
     for (const seed of SEEDS) {
@@ -370,5 +437,161 @@ describe("보스 레이드 2단계 — 초식 카운터(속도·무리·시야·
     const helpless = tune({ attack: 40, ranged: 40, speed: 45, vision: 45, herding: 40, fertility: 45 });
     expect(defeats(helpless, "chaser"), "싸울 형질 없는 빌드가 추격자를 잡았다").toBe(0);
     expect(defeats(helpless, "raider"), "싸울 형질 없는 빌드가 약탈자를 잡았다").toBe(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 시작 프리셋 회귀 축 · 2026-08-04 사건의 사각지대.
+// 기존 레이드 테스트는 전부 형질을 85~95 로 올린 **매칭 빌드**만 검증했다. 그래서 충족도가 floor
+// 바로 위인 **시작 프리셋**(사용자가 실제로 첫 판에 고르는 것)이 통째로 빠져 있었고, "테스트 434개
+// 통과"가 "균형 잡식으로 약탈자를 깎을 수 있다"를 전혀 보증하지 못했다.
+// ⚠ 반드시 실제 플레이 세계 치수(GAME_W/GAME_H/GAME_AREA)로 잰다.
+// ────────────────────────────────────────────────────────────────────────────
+describe("시작 프리셋 x 약탈자 · 화면이 말하는 것과 실제가 같은가", () => {
+  // 실제 보스 라운드 길이(35초). 짧게 끊으면 안 된다 · 이 세계는 떼가 무리에 닿는 데만 20초 넘게
+  // 걸리는 시드가 있다(실측 env-1: 첫 접촉 700틱). 짧은 창으로 재면 "못 깎는다"가 거짓으로 나온다.
+  const ROUND = GAME.bossSeconds * SIM.stepsPerSecond;
+
+  function presetGenome(id: string): Genome {
+    const card = PRESET_CARDS.find((c) => c.id === id);
+    if (card === undefined) throw new Error(`프리셋 없음: ${id}`);
+    const g = defaultGenome();
+    applyCard(g, card);
+    return g;
+  }
+
+  /**
+   * 한 판 · **사람이 무리를 떼 쪽으로 계속 모는 상황**(매 틱 떼 무게중심으로 지시)을 흉내 낸다.
+   * 왜 몰기까지 넣나: 지시가 안 먹히던 것과 격퇴가 안 되던 것은 한 지점에서 만난다. 붙일 수 있어야
+   * 깎이고, 깎여야 "내가 한 것"이 된다. 몰아도 안 깎이면 그건 진짜로 못 깎는 종이다.
+   */
+  function raidWithDrive(
+    genome: Genome,
+    type: BossType,
+    seed: string,
+    mapType: "continent" | "archipelago",
+    ticks: number = ROUND,
+  ): { melee: number; ranged: number; minRatio: number; maxHp: number; hp: number } {
+    const w = new World(seed, GAME_W, GAME_H, genome, GAME_AREA, [], mapType);
+    for (let i = 0; i < 300; i++) w.step();
+    w.boss = createBoss(type, GAME_W, GAME_H, w.terrain, 1, true);
+    const maxHp = w.boss.maxHp;
+    let minRatio = 1;
+    let melee = 0;
+    let ranged = 0;
+    for (let i = 0; i < ticks; i++) {
+      const b = w.boss;
+      if (b === null) break;
+      if (b.members.length > 0) {
+        let mx = 0;
+        let my = 0;
+        for (const m of b.members) {
+          mx += m.x;
+          my += m.y;
+        }
+        w.herdOrder = { x: mx / b.members.length, y: my / b.members.length };
+      }
+      w.step();
+      melee = Math.max(melee, w.raidMeleeFighters);
+      ranged = Math.max(ranged, w.raidRangedFighters);
+      if (maxHp > 0) minRatio = Math.min(minRatio, Math.max(0, b.hp) / maxHp);
+      if (maxHp > 0 && b.hp <= 0) break;
+    }
+    return { melee, ranged, minRatio, maxHp, hp: Math.max(0, w.boss?.hp ?? 0) };
+  }
+
+  it("전사가 0 인 프리셋은 격퇴 체력을 한 톨도 못 깎는다(몰아붙여도)", () => {
+    // 공격력 44~50 · 원거리 없음 → 약탈자에 맞설 수단이 하나도 없다. 화면은 이걸 말해야 한다
+    // ("맞설 수 있는 개체가 없습니다") · 가득 찬 격퇴 바를 보여 주는 것은 거짓말이다.
+    // 전사 수는 게놈이 정하므로 짧은 창으로도 결론이 같다(형질이 문턱 아래면 시간이 흘러도 안 생긴다).
+    for (const id of ["preset_herd", "preset_sea", "preset_venom"]) {
+      const r = raidWithDrive(presetGenome(id), "raider", "env-1", "continent", 400);
+      expect(r.melee + r.ranged, `${id} 에 약탈자 전사가 생겼다`).toBe(0);
+      expect(r.hp, `${id} 가 약탈자 체력을 깎았다`).toBe(r.maxHp);
+    }
+  });
+
+  it("전사가 있는 프리셋은 몰아붙이면 격퇴 체력이 깎인다(균형 잡식 포함)", () => {
+    // 사용자가 첫 판에 고른 바로 그 프리셋이 preset_omni 다. 여기서 실패하면 "체력바 흠집조차
+    // 못 낸다"가 재현된 것이므로, 이 단언은 완화 대상이 아니라 **그 사건의 감지기**다.
+    for (const id of ["preset_omni", "preset_ranged"]) {
+      const r = raidWithDrive(presetGenome(id), "raider", "env-1", "continent");
+      expect(r.melee + r.ranged, `${id} 에 약탈자 전사가 없다`).toBeGreaterThan(0);
+      expect(r.minRatio, `${id} 가 약탈자 격퇴 바를 못 움직였다`).toBeLessThan(0.9);
+    }
+  });
+
+  it("군도에서도 전사 판정 자체는 그대로다(맞설 자격은 맵과 무관하다)", () => {
+    // ⚠ 맞설 **자격**(형질 문턱)은 맵과 무관하지만, 실제로 **닿는지**는 맵이 정한다.
+    //   실측(프로브 · 군도 · 8시드 · 몰기까지 하고도): 균형 잡식 x 약탈자 격퇴 2/8 · 무흠집 6/8.
+    //   같은 조건이 대륙에선 8/8 이다. 땅 떼와 땅 무리가 다른 섬에 있으면 35초 내내 만나지도 못한다.
+    //   그래서 "이 게놈은 약탈자를 잡을 수 있다"를 맵을 합쳐 한 분수로 말하면 그 자체가 거짓말이 된다
+    //   (2026-08-04 사건의 원인 중 하나). 격퇴 여부는 여기서 단언하지 않고 프로브가 맵별로 잰다.
+    const r = raidWithDrive(presetGenome("preset_omni"), "raider", "env-1", "archipelago", 400);
+    expect(r.melee + r.ranged, "군도에서 균형 잡식에 전사가 없다").toBeGreaterThan(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 화면이 읽을 관측값 · "누가 때릴 수 있는가"는 sim 에만 있었고 render·ui 어디도 안 읽었다(grep 0건).
+// 그래서 전사가 0 인 판에서도 격퇴 바가 가득 찬 채 떠 있었다("수치가 화면 표시와 다르면 거짓말").
+// ────────────────────────────────────────────────────────────────────────────
+describe("레이드 관측값 (world.raid* · entity.raidFighter)", () => {
+  /**
+   * 무리를 떼 쪽으로 몰며 한 라운드. **격퇴가 끝나면(hp 0) 멈춘다** · bossRaidable 이 hp>0 을 보므로
+   * 격퇴 뒤에는 전사가 정의상 0 이 된다(맞설 대상이 사라졌으니 맞다). 그 뒤까지 돌려 놓고 "전사가
+   * 0 이다"라고 재면 자기가 만든 상태를 잘못 읽는 것이다.
+   */
+  function driveRound(genome: Genome, ticks: number): World {
+    const w = new World("env-1", W, H, genome);
+    for (let i = 0; i < 600; i++) w.step();
+    w.boss = createBoss("raider", W, H, w.terrain, 1, true);
+    for (let i = 0; i < ticks; i++) {
+      const b = w.boss;
+      if (b === null) break;
+      if (b.maxHp > 0 && b.hp <= 0) break;
+      let mx = 0;
+      let my = 0;
+      for (const m of b.members) {
+        mx += m.x;
+        my += m.y;
+      }
+      if (b.members.length > 0) w.herdOrder = { x: mx / b.members.length, y: my / b.members.length };
+      w.step();
+    }
+    return w;
+  }
+
+  it("보스가 없는 틱에는 맞서는 개체 수가 0 이고 아무도 전사 표식을 달지 않는다", () => {
+    const w = new World("env-1", W, H, defaultGenome());
+    for (let i = 0; i < 60; i++) w.step();
+    expect(w.raidMeleeFighters).toBe(0);
+    expect(w.raidRangedFighters).toBe(0);
+    expect(w.raidHitTick).toBe(-1);
+    expect(w.raidDamageWindow).toBe(0);
+    for (const e of w.entities) expect(e.raidFighter).toBe(false);
+  });
+
+  it("맞설 수단이 없는 게놈은 전사 0 · 격퇴 체력이 정확히 그대로", () => {
+    const w = driveRound(tune({ attack: 44, ranged: 40, speed: 45, vision: 45, herding: 40, fertility: 45 }), 400);
+    expect(w.raidMeleeFighters).toBe(0);
+    expect(w.raidRangedFighters).toBe(0);
+    expect(w.boss?.hp).toBe(w.boss?.maxHp);
+    expect(w.raidHitTick).toBe(-1); // 한 번도 안 깎였다
+  });
+
+  it("공격력이 높은 게놈은 전사가 있고 깎은 틱·최근 피해가 기록된다", () => {
+    const w = driveRound(tune({ attack: 80, speed: 66, vision: 62 }), 400);
+    expect(w.raidMeleeFighters).toBeGreaterThan(0);
+    expect(w.raidHitTick).toBeGreaterThan(0);
+    expect(w.boss!.hp).toBeLessThan(w.boss!.maxHp);
+  });
+
+  it("전사 표식이 붙은 개체 수 = 근접 + 원거리(둘을 겸하면 근접으로만 센다)", () => {
+    const w = driveRound(tune({ attack: 80, ranged: 85, speed: 66 }), 200);
+    let flagged = 0;
+    for (const e of w.entities) if (e.raidFighter) flagged += 1;
+    expect(flagged).toBe(w.raidMeleeFighters + w.raidRangedFighters);
+    expect(flagged).toBeGreaterThan(0);
   });
 });

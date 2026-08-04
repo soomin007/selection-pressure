@@ -41,6 +41,16 @@ export interface Entity {
   // 목표 타일이 바뀌면 재계산). 직선으로 보이면 경로를 버리고 직진하므로 대부분 비어 있다.
   path: number[];
   pathGoalTile: number;
+  // 지금 보스에 맞설 수 있는가(런타임, 직렬화 안 함). sim 이 매 틱 판정해 여기 남긴다 · 렌더가 매
+  // 프레임 isRaidFighter 를 다시 부르면 폰 프레임이 죽고, 조건을 밖에서 다시 유도하면 화면과 실제가
+  // 갈린다. 보스가 없으면 늘 false(world.step 이 매 틱 끈다).
+  // ⚠ 2026-08-04 현재 **프로덕션에서 이 필드를 읽는 곳이 없다**(테스트만 읽는다). worldView 가
+  //   전사 표식을 그릴 때 아직 isRaidFighter 를 매 프레임 다시 부른다 → 렌더를 이 필드로 갈아타든지
+  //   이 필드를 지우든지 둘 중 하나로 정리할 것. 지금은 두 계산이 나란히 돈다.
+  raidFighter: boolean;
+  // 다음 반격까지 남은 틱(런타임, 직렬화 안 함). 이게 0 이어야 근접 전사가 한 번 되받아친다.
+  // 없으면 떼 한복판에 선 한 마리가 매 틱 깎아 격퇴가 접촉 면적에 지배당한다(전부 아니면 전무).
+  raidCounterCd: number;
 }
 
 export function createEntity(
@@ -77,5 +87,7 @@ export function createEntity(
     attackCd: 0,
     woundTicks: 0,
     stuckTicks: 0,
+    raidFighter: false,
+    raidCounterCd: 0,
   };
 }

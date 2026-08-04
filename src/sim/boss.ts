@@ -103,6 +103,15 @@ export interface Boss extends Mover {
   prevY: number;
   speed: number;
   killRadius: number; // 닿으면 즉사하는 반경 (0 = 없음)
+  /**
+   * 근접 전사가 **되받아치는** 반경(떼 시련 전용). 즉사 반경과 분리해 "붙으면 깎인다"를 손끝에서
+   * 성립시킨다(SIM.raidCounterRadius 주석 참조).
+   * ⚠ killRadius 와 **같이 diffMul 로 커진다.** 안 키우면 시대가 오를수록 요구량(maxHp)만 커지고
+   *   반격 기회는 그대로라 후반 시대에 격퇴가 죽은 기능이 된다(known_issues 의 "wear 를 diffMul 로 안
+   *   키우면 시대가 오를수록 어려워진다" 와 같은 함정). 실측: 안 키우면 diffMul 4 에서 사냥꾼 프리셋
+   *   격퇴가 5/8 → 1/8 로 무너졌다.
+   */
+  counterRadius: number;
   visionFlee: number; // 도망 반경에 시야를 곱해 더하는 정도(시야가 카운터인 보스: 일찍 보고 피한다)
   auraRadius: number; // 시각용 위험 반경(독 안개)
   globalDrain: number; // 매 틱 전역 에너지 흡수 (×(0.3+metabolism)) (poison)
@@ -133,7 +142,19 @@ export interface Boss extends Mover {
 interface Preset
   extends Omit<
     Boss,
-    "type" | "name" | "x" | "y" | "prevX" | "prevY" | "members" | "path" | "pathGoalTile" | "hp" | "maxHp"
+    | "type"
+    | "name"
+    | "x"
+    | "y"
+    | "prevX"
+    | "prevY"
+    | "members"
+    | "path"
+    | "pathGoalTile"
+    | "hp"
+    | "maxHp"
+    // 반격 반경은 프리셋마다 다른 값이 아니라 상수 × 시대 배율이라 createBoss 에서만 채운다.
+    | "counterRadius"
   > {
   name: string;
   threat: string;
@@ -439,6 +460,7 @@ export function createBoss(
     prevY: y,
     speed: p.speed,
     killRadius: p.killRadius * diffMul, // 즉사 반경 — 시대가 오를수록 넓어진다
+    counterRadius: SIM.raidCounterRadius * diffMul, // 반격 반경 · 즉사 반경과 같은 계단으로 함께 커진다
     visionFlee: p.visionFlee,
     auraRadius: p.auraRadius,
     globalDrain: p.globalDrain * diffMul, // 에너지 흡수(독 안개) — 시대가 오를수록 세진다
@@ -453,8 +475,9 @@ export function createBoss(
     pathGoalTile: -1,
     members,
     raidCounter: p.raidCounter,
-    // 레이드 격퇴 체력 — **era 1+ 이고 카운터가 있는 보스(raidCounter != null)** 에 준다. 공격(약탈자)은
-    // 전사 반격(memberKills)으로, 초식 카운터(속도·무리·시야·번식)는 매 틱 무리 충족도 집계(stepBoss)로 깎인다.
+    // 레이드 격퇴 체력 · **era 1+ 이고 카운터가 있는 보스(raidCounter != null)** 에 준다.
+    // 떼 보스는 근접 반격(stepMeleeCounter)과 원거리 사격(behavior)이 깎고, 단일 보스는 닿은 틱마다
+    // 반격(stepSingleBoss)이 깎는다. 어느 쪽이든 카운터 형질이나 공격력 문턱을 넘어야 0 이 아니다.
     // era 0(raidEnabled=false)·독 안개(raidCounter null)는 0 → 기존 버티기 게이트 유지(era 0 밸런스 보존).
     ...(raidEnabled && p.raidCounter !== null
       ? { maxHp: SIM.bossMaxHp * diffMul, hp: SIM.bossMaxHp * diffMul }
@@ -644,7 +667,7 @@ function traitFulfill(value: number, floor: number): number {
  *   · **공격력(만능 근접)** — 공격력이 높으면 **어떤 보스든** 이빨·뿔로 맞선다(카운터가 아니어도).
  * 0 이면 근접 전사가 아니다. (원거리는 raidRangedPower 로 따로 — 멀리서 안전하게 쏜다.)
  */
-function raidMeleePower(boss: Boss, t: Traits): number {
+export function raidMeleePower(boss: Boss, t: Traits): number {
   let p = 0;
   const c = boss.raidCounter;
   if (c === "speed" && t.speed >= SIM.raidFighterThreshold) p = traitFulfill(t.speed, SIM.raidSpeedFloor);
@@ -653,7 +676,10 @@ function raidMeleePower(boss: Boss, t: Traits): number {
   else if (c === "fertility" && t.fertility >= SIM.raidFighterThreshold) p = traitFulfill(t.fertility, SIM.raidFertFloor);
   // 공격 = 만능 근접 카운터(어떤 보스든 맞선다). 카운터 충족도와 견줘 큰 쪽을 쓴다.
   if (c !== null && t.attack >= SIM.raidWarriorAttack) p = Math.max(p, traitFulfill(t.attack, SIM.raidAttackFloor));
-  return p;
+  // 문턱을 넘었으면 **최소 몫**을 보장한다. 넘었다고 화면에 "전사"라 써 놓고 충족도 0.18 로 917번을
+  // 물어야 이기게 두는 것은 표시와 실제의 불일치다(SIM.raidMeleeFloorPower 주석 참조).
+  // 문턱을 못 넘으면 여기 안 온다 → 여전히 정확히 0(형질을 안 키우면 못 잡는다).
+  return p > 0 ? SIM.raidMeleeFloorPower + (1 - SIM.raidMeleeFloorPower) * p : 0;
 }
 
 /**
@@ -664,11 +690,21 @@ export function raidRangedPower(t: Traits): number {
   return t.ranged >= SIM.rangedThreshold ? traitFulfill(t.ranged, SIM.raidRangedFloor) : 0;
 }
 
-/** power(0~1)만큼 격퇴 체력을 깎는다(**공격당** 이벤트). 연출(근접 bite / 원거리 spit)은 방향이 달라 호출부에서 낸다. */
-export function dealRaidHit(boss: Boss, power: number): void {
+/**
+ * power 만큼 격퇴 체력을 깎는다(**공격당** 이벤트 · 깎이는 양 = SIM.raidHitDamage × power).
+ * 연출(근접 counter / 원거리 spit)은 방향이 달라 호출부에서 낸다.
+ * ⚠ power 는 충족도(0~1)가 **아니다.** 호출부가 배율을 이미 곱해 넘긴다: 떼 근접 반격은 ×
+ *   SIM.raidCounterMul(5), 원거리는 × SIM.raidRangedMul(2.2), 단일 보스는 배율 없음.
+ * 깎인 사실은 여기 한 자리에서 world 의 관측값(raidHitTick·raidDamageWindow)에도 남긴다 · 사건 단위는
+ * 바의 굵기보다 잘아서(체력 200 을 폭 72 월드px 로 그리면 1픽셀 ≈ 2.8 HP) 번쩍임·잔상이 있어야 읽힌다.
+ * 관측값은 rng 를 안 쓰고 sim 판정에도 안 쓰인다 → 결정론·밸런스 무관.
+ */
+export function dealRaidHit(boss: Boss, power: number, world: World): void {
   if (power <= 0) return;
+  const before = boss.hp;
   boss.hp -= SIM.raidHitDamage * power;
   if (boss.hp < 0) boss.hp = 0;
+  world.recordRaidDamage(before - boss.hp);
 }
 
 /**
@@ -687,10 +723,38 @@ export function isRaidRangedFighter(boss: Boss, e: Entity, world: World): boolea
   );
 }
 
+/**
+ * 화면이 읽을 관측값을 **판정이 일어나는 그 자리에서** 내보낸다(orderFollowers 와 같은 패턴).
+ * 렌더가 매 프레임 전 개체를 돌며 isRaidFighter 를 다시 부르면 폰 프레임이 죽고, 조건을 밖에서
+ * 다시 유도하면 화면과 실제가 갈린다(known_issues).
+ * 근접·원거리를 겸하는 개체는 **근접으로만** 센다 → 두 수의 합이 raidFighter 플래그 수와 정확히 같다.
+ * rng 미사용·단순 합계 → 결정론·밸런스 무관.
+ */
+function tagRaidFighters(boss: Boss, world: World): void {
+  const raidable = bossRaidable(boss);
+  let melee = 0;
+  let ranged = 0;
+  for (const e of world.entities) {
+    if (!e.alive || !e.species.isPlayer) continue;
+    if (!raidable || !bossCanHunt(boss, e, world)) continue;
+    if (raidMeleePower(boss, e.genome.traits) > 0) {
+      melee += 1;
+      e.raidFighter = true;
+    } else if (raidRangedPower(e.genome.traits) > 0) {
+      ranged += 1;
+      e.raidFighter = true;
+    }
+  }
+  world.raidMeleeFighters = melee;
+  world.raidRangedFighters = ranged;
+}
+
 /** 보스 한 틱. 타입별로 다른 압박을 가한다. */
 export function stepBoss(boss: Boss, world: World): void {
+  tagRaidFighters(boss, world);
   // 개체형 떼 시련(사나운 무리·약탈자·외톨이 사냥꾼·그림자 매복자·말벌 떼) — 실제 개체가 몰려와 문다.
-  // 격퇴 체력은 **보스가 물 때만**(memberKills·killRadius) 전사의 반격/다산 압도로 깎인다(시간 아닌 물기당).
+  // 격퇴 체력은 즉사 판정과 **분리된 자리**에서 깎인다: 근접은 stepMeleeCounter(반격 반경 × 개체별
+  // 쿨다운), 원거리는 behavior 의 사격. memberKills 는 이제 죽는가만 본다(그 함수 주석 참조).
   if (boss.members.length > 0) {
     stepMemberHorde(boss, world);
   } else {
@@ -714,9 +778,12 @@ function stepSingleBoss(boss: Boss, world: World): void {
         if (bossRaidable(boss) && e.species.isPlayer) {
           const melee = raidMeleePower(boss, e.genome.traits);
           if (melee > 0 || raidRangedPower(e.genome.traits) > 0) {
+            // 단일 보스(추격자·큰수리·상어)는 즉사 반경이 넓어(14~68px) 접촉이 이미 충분하다 →
+            // 떼처럼 반경·쿨다운을 따로 두지 않고 예전 구조(닿은 틱마다 반격)를 그대로 둔다.
+            // 연출만 bite → counter 로 가른다(씹힌 것과 되받아친 것이 같은 그림이면 구별이 안 된다).
             if (melee > 0) {
-              dealRaidHit(boss, melee);
-              world.emit("bite", e.x, e.y, e.species.isPlayer); // 연출: 맞받아침(근접)
+              dealRaidHit(boss, melee, world);
+              world.emit("counter", e.x, e.y, e.species.isPlayer, boss.x, boss.y); // 연출: 맞받아침(근접)
             }
             continue;
           }
@@ -795,6 +862,53 @@ function stepMemberHorde(boss: Boss, world: World): void {
       }
     }
   }
+  // 반격은 **즉사 판정과 다른 자리**에서 판정한다(아래 주석 참조). 모든 떼가 움직인 뒤라 순회 순서 무관.
+  stepMeleeCounter(boss, world);
+}
+
+/**
+ * 근접 전사의 **반격** 한 틱 · 떼에 붙어 있는 전사가 쿨다운마다 한 번씩 되받아쳐 격퇴 체력을 깎는다.
+ *
+ * 왜 즉사 판정(killRadius)에서 떼어 냈나. 예전엔 memberKills 안에서 "물린 순간 맞받아친다"로 함께
+ * 판정했다. 그러면 반격 기회가 즉사 반경(약탈자 8px)이라는 **요구량과 같은 자리**에 눌려, 격퇴가
+ * 형질이 아니라 접촉 면적에 지배당한다 · 떼 한복판에 낀 한 마리는 매 틱 여러 번 깎고, 스쳐 지나간
+ * 판은 한 번도 못 깎는다(실측: 모든 공격력 구간에서 "한 번도 안 깎인 시드"가 늘 섞였다 = 전부 아니면
+ * 전무). 반경을 넓히고(SIM.raidCounterRadius 40px × 시대 배율) 개체별 쿨다운을 두면 "붙이면 깎인다"가
+ * 손끝에서 성립한다. 한 방의 크기는 SIM.raidCounterMul 로 키워 격퇴 바에서 눈에 보이게 했다.
+ *
+ * ⚠ 여기서는 **죽음 판정을 한 글자도 안 건드린다.** 전사가 안 죽는 것은 위 memberKills 가 그대로
+ *   담당한다 · 죽음 경로가 오염되면 "보스에게 죽은 내 종 수"가 통째로 이동해 기존 밸런스가 무너진다.
+ * ⚠ world.rng 를 한 번도 안 쓴다(정수 쿨다운뿐) → 난수 스트림 불변.
+ */
+function stepMeleeCounter(boss: Boss, world: World): void {
+  if (!bossRaidable(boss)) return;
+  const r2 = boss.counterRadius * boss.counterRadius;
+  for (const e of world.entities) {
+    if (!e.alive || !e.species.isPlayer) continue;
+    if (e.raidCounterCd > 0) continue;
+    if (!bossCanHunt(boss, e, world)) continue; // 숨거나 층이 다르면 못 때린다(기존 규칙 그대로)
+    const power = raidMeleePower(boss, e.genome.traits);
+    if (power <= 0) continue; // 근접 전사가 아니다(원거리는 behavior 에서 따로 쏜다)
+    // 가장 가까운 떼 개체 · 반격 스파크가 그쪽을 향하게 하려면 방향이 필요하다.
+    let best2 = Infinity;
+    let bx = 0;
+    let by = 0;
+    for (const m of boss.members) {
+      const dx = m.x - e.x;
+      const dy = m.y - e.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < best2) {
+        best2 = d2;
+        bx = m.x;
+        by = m.y;
+      }
+    }
+    if (best2 > r2) continue;
+    dealRaidHit(boss, power * SIM.raidCounterMul, world);
+    e.raidCounterCd = SIM.raidCounterCooldown;
+    // 연출: 되받아침. 씹힌 것(bite)과 **다른 그림**이라야 화면에서 구별된다.
+    world.emit("counter", e.x, e.y, true, bx, by);
+  }
 }
 
 /**
@@ -805,17 +919,11 @@ function stepMemberHorde(boss: Boss, world: World): void {
  */
 function memberKills(e: Entity, boss: Boss, world: World): boolean {
   const t = e.genome.traits;
-  // 전사(근접 카운터·만능 공격, 또는 원거리)는 물려도 산다. 근접 전사는 그 자리에서 맞받아쳐 격퇴 체력을
-  // 깎고(dealRaidHit), 원거리 전사는 여기선 안 깎고 뒤로 물러나 쏜다(behavior). 약한 개체는 아래 확률 저항.
+  // 전사(근접 카운터·만능 공격, 또는 원거리)는 물려도 산다 · 여기는 **죽는가만** 판정한다.
+  // 격퇴 체력을 깎는 것은 stepMeleeCounter(근접) · behavior(원거리)가 따로 맡는다. 예전엔 이 자리에서
+  // 함께 깎았는데, 그러면 반격 기회가 즉사 반경에 갇혀 격퇴가 접촉 면적에 지배당했다(위 주석).
   if (bossRaidable(boss) && e.species.isPlayer) {
-    const melee = raidMeleePower(boss, t);
-    if (melee > 0 || raidRangedPower(t) > 0) {
-      if (melee > 0) {
-        dealRaidHit(boss, melee);
-        world.emit("bite", e.x, e.y, e.species.isPlayer); // 연출: 그 자리에서 맞받아침(근접)
-      }
-      return false;
-    }
+    if (raidMeleePower(boss, t) > 0 || raidRangedPower(t) > 0) return false;
   }
   // 비전사(약한 개체)·레이드 꺼짐: 카운터 형질 확률 저항(형질 높을수록 잘 산다). 저항 없으면(사나운 무리) 죽음.
   if (boss.cullAttackResist > 0) return world.rng.unit() >= boss.cullAttackResist * (t.attack / TRAIT_MAX);

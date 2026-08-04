@@ -82,7 +82,10 @@ export function adaptWildTraits(t: Traits, p: WildPressure): void {
 // "block" = 이빨이 안 박힌 물기(biteOutcome.ignored). 예전엔 **아무것도 안 일어나서** 화면상
 // "왜 공격이 안 먹히는지"를 알 방법이 없었다(CLAUDE.md 전달 규칙이 좋은 피드백의 예로 든 바로 그 자리:
 // "물기가 튕겨 나감"). 사거리·쿨다운은 그대로 소모되므로 헛손질에 대가도 있다.
-export type VisualEventKind = "birth" | "death" | "kill" | "bite" | "spit" | "block";
+// "counter" = 내 무리가 보스에게 **되받아친** 순간(dealRaidHit 이 나는 자리). 물린 것(bite)과 갈라 놓는다 ·
+// 반격 한 번은 체력 200 짜리 바에서 몇 픽셀도 못 움직인다(공격력 64 기준 3.05 HP ≈ 1픽셀). 몇 번 쳤는지를
+// 사람이 실제로 읽는 것은 그 순간의 스파크다(전달 규칙 2순위: 일어나는 순간의 피드백).
+export type VisualEventKind = "birth" | "death" | "kill" | "bite" | "spit" | "block" | "counter";
 export interface VisualEvent {
   kind: VisualEventKind;
   x: number;
@@ -155,6 +158,46 @@ export class World {
    * 매 틱 여기서 0 으로 되돌린다. rng 미사용·단순 합계라 순회 순서와 무관하다.
    */
   orderFollowers = 0;
+
+  /**
+   * 지금 이 보스에 **맞설 수 있는** 내 종 개체 수(근접 / 원거리). 화면이 "왜 아무도 안 싸우는가"를
+   * 말할 수 있게 하는 유일한 숫자다 · 이게 0 이면 격퇴 체력 바를 보여 주는 것 자체가 거짓말이다.
+   *
+   * ⚠ 세는 곳은 **판정이 일어나는 그 자리 하나뿐**(boss.tagRaidFighters). 렌더가 매 프레임 전 개체를
+   * 돌며 isRaidFighter 를 다시 부르면 폰 프레임이 죽고, 조건을 밖에서 다시 유도하면 화면과 실제가
+   * 갈린다(known_issues 의 "따르는 무리" 오집계와 같은 함정).
+   * 근접·원거리를 겸하는 개체는 **근접으로만** 센다 → 두 수의 합 = raidFighter 플래그가 붙은 개체 수.
+   * rng 미사용·단순 합계라 순회 순서와 무관하다. 매 틱 리셋(보스가 없으면 0).
+   */
+  raidMeleeFighters = 0;
+  raidRangedFighters = 0;
+
+  /**
+   * 마지막으로 격퇴 체력이 깎인 틱(-1 = 이 세계에서 한 번도 없음).
+   * ⚠ 2026-08-04 현재 **프로덕션에서 읽는 곳이 없다**(테스트만 읽는다). worldView 는 번쩍임·잔상을
+   *   boss.hp 의 변화로 직접 낸다 → 렌더를 이 값으로 갈아타든지 이 값을 지우든지 정리할 것.
+   */
+  raidHitTick = -1;
+  /**
+   * 최근 1초(stepsPerSecond 틱) 동안 깎인 격퇴 체력 합.
+   * ⚠ 위와 같다 · 지금은 매 틱 링 버퍼만 돌고 읽는 쪽이 테스트뿐이다.
+   */
+  private readonly raidDmgRing: number[] = new Array<number>(SIM.stepsPerSecond).fill(0);
+  get raidDamageWindow(): number {
+    let sum = 0;
+    for (const v of this.raidDmgRing) sum += v;
+    return sum;
+  }
+  /**
+   * 격퇴 체력이 깎인 사실을 화면용 관측값에 남긴다(boss.dealRaidHit 한 자리에서만 부른다).
+   * 링 버퍼라 오차가 안 쌓이고, rng 를 안 쓰며 sim 판정에도 안 쓰인다 → 결정론·밸런스와 무관하다.
+   */
+  recordRaidDamage(amount: number): void {
+    if (amount <= 0) return;
+    const i = this.tick % this.raidDmgRing.length;
+    this.raidDmgRing[i] = (this.raidDmgRing[i] ?? 0) + amount;
+    this.raidHitTick = this.tick;
+  }
 
   // Phase 5 단계 상태 (Game 이 설정/해제). 기본값은 평상시(영향 없음).
   boss: Boss | null = null;
@@ -294,6 +337,12 @@ export class World {
     // HUD 표시용 집계는 매 틱 여기서만 0 으로 되돌린다(세는 곳은 behavior 의 cohesion 한 자리뿐).
     L.followerCount = 0;
     this.orderFollowers = 0; // 뜻을 향해 움직인 수도 같은 규칙으로 매 틱 리셋(세는 곳은 behavior 한 자리)
+    // 맞설 수 있는 개체 수도 같은 자리에서 매 틱 0 으로. 보스가 있으면 stepBoss 가 다시 채운다
+    // (보스가 사라진 틱에 낡은 수가 남아 "싸울 수 있다"고 거짓말하지 않게).
+    this.raidMeleeFighters = 0;
+    this.raidRangedFighters = 0;
+    // 1초 창의 이번 틱 칸을 비운다(1초 전 값이 여기 들어 있다). tick 증가 뒤라 칸이 정확히 맞는다.
+    this.raidDmgRing[this.tick % this.raidDmgRing.length] = 0;
     // 조준 대상도 매 틱 여기서 다시 잡는다. 먼저 비워 두면 알파가 없거나(leaderId<0) 이번 틱에
     // 쓰러진 경우(아래 조기 반환)에도 "물 수 있다"가 낡은 채로 남지 않는다.
     L.biteTargetId = -1;
@@ -388,6 +437,11 @@ export class World {
     for (const e of this.entities) {
       e.prevX = e.x;
       e.prevY = e.y;
+      // 맞설 수 있는가는 매 틱 꺼 두고 stepBoss(tagRaidFighters)가 다시 켠다 · 보스가 사라지면
+      // 저절로 꺼져, 화면이 지난 보스의 전사 표식을 계속 그리는 일이 없다.
+      e.raidFighter = false;
+      // 반격 쿨다운은 여기 한 자리에서만 줄인다(정수 카운터 · rng 미사용 → 스트림 불변).
+      if (e.raidCounterCd > 0) e.raidCounterCd -= 1;
     }
     // 알파의 파생값을 틱 시작에 한 번 굳힌다(알파가 없으면 첫 줄에서 빠진다 = 기존과 동일).
     this.syncLeadStart();

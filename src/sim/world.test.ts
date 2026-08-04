@@ -1367,3 +1367,18 @@ describe("라운드 계수기 (roundCounts · 시험 판정의 눈금)", () => {
     expect(eaten).toBeGreaterThan(0); // 실제로 잡아먹히는 세계였는데도 hunts 는 0
   });
 });
+
+describe("레이드 관측값의 매 틱 리셋 (화면이 읽는 숫자는 한 자리에서만 만든다)", () => {
+  it("보스가 없으면 맞서는 개체 수·전사 표식·최근 피해가 전부 0 이다", () => {
+    // orderFollowers 와 같은 규칙: 세는 곳은 판정이 일어나는 한 자리(boss.tagRaidFighters)뿐이고,
+    // 리셋도 한 자리(syncLeadStart)뿐이다. 보스가 없는 틱에 낡은 값이 남으면 화면이 "싸울 수 있다"고
+    // 거짓말한다("수치가 화면 표시와 다르면 그건 거짓말이다").
+    const w = new World("raid-reset", W, H, defaultGenome());
+    for (let i = 0; i < 200; i++) w.step();
+    expect(w.raidMeleeFighters).toBe(0);
+    expect(w.raidRangedFighters).toBe(0);
+    expect(w.raidDamageWindow).toBe(0);
+    expect(w.raidHitTick).toBe(-1);
+    for (const e of w.entities) expect(e.raidFighter).toBe(false);
+  });
+});

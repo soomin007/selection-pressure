@@ -547,7 +547,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   if (fighter && raidBoss && isRaidRangedFighter(raidBoss, e, world)) {
     const tgt = bossRaidTargetFor(raidBoss, e.x, e.y);
     if ((e.x - tgt.x) ** 2 + (e.y - tgt.y) ** 2 <= atkRange * atkRange && e.attackCd <= 0) {
-      dealRaidHit(raidBoss, raidRangedPower(t) * SIM.raidRangedMul);
+      dealRaidHit(raidBoss, raidRangedPower(t) * SIM.raidRangedMul, world);
       e.attackCd = SIM.attackCooldownTicks;
       world.emit("spit", e.x, e.y, e.species.isPlayer, tgt.x, tgt.y); // 연출: 발사체가 보스로 날아간다(원거리)
     }
@@ -651,24 +651,56 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 밀린다(known_issues 의 "쌍둥이" 함정). 여기서는 결과값 desired 만 섞는다. 지시가 없으면(null)
   // 이 블록은 통째로 안 돌아, 명령을 한 번도 안 준 세계는 기존과 부동소수점까지 같다.
   //
-  // 우선순위: 도망 > 사냥감 추적 > 먹이 추적 > **지시** > 배회. 그래서 겁먹은 개체는 안 오고,
-  // 배고픈 개체는 가는 길에 먹고 간다. 이게 "이행은 천성이 정한다"의 실체다(새 규칙이 아니다).
+  // 우선순위: 도망 > 사냥감 추적 > (가는 길·코앞의) 먹이 > **지시** > 배회.
+  // ⚠ 단 **도착 반경 밖에서는 지시가 그 밖의 먹이를 이긴다.** 예전 조건은 targetFood/targetPrey 가 하나라도
+  //   있으면 지시를 통째로 무시했는데, 먹이를 쫓는 것은 예외적 사정이 아니라 **기본 상태**다(실측:
+  //   개체틱의 72.1%). 그래서 순종률이 7.5% 였고 사용자가 "내 말을 듣는다는 느낌이 전혀 안 든다"고 했다.
+  //   herdOrder.ts 가 스스로 정한 마지막 선 "방향은 반드시 따른다"를 코드가 못 지키고 있던 것이다.
+  //
+  // "가는 길" 예외는 남긴다 · 목표가 지시 쪽(내적 ≥ 0)이고 지시점보다 가까우면 그것부터 먹고 간다.
+  // 순수 기하라 rng 를 한 번도 안 쓴다(스트림 불변).
+  //
+  // ★ chooseGoal 은 한 글자도 안 건드린다 · targetFood 는 그대로 세팅해 두고 **이동 벡터만** 덮는다.
+  //   먹기는 근접(eatRadius) 판정이라 행진 중 지나치는 먹이는 자동으로 먹힌다(아래 섭취 블록).
   const order = world.herdOrder;
-  if (order !== null && e.species.isPlayer && !fleeing && e.targetPrey === null && e.targetFood === null) {
+  if (order !== null && e.species.isPlayer && !fleeing) {
     const odx = order.x - e.x;
     const ody = order.y - e.y;
-    if (odx * odx + ody * ody > ORDER.arriveRadius * ORDER.arriveRadius) {
-      // 격자 길찾기를 태운다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러지기만 한다
-      // (known_issues "반응형 벽 회피는 진동을 만든다 · 격자 BFS 가 정답").
-      const nav = navTo(e, world, { x: order.x, y: order.y }, canSwim, canLand, canFly);
-      const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? ORDER.arriveRadius : 0);
-      desired = {
-        x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
-        y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
-      };
-      // 순종의 질을 화면에 보여 주는 숫자는 **여기서**, 규칙이 판정된 그 자리에서 센다.
-      // 밖에서 조건을 다시 유도하면 화면과 실제가 갈린다(known_issues).
-      world.orderFollowers += 1;
+    const od2 = odx * odx + ody * ody;
+    if (od2 > ORDER.arriveRadius * ORDER.arriveRadius) {
+      // 물고 있는 사냥감은 **지시보다 위다**(예전 우선순위 그대로). 사냥은 라운드에 5~10번뿐인 드물고
+      // 값진 사건이고 표적이 달아나므로, 한 번 중단되면 그 사냥은 통째로 사라진다. 실측: 사냥감까지
+      // 지시로 덮으면 시험 계수가 사냥 9.0 → 2.5(합격선 5 미달) · 사냥꾼 프리셋은 새끼도 11.2 → 6.5 로
+      // 무너졌다. 쫓는 개체가 늘 소수라 순종률 손해는 작다(사냥꾼 프리셋이 여전히 가장 잘 따른다).
+      // 먹이(풀)는 다르다 · 한 라운드에 100번 넘게 일어나는 기본 행동이라 이걸 안 덮으면 지시가
+      // 사실상 아무 일도 안 한다(그게 이번 결함의 원인이었다: 개체틱의 72.1%가 먹이 추적).
+      const hunting = e.targetPrey !== null;
+      // 쫓던 먹이가 "가는 길"에 있나 · 있으면 그것부터 먹고 간다(배고픈 개체는 지나치지 못한다).
+      // 가는 길 = 지시 쪽(내적 ≥ 0)이고 지시점보다 가깝다. 여기에 **코앞(grabRadius)** 을 더한다 ·
+      // 방향 조건만 두면 등 뒤의 먹이가 매 틱 버려져 행군 중엔 거의 못 먹는다.
+      const food = e.targetFood;
+      let onTheWay = false;
+      if (!hunting && food !== null) {
+        const gdx = food.x - e.x;
+        const gdy = food.y - e.y;
+        const gd2 = gdx * gdx + gdy * gdy;
+        onTheWay = gd2 <= ORDER.grabRadius * ORDER.grabRadius || (gd2 < od2 && gdx * odx + gdy * ody >= 0);
+      }
+      if (!hunting && !onTheWay) {
+        // 격자 길찾기를 태운다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러지기만 한다
+        // (known_issues "반응형 벽 회피는 진동을 만든다 · 격자 BFS 가 정답").
+        const nav = navTo(e, world, { x: order.x, y: order.y }, canSwim, canLand, canFly);
+        const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? ORDER.arriveRadius : 0);
+        desired = {
+          x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
+          y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
+        };
+        // 순종의 질을 화면에 보여 주는 숫자는 **여기서**, 규칙이 판정된 그 자리에서 센다.
+        // 밖에서 조건을 다시 유도하면 화면과 실제가 갈린다(known_issues).
+        // 세는 것은 **지시가 이번 틱 이동을 가져간 개체**뿐이다 · 가는 길의 먹이로 잠깐 새는 개체는
+        // 안 센다(그건 지시가 아니라 천성이 모는 것이라, 세면 순종이 부풀어 화면이 거짓말한다).
+        world.orderFollowers += 1;
+      }
     }
   }
 

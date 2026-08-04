@@ -9,7 +9,13 @@ import type { VisualEventKind } from "@/sim/world";
 // 탭 명령 피드백 핑 — **렌더 전용**이라 VisualEventKind(sim 타입)에 안 넣는다. 명령 접수/거부는
 // 세계에서 일어난 사건이 아니라 입력에 대한 화면의 응답이고, sim 에 렌더 사정이 새면 순수성이 깨진다.
 type PingKind = "go" | "deny";
-type ParticleKind = VisualEventKind | PingKind;
+// 반격 · 내 무리가 보스에게 **되받아친** 순간(sim 의 dealRaidHit 이 나는 자리). 물린 것(bite)과 같은
+// 그림이면 "씹혔다"와 "되받아쳤다"가 화면에서 구별이 안 된다. 이건 sim 이 내는 세계의 사건이므로
+// 원래 자리는 VisualEventKind 다 · sim 이 "counter" 를 그 union 에 더하면 아래 union 이 그대로
+// 흡수하고(같은 문자열 리터럴은 union 에서 하나로 합쳐진다) main 의 배선(`effects.spawn(ev.kind, …)`)도
+// 손댈 필요가 없다. sim 이 아직 안 냈으면 이 갈래는 그냥 안 불릴 뿐이다.
+type CounterKind = "counter";
+type ParticleKind = VisualEventKind | PingKind | CounterKind;
 
 interface Particle {
   kind: ParticleKind;
@@ -25,8 +31,10 @@ interface Particle {
 
 // block(튕김)은 짧고 단단해야 한다 — 길게 끌면 "막혔다"가 아니라 "뭔가 터졌다"로 읽힌다.
 // go/deny(명령 핑)도 짧게 — 명령은 연달아 내리므로 오래 남으면 이전 핑이 다음 명령을 어지럽힌다.
+// counter(반격)는 bite 보다 **짧고 날카롭게** · 격퇴 바가 한 번에 0.1px 도 안 움직이는 판이라,
+// 사람이 실제로 읽는 것은 이 스파크다. 길게 끌면 여러 번의 반격이 뭉개져 "몇 번 쳤는지"가 사라진다.
 const LIFE: Record<ParticleKind, number> = {
-  birth: 720, death: 820, kill: 620, bite: 240, spit: 200, block: 300, go: 350, deny: 250,
+  birth: 720, death: 820, kill: 620, bite: 240, spit: 200, block: 300, go: 350, deny: 250, counter: 190,
 };
 const TAU = Math.PI * 2;
 
@@ -58,7 +66,9 @@ export class Effects {
   // 인자 순서는 `world.emit` 과 **똑같이** 맞춘다(kind, x, y, mine, tx, ty). 예전엔 mine 이 맨 뒤 기본값
   // 인자라, 호출부가 그걸 안 넘겨도 컴파일이 통과했다. 실제로 그래서 아래 다이어트가 통째로 죽어 있었다
   // (2026-08-03 발견: 야생 사건이 예전처럼 다 튀고 있었다). 필수 인자로 바꿔 컴파일러가 잡게 한다.
-  spawn(kind: VisualEventKind, x: number, y: number, mine: boolean, tx?: number, ty?: number): void {
+  // ⚠ 인자 타입에 CounterKind 를 더해 둔 이유: sim 이 "counter" 를 VisualEventKind 에 더하기 전에도
+  //   이 파일이 홀로 컴파일되고, 더한 뒤엔 union 이 합쳐져 호출부가 그대로 통과한다(배선 변경 0).
+  spawn(kind: VisualEventKind | CounterKind, x: number, y: number, mine: boolean, tx?: number, ty?: number): void {
     if (this.particles.length > 220) return; // 과부하 방지(대량 사망 시)
     // 야생끼리의 사건은 다이어트한다(2026-08-02 사용자: 남의 연출이 정신사납다) — 탄생·자연사는
     // 아예 생략(생태 배경 소음), 사냥·발사체 같은 격한 사건만 훨씬 옅게 남긴다(세계가 살아 있다는
@@ -116,6 +126,8 @@ function drawParticle(g: Graphics, p: Particle, t: number): void {
     drawSpit(g, x, y, p.tx, p.ty, p.age, p.life, p.seed, p.dim);
   } else if (p.kind === "block") {
     drawBlock(g, x, y, p.tx, p.ty, t, fade, p.seed);
+  } else if (p.kind === "counter") {
+    drawCounter(g, x, y, p.tx, p.ty, t, fade, p.seed);
   } else if (p.kind === "go") {
     drawGoPing(g, x, y, e, fade);
   } else if (p.kind === "deny") {
@@ -179,6 +191,44 @@ function drawBlock(
       .lineTo(cx + Math.cos(a) * s1, cy + Math.sin(a) * s1)
       .stroke({ color: 0xbfe4ff, width: 1.5 * fade + 0.2, alpha: 0.8 * fade, cap: "round" });
   }
+}
+
+/**
+ * 반격 · 내 무리가 보스를 **되받아친** 순간. 물린 것(drawBite, 붉은 살점)과 색·모양·방향이 전부 달라야
+ * "씹혔다"와 "쳤다"가 갈린다: 밝은 금빛이 **보스 쪽으로** 곧게 뻗는다(bite 는 사방으로 흩어지는 붉은 파편).
+ * (x,y)=때린 개체, (tx,ty)=맞은 보스. 방향이 없으면(같은 점) 위로 뻗는다.
+ * 격퇴 바가 한 번에 1픽셀도 안 움직이는 구간이 있으므로, "지금 깎이고 있다"를 사람이 읽는 자리가 여기다.
+ */
+function drawCounter(
+  g: Graphics, x: number, y: number, tx: number, ty: number, t: number, fade: number, seed: number,
+): void {
+  const dx = tx - x;
+  const dy = ty - y;
+  const d = Math.hypot(dx, dy);
+  const ux = d > 0.001 ? dx / d : 0;
+  const uy = d > 0.001 ? dy / d : -1; // 방향이 없으면 위로(하늘로 치켜든 반격)
+  const ang = Math.atan2(uy, ux);
+  const snap = Math.min(1, t / 0.22); // 앞 22% 에 탁 뻗고 나머지는 그 자리에서 옅어진다(날카롭게)
+  const reach = 7 + snap * 15;
+  const cx = x + ux * 3;
+  const cy = y + uy * 3;
+  // 뻗는 금빛 창 · 두 겹(바깥 진한 금 + 안쪽 흰빛)이라 어두운 지형·밤 오버레이 위에서도 안 묻힌다.
+  g.moveTo(cx, cy)
+    .lineTo(cx + ux * reach, cy + uy * reach)
+    .stroke({ color: 0xffb524, width: 3.4 * fade + 0.5, alpha: 0.95 * fade, cap: "round" });
+  g.moveTo(cx, cy)
+    .lineTo(cx + ux * reach * 0.7, cy + uy * reach * 0.7)
+    .stroke({ color: 0xfff4c8, width: 1.5 * fade + 0.3, alpha: 0.95 * fade, cap: "round" });
+  // 창끝에서 갈라지는 불꽃 셋 · **보스 쪽으로만** 튄다(되받아친 방향이 형태로 읽힌다).
+  for (let i = 0; i < 3; i++) {
+    const a = ang + (frand(seed, i) - 0.5) * 0.9;
+    const r0 = reach * 0.8;
+    const r1 = r0 + (4 + frand(seed, i + 11) * 6) * snap;
+    g.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0)
+      .lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1)
+      .stroke({ color: 0xffd76a, width: 1.6 * fade + 0.2, alpha: 0.9 * fade, cap: "round" });
+  }
+  g.circle(x, y, 2.6 * fade + 0.6).fill({ color: 0xfff4c8, alpha: 0.9 * fade }); // 뿌리의 섬광(친 자리)
 }
 
 // 원거리 공격 — 뱉은 것/쏜 가시가 목표로 **빠르게 날아간다**(레일건 조준선 대신 생물다운 발사체). 비행은

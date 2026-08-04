@@ -24,7 +24,10 @@ export interface GoalData {
   xp01: number; // 다음 카드까지 진행(0~1)
   mine: number;
   wild: number;
-  followers: number; // 지금 뜻을 향해 움직이는 수(뜻이 없으면 -1 → 줄 숨김)
+  followers: number; // 지금 뜻을 향해 움직이는 수(뜻이 없으면 -1 → 상세 패널 줄 숨김)
+  /** 접힌 기본 알약에 상시로 붙는 짧은 칩("따르는 중 3/12"·"무리 도착"). 빈 문자열이면 숨긴다.
+   *  문구를 main 이 만드는 이유: 도착 여부처럼 월드를 봐야 아는 것이 섞여 있다(여기선 그리기만). */
+  follow: string;
   seconds: number;
   night: boolean;
 }
@@ -50,11 +53,19 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
   const pill = document.createElement("button");
   pill.className = "goal-pill";
   pill.title = "탭하면 자세한 정보가 열립니다";
+  // 첫 줄은 "할 일 + 순종 칩"이 한 줄을 나눠 쓴다(flex). 칩을 아래 sub 줄에 붙이면 기한·불씨와
+  // 뒤엉키고, 새 줄로 빼면 상시 HUD 가 한 줄 더 늘어난다.
+  const line = document.createElement("div");
+  line.className = "goal-line";
   const textEl = document.createElement("div");
   textEl.className = "goal-text";
+  const followEl = document.createElement("span");
+  followEl.className = "goal-follow";
+  followEl.style.display = "none";
+  line.append(textEl, followEl);
   const subEl = document.createElement("div");
   subEl.className = "goal-sub";
-  pill.append(textEl, subEl);
+  pill.append(line, subEl);
 
   const pauseBtn = document.createElement("button");
   pauseBtn.className = "goal-pause";
@@ -127,6 +138,9 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
       setText(subEl, d.sub);
       const subVis = d.sub ? "block" : "none";
       if (subEl.style.display !== subVis) subEl.style.display = subVis;
+      setText(followEl, d.follow);
+      const followVis = d.follow ? "inline-block" : "none";
+      if (followEl.style.display !== followVis) followEl.style.display = followVis;
       if (!open) return; // 패널이 닫혀 있으면 상세 갱신도 생략(비용 0)
       setText(stageRow, d.stage);
       setText(levelRow, `레벨 ${d.level} · 다음 카드까지 ${Math.round(d.xp01 * 100)}%`);
@@ -178,8 +192,13 @@ function ensureGoalStyles(): void {
   .goal-pill { pointer-events: auto; flex: 1; min-width: 0; text-align: left; cursor: pointer;
     background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 7px 12px;
     color: var(--ink); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
-  .goal-text { font-family: var(--font-title); font-size: 14.5px; line-height: 1.25;
+  /* 첫 줄 = 할 일 + 순종 칩. 글이 늘어나는 쪽(goal-text)에 min-width:0 을 줘야 칩을 밀어내지 않고
+     제 안에서 잘린다(안 주면 flex 기본 min-width:auto 라 칩이 알약 밖으로 밀려난다). */
+  .goal-line { display: flex; align-items: baseline; gap: 6px; }
+  .goal-text { flex: 1; min-width: 0; font-family: var(--font-title); font-size: 14.5px; line-height: 1.25;
     overflow: hidden; text-overflow: ellipsis; }
+  .goal-follow { flex: none; font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap;
+    padding: 2px 6px; border-radius: 999px; background: rgba(255,255,255,0.09); opacity: 0.85; }
   /* nowrap 이면 긴 안내가 "..."로 잘려 나간다(사용자 지적). 두 줄까지 접히게 두고, 그걸 넘기면
      그때만 자른다. 문구 자체를 한 줄에 들어오게 짧게 쓰는 게 먼저다(main 의 goalSub 참고). */
   .goal-sub { font-family: var(--font-mono); font-size: 11.5px; opacity: 0.75; margin-top: 2px;

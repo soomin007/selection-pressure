@@ -37,10 +37,12 @@ import {
   abilityLevel,
   ABILITY_KEYS,
   NEUTRAL_TRAITS,
+  type ChipTone,
   type EffectChip,
 } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { registerKeyLayer, keyChip } from "@/ui/keys";
+import { SIM } from "@/sim/params";
 import { DEBUG } from "@/debug";
 import {
   DRAFT_TIMING,
@@ -75,6 +77,68 @@ const CONFETTI_COLORS: readonly string[] = [
 const COMMIT_DELAY_MS = 850;
 
 /**
+ * 보스에 맞설 수 있게 되는 형질 문턱. 공격력과 원거리는 **어떤 보스에게나 통하는 수단**이라
+ * (sim/boss.ts 의 raidMeleePower·raidRangedPower) 어느 보스가 나오든 이 두 문턱만 넘으면 맞선다.
+ * ⚠ 숫자를 여기 적지 않고 sim 상수를 그대로 읽는다 · 옮겨 적는 순간 언젠가 화면과 실제가 갈린다.
+ * ⚠ "얼마나 세게 깎느냐"(충족도)는 여기서 계산하지 않는다. 그 식은 sim 안에만 있고 밖에서 다시
+ *   유도하면 그게 곧 새 거짓말이 된다 · 화면에는 넘었나/못 넘었나만 말한다.
+ */
+const MELEE_GATE = SIM.raidWarriorAttack;
+const RANGED_GATE = SIM.rangedThreshold;
+
+function canFaceBoss(attack: number, ranged: number): boolean {
+  return attack >= MELEE_GATE || ranged >= RANGED_GATE;
+}
+
+/**
+ * 헤더 한 줄 · 다음 관문에 맞설 수 있는 종인가. 카드를 고르기 전에 지금 상태를 먼저 말한다.
+ * ⚠ 두 문턱은 지금 같은 값이지만 sim 이 **따로 잡는 상수**다. 한 숫자로 뭉뚱그려 적으면 둘이
+ *   갈리는 날 화면이 조용히 거짓말한다 → 같을 때만 한 번 적고, 다르면 각각 적는다.
+ */
+function gatePhrase(): string {
+  return MELEE_GATE === RANGED_GATE
+    ? `공격력이나 원거리가 ${MELEE_GATE} 이상이면`
+    : `공격력이 ${MELEE_GATE} 이상이거나 원거리가 ${RANGED_GATE} 이상이면`;
+}
+
+function raidHeadline(boss: string, t: Traits): string {
+  const a = t.attack;
+  const r = t.ranged;
+  if (a >= MELEE_GATE) return `다음 관문 「${boss}」 · 지금 공격력 ${a} · 맞설 수 있습니다`;
+  if (r >= RANGED_GATE) return `다음 관문 「${boss}」 · 지금 원거리 ${r} · 멀리서 맞설 수 있습니다`;
+  // ⚠ "이것만이 길"이라고 말하지 않는다 · 보스마다 제 약점(속도·시야·무리·번식)이 따로 있고
+  //   화면은 그게 무엇인지 모른다. 공격력·원거리는 **어떤 보스에도 통하는** 길이라 그것만 단언한다.
+  return `다음 관문 「${boss}」 · 지금 공격력 ${a} · ${gatePhrase()} 어떤 보스든 맞설 수 있습니다`;
+}
+
+/**
+ * 카드 한 장이 "맞설 수 있는가"를 **켜는가**. 켜지 않는 카드에는 아무것도 안 붙인다.
+ * 이미 맞설 수 있는 종에게 "더 세진다"고는 말하지 않는다 · 그 양을 화면이 뒷받침할 수 없다.
+ * 얼마나 오르는지는 옆의 효과 칩(「공격력 +7」)이, 문턱과 지금 값은 헤더 줄이 이미 말한다.
+ *
+ * ⚠ **"못 맞섬" 칩은 달지 않는다 · 그건 거짓일 수 있다.** 여기서 아는 것은 공격력·원거리
+ *   문턱뿐인데, 격퇴 보스 5종 중 4종은 카운터가 속도·시야·무리·번식이다. 공격력을 깎고 무리를
+ *   올리는 카드(「밀물 같은 무리」 등)는 이 함수 눈에는 "못 맞섬"이지만 실제로는 외톨이 사냥꾼에
+ *   맞설 능력을 켜 준다. 반대로 문턱을 넘기는 쪽은 만능 카운터라 **언제나 참**이므로 그것만 말한다.
+ *   보스별 약점까지 정확히 말하려면 sim 에 판정기(보스 종류 + 게놈 → 맞섬 여부)를 두고 그것을
+ *   불러야 한다 · 규칙을 UI 에서 옮겨 적으면 그 순간 두 곳으로 갈라진다.
+ *
+ * ⚠ 카드 아래 각주(.draft-note)로 달지 않는다. 실측: 360x780 에서 석 장 모두에 각주가 붙으면
+ *   카드가 한 줄씩 자라 히어로 배지와 카드 이름이 겹쳤다(칩으로 넣으면 셋 다 붙어도 여유 20px 유지).
+ */
+function raidCardChip(card: Card, t: Traits): { label: string; tone: ChipTone; up: boolean } | null {
+  const a = t.attack;
+  const r = t.ranged;
+  const da = cardDelta(card, "attack", a);
+  const dr = cardDelta(card, "ranged", r);
+  if (da === 0 && dr === 0) return null;
+  if (!canFaceBoss(a, r) && canFaceBoss(a + da, r + dr)) {
+    return { label: "보스에 맞섬", tone: "gain", up: true };
+  }
+  return null;
+}
+
+/**
  * "건너뛰기" 단축키. 평소엔 S 지만 **조종 모드에선 S 가 아래로 가는 키**라, 손을 WASD 에 올린 채
  * 드래프트가 뜨면 카드를 보기도 전에 건너뛰어진다(실기 피드백 2026-08-01). 그 모드에서만 X 로 옮긴다.
  * 화면의 키 칩·안내 줄도 이 값을 쓰므로 표시와 실제가 어긋날 수 없다.
@@ -95,6 +159,9 @@ export interface DraftContext {
   /** 직전 라운드 판정. 있으면 제목 자리를 대신 차지한다(기본 제목은 아무 정보가 없는 문구라
    *  판정으로 바꾸는 편이 낫다). null 이면 기본 제목. */
   verdict: { text: string; passed: boolean } | null;
+  /** 다음 관문이 **때려서 물리칠 수 있는 보스**면 그 이름. 아니면 null(때릴 대상이 없는 전역 시련
+   *  이거나 관문이 보스가 아니다). 있을 때만 맞섬 안내가 붙는다 · 없는 격퇴를 예고하면 거짓말이다. */
+  raidBoss: string | null;
 }
 
 export interface DraftPanelCallbacks {
@@ -137,6 +204,10 @@ export function createDraftPanel(
   // .draft-hd 는 가운데 정렬 블록이라 그냥 아래 줄로 붙고, 헤더가 한 줄 늘면 fitHero 가 히어로를 줄인다.
   const forecastEl = el("div", "draft-forecast");
   hd.appendChild(forecastEl);
+  // 맞섬 줄: 다음 관문이 보스면 "지금 이 종이 맞설 수 있는가"를 카드를 고르기 전에 먼저 말한다.
+  // 형질을 키울 이유가 지금까지 4초짜리 전광판과 대백과에만 있었다(CLAUDE.md 전달 규칙 미달).
+  const raidEl = el("div", "draft-forecast");
+  hd.appendChild(raidEl);
   // 안내 줄: 지금 도는 위협("다가오는 위협. …")이나 시대 보상 설명. 카드를 고르는 동안 화면이 통째로
   // 덮이므로, 무엇과 싸우는 중인지·왜 이 카드가 센지를 여기서 알려 준다.
   const noticeEl = el("div", "draft-notice");
@@ -622,6 +693,9 @@ export function createDraftPanel(
     title.style.color = v ? (v.passed ? "var(--lime)" : "var(--amber)") : "";
     forecastEl.textContent = nextCtx.forecast;
     forecastEl.style.display = nextCtx.forecast ? "" : "none";
+    const raidLine = nextCtx.raidBoss ? raidHeadline(nextCtx.raidBoss, nextCtx.genome.traits) : "";
+    raidEl.textContent = raidLine;
+    raidEl.style.display = raidLine ? "" : "none";
     noticeEl.textContent = nextCtx.notice;
     noticeEl.style.display = nextCtx.notice ? "" : "none";
     mineThumb.style.backgroundImage = `url("${currentSpriteUrl(renderer, nextCtx)}")`;
@@ -664,6 +738,9 @@ export function createDraftPanel(
       const chips = el("span", "draft-chips");
       const effChips = cardEffectChips(card, ctx?.genome.traits);
       for (const c of effChips) chips.appendChild(effectChipEl(c));
+      // 다음 관문이 보스면, 이 카드가 "맞설 수 있는가"를 뒤집을 때만 칩 하나를 더 단다.
+      const raidChip = nextCtx.raidBoss ? raidCardChip(card, nextCtx.genome.traits) : null;
+      if (raidChip) chips.appendChild(plainChipEl(raidChip.label, raidChip.tone, raidChip.up));
       body.append(desc, chips);
       // 왜 수치가 이런지를 **그 자리에서** 한 줄로 답한다(대백과로 미루지 않는다 — CLAUDE.md 전달 규칙).
       // 취소선이 떴으면 "왜 덜 오르는지", 정점 고정이 걸렸으면 "왜 안 내려가는지".
@@ -771,6 +848,20 @@ function rarityBadge(rarity: Rarity): HTMLElement {
   text.textContent = style.label;
   badge.append(dot, text);
   return badge;
+}
+
+/** 수치 없는 칩 하나(형질 효과가 아니라 "이 카드가 무엇을 뒤집는가"). 색·모양은 효과 칩과 같은 규칙. */
+function plainChipEl(label: string, tone: ChipTone, up: boolean): HTMLElement {
+  const node = el("span", "draft-chip");
+  const color = chipColor(tone);
+  node.style.color = color;
+  node.style.background = withAlpha(color, 0.13);
+  const arrow = el("i");
+  arrow.textContent = up ? "▲" : "▼";
+  const text = el("span");
+  text.textContent = label;
+  node.append(arrow, text);
+  return node;
 }
 
 function effectChipEl(chip: EffectChip): HTMLElement {
