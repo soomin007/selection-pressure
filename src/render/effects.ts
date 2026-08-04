@@ -178,9 +178,17 @@ function drawBlock(
   const half = 0.95; // 호의 반각(rad) — 약 55도. 정면만 막는다는 게 보이게 좁게.
   const cx = x + ux * 2.5;
   const cy = y + uy * 2.5;
-  g.arc(cx, cy, r, ang - half, ang + half)
+  // ⚠ arc 앞에는 **반드시 moveTo 로 호의 시작점을 찍는다.** 모든 파티클이 Graphics 하나에 이어서
+  //   그려지므로, 안 찍으면 직전 파티클이 남긴 끝점에서 여기까지 **직선이 그어진다**(화면을 가로지르는
+  //   줄로 보인다 · 2026-08-04 사용자 보고). 같은 규칙을 worldView 의 시야 부채꼴이 이미 지키고 있다.
+  const r2 = Math.max(1, r - 2.6);
+  const a0 = ang - half;
+  const b0 = ang - half * 0.7;
+  g.moveTo(cx + Math.cos(a0) * r, cy + Math.sin(a0) * r)
+    .arc(cx, cy, r, a0, ang + half)
     .stroke({ color: 0xdff0ff, width: 2.6 * fade + 0.6, alpha: 0.9 * fade, cap: "round" });
-  g.arc(cx, cy, Math.max(1, r - 2.6), ang - half * 0.7, ang + half * 0.7)
+  g.moveTo(cx + Math.cos(b0) * r2, cy + Math.sin(b0) * r2)
+    .arc(cx, cy, r2, b0, ang + half * 0.7)
     .stroke({ color: 0xffffff, width: 1.3 * fade + 0.3, alpha: 0.75 * fade, cap: "round" });
   // 되튀는 불꽃 — 문 쪽으로 짧게 흩어진다.
   for (let i = 0; i < 3; i++) {

@@ -92,11 +92,14 @@ export function ensurePanelStyles(): void {
      보조 텍스트 색 + 그림자로 올렸다(폰 실측). */
   .lobby-hint { font-size: 12.5px; color: var(--sub); margin-top: 6px; line-height: 1.55; max-width: 440px;
     text-shadow: 0 2px 10px rgba(0,0,0,0.85); }
-  /* 저장 데이터 지우기 · 되돌릴 수 없는 동작이라 눈에 안 띄게 두되, 한 번 누르면(armed) 붉게 경고한다. */
-  .lobby-reset { margin-top: 18px; padding: 6px 10px; border: 0; background: transparent; cursor: pointer;
-    color: var(--faint); font-family: var(--font-body); font-size: 11.5px; line-height: 1.5;
-    max-width: 440px; text-decoration: underline; text-underline-offset: 3px;
-    text-shadow: 0 2px 10px rgba(0,0,0,0.85); }
+  /* 저장 데이터 지우기 · 되돌릴 수 없는 동작이지만 **찾을 수는 있어야 한다.** 처음엔 --faint 에
+     테두리도 없게 뒀는데 사용자가 아예 못 찾았다(2026-08-04: "초기화 버튼 만들었다 한 것 같은데
+     그건 어딨어?"). 실수로 누르는 것은 두 번 눌러야 실행되는 것(armed)이 막으므로, 눈에 안 띄게
+     하는 쪽이 아니라 읽히되 조용한 쪽으로 잡는다. */
+  .lobby-reset { margin-top: 18px; padding: 7px 13px; background: transparent; cursor: pointer;
+    border: 1px solid var(--line); border-radius: var(--r-btn);
+    color: var(--sub); font-family: var(--font-body); font-size: 12px; line-height: 1.5;
+    max-width: 440px; text-shadow: 0 2px 10px rgba(0,0,0,0.85); }
   .lobby-reset.armed { color: var(--red); }
 
   /* 인게임 컨트롤 바(우상단) — 계측 알약 세그먼트 */
