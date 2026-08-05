@@ -251,8 +251,13 @@ export function ensurePanelStyles(): void {
   .draft-hero-group { display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .draft-medallion-zone { position: relative; width: 204px; height: 164px;
     display: flex; align-items: center; justify-content: center; }
+  /* 오라는 담긴 칸(164px)보다 큰 196px 원이라 위아래로 16px 씩 삐져나온다 · 아래로 삐져나온 부분이
+     바로 밑의 배지 글씨를 덮었다(겹침 검사기가 "가림"으로 잡은 것이 이것).
+     ⚠ 원인은 z-index 가 아니라 **칠하는 순서**다: 자리를 지정한 요소(absolute)는 지정하지 않은
+     형제(static)보다 늘 위에 칠해진다. DOM 에서 배지가 뒤에 있어도 소용이 없다.
+     그래서 배지·점에 자리를 지정해(relative) 순서를 되돌리고, 장식은 탭도 안 먹게 한다. */
   .draft-aura { position: absolute; width: 196px; height: 196px; border-radius: 50%;
-    animation: aura-breathe 4s ease-in-out infinite; }
+    pointer-events: none; animation: aura-breathe 4s ease-in-out infinite; }
   .draft-flourish { position: absolute; inset: 0; pointer-events: none; }
   .draft-medallion { position: relative; width: 126px; height: 112px; border-radius: 30px;
     background: #141B28; overflow: hidden; animation: float-soft 5s ease-in-out infinite; }
@@ -264,9 +269,10 @@ export function ensurePanelStyles(): void {
     background-position: center; background-size: contain; background-repeat: no-repeat; }
   .draft-dash { position: absolute; height: 5px; border-radius: 3px;
     animation: dash-drift 1.6s ease-in-out infinite; }
-  .draft-hero-badge { font-family: var(--font-mono); font-size: 10px; border-radius: 999px;
+  .draft-hero-badge { position: relative; font-family: var(--font-mono); font-size: 10px;
+    border-radius: 999px;
     padding: 5px 12px; white-space: nowrap; box-shadow: 0 4px 12px -4px rgba(0,0,0,0.5); }
-  .draft-dots { display: flex; gap: 6px; }
+  .draft-dots { position: relative; display: flex; gap: 6px; }
   .draft-dots > span { width: 6px; height: 6px; border-radius: 50%; background: rgba(245,238,225,0.4); }
 
   /* §3 카드 — 모바일은 세로 스택(가로 행 카드) */

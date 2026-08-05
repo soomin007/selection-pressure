@@ -814,7 +814,7 @@ export class Game {
 
   private makeWorld(): World {
     // 진도별 맵 크기 · 세계를 만들 때마다 치수를 새로 계산한다(진도 0 은 1.0 = 월드가 화면 그대로 →
-    // 무리도 보스도 화면 안. 진도가 오르면 1.4·1.7·2.0 으로 넓어진다). fixedMapScale 은 테스트 전용 고정.
+    // 무리도 보스도 화면 안. 진도가 오르면 1.4·2.0 으로 넓어진다). fixedMapScale 은 테스트 전용 고정.
     const step = this.onboarding;
     const s = this.fixedMapScale ?? mapScale(step);
     return new World(

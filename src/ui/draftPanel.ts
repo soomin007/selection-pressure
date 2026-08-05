@@ -409,8 +409,12 @@ export function createDraftPanel(
     medallion.style.boxShadow = `0 12px 24px -8px rgba(0,0,0,.55), 0 0 18px ${withAlpha(accent, 0.3)}`;
     tint.style.background = `radial-gradient(circle at 50% 42%, ${withAlpha(accent, 0.22)}, transparent 72%)`;
     heroBadge.textContent = `이 형질을 얻으면 · ${card.name}`;
-    heroBadge.style.background = withAlpha(accent, 0.9);
-    heroBadge.style.color = "#241C10";
+    // 등급 색을 배경에 깔고 어두운 글씨를 얹었더니, 중간 밝기 등급(드묾의 파랑)에서 대비가 모자라
+    // 글씨가 뭉개졌다. 이 프로젝트의 톤(어두운 바탕에 밝은 글씨)대로 뒤집는다: 바탕은 늘 어둡게,
+    // 등급 색은 글씨와 테두리가 받는다. 그러면 등급이 여전히 보이면서 대비는 등급과 무관하게 확보된다.
+    heroBadge.style.background = "rgba(16,12,8,0.86)";
+    heroBadge.style.color = accent;
+    heroBadge.style.border = `1px solid ${withAlpha(accent, 0.55)}`;
     flourish.replaceChildren(...heroFlourish(card, accent, spriteFor(preview)));
 
     dots.replaceChildren();
