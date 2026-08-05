@@ -882,7 +882,10 @@ async function boot(): Promise<void> {
     updateCamera(ticker.deltaMS);
     // 미니맵 — 관전 중에만. 드래프트에선 캔버스 전체가 블러라 뭉갠 미니맵이 남으면 지저분하다.
     // 목표 줄 상세를 펼쳤을 때도 숨긴다: 그 패널이 미니맵 자리를 덮어 조각만 삐져나와 지저분했다.
-    minimap.container.visible = game.phase === "watch" && !goalBar.isOpen();
+    // 월드가 화면보다 크지 않으면 미니맵은 보여 줄 것이 없다(같은 그림의 축소판일 뿐) → 숨긴다.
+    // 첫 시대 맵이 화면 크기로 좁아지면 이 조건이 알아서 미니맵을 거둔다.
+    const worldFitsScreen = game.width <= layout.width && game.height <= layout.height;
+    minimap.container.visible = game.phase === "watch" && !goalBar.isOpen() && !worldFitsScreen;
     // 미니맵은 캔버스에 그려 DOM 으로 못 잰다. 겹침 검사기(scripts/overlap-check.mjs)가 "지금 떠 있나"를
     // 알 수 있게 body 에 표식만 남긴다(값이 바뀔 때만 쓴다 · 매 프레임 DOM 쓰기 아님).
     const mmFlag = minimap.container.visible ? "on" : "off";

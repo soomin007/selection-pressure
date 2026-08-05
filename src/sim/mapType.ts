@@ -14,7 +14,13 @@
 import type { Rng } from "@/sim/rng";
 import type { TerrainOptions } from "@/sim/terrain";
 
-export type MapType = "continent" | "pangaea" | "archipelago" | "ocean";
+export type MapType = "continent" | "pangaea" | "archipelago" | "ocean" | "meadow";
+
+/**
+ * 첫 시대 전용 세계. **무작위 뽑기 풀(MAP_TYPES)에는 안 들어간다** — 게임 층이 era 0 에서만 못박아 쓴다.
+ * 첫 판은 지형이 읽을 것 없이 단순해야 한다: 산도 험지도 수풀도 0, 작은 호수 몇 개뿐인 평평한 초원.
+ */
+export const FIRST_ERA_MAP: MapType = "meadow";
 
 export interface MapKind {
   id: MapType;
@@ -101,8 +107,21 @@ export const MAP_KINDS: Record<MapType, MapKind> = {
     mountainFoodScale: 0.2, // 산이 거의 없다
     unlockLevel: 6, // 가장 극단이라 가장 늦게
   },
+  meadow: {
+    id: "meadow",
+    name: "초원",
+    desc: "평평한 초원에 작은 호수가 몇 개 있습니다. 산도 험한 곳도 없어 어디로든 걸어갈 수 있습니다.",
+    // 분위수 역산이라 0 은 정확히 0 이 된다 — 산·험지·수풀이 시드와 무관하게 한 칸도 안 생긴다.
+    // 대륙(밸런스 기준선)은 절대 안 건드린다. 이 항목은 첫 시대에서만 쓰인다.
+    terrain: { fractions: { sea: 0.06, grass: 0, rough: 0, mountain: 0 } },
+    landFoodScale: 1,
+    seaFoodScale: 1,
+    mountainFoodScale: 1, // 산이 0 칸이라 실제로는 고산 먹이가 하나도 안 놓인다(가중치 합 0)
+    unlockLevel: 1, // 뽑기 풀 밖이라 실제로 쓰이지 않는 값(형식상 채운다)
+  },
 };
 
+/** 판마다 무작위로 뽑는 세계들. **첫 시대 전용 「초원」은 여기 없다**(게임이 era 0 에서만 못박아 쓴다). */
 export const MAP_TYPES: readonly MapType[] = ["continent", "pangaea", "archipelago", "ocean"];
 
 export function mapKind(type: MapType): MapKind {

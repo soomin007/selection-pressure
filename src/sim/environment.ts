@@ -44,6 +44,20 @@ export function classifyBiome(temperature: number, moisture: number): Biome {
   return wet ? "wetland" : "grassland"; // 온대: 습윤=습지 / 건조=초원
 }
 
+/**
+ * 환경 생성 옵션 — **주지 않으면 지금까지의 세계 그대로**(무작위 기후)다. 첫 시대만 이것으로 기후를
+ * 평탄하게 못박아 맵 전체를 한 바이옴(초원)으로 만든다. 첫 판에 사막·빙하·우림이 섞여 있으면
+ * "여긴 왜 추운가"부터 배워야 하는데, 그건 첫 판이 감당할 정보가 아니다.
+ */
+export interface EnvOptions {
+  /** 기본 온도(0~1). 생략하면 시드로 뽑는다. */
+  tempBase?: number;
+  /** 기본 습도(0~1). 생략하면 시드로 뽑는다. */
+  moistBase?: number;
+  /** 공간 변동 폭. 0 이면 맵 전체가 같은 기후(단일 바이옴). 생략하면 기존 값(1.15). */
+  spread?: number;
+}
+
 export class Environment {
   readonly cols: number;
   readonly rows: number;
@@ -71,15 +85,25 @@ export class Environment {
     this.biome = biome;
   }
 
-  static generate(rng: Rng, width: number, height: number, cellSize: number): Environment {
+  static generate(
+    rng: Rng,
+    width: number,
+    height: number,
+    cellSize: number,
+    opt: EnvOptions = {},
+  ): Environment {
     const cols = Math.max(1, Math.ceil(width / cellSize));
     const rows = Math.max(1, Math.ceil(height / cellSize));
     // 맵마다 전체 기후 성향(추운 맵/더운 맵, 습한 맵/건조한 맵)을 넓게 주되, 공간 변동도 커 한 맵에 여러
     // 바이옴이 공존한다. base 를 넓히면 어떤 맵은 빙하가 넓고 어떤 맵은 사막이 넓다(맵 정체성).
-    const tempBase = rng.range(0.3, 0.7);
-    const moistBase = rng.range(0.32, 0.68);
-    const temperature = smoothField(rng, cols, rows, tempBase, 1.15);
-    const moisture = smoothField(rng, cols, rows, moistBase, 1.15);
+    // ⚠ 추첨은 옵션과 무관하게 **늘 그대로 두 번 뽑는다**(rng 소비 순서 보존) · 값만 덮어쓴다.
+    const drawnTemp = rng.range(0.3, 0.7);
+    const drawnMoist = rng.range(0.32, 0.68);
+    const tempBase = opt.tempBase ?? drawnTemp;
+    const moistBase = opt.moistBase ?? drawnMoist;
+    const spread = opt.spread ?? 1.15;
+    const temperature = smoothField(rng, cols, rows, tempBase, spread);
+    const moisture = smoothField(rng, cols, rows, moistBase, spread);
 
     const n = cols * rows;
     const coldness = new Array<number>(n);

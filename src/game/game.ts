@@ -16,7 +16,7 @@ import { SIM } from "@/sim/params";
 import { grazeEfficiency } from "@/sim/behavior";
 import type { LeadCommand } from "@/sim/lead";
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, bossEligible, BOSS_TYPES, type BossType } from "@/sim/boss";
-import { pickMapType, mapKind, type MapKind, type MapType } from "@/sim/mapType";
+import { pickMapType, mapKind, FIRST_ERA_MAP, type MapKind, type MapType } from "@/sim/mapType";
 import { TILE } from "@/sim/terrain";
 import { buildRunReport } from "@/game/runReport";
 
@@ -776,6 +776,23 @@ export class Game {
     this.beginFirstDraft();
   }
 
+  /**
+   * 첫 시대(era 0)인가 — 첫 판만 세계를 좁힌다(종 셋·평평한 초원·챔피언 없음·시험 없음).
+   * 메타 언락이 "선택지"만 늘리게 설계돼 있어 세계의 복잡도가 첫 판부터 최대였다(로그라이크 관례와 반대).
+   */
+  private get firstEra(): boolean {
+    return this.era === 0;
+  }
+
+  /**
+   * 이 시대의 세계 종류. 첫 시대는 늘 「초원」(산·험지·수풀 없는 평평한 땅 + 작은 호수 몇 개)이고,
+   * 그 뒤로는 이 런에서 뽑힌 세계(currentMapType)를 쓴다. 시대를 넘어도 뽑기를 다시 하지 않으므로
+   * 여기서 시대만 보고 갈라야 첫 시대 이후가 「초원」에 갇히지 않는다.
+   */
+  private eraMapType(era: number): MapType {
+    return era === 0 ? FIRST_ERA_MAP : this.currentMapType;
+  }
+
   private makeWorld(): World {
     // 시대별 맵 크기 배관 · 매 시대 치수를 새로 계산한다. 지금은 mapScale 이 모든 시대에 같은 값(2.0)을
     // 돌려줘 어떤 세계도 변하지 않는다(값이 시대별로 갈리는 것은 다음 단계에서).
@@ -786,19 +803,23 @@ export class Game {
       this.baseH * s,
       this.genome,
       s * s, // 면적 배율 · 개체는 절대 수(소수)지만 먹이 밀도·상한은 면적 비례
-      this.champions,
-      this.currentMapType,
+      // 첫 시대에는 지난 챔피언(비동기 생물)을 부르지 않는다 — 08-05 실측에서 챔피언 2종이 100초 시점
+      // 내 종을 22.9 → 9.8마리로 깎았다. this.champions 자체는 그대로 두고(다음 시대에 다시 쓴다),
+      // 챔피언 경로는 이미 독립 rng 라 끄는 비용이 0이다.
+      this.firstEra ? [] : this.champions,
+      this.eraMapType(this.era),
       eraScarcity(this.era), // 시대가 지날수록 세계가 척박(먹이↓·재생↓) — era 0 = 1.0 = 기존과 동일
+      this.firstEra, // 첫 시대만 종을 셋으로 좁히고 기후를 평탄하게 한다
     );
   }
 
-  /** 이번 런의 세계 종류(대륙·판게아·군도·대양). 로비가 "이번 세계"로 보여준다. */
+  /** 지금 시대의 세계 종류(첫 시대는 초원 · 그 뒤는 이 런에 뽑힌 대륙·판게아·군도·대양). */
   get mapType(): MapType {
-    return this.currentMapType;
+    return this.eraMapType(this.era);
   }
 
   get mapKindNow(): MapKind {
-    return mapKind(this.currentMapType);
+    return mapKind(this.mapType);
   }
 
   /**
@@ -918,9 +939,16 @@ export class Game {
       this.preview = "";
       this.threatText = ""; // 채집 라운드에는 도는 위협이 없다
       this.stageTicksLeft = GAME.roundSeconds * SIM.stepsPerSecond;
+      // 첫 시대에는 시험을 안 건다 — 첫 판이 답해야 할 질문은 "무리를 먹여 키운다" 하나뿐이다.
+      // 이 한 줄로 판정·불씨 감소·목표 줄의 불씨 점·첫 안내 배너·드래프트 예고가 전부 연쇄로 꺼진다
+      // (전부 game.trial 을 보고 켜지므로). pickTrial 은 전용 해시 Rng 라 건너뛰어도 스트림이 안 밀린다.
+      if (this.firstEra) {
+        this.currentTrial = null;
+        this.pendingTrial = null;
+      }
       // 시대 보상 드래프트가 예고한 시험이 있으면 그대로 쓴다(예고=실물). pop 기준점은 시험을
       // 만든 순간의 것을 유지한다(드래프트에서 스킵으로 낳은 새끼도 pop 점수에서 빠지게).
-      if (this.pendingTrial) {
+      else if (this.pendingTrial) {
         this.currentTrial = this.pendingTrial;
         this.pendingTrial = null;
       } else {

@@ -13,7 +13,7 @@ import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { mapKind, type MapType } from "@/sim/mapType";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
-import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeMapSpecies, mapSpeciesHabitat, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
+import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeMapSpecies, mapSpeciesHabitat, makeChampionSpecies, survivesFirstEra, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
 import type { Biome } from "@/sim/environment";
 import { stepEntity, visionRadius, leadBiteTarget } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
@@ -118,6 +118,12 @@ export class World {
   readonly terrain: Terrain;
   /** 이번 판의 세계 종류(대륙·판게아·군도·대양). 지형 파라미터와 먹이 배수를 정한다. */
   readonly mapType: MapType;
+  /**
+   * 이번 세계에서 **감춘 종**의 id. 첫 시대(단순화 세계)에서만 비어 있지 않다.
+   * 종을 만드는 것도, 스폰 추첨도 그대로 두고 **마지막에 개체만 걸러낸다** — 그래야 rng 소비·개체 id·
+   * 남은 종의 스폰 좌표가 1비트도 안 밀린다. `species` 배열에는 감춘 종도 그대로 남는다(길이 불변).
+   */
+  readonly hiddenSpeciesIds: ReadonlySet<number>;
   readonly grid: SpatialGrid;
   /** 먹이 공간 격자 — 가까운 먹이 질의를 빠르게(큰 맵 성능). 먹이 위치 불변이라 생성 시 1회 빌드. */
   readonly foodGrid: FoodGrid;
@@ -238,6 +244,7 @@ export class World {
     champions: ChampionSeed[] = [],
     mapType: MapType = "continent",
     foodScarcity = 1,
+    simplified = false,
   ) {
     this.width = width;
     this.height = height;
@@ -249,7 +256,15 @@ export class World {
     this.mutRng = new Rng(String(seed) + "-mut"); // 개체 변이 전용 독립 스트림(메인 rng 불변)
     this.genome = genome;
     // 환경(바이옴)도 지형처럼 "독립된 rng"로 생성 → 앞으로 환경을 손봐도 메인 sim 동역학 스트림과 무관.
-    this.environment = Environment.generate(new Rng(String(seed) + "-env"), width, height, SIM.cellSize);
+    // 단순화 세계(첫 시대)는 기후를 평탄하게 못박아 맵 전체가 초원 하나가 된다(spread 0 = 공간 변동 없음).
+    // 부수 효과로 바이옴 특화종 3종과 바이옴 전용 먹이가 기존 게이트로 저절로 사라진다.
+    this.environment = Environment.generate(
+      new Rng(String(seed) + "-env"),
+      width,
+      height,
+      SIM.cellSize,
+      simplified ? { tempBase: 0.5, moistBase: 0.35, spread: 0 } : {},
+    );
     // 지형은 메인 rng 와 "독립된 rng"로 생성 → 기존 sim 동역학(결정론·밸런스)을 1비트도 안 건드린다.
     // 맵 종류가 지형 파라미터를 덮어쓴다(대륙 = 빈 덮어쓰기 = 기존과 동일).
     this.terrain = Terrain.generate(
@@ -283,6 +298,11 @@ export class World {
     // 들이는 게 핵심이다 — 지금까지 바다엔 위험이 하나도 없어 헤엄치는 종이 공짜로 먹고 살았다.
     const mapSpecies = makeMapSpecies(new Rng(String(seed) + "-mapspecies"), mapType);
     this.species = [this.playerSpecies, kin, ...wild, ...biomeSpecies, ...mapSpecies, ...championSpecies];
+    // 감출 종을 **여기서 정해 두기만** 한다(배열에서 빼지 않는다 · 스폰도 건너뛰지 않는다).
+    // 실제로 빼는 것은 모든 스폰이 끝난 뒤 딱 한 번(아래 grid.rebuild 직전)이다.
+    this.hiddenSpeciesIds = simplified
+      ? new Set(this.species.filter((s) => !survivesFirstEra(s)).map((s) => s.id))
+      : new Set<number>();
     this.spawnFood();
     this.spawnEntities();
     // 친척은 spawnEntities(메인 rng) 대신 "독립 rng"로 내 종 근처에 스폰 → 메인 소비 순서 보존(밸런스 불변).
@@ -301,6 +321,12 @@ export class World {
     this.spawnMapAnimals(new Rng(String(seed) + "-mappos"), mapSpecies);
     // 챔피언(비동기 생물)도 독립 rng 로 소수만, 친척처럼 맵의 독립 영역에 — 메인 스트림·밸런스 불변.
     this.spawnChampions(new Rng(String(seed) + "-champpos"));
+    // ── 첫 시대 단순화: 감추기와 자리 잡기는 **모든 스폰이 끝난 이 자리에서만** 한다 ──
+    // 위쪽을 하나도 안 건드리므로 rng 소비·nextId·먹이 좌표·남은 종의 스폰 좌표가 1비트도 안 밀린다.
+    if (this.hiddenSpeciesIds.size > 0) {
+      this.entities = this.entities.filter((e) => !this.hiddenSpeciesIds.has(e.species.id));
+      this.placeFirstPredators();
+    }
     this.grid.rebuild(this.entities);
     // 먹이 위치는 불변이라 격자를 한 번만 빌드한다(available 토글은 탐색 시 거른다).
     this.foodGrid = new FoodGrid(width, height, SIM.gridCellSize);
@@ -797,7 +823,8 @@ export class World {
     for (const e of this.entities) counts.set(e.species.id, (counts.get(e.species.id) ?? 0) + 1);
     for (const sp of this.species) {
       // 친척·바이옴 특화종은 이주로 보충 안 함(친척=내 편, 바이옴종=제 바이옴에서만 산다 — 멸종하면 사라짐).
-      if (sp.isPlayer || sp.friendly || sp.homeBiome) continue;
+      // 감춘 종(첫 시대)도 마찬가지다 — 안 막으면 걸러낸 종이 10초마다 이주로 되살아난다.
+      if (sp.isPlayer || sp.friendly || sp.homeBiome || this.hiddenSpeciesIds.has(sp.id)) continue;
       if ((counts.get(sp.id) ?? 0) >= floor) continue;
       const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
       const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
@@ -873,6 +900,87 @@ export class World {
           : this.terrain.nearestPassable(x, y, canSwim, canLand, canFly);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
+    }
+  }
+
+  /**
+   * 첫 시대에만: 사냥하는 야생 무리를 내 종에서 **일정 거리**에 옮겨 둔다.
+   *
+   * 왜: 실측에서 내 종과 가장 가까운 포식자까지의 거리가 시드에 따라 32px~1090px(34배)로 갈렸다.
+   * 어떤 판은 시작하자마자 물리고 어떤 판은 끝까지 포식자를 못 본다 — 그건 난이도가 아니라 운이고,
+   * "포식자가 있는 세계"라는 첫 판의 배울 거리가 시드 절반에서 통째로 사라진다.
+   *
+   * ⚠ rng 를 한 번도 안 쓴다. 보금자리 추첨은 그대로 두고 **결과값만 평행이동**한다
+   *   (물 전용 내 종을 큰 바다로 스냅하는 기존 처리와 같은 안전한 형태).
+   */
+  private placeFirstPredators(): void {
+    // 맵 짧은 변 대비 거리 — 이 띠 안이면 그대로 두고, 벗어난 판만 가운데 값으로 옮긴다.
+    const NEAR = 0.3;
+    const FAR = 0.4;
+    const TARGET = 0.35;
+    let px = 0;
+    let py = 0;
+    let pn = 0;
+    const pack: Entity[] = [];
+    for (const e of this.entities) {
+      if (e.species.isPlayer) {
+        px += e.x;
+        py += e.y;
+        pn += 1;
+        continue;
+      }
+      if (e.species.friendly) continue;
+      if (e.species.genome.traits.diet <= SIM.dietHuntMin) continue; // 사냥하는 종만
+      pack.push(e);
+    }
+    const first = pack[0];
+    if (pn === 0 || first === undefined) return;
+    const cx = px / pn;
+    const cy = py / pn;
+    let qx = 0;
+    let qy = 0;
+    for (const e of pack) {
+      qx += e.x;
+      qy += e.y;
+    }
+    qx /= pack.length;
+    qy /= pack.length;
+    const side = Math.min(this.width, this.height);
+    const d = Math.hypot(qx - cx, qy - cy);
+    if (d >= NEAR * side && d <= FAR * side) return; // 이미 알맞은 거리 · 손대지 않는다
+    const want = TARGET * side;
+    const margin = this.spawnSpread;
+    // 지금 있는 쪽을 우선 쓰고, 그 자리가 맵 밖이면 45°씩 돌려 본다(순수 계산 · 결정론).
+    const base = d > 1e-6 ? Math.atan2(qy - cy, qx - cx) : 0;
+    let tx = cx + Math.cos(base) * want;
+    let ty = cy + Math.sin(base) * want;
+    for (let k = 0; k < 8; k++) {
+      const a = base + (k * Math.PI) / 4;
+      const x = cx + Math.cos(a) * want;
+      const y = cy + Math.sin(a) * want;
+      if (x >= margin && x <= this.width - margin && y >= margin && y <= this.height - margin) {
+        tx = x;
+        ty = y;
+        break;
+      }
+    }
+    tx = Math.max(margin, Math.min(this.width - margin, tx));
+    ty = Math.max(margin, Math.min(this.height - margin, ty));
+    const dx = tx - qx;
+    const dy = ty - qy;
+    for (const e of pack) {
+      const t = e.species.genome.traits;
+      const spot = this.terrain.nearestPassable(
+        Math.max(0, Math.min(this.width, e.x + dx)),
+        Math.max(0, Math.min(this.height, e.y + dy)),
+        t.swimming >= SIM.swimThreshold,
+        t.swimming < SIM.aquaticOnlyThreshold,
+        t.wings >= SIM.flyThreshold,
+      );
+      e.x = spot.x;
+      e.y = spot.y;
+      e.prevX = spot.x; // 렌더 보간이 옛 자리에서 새 자리로 미끄러지지 않게 함께 옮긴다
+      e.prevY = spot.y;
     }
   }
 

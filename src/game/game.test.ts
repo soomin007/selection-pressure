@@ -229,7 +229,9 @@ describe("다시 뽑기(리롤)", () => {
       expect(g.draftCards.length).toBe(before); // 여전히 3장(새로 뽑음)
       expect(g.canReroll).toBe(false); // 드래프트당 1회 제한 → 더는 못 뽑음
       // 리롤 후에도 정상적으로 카드를 고를 수 있다(관전 복귀).
-      g.pickCard(0);
+      // 한 라운드에 레벨이 두 번 올랐으면 카드창이 이어서 한 번 더 열린다(밀린 레벨업) → 다 고르고 확인.
+      let picks = 0;
+      while (g.phase === "draft" && picks++ < 8) g.pickCard(0);
       expect(g.phase).toBe("watch");
     } finally {
       gl.localStorage = prev;
@@ -426,27 +428,53 @@ describe("라운드 시험과 혈통의 불씨", () => {
     pickTrial(): Trial;
   };
 
-  /** 첫 채집 단계의 시험이 pop(무리)이 아닌 시드를 찾는다 · 계수기 조작만으로 합·불을 강제할 수 있는 시험. */
+  /**
+   * 둘째 시대(era 1)의 첫 채집 단계까지 진행한 런.
+   * **첫 시대(era 0)에는 시험이 안 걸린다**(첫 판 좁히기 · 2026-08-05) — 시험·불씨 검증은 시험이
+   * 실제로 등장하는 시점에서 해야 한다. 기능을 지운 게 아니라 등장 시점을 옮긴 것이므로 테스트도 따라간다.
+   */
+  function startRunEra1(seed: string): Game {
+    const g = startRun(seed);
+    g.result = "win"; // 승리 직후 상태를 흉내(continueToNextEra 의 가드)
+    g.continueToNextEra(); // era 1 · 시대 보상 드래프트가 열린다
+    let guard = 0;
+    while (g.phase === "draft" && guard++ < 8) g.pickCard(0); // 밀린 레벨업이 있으면 이어서 고른다
+    return g;
+  }
+
+  /** 채집 단계의 시험이 pop(무리)이 아닌 시드를 찾는다 · 계수기 조작만으로 합·불을 강제할 수 있는 시험. */
   function startWithCountTrial(prefix: string): Game {
     for (let s = 0; s < 40; s++) {
-      const g = startRun(`${prefix}-${s}`);
+      const g = startRunEra1(`${prefix}-${s}`);
       if (g.trial && g.trial.kind !== "pop") return g;
     }
     throw new Error("계수형 시험(hunt·feed·birth)이 걸리는 시드를 찾지 못했습니다");
   }
 
   it("같은 시드면 같은 시험이 나온다(시드 파생 해시 · 기존 rng 스트림 미소비)", () => {
-    const a = startRun("trial-same").trial;
-    const b = startRun("trial-same").trial;
-    expect(a).not.toBeNull(); // 채집 단계에는 시험이 항상 있다
+    const a = startRunEra1("trial-same").trial;
+    const b = startRunEra1("trial-same").trial;
+    expect(a).not.toBeNull(); // 둘째 시대부터는 채집 단계에 시험이 항상 있다
     expect(a).toEqual(b);
     // 다른 시드에서는 시험이 갈린다 · 여러 시드를 모으면 적어도 두 종류 이상 나와야 한다.
     const labels = new Set<string>();
     for (let s = 0; s < 16; s++) {
-      const t = startRun(`trial-vary-${s}`).trial;
+      const t = startRunEra1(`trial-vary-${s}`).trial;
       if (t) labels.add(t.label);
     }
     expect(labels.size).toBeGreaterThan(1);
+  });
+
+  it("첫 시대에는 시험이 안 걸린다(첫 판은 무리를 먹여 키우는 것만)", () => {
+    // 첫 판부터 시험·불씨·예고가 한꺼번에 나오면 배울 것이 너무 많다 → 등장 시점을 둘째 시대로 옮겼다.
+    // 이 한 가지가 꺼지면 판정·불씨 감소·목표 줄의 불씨 점·첫 안내 배너·드래프트 예고가 연쇄로 꺼진다.
+    for (let s = 0; s < 12; s++) {
+      const g = startRun(`no-trial-era0-${s}`);
+      expect(g.era).toBe(0);
+      expect(g.trial).toBeNull();
+      expect(g.upcomingTrial).toBeNull();
+      expect(startRunEra1(`no-trial-era0-${s}`).trial).not.toBeNull(); // 둘째 시대에는 걸린다
+    }
   });
 
   it("순수 초식(diet 0)에게 사냥 시험이, 완전 육식(diet 100)에게 먹이 시험이 안 나온다(후보 필터)", () => {
