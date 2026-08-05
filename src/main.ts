@@ -24,13 +24,14 @@ import { createControls } from "@/ui/controls";
 import { registerKeyLayer } from "@/ui/keys";
 import { createBuildPanel } from "@/ui/buildPanel";
 import { createGlossary } from "@/ui/glossary";
-import { equippedCosmetic, mythicNamesUnlocked } from "@/game/achievements";
+import { ACHIEVEMENTS, equippedCosmetic, mythicNamesUnlocked } from "@/game/achievements";
 import { setMythicNames } from "@/ui/creatureName";
 import { describeSpecies } from "@/game/runReport";
 import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
 import { ThreatBanner } from "@/render/threatBanner";
+import { publishPixiTextRects } from "@/render/pixiTextRects";
 import { TRAIT_LABELS } from "@/sim/genome";
 import { APEX_BOON } from "@/ui/traitDisplay";
 import { isPredatorBoss, bossRaidable } from "@/sim/boss";
@@ -521,6 +522,34 @@ async function boot(): Promise<void> {
     updateToggle();
   }
 
+  // ?ovhook: 겹침 검사기(scripts/overlap-check.mjs) 전용 문. "그 순간에만 뜨는 화면"을 스크립트가
+  // 만들 수 있게 한다: 위협 예고 전광판·판정 플래시·보스 등장·런 종료 진척도.
+  // ⚠ 문구를 여기서 지어내지 않는다 · summon 은 진짜 보스를 소환해 **게임이 만드는 문구**를 띄우고,
+  //   levelUp 은 진짜 해금표·진짜 도전 과제 목록을 쓴다. 가짜 문자열을 검사하면 검사가 거짓말이 된다.
+  // ⚠ `?dev` 패널을 대신 쓰지 않는 이유: 그 버튼 무더기가 화면 절반을 덮어 겹침 측정을 오염시킨다.
+  interface OverlapHooks {
+    /** 위협 예고 전광판을 띄운다(검사기가 최악 길이의 제목·힌트를 넣는다). */
+    banner: (title: string, sub: string) => void;
+    /** 상단 플래시를 띄운다(판정 문구 등 · 색은 게임과 같은 값을 검사기가 넘긴다). */
+    flash: (msg: string, color: number, priority: boolean) => void;
+    /** 진짜 보스를 지금 단계에 소환 · 목표 줄이 두 줄로 늘고 빨간 등장 플래시가 뜬다(사용자 신고 상황). */
+    summon: (kind: string) => void;
+    /** 런 종료 진척도 화면 · 실제 해금표(경험치 적립)와 실제 도전 과제 앞 n개로 최악 길이를 만든다. */
+    levelUp: (xp: number, achCount: number) => void;
+  }
+  if (new URLSearchParams(window.location.search).has("ovhook")) {
+    const hooks: OverlapHooks = {
+      banner: (title, sub) => threatBanner.show(title, sub),
+      flash: (msg, color, priority) => highlights.flash(msg, color, priority),
+      summon: (kind) => game.debugSummon(kind as BossType),
+      levelUp: (xp, achCount) => {
+        controls.setVisible(false);
+        levelScreen.play(game.debugGrantMetaXp(xp), ACHIEVEMENTS.slice(0, achCount), () => {});
+      },
+    };
+    (window as unknown as { __ov: OverlapHooks }).__ov = hooks;
+  }
+
   // 하이라이트 이벤트 감지 상태(카메라 변수는 위에서 onWorldChanged 보다 먼저 선언했다).
   let prevBoss = false;
   let prevExt = "";
@@ -901,8 +930,18 @@ async function boot(): Promise<void> {
       minimap.place(app.screen.width, app.screen.height);
     }
     detectEvents(raidFighters);
-    highlights.update(ticker.deltaMS, app.screen.width / uiZoom);
-    threatBanner.update(ticker.deltaMS, app.screen.width / uiZoom, app.screen.height / uiZoom);
+    // 캔버스 글씨(플래시·위협 예고)는 DOM 목표 줄 **아래**에 깔린다 → 그 줄이 실제로 차지한 높이를
+    // 넘겨 그만큼 비켜 그리게 한다. 고정값(예전 66px)은 문구가 길어지는 순간 틀린다(goalBar.bottomPx 주석).
+    // 논리 좌표로 바꿔 넘긴다 · Pixi UI 는 uiZoom 배율 안에서 산다.
+    const hudSafe = goalBar.bottomPx() / uiZoom;
+    highlights.update(ticker.deltaMS, app.screen.width / uiZoom, hudSafe);
+    // 전광판은 HUD 뿐 아니라 **위 플래시 아래**로도 비켜 앉는다. 둘 다 "HUD 아래"로만 밀면 서로
+    // 겹친다(상세를 펼친 짧은 폰에서 보스 등장 플래시와 예고 띠가 같은 자리에 얹혔다). 위에서부터
+    // HUD → 플래시 → 전광판 순으로 쌓는다.
+    const bannerSafe = Math.max(hudSafe, highlights.bottomY());
+    threatBanner.update(ticker.deltaMS, app.screen.width / uiZoom, app.screen.height / uiZoom, bannerSafe);
+    // 겹침 검사기가 캔버스 글씨를 잴 수 있게 화면 좌표를 body 에 싣는다(pixiTextRects 주석).
+    publishPixiTextRects([...highlights.screenRects(), ...threatBanner.screenRects()]);
     // 격퇴 체력 바는 worldView 가 보스 몸 위에 그린다(상단 글로벌 바 제거 — HUD 갈아엎기).
 
     if (debugBadge) {

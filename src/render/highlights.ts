@@ -2,6 +2,7 @@
 // 스케일 컨테이너 밖(화면 픽셀)에 올려 선명하게. 가독성 §7: "지금 무슨 일이 일어나는가".
 
 import { Container, Text, TextStyle } from "pixi.js";
+import type { PixiTextRect } from "@/render/pixiTextRects";
 
 const DURATION = 2200; // ms
 
@@ -9,6 +10,7 @@ export class Highlights {
   readonly container = new Container();
   private readonly text: Text;
   private life = 0;
+  private scale = 1; // 데스크톱 UI 확대 배율 · 화면 좌표를 되돌려 줄 때 곱한다
   /** 지금 문구가 "끝까지 보여야 하는" 문구인가(시험 판정 등). 살아 있는 동안 일반 flash 가 못 덮는다. */
   private protect = false;
   /** 보호 문구가 사는 동안 밀려난 일반 문구들 · 보호 문구가 끝나면 순서대로 이어서 띄운다(최대 2개). */
@@ -41,8 +43,35 @@ export class Highlights {
   /** 데스크톱 UI 확대 · 컨테이너를 키우고, 텍스트는 배율만큼 높은 해상도로 다시 구워 흐림을 막는다.
    *  호출부(main)는 update 에 화면 폭을 배율로 나눈 "논리 화면"을 넘긴다. */
   setUiScale(s: number): void {
+    this.scale = s;
     this.container.scale.set(s);
     this.text.resolution = (window.devicePixelRatio || 1) * s;
+  }
+
+  /**
+   * 지금 뜬 문구의 아래 끝(논리 픽셀). 안 떠 있으면 0.
+   * 위협 예고 전광판이 이 아래로 비켜 앉는 근거다 · 둘 다 "HUD 아래"로 밀려나면 서로 겹친다
+   * (실제로 겪었다: 상세를 펼친 짧은 폰에서 보스 등장 플래시와 예고 띠가 같은 자리에 얹혔다).
+   */
+  bottomY(): number {
+    if (!this.text.visible || this.life <= 0 || this.text.alpha < 0.05) return 0;
+    return this.text.y + this.text.height;
+  }
+
+  /** 지금 실제로 보이는 글씨의 화면 사각형(겹침 검사기용 · pixiTextRects 참고). 안 보이면 빈 배열. */
+  screenRects(): PixiTextRect[] {
+    if (!this.text.visible || this.life <= 0 || this.text.alpha < 0.05) return [];
+    const s = this.scale;
+    return [
+      {
+        label: "Pixi 하이라이트",
+        text: this.text.text,
+        x: (this.text.x - this.text.width / 2) * s, // anchor(0.5, 0)
+        y: this.text.y * s,
+        w: this.text.width * s,
+        h: this.text.height * s,
+      },
+    ];
   }
 
   /**
@@ -63,7 +92,11 @@ export class Highlights {
     this.text.visible = true;
   }
 
-  update(deltaMS: number, screenW: number): void {
+  /**
+   * @param topSafe 화면 위쪽에서 DOM HUD(목표 줄)가 차지한 높이(논리 픽셀). 이 아래에만 그린다.
+   *   ⚠ 기본값을 주지 않는다 · 안 넘겨도 조용히 동작하면 기능이 통째로 죽는다(known_issues).
+   */
+  update(deltaMS: number, screenW: number, topSafe: number): void {
     if (this.life <= 0) {
       const next = this.pending.shift();
       if (!next) {
@@ -75,7 +108,9 @@ export class Highlights {
     this.life -= deltaMS;
     // 우상단 미니맵 기둥(고정 폭 84 + 여백, minimap.ts MM_W/MM_TOP)을 비워 두고, 남는 왼쪽 공간의
     // 가운데에 놓는다 · 화면 전체 폭으로 접으면 긴 문구의 오른쪽 끝이 미니맵 **밑으로 들어가 가려진다**.
-    // 세로는 goalBar(DOM, top 8 + 두 줄 ≈ 60px) 바로 아래에서 시작해 anchor(0.5, 0)으로 아래로만 자란다.
+    // 세로는 goalBar(DOM) **아래 끝에서** 시작해 anchor(0.5, 0)으로 아래로만 자란다. 예전엔 "두 줄
+    // ≈ 60px" 이라 보고 66 을 박아 뒀는데, 그 줄은 문구에 따라 자라므로(보스 판에서 74px, 상세를
+    // 펼치면 251px) 고정값은 언제나 틀린다 · 빨간 보스 플래시의 윗줄이 패널 뒤로 들어가 안 읽혔다.
     const reserved = 110; // 미니맵 84 + 좌우 여백
     const wrapW = Math.max(180, screenW - reserved - 16);
     if (this.text.style.wordWrapWidth !== wrapW) this.text.style.wordWrapWidth = wrapW;
@@ -83,6 +118,9 @@ export class Highlights {
     if (this.text.style.fontSize !== size) this.text.style.fontSize = size;
     const t = this.life / DURATION; // 1 → 0
     this.text.alpha = Math.min(1, t * 3); // 마지막 ~0.7초에 페이드아웃
-    this.text.position.set((screenW - reserved + 16) / 2, 66 + (1 - t) * -8);
+    const top = Math.max(66, topSafe + 6); // HUD 가 짧으면 예전 자리 그대로, 길어지면 그만큼 내려간다
+    // 사라질 때 살짝 떠오르는 연출 · 떠오르는 끝점이 top 이라 어떤 순간에도 HUD 를 침범하지 않는다
+    // (예전엔 top 에서 8px 더 위로 올라가, 마지막 0.7초 동안 패널 뒤로 들어갔다).
+    this.text.position.set((screenW - reserved + 16) / 2, top + 8 - (1 - t) * 8);
   }
 }

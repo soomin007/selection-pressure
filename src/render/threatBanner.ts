@@ -2,6 +2,7 @@
 // 상단 하이라이트(highlights)보다 크고 배경 띠가 있어 "전광판"처럼 확 눈에 띈다. 화면 픽셀 좌표.
 
 import { Container, Graphics, Text, TextStyle } from "pixi.js";
+import type { PixiTextRect } from "@/render/pixiTextRects";
 
 const DURATION = 2600; // ms
 
@@ -11,6 +12,7 @@ export class ThreatBanner {
   private readonly text: Text; // 위협 이름(큰 글씨)
   private readonly subText: Text; // 대응 힌트(작은 글씨)
   private life = 0;
+  private scale = 1; // 데스크톱 UI 확대 배율 · 화면 좌표를 되돌려 줄 때 곱한다
 
   constructor() {
     // ⚠ wordWrap 이 필수다 — 없으면 대응 힌트("물속을 도는 상어가 …")가 한 줄로 뻗어 폰 화면 밖으로
@@ -55,10 +57,38 @@ export class ThreatBanner {
   /** 데스크톱 UI 확대 — 컨테이너를 키우고, 텍스트는 배율만큼 높은 해상도로 다시 구워 흐림을 막는다.
    *  호출부(main)는 update 에 화면 크기를 배율로 나눈 "논리 화면"을 넘긴다. */
   setUiScale(s: number): void {
+    this.scale = s;
     this.container.scale.set(s);
     const res = (window.devicePixelRatio || 1) * s;
     this.text.resolution = res;
     this.subText.resolution = res;
+  }
+
+  /** 지금 실제로 보이는 글씨의 화면 사각형(겹침 검사기용 · pixiTextRects 참고). 안 보이면 빈 배열. */
+  screenRects(): PixiTextRect[] {
+    if (!this.container.visible || this.life <= 0 || this.container.alpha < 0.05) return [];
+    const s = this.scale;
+    const out: PixiTextRect[] = [
+      {
+        label: "Pixi 위협 예고",
+        text: this.text.text,
+        x: (this.text.x - this.text.width / 2) * s, // anchor(0.5, 0.5)
+        y: (this.text.y - this.text.height / 2) * s,
+        w: this.text.width * s,
+        h: this.text.height * s,
+      },
+    ];
+    if (this.subText.visible) {
+      out.push({
+        label: "Pixi 위협 예고(힌트)",
+        text: this.subText.text,
+        x: (this.subText.x - this.subText.width / 2) * s, // anchor(0.5, 0)
+        y: this.subText.y * s,
+        w: this.subText.width * s,
+        h: this.subText.height * s,
+      });
+    }
+    return out;
   }
 
   show(title: string, sub: string): void {
@@ -69,7 +99,11 @@ export class ThreatBanner {
     this.container.visible = true;
   }
 
-  update(deltaMS: number, screenW: number, screenH: number): void {
+  /**
+   * @param topSafe 화면 위쪽에서 DOM HUD(목표 줄)가 차지한 높이(논리 픽셀). 띠가 그 아래로 비켜난다.
+   *   ⚠ 기본값을 주지 않는다 · 안 넘겨도 조용히 동작하면 기능이 통째로 죽는다(known_issues).
+   */
+  update(deltaMS: number, screenW: number, screenH: number, topSafe: number): void {
     if (this.life <= 0) {
       this.container.visible = false;
       return;
@@ -78,10 +112,11 @@ export class ThreatBanner {
     const t = this.life / DURATION; // 1 → 0
     this.container.alpha = Math.min(1, t * 4); // 빠르게 등장, 마지막 ~0.65초에 페이드아웃
     const cx = screenW / 2;
-    const cy = screenH * 0.4;
 
     // 화면 폭에 맞춰 줄바꿈 폭·글자 크기를 조인다 — 좁은 폰에서 글자가 잘리거나 띠가 화면을 넘지 않게.
     // 양옆 여백 24px 씩 + 띠 안쪽 여백을 빼고 남는 만큼만 쓴다.
+    // ⚠ 크기부터 정하고 자리를 정한다 · 아래 세로 배치가 글자 높이를 읽으므로 순서가 뒤바뀌면
+    //   한 프레임 낡은 높이로 자리를 잡는다(문구가 바뀌는 첫 프레임에 어긋난다).
     const wrapW = Math.max(180, screenW - 48 - 40);
     if (this.text.style.wordWrapWidth !== wrapW) {
       this.text.style.wordWrapWidth = wrapW;
@@ -93,8 +128,20 @@ export class ThreatBanner {
       this.text.style.lineHeight = titleSize + 6;
     }
 
-    this.text.position.set(cx, cy);
     const hasSub = this.subText.visible;
+    // 세로 자리 · 기본은 화면 위에서 40% 지점이지만, 목표 줄 상세를 펼치면 그 패널이 화면 절반 가까이
+    // 내려와(폰 실측 251px) 이 띠의 윗부분을 덮었다. 위협 예고는 "왜 졌는지 모르는데 졌다"를 막는
+    // 핵심 안내라(CLAUDE.md) 가려지면 안 된다 → HUD 아래로 밀어낸다.
+    // 위(HUD)와 아래(화면 끝) 둘 다 못 지킬 만큼 띠가 크면 **위를 지킨다** · 제목이 먼저다.
+    const halfUp = this.text.height / 2 + 14; // 중심에서 띠 위 끝까지
+    const halfDown = hasSub
+      ? this.text.height / 2 + 6 + this.subText.height + 12
+      : this.text.height / 2 + 14; // 중심에서 띠 아래 끝까지
+    const minCy = topSafe + 10 + halfUp;
+    const maxCy = screenH - 10 - halfDown;
+    const cy = Math.max(minCy, Math.min(maxCy, screenH * 0.4));
+
+    this.text.position.set(cx, cy);
     this.subText.position.set(cx, cy + this.text.height / 2 + 6);
     // 어두운 경고 띠 — 이름 + 힌트를 함께 감싼다(빨강 테두리 전광판).
     // 화면을 넘지 않게 상한을 둔다(줄바꿈이 들어가도 띠가 밖으로 삐져나가지 않게).

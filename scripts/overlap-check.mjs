@@ -9,11 +9,12 @@
 // 사용: npm run overlap
 // 사전: npx playwright install chromium (최초 1회). 저장: screenshots/overlap/*.png (git 미추적)
 //
-// 무엇을 잡나 (네 가지):
+// 무엇을 잡나 (다섯 가지):
 //   ① 겹침    글씨 요소끼리 사각형이 겹친다(부모·자식 관계는 정상이라 제외).
 //   ② 가림    **그림이 글씨를 덮는다**(생물 스프라이트·오라·메달리온 같은 그림 요소가 위에 얹힘).
 //   ③ 이탈    글씨 요소가 화면 밖으로 나갔다(왼쪽이 잘리거나 아래로 밀려남).
 //   ④ 가로 스크롤  문서 폭이 화면보다 넓다(폰에서 좌우로 밀리는 증상).
+//   ⑤ 캔버스 가림  **DOM 패널이 캔버스(Pixi) 글씨를 덮는다**(위협 예고 전광판·판정/보스 플래시).
 //
 // ②가 왜 뒤늦게 들어왔나(2026-08-05 사용자 지적: "드래프트에서 캐릭터 그림이 위 글씨를 가린다"):
 // 이 검사기는 **글씨끼리만** 쟀다. 게다가 가려진 글씨는 오탐을 줄이려고 후보에서 조용히 빼 왔는데,
@@ -21,9 +22,16 @@
 // 동안에도 폰 화면에서는 생물이 헤더를 덮고 있었다. 가린 것이 글씨/패널이면 정상 오버레이지만,
 // 가린 것이 **그림**이면 그건 버그다. 그 둘을 가른다.
 //
+// ⑤는 왜 들어왔나(2026-08-05, **같은 부류를 세 번째로 놓친 뒤**): 이 검사기는 DOM 만 쟀다.
+// 그래서 왼쪽 위 목표 줄(DOM)이 두 줄로 늘거나 상세를 펼치면 그 뒤의 **빨간 보스 플래시·초록
+// 통과 문구·위협 예고 전광판**(전부 캔버스)이 통째로 가려지는데도 늘 초록불이었다. 사용자가 세 번
+// 지적하고서야 잡혔다. 이제 그리는 쪽이 자기 글씨의 화면 좌표를 `body.dataset.pixiText` 로 내보내고
+// (src/render/pixiTextRects.ts), 여기서 그 사각형이 실제로 캔버스 위에 노출돼 있는지 히트 테스트한다.
+//
 // 한계(알아 두고 쓸 것):
-// - DOM 만 잰다. Pixi(canvas) 로 그리는 것 중 자리가 고정된 미니맵만 배치 공식으로 넣어 함께 검사한다.
-//   배너·보스 바·판정 플래시 같은 다른 Pixi UI 는 안 잡히므로, 그쪽을 옮겼다면 스크린샷을 눈으로도 봐야 한다.
+// - 캔버스 UI 중 검사되는 것은 ⑤로 좌표를 내보내는 위젯(하이라이트·위협 예고)과 배치 공식을 여기
+//   베껴 둔 미니맵뿐이다. 보스 격퇴 체력 바(worldView 가 보스 몸 위에 그린다)는 월드 좌표라 안 잡히므로,
+//   그쪽을 옮겼다면 스크린샷을 눈으로도 봐야 한다.
 // - 결과·보고서 화면은 런을 끝까지 굴려야 나와서 여기서 안 잰다(수동 확인 대상으로 남긴다).
 
 import { spawn } from "node:child_process";
@@ -55,6 +63,21 @@ async function toWatch(page) {
   await page.waitForTimeout(600);
   await page.getByRole("button", { name: /이 종으로 시작/ }).first().click();
   await page.waitForTimeout(4200);
+}
+
+/**
+ * 캔버스 글씨가 실제로 떠오를 때까지 기다린다. 상단 플래시는 **단일 슬롯 + 우선순위 대기열**이라
+ * (highlights.ts) 첫 안내가 끝나야 다음 문구가 나온다 → 고정 대기로는 "안 떠 있는 순간"을 재게 된다.
+ * 여기서 헛되이 통과시키면 검사기가 또 초록불 거짓말을 한다.
+ */
+async function waitForPixiText(page, re, timeoutMs = 9000) {
+  const t0 = Date.now();
+  for (;;) {
+    const raw = await page.evaluate(() => document.body.dataset.pixiText ?? "");
+    if (re.test(raw)) return true;
+    if (Date.now() - t0 > timeoutMs) return false;
+    await page.waitForTimeout(200);
+  }
 }
 
 /**
@@ -147,6 +170,72 @@ const SCREENS = {
       await page.waitForTimeout(900);
     },
   },
+  // ── 캔버스 글씨가 떠 있는 순간들(⑤ 전용) ──────────────────────────────────────────
+  // 여기 없던 것이 사고의 전부였다. 예전 13개 장면에는 "위협 예고가 떠 있는 순간"도 "판정 플래시가
+  // 떠 있는 순간"도 없었고, 그래서 그 글씨가 왼쪽 위 패널 뒤로 들어가는 것을 세 번 놓쳤다.
+  // 문구는 `?ovhook` 문(main.ts)이 **게임의 진짜 경로**로 만든다(가짜 문자열 금지).
+  watchBossFlash: {
+    label: "관전 + 보스 등장 플래시",
+    async go(page) {
+      await toWatch(page);
+      // 진짜 보스를 소환한다 → 목표 줄이 "위협: 그림자 매복자" + 두 줄짜리 안내로 늘고(사용자가
+      // 신고한 그 상태), 빨간 등장 플래시가 그 바로 아래에 뜬다. 이름이 가장 긴 보스를 고른다.
+      await page.evaluate(() => window.__ov.summon("stalker"));
+      if (!(await waitForPixiText(page, /보스/))) throw new Error("보스 등장 플래시가 안 떴다");
+    },
+  },
+  watchBossFlashExpanded: {
+    label: "관전 + 보스 플래시 + 목표 줄 펼침",
+    async go(page) {
+      await toWatch(page);
+      await page.locator(".goal-pill").first().click();
+      await page.waitForTimeout(400);
+      await page.evaluate(() => window.__ov.summon("stalker"));
+      if (!(await waitForPixiText(page, /보스/))) throw new Error("보스 등장 플래시가 안 떴다");
+    },
+  },
+  watchThreatBanner: {
+    label: "관전 + 위협 예고 전광판 + HUD 최대",
+    async go(page) {
+      await toWatch(page);
+      // HUD 를 실제로 커질 수 있는 최대치로 만든다: 목표 줄이 가장 긴 상태(보스 판 · 안내가 두 줄) +
+      // 상세 펼침. 조각 하나하나는 게임이 만드는 진짜 상태이고, 여기서 일부러 겹쳐 최악을 잰다.
+      // (예고가 뜨는 순간의 평균 HUD 만 재면 여유가 몇 px 인지 모른 채 지나간다.)
+      await page.evaluate(() => window.__ov.summon("stalker"));
+      await page.waitForTimeout(400);
+      await page.locator(".goal-pill").first().click();
+      await page.waitForTimeout(400); // 늘어난 높이가 goalBar 의 실측(ResizeObserver)에 반영될 틈
+      // 실제로 나올 수 있는 가장 긴 예고(game.ts upcomingThreat 의 형식 · 보스 이름·카운터 힌트가
+      // 가장 긴 조합). 전광판은 화면 한복판이지만 상세 패널이 펼쳐지면 그 위까지 내려온다.
+      await page.evaluate(() =>
+        window.__ov.banner(
+          "곧 그림자 매복자!",
+          "시야를 키우면 일찍 보고 달아납니다. 공격력이나 원거리가 높으면 어떤 보스든 맞서 잡습니다.",
+        ),
+      );
+      if (!(await waitForPixiText(page, /매복자/))) throw new Error("위협 예고가 안 떴다");
+    },
+  },
+  watchVerdictFlash: {
+    label: "관전 + 시험 판정 플래시",
+    async go(page) {
+      await toWatch(page);
+      // main.ts verdictLine 이 만드는 가장 긴 형태(불합격 + 진행/목표 + 불씨). 색도 게임과 같은 호박색.
+      await page.evaluate(() =>
+        window.__ov.flash("시험 불합격 · 무리 14/18 · 불씨 하나가 꺼졌습니다", 0xffba3a, true),
+      );
+      if (!(await waitForPixiText(page, /불합격/))) throw new Error("판정 플래시가 안 떴다");
+    },
+  },
+  levelUp: {
+    label: "런 종료 진척도(해금 여러 개 + 도전 과제)",
+    async go(page) {
+      await toWatch(page);
+      // 진짜 해금표(경험치 400 = 여러 레벨 한 번에)와 진짜 도전 과제 둘. 사용자 스크린샷의 그 판이다.
+      await page.evaluate(() => window.__ov.levelUp(400, 2));
+      await page.waitForTimeout(3400); // 경험치 애니메이션(최대 2.6초) + 해금 등장이 끝난 뒤에 잰다
+    },
+  },
 };
 
 // 무엇을 어느 폭에서 볼 것인가. 폰이 기본이고, 데스크톱은 확대 배율(CSS zoom) 때문에 따로 본다.
@@ -155,6 +244,12 @@ const SCENES = [
   { screen: "presetCategory", viewport: PHONE_NARROW },
   { screen: "presetDetail", viewport: PHONE_NARROW },
   { screen: "glossary", viewport: PHONE_NARROW },
+  // 세로가 짧은 화면 전수 점검 · 세로로 자라는 전체화면 화면은 여기서만 위가 잘린다
+  // (런 종료 진척도가 실제로 그랬다). 폭만 챙기고 높이를 안 챙기면 같은 사고를 또 놓친다.
+  { screen: "lobby", viewport: PHONE_SHORT },
+  { screen: "presetCategory", viewport: PHONE_SHORT },
+  { screen: "presetDetail", viewport: PHONE_SHORT },
+  { screen: "glossary", viewport: PHONE_SHORT },
   { screen: "watch", viewport: PHONE_NARROW },
   { screen: "watch", viewport: PHONE },
   { screen: "watch", viewport: DESKTOP },
@@ -166,6 +261,18 @@ const SCENES = [
   { screen: "draftLongCopy", viewport: PHONE_SHORT, query: "?watch" },
   { screen: "draftLongCopy", viewport: DESKTOP, query: "?watch" },
   { screen: "draftMine", viewport: PHONE_NARROW, query: "?watch" },
+  // 팝업이 열리면 뒤 헤더가 잘리는지 · 세로가 짧은 화면에서만 터진다(팝업이 화면 높이를 다 쓴다).
+  { screen: "draftMine", viewport: PHONE_SHORT, query: "?watch" },
+  // 캔버스 글씨가 떠 있는 순간 · 여기가 세 번 놓친 자리다(⑤).
+  { screen: "watchBossFlash", viewport: PHONE_SHORT, query: "?ovhook" },
+  { screen: "watchBossFlash", viewport: PHONE_NARROW, query: "?ovhook" },
+  { screen: "watchBossFlashExpanded", viewport: PHONE_SHORT, query: "?ovhook" },
+  { screen: "watchThreatBanner", viewport: PHONE_SHORT, query: "?ovhook" },
+  { screen: "watchThreatBanner", viewport: DESKTOP, query: "?ovhook" },
+  { screen: "watchVerdictFlash", viewport: PHONE_NARROW, query: "?ovhook" },
+  // 런 종료 진척도 · 내용이 길면 위(제목)가 잘렸다. 짧은 화면이 최악.
+  { screen: "levelUp", viewport: PHONE_SHORT, query: "?ovhook" },
+  { screen: "levelUp", viewport: PHONE_NARROW, query: "?ovhook" },
 ];
 
 mkdirSync(OUT, { recursive: true });
@@ -325,6 +432,92 @@ const COLLECT = () => {
   return out;
 };
 
+// 브라우저 안에서 실행 · 캔버스(Pixi) 글씨가 **DOM 에 덮여 안 보이는지**를 잰다.
+//
+// 왜 히트 테스트인가: 사각형 교집합만 보면 "글자끼리"만 잡힌다. 실제로 안 보이게 만드는 것은 대부분
+// 패널의 **배경**이다(목표 줄 알약은 반투명 갈색 + blur 라 그 뒤 글씨가 뭉개진다). 그래서 각 사각형에
+// 점을 찍어 "그 픽셀의 맨 위가 무엇인가"를 묻고, 캔버스가 아니면 덮인 것으로 센다.
+//
+// 오탐을 만들지 않기 위한 규칙(오탐이 많으면 아무도 검사기를 안 본다 · known_issues):
+//  · 검사 전에 주입한 `* { pointer-events: auto }` 때문에 **투명한 레이아웃 상자**까지 히트된다.
+//    (예: `.goal-root` 는 화면 폭을 다 쓰지만 배경이 없어 아무것도 안 가린다.)
+//    → 히트된 요소에서 위로 올라가며 **실제로 칠하는 것**(불투명한 배경색·배경 그림·backdrop-filter)
+//      또는 **자기 글자**를 가진 조상이 있을 때만 "덮었다"로 센다. 없으면 그냥 통과.
+//  · **전체 화면 오버레이**(드래프트·진척도·로비·멈춤 메뉴)가 덮는 것은 넘어간다. 그건 화면이 통째로
+//    바뀐 것이지 "글씨가 가려진" 사고가 아니다(DOM 쪽 ②가 서로 다른 전체화면 레이어를 넘기는 것과
+//    같은 규칙). 그 자리의 처방은 따로 있다 · 문구를 그 패널 안에도 실어라(known_issues).
+//  · 3x5 표본 중 2점 이상일 때만 신고한다(모서리 한 점 스침 제외).
+const PIXI_COVER = () => {
+  const raw = document.body.dataset.pixiText;
+  if (!raw) return [];
+  const rects = JSON.parse(raw);
+  const canvas = document.querySelector("#app canvas");
+
+  /** 이 요소가 전체 화면을 덮는 레이어 안에 있는가(=화면이 통째로 바뀐 것). 그러면 사고가 아니다. */
+  const inFullScreenLayer = (node) => {
+    for (let p = node; p && p !== document.body; p = p.parentElement) {
+      const cs = getComputedStyle(p);
+      if (cs.position !== "fixed" && cs.position !== "absolute") continue;
+      const rc = p.getBoundingClientRect();
+      if (rc.width >= innerWidth * 0.95 && rc.height >= innerHeight * 0.95) return true;
+    }
+    return false;
+  };
+
+  /** 이 요소(또는 조상)가 그 자리에서 실제로 무언가를 칠하는가. 칠하는 요소를 돌려준다(없으면 null). */
+  const painter = (node) => {
+    // 자기 글자를 직접 가진 요소면 그 글씨가 캔버스 글씨 위에 얹힌 것 → 칠하는 것으로 친다.
+    for (const c of node.childNodes) {
+      if (c.nodeType === 3 && (c.textContent ?? "").trim()) return node;
+    }
+    for (let p = node; p && p !== document.body; p = p.parentElement) {
+      const cs = getComputedStyle(p);
+      if (cs.backgroundImage && cs.backgroundImage !== "none") return p;
+      if (cs.backdropFilter && cs.backdropFilter !== "none") return p;
+      if (cs.webkitBackdropFilter && cs.webkitBackdropFilter !== "none") return p;
+      const m = /rgba?\(([^)]+)\)/.exec(cs.backgroundColor ?? "");
+      if (m) {
+        const parts = m[1].split(",").map((v) => Number(v.trim()));
+        const alpha = parts.length > 3 ? parts[3] : 1;
+        if (alpha >= 0.15) return p;
+      }
+    }
+    return null;
+  };
+
+  const out = [];
+  for (const r of rects) {
+    const covers = new Map();
+    let tested = 0;
+    // 세로 표본에 **가장자리 바로 안쪽**(6% · 94%)을 넣는다. 이 사고는 대개 "윗줄만 잘리는" 모양으로
+    // 온다(패널이 8px 만 겹쳐도 첫 줄 획이 뭉갠다) · 가운데 세 줄만 찍으면 그 얇은 띠를 통째로 놓친다.
+    const ys = [0.06, 0.28, 0.5, 0.72, 0.94];
+    for (let a = 1; a <= 3; a++) {
+      for (const fy of ys) {
+        const px = r.x + (r.w * a) / 4;
+        const py = r.y + r.h * fy;
+        if (px < 0 || py < 0 || px > innerWidth || py > innerHeight) continue;
+        tested++;
+        const hit = document.elementFromPoint(px, py);
+        if (!hit || hit === canvas || hit.id === "app" || hit === document.body) continue;
+        if (inFullScreenLayer(hit)) continue; // 화면이 통째로 바뀐 것 · 위 주석의 예외
+        const paint = painter(hit);
+        if (!paint) continue;
+        const cls =
+          typeof paint.className === "string" && paint.className
+            ? paint.className
+            : paint.tagName.toLowerCase();
+        const key = cls.slice(0, 30);
+        covers.set(key, (covers.get(key) ?? 0) + 1);
+      }
+    }
+    let worst = null;
+    for (const [key, n] of covers) if (n >= 2 && (!worst || n > worst.pts)) worst = { key, pts: n };
+    out.push({ label: r.label, text: r.text, rect: r, tested, cover: worst });
+  }
+  return out;
+};
+
 function intersect(a, b) {
   const ix = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
   const iy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
@@ -360,6 +553,7 @@ async function checkScene(browser, scene) {
   // 뒤 캔버스로 뚫려 "안 보인다"고 오판되는 것을 막는다.
   await page.addStyleTag({ content: "* { pointer-events: auto !important; }" });
   const rects = await page.evaluate(COLLECT);
+  const pixi = await page.evaluate(PIXI_COVER);
   const doc = await page.evaluate(() => ({
     ui: Number(getComputedStyle(document.body).getPropertyValue("--ui-zoom")) || 1,
     scrollW: document.documentElement.scrollWidth,
@@ -369,6 +563,18 @@ async function checkScene(browser, scene) {
   }));
 
   const all = rects.filter((r) => r.vis.length > 0);
+  // 캔버스 글씨도 같은 좌표계의 사각형이다 → ①(겹침)·③(이탈)에 함께 태운다. DOM 글씨와의 관계는
+  // ⑤가 배경까지 보고 더 정확히 판정하므로 ①에서는 그 쌍만 건너뛴다(중복 보고 방지).
+  for (const p of pixi) {
+    all.push({
+      pixiText: true,
+      cls: p.label,
+      text: p.text.replace(/\s+/g, " ").slice(0, 26),
+      chain: [],
+      raw: [p.rect],
+      vis: [p.rect],
+    });
+  }
   if (doc.minimap) {
     const mmH = Math.round((MM_W * scene.viewport.height) / scene.viewport.width);
     all.push({
@@ -393,6 +599,8 @@ async function checkScene(browser, scene) {
       const A = all[i];
       const B = all[j];
       if ((A.chain && B.id && A.chain.includes(B.id)) || (B.chain && A.id && B.chain.includes(A.id))) continue;
+      // 캔버스 글씨 × DOM 글씨는 ⑤가 잡는다(배경까지 본다) → 여기서 또 세면 같은 사고가 두 번 찍힌다.
+      if ((A.pixiText && B.id) || (B.pixiText && A.id)) continue;
       let area = 0;
       for (const ra of A.vis) for (const rb of B.vis) area += intersect(ra, rb);
       if (area > 0) hits.push({ a: A, b: B, area });
@@ -426,13 +634,33 @@ async function checkScene(browser, scene) {
     }
   }
 
+  // ③-b 캔버스 글씨의 이탈 · 화면 밖으로 나간 예고·플래시(스크롤 상자가 없으니 곧장 안 보인다).
+  for (const p of pixi) {
+    const g = p.rect;
+    const out = [];
+    if (g.x < -1.5) out.push(`왼쪽 ${Math.round(-g.x)}px`);
+    if (g.x + g.w > scene.viewport.width + 1.5) out.push(`오른쪽 ${Math.round(g.x + g.w - scene.viewport.width)}px`);
+    if (g.y < -1.5) out.push(`위 ${Math.round(-g.y)}px`);
+    if (g.y + g.h > scene.viewport.height + 1.5) out.push(`아래 ${Math.round(g.y + g.h - scene.viewport.height)}px`);
+    if (out.length) problems.push(`이탈 [${p.label}|${p.text.slice(0, 26)}] ${out.join(" · ")}`);
+  }
+
   // ④ 가로 스크롤
   if (doc.scrollW > doc.clientW + 1) problems.push(`가로 스크롤 ${doc.scrollW} > ${doc.clientW}`);
+
+  // ⑤ DOM 이 캔버스 글씨를 덮음 · 위협 예고·판정/보스 플래시가 패널 뒤로 들어간 것(세 번 놓친 사고).
+  for (const p of pixi) {
+    if (p.cover) {
+      problems.push(`캔버스 가림 [${p.label}|${p.text.slice(0, 26)}] ← DOM [${p.cover.key}] ${p.cover.pts}/${p.tested}점`);
+    }
+  }
 
   await page.screenshot({ path: `${OUT}/${file}.png` });
 
   console.log(`\n=== ${name} ===`);
-  console.log(`  글씨 요소 ${rects.length}개 · JS 오류 ${errs.length}건 · ${file}.png`);
+  console.log(
+    `  글씨 요소 ${rects.length}개 · 캔버스 글씨 ${pixi.length}개 · JS 오류 ${errs.length}건 · ${file}.png`,
+  );
   if (!problems.length) console.log("  ✓ 이상 없음");
   for (const p of problems) console.log("  ✗ " + p);
   for (const e of errs) console.log("  JS:", e);

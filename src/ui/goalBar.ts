@@ -59,6 +59,17 @@ export interface GoalBar {
   /** 상세 패널이 펼쳐져 있는가. 펼치면 우상단 미니맵을 덮으므로 main 이 미니맵을 숨기는 데 쓴다
    *  (같은 모서리를 쓰는 위젯은 동시에 두지 않고 상태로 나눠 쓴다 · known_issues). */
   isOpen: () => boolean;
+  /**
+   * 이 HUD 가 화면 위쪽에서 실제로 차지한 높이(화면 CSS 픽셀 · 안 보이면 0).
+   *
+   * 왜 필요한가: 캔버스(Pixi)에 그리는 글씨(위협 예고 전광판·판정/보스 플래시)는 **이 DOM 패널
+   * 아래에 깔린다.** 알약이 두 줄로 늘거나 상세를 펼치면 그 글씨가 통째로 가려져 "왜 졌는지 모르는데
+   * 졌다"가 된다(2026-08-05 사용자 지적, 세 번째). 예전엔 Pixi 쪽이 "대략 60px" 이라는 고정값을
+   * 들고 있었는데, 이 줄은 문구 길이에 따라 자라므로 고정값은 언제나 틀린다.
+   * → **여기서 실측한 높이 하나가 단일 진실**이고 main 이 그 값을 Pixi 위젯에 넘긴다.
+   * 매 프레임 재면 레이아웃 비용이 드니 크기가 바뀔 때만(ResizeObserver) 다시 잰다.
+   */
+  bottomPx: () => number;
 }
 
 export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
@@ -148,6 +159,18 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
   root.append(head, panel);
   document.body.appendChild(root);
 
+  // 이 HUD 가 차지한 아래 끝(화면 CSS 픽셀). Pixi 글씨가 그 밑으로 비켜 그려지는 근거다(bottomPx 주석).
+  // 크기가 바뀔 때만 다시 잰다 · 매 프레임 getBoundingClientRect 는 폰에서 레이아웃 강제 계산 비용이다.
+  let hudBottom = 0;
+  const measure = (): void => {
+    hudBottom = root.style.display === "none" ? 0 : root.getBoundingClientRect().bottom;
+  };
+  // 문구가 한 줄↔두 줄로 오가거나 상세를 펼치면 높이가 바뀐다 → 그때마다 관찰자가 다시 잰다.
+  new ResizeObserver(measure).observe(root);
+  // 창 크기·확대 배율(--ui-zoom)이 바뀌면 zoom 이 걸린 이 뿌리의 화면 좌표도 바뀐다(ResizeObserver 는
+  // zoom 변화를 못 잡는 경우가 있어 창 이벤트로도 다시 잰다).
+  window.addEventListener("resize", measure);
+
   let open = false;
   let hintOn = true; // 아직 한 번도 안 펼쳐 봤다 → 화살표가 깜빡여 "여기를 눌러 보라"고 말한다
   function setOpen(next: boolean): void {
@@ -178,6 +201,7 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
       if (root.style.display !== vis) {
         root.style.display = vis;
         if (!d.visible) setOpen(false);
+        measure(); // 숨김↔표시는 ResizeObserver 가 안 알려 준다(display:none 은 크기 변화가 아니다)
       }
       if (!d.visible) return;
       setText(textEl, d.text);
@@ -208,6 +232,7 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
     collapse: (): void => setOpen(false),
     toggle: (): void => setOpen(!open),
     isOpen: () => open,
+    bottomPx: () => hudBottom,
   };
 }
 

@@ -32,6 +32,21 @@ function ensureStyles(): void {
       background:#2a1e06; border-radius:1.5px; }
     .lvl-mark::before { width:12px; height:3px; transform:translate(-50%,-50%); }
     .lvl-mark::after  { width:3px; height:12px; transform:translate(-50%,-50%); }
+    /* 내용이 화면보다 길어질 때 · 해금 4개 + 도전 과제 2개 같은 큰 판.
+       예전엔 오버레이가 justify-content:center 인 세로 flex 라, 내용이 넘치면 **위아래로 똑같이**
+       넘쳐 제목("이번 혈통이 남긴 자취")이 화면 위로 잘려 나갔다(폰 스크린샷). flex 의 가운데 정렬은
+       넘칠 때 시작 모서리를 지켜 주지 않는다.
+       → 스크롤을 열고(overflow-y:auto) 가운데 정렬을 **auto 마진**으로 바꾼다. auto 마진은 남는 자리가
+       있을 때만 가운데로 밀고, 자리가 없으면 0 이 되어 위를 안 자른다(known_issues 의 "한쪽만 고정한
+       전체화면 오버레이" 처방의 세로판). */
+    .lvl-overlay { overflow-y:auto; overscroll-behavior:contain; }
+    .lvl-inner { margin:auto; display:flex; flex-direction:column; align-items:center; gap:14px;
+      width:100%; }
+    /* "계속"은 늘 눌러야 하는 컨트롤이라 스크롤과 무관하게 보인다(sticky). 뒤 내용이 비쳐 글씨가
+       겹쳐 보이지 않게 불투명 띠를 깔고, 자기 자리보다 넓게 잡아 좌우 가장자리까지 가린다. */
+    .lvl-continue-wrap { position:sticky; bottom:-24px; z-index:2; width:100%;
+      display:flex; justify-content:center; padding:10px 0 24px; margin-bottom:-24px;
+      background:linear-gradient(180deg, rgba(11,9,6,0) 0, rgba(11,9,6,0.97) 22%, rgba(11,9,6,1) 100%); }
   `;
   document.head.appendChild(s);
 }
@@ -40,9 +55,11 @@ export function createLevelUpScreen(): LevelUpScreen {
   ensureStyles();
 
   const overlay = document.createElement("div");
+  overlay.className = "lvl-overlay";
+  // justify-content 는 flex-start · 가운데 정렬은 안쪽 묶음(.lvl-inner)의 auto 마진이 맡는다(위 CSS 주석).
   overlay.style.cssText =
     "position:fixed; inset:0; z-index:40; display:none; flex-direction:column; align-items:center;" +
-    "justify-content:center; gap:14px; padding:24px; background:rgba(11,9,6,0.85);" +
+    "justify-content:flex-start; padding:24px; background:rgba(11,9,6,0.85);" +
     "font-family:var(--font-body); text-align:center; user-select:none;";
 
   const title = document.createElement("div");
@@ -99,15 +116,24 @@ export function createLevelUpScreen(): LevelUpScreen {
   achieveList.style.cssText = "display:flex; flex-direction:column; gap:8px;";
   achieveBox.append(achieveHeader, achieveList);
 
+  // "계속"은 스크롤 끝까지 안 내려도 늘 보여야 한다 → sticky 띠에 담는다(display 토글은 이 띠가 받는다).
+  const continueWrap = document.createElement("div");
+  continueWrap.className = "lvl-continue-wrap";
+  continueWrap.style.display = "none";
   const continueBtn = document.createElement("button");
   continueBtn.textContent = "계속";
   continueBtn.appendChild(keyChip("Enter"));
   continueBtn.style.cssText =
-    "display:none; margin-top:10px; padding:12px 34px; border:0; border-radius:var(--r-btn);" +
+    "padding:12px 34px; border:0; border-radius:var(--r-btn);" +
     "background:var(--lime); color:#1B2A0A; font-family:var(--font-title); font-size:16px;" +
     "border-bottom:5px solid var(--limeD); cursor:pointer;";
+  continueWrap.appendChild(continueBtn);
 
-  overlay.append(title, badge, track, gained, unlockBox, achieveBox, continueBtn);
+  // 안쪽 묶음 하나로 감싸야 auto 마진 가운데 정렬이 먹는다(오버레이는 스크롤 상자 역할만).
+  const inner = document.createElement("div");
+  inner.className = "lvl-inner";
+  inner.append(title, badge, track, gained, unlockBox, achieveBox, continueWrap);
+  overlay.append(inner);
   document.body.appendChild(overlay);
 
   let raf = 0;
@@ -124,7 +150,7 @@ export function createLevelUpScreen(): LevelUpScreen {
         case "Space":
         case "Escape":
           if (e.repeat) return true;
-          if (continueBtn.style.display !== "none") continueBtn.click();
+          if (continueWrap.style.display !== "none") continueBtn.click();
           else overlay.click();
           return true;
         default:
@@ -176,7 +202,7 @@ export function createLevelUpScreen(): LevelUpScreen {
     for (const el of xpParts) el.style.display = progress ? "" : "none";
     if (!progress) {
       overlay.onclick = null;
-      continueBtn.style.display = "block";
+      continueWrap.style.display = "flex";
       continueBtn.onclick = (e: MouseEvent): void => {
         e.stopPropagation();
         clear();
@@ -249,7 +275,7 @@ export function createLevelUpScreen(): LevelUpScreen {
           for (const u of lu.unlocks) addUnlock(u);
         }
       }
-      continueBtn.style.display = "block";
+      continueWrap.style.display = "flex";
     };
 
     // 애니메이션 길이 — 쌓인 경험치에 비례하되 상한(느긋하지도 지루하지도 않게).
@@ -272,9 +298,10 @@ export function createLevelUpScreen(): LevelUpScreen {
       onDone();
     };
 
-    continueBtn.style.display = "none";
+    continueWrap.style.display = "none";
     render(progress.beforeXp);
     overlay.style.display = "flex";
+    overlay.scrollTop = 0; // 늘 맨 위(제목)부터 보이게 · 내용이 길어도 위가 잘리지 않는다
     raf = requestAnimationFrame(frame);
   };
 

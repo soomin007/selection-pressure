@@ -59,14 +59,19 @@ export function createPresetPanel(
 ): PresetPanel {
   ensurePanelStyles(); // :root 토큰 보장
   const root = document.createElement("div");
+  // 세로 정렬을 justify-content:center 로 두면 안 된다. 세부 종 선택은 세로로 자라는 화면이라
+  // 짧은 폰(390x640 실측)에서 위로 24px, 아래로 10px 넘쳐 "‹ 갈래 다시 고르기"와 "이 종으로 시작"이
+  // **둘 다 화면 밖으로** 나갔다. flex 의 가운데 정렬은 넘칠 때 시작 모서리를 안 지켜 준다.
+  // → 스크롤을 열고(overflow-y:auto) 가운데 정렬은 패널의 auto 마진에 맡긴다(자리가 있을 때만 가운데).
   root.style.cssText =
-    "position:fixed; inset:0; z-index:20; display:none; align-items:center; justify-content:center;" +
+    "position:fixed; inset:0; z-index:20; display:none; align-items:center; justify-content:flex-start;" +
+    "overflow-y:auto; overscroll-behavior:contain; padding:12px 0;" +
     "background:rgba(11,9,6,0.82); backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);" +
     "font-family:var(--font-body); user-select:none;";
 
   const panel = document.createElement("div");
   panel.style.cssText =
-    "width:min(360px,92vw); box-sizing:border-box; padding:18px 18px 18px;" +
+    "width:min(360px,92vw); box-sizing:border-box; padding:18px 18px 18px; margin:auto 0; flex:none;" +
     "background:var(--bg-lobby); border:1px solid var(--line); border-radius:var(--r-panel); color:var(--ink); text-align:center;";
   root.appendChild(panel);
   document.body.appendChild(root);
