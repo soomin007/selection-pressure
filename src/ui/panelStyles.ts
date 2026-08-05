@@ -226,8 +226,17 @@ export function ensurePanelStyles(): void {
     color: var(--sub); text-shadow: 0 2px 8px rgba(0,0,0,0.6); word-break: keep-all; }
 
   /* §5 히어로 미리보기 */
-  .draft-hero { grid-area: hero; position: relative; min-height: 0;
+  /* overflow:hidden 은 안전망이다 · 히어로는 transform 으로 줄어드는데 transform 은 레이아웃 높이를
+     안 바꾼다. 그래서 배율 계산이 조금이라도 어긋나면 그림이 칸 밖으로 나가 **헤더 글씨 위에 얹힌다**
+     (2026-08-05 사용자 지적: "캐릭터 그림이 위 글씨를 가린다"). 배율은 draftPanel.fitHero 가 실제
+     시각 경계로 맞추지만, 새 장식·새 애니메이션이 들어와도 글씨를 침범할 수 없게 칸에서 잘라 둔다.
+     ⚠ 좌우 화살표도 이 칸 안이라 함께 잘린다. 칸이 아주 낮은 화면에서는 안 보인다. 모바일은 카드를
+     탭하면 미리보기가 바뀌고 데스크톱은 ← → 키가 있어, 화살표가 사라지는 것보다 글씨를 덮는 게 나쁘다. */
+  .draft-hero { grid-area: hero; position: relative; min-height: 0; overflow: hidden;
     display: flex; align-items: center; justify-content: center; }
+  /* 잴 때만 애니메이션 정지 · 오라 숨쉬기(scale 1.14)·둥둥 뜨기가 도는 중에 재면 잴 때마다 크기가
+     달라져 배율이 흔들린다. fitHero 가 이 클래스를 잠깐 붙였다 뗀다. */
+  .draft-hero.measuring, .draft-hero.measuring * { animation: none !important; }
   .draft-arrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 3;
     width: 42px; height: 42px; border-radius: 50%; background: rgba(20,16,10,0.5);
     border: 1px solid rgba(245,235,220,0.18); color: var(--ink);
@@ -395,6 +404,21 @@ export function ensurePanelStyles(): void {
   .draft-picked-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
     background: rgba(255,255,255,0.06); border-radius: 999px; padding: 5px 12px; }
   .draft-picked-chip > i { width: 7px; height: 7px; border-radius: 2px; display: block; flex: none; }
+
+  /* 세로가 짧은 화면(작은 폰·주소창 펼친 폰). 헤더 문구가 길어지면 히어로 칸(1fr)이 0 으로 접혀
+     미리보기가 통째로 사라진다. 카드·푸터의 여백만 조금씩 조여 히어로가 설 자리를 벌어 준다.
+     ⚠ 글씨 크기는 안 건드린다(작은 화면일수록 읽혀야 한다) · 여백만 줄인다.
+     ⚠ 좌우 여백은 그대로 둔다 · .draft-shell 은 padding 단축 속성으로 좌우 18px 을 잡고 있어서,
+        여기서 단축으로 덮으면 좁은 폰에서 글씨가 화면 끝에 붙는다(축을 나눠 위/아래만 덮는다). */
+  @media (max-height: 720px) {
+    .draft-shell { padding-top: calc(14px + env(safe-area-inset-top));
+      padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+    .draft-cards { margin-top: 6px; gap: 7px; }
+    .draft-card { padding: 10px 14px; }
+    .draft-card-body { margin-top: 5px; gap: 6px 9px; }
+    .draft-cta { margin-top: 9px; padding: 11px 16px; }
+    .draft-ft-row { margin-top: 9px; }
+  }
 
   /* §3 데스크톱 (>= 860px) — 세로형 카드 3장 가로 배열 */
   @media (min-width: 860px) {

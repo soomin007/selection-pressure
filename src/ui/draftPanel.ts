@@ -317,19 +317,59 @@ export function createDraftPanel(
   };
 
   /**
+   * 배율·애니메이션을 끈 상태에서 히어로 그림이 **실제로** 차지하는 크기(장식 포함).
+   *
+   * ⚠ `heroGroup.offsetHeight` 를 쓰면 안 된다. 오라(`.draft-aura`, 196x196)는 position:absolute 라
+   *   레이아웃 높이에 안 잡히는데 담긴 칸(`.draft-medallion-zone`)은 164px 뿐이라, 위아래로 16px 씩
+   *   더 나간다. 새끼 메달리온·속도 대시도 마찬가지다. 그래서 자손 전부의 rect 를 합집합한다.
+   *   앞으로 장식이 늘어도 자동으로 포함된다.
+   * 재는 동안 배율과 애니메이션을 잠깐 끈다(오라 숨쉬기 scale 1.14, 둥둥 뜨기 translateY). 안 끄면
+   * 애니메이션 위상에 따라 잴 때마다 값이 달라져 배율이 흔들린다. 그 위상 초과분은 칸의
+   * overflow:hidden 이 받아낸다(오라 바깥 테두리는 완전 투명이라 잘려도 안 보인다).
+   */
+  const heroNaturalSize = (): { w: number; h: number } => {
+    const prev = heroScale.style.transform;
+    heroScale.style.transform = "none";
+    hero.classList.add("measuring");
+    let l = Infinity;
+    let t = Infinity;
+    let r = -Infinity;
+    let b = -Infinity;
+    const grow = (node: Element): void => {
+      const q = node.getBoundingClientRect();
+      if (q.width <= 0 || q.height <= 0) return;
+      if (q.left < l) l = q.left;
+      if (q.top < t) t = q.top;
+      if (q.right > r) r = q.right;
+      if (q.bottom > b) b = q.bottom;
+    };
+    grow(heroGroup);
+    for (const node of heroGroup.querySelectorAll("*")) grow(node);
+    hero.classList.remove("measuring");
+    heroScale.style.transform = prev;
+    return r > l && b > t ? { w: r - l, h: b - t } : { w: 0, h: 0 };
+  };
+
+  /**
    * 히어로를 남는 세로 공간에 맞춰 줄인다(§8 함정: 고정 크기 히어로는 낮은 창에서 헤더·카드·CTA 를 밀어낸다).
    * transform 이라 레이아웃 높이는 그대로다 — 히어로 칸(1fr) 안에서 가운데 정렬된 채 시각적으로만 줄어든다.
    * 여유가 있으면 조금 키운다(스펙의 데스크톱 확대). 화살표 자리(42px)는 가로 계산에서 빼 둔다.
+   *
+   * ⚠ 2026-08-05 사고: 예전엔 `Math.max(0.4, s)` 로 **하한 0.4 를 무조건** 걸었다. 하한은 "칸에
+   *   들어가는지"와 무관하니, 헤더 문구가 길어 히어로 칸이 0 으로 접힌 화면(390x640 등)에서도 100px
+   *   짜리 생물이 그려져 **헤더 글씨 위에 그대로 얹혔다**(사용자 지적). transform 은 레이아웃을 안
+   *   밀어내니 아무도 못 막았고, 겹침 검사기는 글씨끼리만 재서 통과시켰다.
+   *   → 하한을 없애고 **칸에 들어가는 배율만** 쓴다. 히어로가 너무 작아지는 반대 사고는 배율이 아니라
+   *     자리로 막는다(panelStyles 의 max-height 720px 규칙이 카드·푸터 여백을 조여 자리를 벌어 준다).
    */
   const fitHero = (): void => {
     const availH = hero.clientHeight - 14; // 헤더·카드와 맞닿지 않게 위아래 숨 쉴 틈
     const availW = hero.clientWidth - 2 * 50;
-    const natH = heroGroup.offsetHeight;
-    const natW = heroGroup.offsetWidth;
-    if (!availH || !availW || !natH || !natW) return;
-    // 위: 여유가 있으면 1.4배까지 키운다. 아래: 세로가 아주 짧은 폰에서도 히어로가 헤더·카드를 안 덮게 0.4까지 줄인다.
-    const s = Math.min(availH / natH, availW / natW, 1.4);
-    heroScale.style.transform = `scale(${Math.max(0.4, s).toFixed(3)})`;
+    const nat = heroNaturalSize();
+    if (!nat.w || !nat.h) return;
+    // 위: 여유가 있으면 1.4배까지 키운다. 아래: 0 아래로는 안 간다(음수면 뒤집힌다).
+    const s = Math.min(availH / nat.h, availW / nat.w, 1.4);
+    heroScale.style.transform = `scale(${Math.max(0, s).toFixed(3)})`;
   };
 
   window.addEventListener("resize", () => {

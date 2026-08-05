@@ -9,10 +9,17 @@
 // 사용: npm run overlap
 // 사전: npx playwright install chromium (최초 1회). 저장: screenshots/overlap/*.png (git 미추적)
 //
-// 무엇을 잡나 (세 가지):
+// 무엇을 잡나 (네 가지):
 //   ① 겹침    글씨 요소끼리 사각형이 겹친다(부모·자식 관계는 정상이라 제외).
-//   ② 이탈    글씨 요소가 화면 밖으로 나갔다(왼쪽이 잘리거나 아래로 밀려남).
-//   ③ 가로 스크롤  문서 폭이 화면보다 넓다(폰에서 좌우로 밀리는 증상).
+//   ② 가림    **그림이 글씨를 덮는다**(생물 스프라이트·오라·메달리온 같은 그림 요소가 위에 얹힘).
+//   ③ 이탈    글씨 요소가 화면 밖으로 나갔다(왼쪽이 잘리거나 아래로 밀려남).
+//   ④ 가로 스크롤  문서 폭이 화면보다 넓다(폰에서 좌우로 밀리는 증상).
+//
+// ②가 왜 뒤늦게 들어왔나(2026-08-05 사용자 지적: "드래프트에서 캐릭터 그림이 위 글씨를 가린다"):
+// 이 검사기는 **글씨끼리만** 쟀다. 게다가 가려진 글씨는 오탐을 줄이려고 후보에서 조용히 빼 왔는데,
+// 그 "빼기"가 곧 **그림에 덮인 글씨를 통과시키는 구멍**이었다. 13개 화면 전부 "이상 없음"이 뜨는
+// 동안에도 폰 화면에서는 생물이 헤더를 덮고 있었다. 가린 것이 글씨/패널이면 정상 오버레이지만,
+// 가린 것이 **그림**이면 그건 버그다. 그 둘을 가른다.
 //
 // 한계(알아 두고 쓸 것):
 // - DOM 만 잰다. Pixi(canvas) 로 그리는 것 중 자리가 고정된 미니맵만 배치 공식으로 넣어 함께 검사한다.
@@ -35,6 +42,9 @@ const MM_MARGIN = 10;
 // 폰 두 폭을 다 본다: 360 은 흔한 좁은 폰(여기서만 터지는 사고가 실제로 있었다), 390 은 기준 폰.
 const PHONE_NARROW = { width: 360, height: 780 };
 const PHONE = { width: 390, height: 844 };
+// 세로가 짧은 폰(주소창을 펼친 상태·작은 기기). 여기서만 터지는 사고가 있다. 헤더 문구가 길면
+// 히어로 칸(1fr)이 0 으로 접히는데, transform 배율은 레이아웃을 안 밀어내서 그림이 헤더 위로 올라탔다.
+const PHONE_SHORT = { width: 390, height: 640 };
 const DESKTOP = { width: 1920, height: 1010 };
 
 /** 로비에서 관전 화면까지 · 모든 흐름의 공통 앞부분. */
@@ -152,6 +162,8 @@ const SCENES = [
   { screen: "watchExpanded", viewport: PHONE_NARROW },
   { screen: "draft", viewport: PHONE_NARROW, query: "?watch" },
   { screen: "draftLongCopy", viewport: PHONE_NARROW, query: "?watch" },
+  // 짧은 폰 + 최장 문구 = 히어로 칸이 가장 좁아지는 최악. 그림이 헤더를 덮던 자리다.
+  { screen: "draftLongCopy", viewport: PHONE_SHORT, query: "?watch" },
   { screen: "draftLongCopy", viewport: DESKTOP, query: "?watch" },
   { screen: "draftMine", viewport: PHONE_NARROW, query: "?watch" },
 ];
@@ -184,9 +196,52 @@ function waitFor(url, timeoutMs) {
 //  · 대백과·내 종 팝업 같은 전체 화면 오버레이는 뒤 화면을 덮는 게 정상인데, 뒤 글씨까지 세면
 //    "겹침"이 수십 건 쏟아진다. → 각 글자 사각형에서 점을 찍어 `elementFromPoint` 로 **맨 위에 있는지**
 //    확인하고, 가려진 글씨는 아예 후보에서 뺀다. 남는 것은 "둘 다 실제로 보이는데 겹친 것"뿐이다.
+//
+// 그림 판정 규칙(②) · 오탐이 많으면 아무도 검사기를 안 보게 되므로 규칙과 예외를 여기 못 박는다:
+//  · 그림으로 치는 것: <img> · <canvas> · <svg> · <video> · background-image 가 url(...) 인 요소 ·
+//    그라디언트 배경인데 **글자를 하나도 안 담은** 순수 장식 요소(드래프트 오라·틴트가 여기 해당).
+//  · 그림으로 안 치는 것: 글자를 담은 요소의 배경(그건 그 글씨의 배경이지 남의 글씨를 덮는 그림이 아니다),
+//    배경색만 있는 패널·베일(색면은 오버레이의 정상 재료다).
+//  · **같은 패널 안일 때만** 신고한다. 그림과 글씨의 최근접 공통 조상이 body/html 이면 서로 다른
+//    전체화면 레이어라는 뜻이라 넘어간다(대백과가 뒤 HUD 를 덮는 것은 정상이다). 한 패널이 제 글씨를
+//    제 그림으로 덮는 것만 버그로 센다.
+//  · 3x3 표본 중 **2점 이상**을 덮었을 때만 신고한다(1점은 글자 사각형 가장자리를 스친 수준).
+//  · 부모·자식은 애초에 "보이는 글씨"로 세므로 여기 안 온다(글씨 위에 제 배경이 있는 건 정상).
 const COLLECT = () => {
   const out = [];
   let uid = 0;
+
+  /** 이 요소가 "그림"인가. 아니면 null. */
+  const artKind = (node) => {
+    const tag = node.tagName;
+    if (tag === "IMG" || tag === "CANVAS" || tag === "VIDEO" || tag === "svg" || tag === "SVG") {
+      return tag.toLowerCase();
+    }
+    const bg = getComputedStyle(node).backgroundImage;
+    if (!bg || bg === "none") return null;
+    if (bg.includes("url(")) return "그림";
+    // 그라디언트는 글씨 배경으로도 흔히 쓰인다 → 글자를 안 담은 순수 장식일 때만 그림으로 친다.
+    if (bg.includes("gradient") && (node.textContent ?? "").trim() === "") return "장식";
+    return null;
+  };
+
+  /** 히트된 픽셀의 주인에서 위로 올라가며 가장 가까운 그림 요소를 찾는다(빈 래퍼가 잡히는 경우 대비). */
+  const nearestArt = (node) => {
+    for (let p = node, i = 0; p && p !== document.body && i < 6; p = p.parentElement, i++) {
+      if (artKind(p)) return p;
+    }
+    return null;
+  };
+
+  /** 그림과 글씨가 같은 패널 안인가(공통 조상이 body/html 이면 서로 다른 전체화면 레이어). */
+  const samePanel = (art, textEl) => {
+    const up = new Set();
+    for (let p = art; p; p = p.parentElement) up.add(p);
+    for (let p = textEl; p; p = p.parentElement) {
+      if (up.has(p)) return p !== document.body && p !== document.documentElement;
+    }
+    return false;
+  };
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   const nodes = [];
   while (walker.nextNode()) {
@@ -223,6 +278,7 @@ const COLLECT = () => {
 
     const raw = [];
     const vis = [];
+    const artHits = new Map(); // 이 글씨를 덮은 그림 요소 → 덮은 표본 점 수
     for (const r of rects) {
       raw.push({ x: r.x, y: r.y, w: r.width, h: r.height });
       // 3x3 격자로 찍어 "맨 위에 있는 픽셀"의 비율을 센다. 절반 넘게 보이면 보이는 글자로 친다.
@@ -235,11 +291,25 @@ const COLLECT = () => {
           if (px < 0 || py < 0 || px > innerWidth || py > innerHeight) continue;
           tested++;
           const hit = document.elementFromPoint(px, py);
-          if (hit && (hit === el || el.contains(hit) || hit.contains(el))) shown++;
+          if (hit && (hit === el || el.contains(hit) || hit.contains(el))) {
+            shown++;
+            continue;
+          }
+          // 안 보이는 픽셀 · 무엇이 덮었나. 그림이면 버그, 남의 패널/글씨면 정상 오버레이다.
+          if (!hit) continue;
+          const art = nearestArt(hit);
+          if (!art || !samePanel(art, el)) continue;
+          const cls = typeof art.className === "string" && art.className ? art.className : art.tagName.toLowerCase();
+          const key = `${cls.slice(0, 30)}|${artKind(art)}`;
+          artHits.set(key, (artHits.get(key) ?? 0) + 1);
         }
       }
       if (tested > 0 && shown * 2 >= tested) vis.push({ x: r.x, y: r.y, w: r.width, h: r.height });
     }
+
+    // 가장 크게 덮은 그림 하나만 보고한다(한 글씨에 여러 조각이 걸리면 목록이 폭발한다).
+    let art = null;
+    for (const [key, n] of artHits) if (n >= 2 && (!art || n > art.pts)) art = { key, pts: n };
 
     out.push({
       id,
@@ -249,6 +319,7 @@ const COLLECT = () => {
       text: node.textContent.trim().replace(/\s+/g, " ").slice(0, 26),
       raw,
       vis,
+      art,
     });
   }
   return out;
@@ -263,7 +334,8 @@ function intersect(a, b) {
 async function checkScene(browser, scene) {
   const screen = SCREENS[scene.screen];
   const name = `${scene.viewport.width}x${scene.viewport.height} · ${screen.label}${scene.query ? " " + scene.query : ""}`;
-  const file = `${scene.screen}-${scene.viewport.width}${scene.query === "?watch" ? "-watch" : ""}`;
+  // 같은 화면을 여러 뷰포트에서 재므로 파일 이름에 높이까지 넣는다(안 넣으면 서로 덮어쓴다).
+  const file = `${scene.screen}-${scene.viewport.width}x${scene.viewport.height}${scene.query === "?watch" ? "-watch" : ""}`;
   const ctx = await browser.newContext({ viewport: scene.viewport });
   const page = await ctx.newPage();
   const errs = [];
@@ -330,7 +402,13 @@ async function checkScene(browser, scene) {
   for (const h of hits.slice(0, 8))
     problems.push(`겹침 ${h.area}px²  [${h.a.cls}|${h.a.text}]  ×  [${h.b.cls}|${h.b.text}]`);
 
-  // ② 화면 밖 이탈 · 스크롤 상자 안은 정상이라 뺀다. 가려진 글자도 "밖으로 나간" 건 잡아야 하므로
+  // ② 그림이 글씨를 덮음 · 같은 패널 안에서 그림 요소가 글씨 위에 얹힌 것만 센다(규칙은 COLLECT 주석).
+  //    ⚠ 이 글씨들은 ①에서는 안 보인다. 덮였으니 vis 가 비어 후보에서 빠진다. 바로 그 구멍을 메우는 항목이다.
+  for (const r of rects) {
+    if (r.art) problems.push(`가림 [${r.cls}|${r.text}] ← 그림 [${r.art.key}] ${r.art.pts}/9점`);
+  }
+
+  // ③ 화면 밖 이탈 · 스크롤 상자 안은 정상이라 뺀다. 가려진 글자도 "밖으로 나간" 건 잡아야 하므로
   //    보이는 것(vis)이 아니라 글자 사각형 전체(raw)로 잰다.
   for (const r of rects) {
     if (r.scrolled) continue;
@@ -348,7 +426,7 @@ async function checkScene(browser, scene) {
     }
   }
 
-  // ③ 가로 스크롤
+  // ④ 가로 스크롤
   if (doc.scrollW > doc.clientW + 1) problems.push(`가로 스크롤 ${doc.scrollW} > ${doc.clientW}`);
 
   await page.screenshot({ path: `${OUT}/${file}.png` });
