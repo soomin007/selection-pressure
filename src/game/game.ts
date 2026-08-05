@@ -794,8 +794,8 @@ export class Game {
   }
 
   private makeWorld(): World {
-    // 시대별 맵 크기 배관 · 매 시대 치수를 새로 계산한다. 지금은 mapScale 이 모든 시대에 같은 값(2.0)을
-    // 돌려줘 어떤 세계도 변하지 않는다(값이 시대별로 갈리는 것은 다음 단계에서).
+    // 시대별 맵 크기 · 매 시대 치수를 새로 계산한다(첫 시대 1.0 = 월드가 화면 그대로 → 무리도 보스도
+    // 화면 안. 시대가 오르면 1.4·1.7·2.0 으로 넓어진다). fixedMapScale 은 테스트 전용 고정.
     const s = this.fixedMapScale ?? mapScale(this.era);
     return new World(
       `${this.currentSeed}-env`,

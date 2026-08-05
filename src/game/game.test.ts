@@ -2,7 +2,8 @@
 // Game 은 순수 TS(Pixi 무관)라 headless 로 런을 끝까지 돌려 관찰할 수 있다.
 import { describe, it, expect } from "vitest";
 import { Game, type RunHistory, type Trial, type TrialVerdict } from "@/game/game";
-import { GAME, eraDifficulty, eraScarcity } from "@/game/config";
+import { GAME, eraDifficulty, eraScarcity, mapScale } from "@/game/config";
+import { MAP_SCALE } from "@/config";
 import { createBoss } from "@/sim/boss";
 import { CARD_POOL, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
 import { Rng } from "@/sim/rng";
@@ -633,3 +634,38 @@ describe("라운드 시험과 혈통의 불씨", () => {
   });
 });
 
+
+describe("시대별 맵 크기 (첫 판은 화면에 담긴다)", () => {
+  it("첫 시대 월드는 기준 화면 그대로다 — 미니맵이 저절로 꺼지는 조건", () => {
+    // main 은 화면(논리 해상도) 치수만 넘기고 Game 이 mapScale(era) 로 월드를 만든다.
+    // era 0 배율이 1 이라야 "월드 ≤ 화면"이 성립해 main 의 worldFitsScreen 이 미니맵을 거둔다.
+    expect(mapScale(0)).toBe(1);
+    const g = new Game(540, 960);
+    expect(g.width).toBe(540);
+    expect(g.height).toBe(960);
+    expect(g.areaScale).toBe(1); // 면적 배율은 늘 배율의 제곱
+  });
+
+  it("시대가 오를수록 넓어지고 좁아지는 일은 없다", () => {
+    for (let era = 1; era <= 8; era++) {
+      expect(mapScale(era)).toBeGreaterThanOrEqual(mapScale(era - 1));
+    }
+    expect(mapScale(3)).toBe(MAP_SCALE); // 시대 3 이상은 상한(src/config.ts 단일 근원)
+    expect(mapScale(99)).toBe(MAP_SCALE);
+  });
+
+  it("시대를 넘으면 그 시대 배율로 월드가 다시 만들어진다", () => {
+    const g = startRun("era-map-scale");
+    expect(g.width).toBe(240); // startRun 은 배율 1 고정(예전 소형 테스트 세계 보존)
+    const free = new Game(540, 960); // 고정 없이 = 실제 게임과 같은 길
+    free.fixedSeed = "era-map-scale";
+    free.beginRun();
+    free.pickCard(0);
+    expect(free.width).toBe(540);
+    free.result = "win";
+    free.continueToNextEra();
+    expect(free.era).toBe(1);
+    expect(free.width).toBe(Math.round(540 * mapScale(1)));
+    expect(free.areaScale).toBeCloseTo(mapScale(1) * mapScale(1), 6);
+  });
+});

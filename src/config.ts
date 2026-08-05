@@ -12,16 +12,19 @@ export interface Layout {
 export const MOBILE: Layout = { width: 540, height: 960, isDesktop: false };
 const DESKTOP: Layout = { width: 960, height: 600, isDesktop: true };
 
-// 맵 배율 — 월드를 화면(논리 해상도)의 이 배수만큼 크게. 소수 개체(한 무리)를 카메라가 따라가며
+// 맵 배율 상한 — 월드를 화면(논리 해상도)의 이 배수만큼 크게. 소수 개체(한 무리)를 카메라가 따라가며
 // 탐험하고, 바이옴(사막·빙하·우림)이 뚜렷한 구역으로 펼쳐지도록 넓게 잡는다.
+// ⚠ 이 값이 걸리는 것은 **시대 3 이상**이다. 첫 시대는 1.0(월드 = 화면), 그 사이는 1.4·1.7 로
+// 넓어진다 — 시대별 값은 mapScale(era)(src/game/config.ts) 한 곳에서만 정한다.
 // ⚠ **측정 도구의 단일 근원**: 실제 플레이 세계 치수는 여기서만 나온다. 게임 본편은 시대별 배율
 // mapScale(era)(src/game/config.ts)가 이 값을 파생해 쓰고, src/sim/boss.test.ts(격퇴 테스트) ·
 // scripts/balance-probe.mjs(밸런스 프로브)도 같은 근원에서 파생한다. 복사본을 만들면 맵 크기를 바꿀 때
 // 측정 도구가 존재하지 않는 세계를 재게 된다
 // (2026-08-04 격퇴율 72% 사고). src/sim/ 런타임은 이 모듈을 import 하지 않는다(화면 개념 없음).
 export const MAP_SCALE = 2.0;
-// 면적 배율 — 개체는 절대 수(소수)라 먹이 밀도·상한만 면적 비례로 키운다(areaScale).
-export const MAP_AREA_SCALE: number = MAP_SCALE * MAP_SCALE;
+// 면적 배율(areaScale)은 여기 두지 않는다 — 시대마다 다르기 때문이다. 늘 `mapScale(era)²` 로 파생한다
+// (Game.makeWorld · scripts/balance-probe.mjs · src/sim/boss.test.ts 가 전부 그렇게 쓴다).
+// 개체는 절대 수(소수)라 면적 배율은 먹이 밀도·이주량·스폰 퍼짐에만 걸린다.
 
 /**
  * 창 비율로 모바일/데스크톱 레이아웃을 고른다(가로로 넓으면 데스크톱).
