@@ -216,19 +216,11 @@ const WILD_ARCHETYPES: readonly Archetype[] = [
 ];
 
 /**
- * 첫 시대에 화면에 남는 야생종 이름 — 초식 하나·육식 하나뿐이다(회의 합의: "종은 특색 강한 두셋").
- * 첫 판부터 열 종이 넘게 뛰어다니면 무엇이 나를 잡아먹는지, 무엇이 내 먹이를 뺏는지 구분이 안 된다.
- *
- * ⚠ 여기 있는 이름은 WILD_ARCHETYPES 의 이름과 정확히 같아야 한다. 아키타입에서 종을 **지우지 않고**
- *   World 가 모든 스폰이 끝난 뒤 이 목록 밖의 개체만 걸러낸다 — 아키타입 하나가 메인 rng 7회라
- *   생성 자체를 건너뛰면 세계가 통째로 갈린다(개체 id 도 밀린다).
+ * 야생 아키타입의 이름들 — 세계를 좁힐 때 "무엇을 남길지"를 이름으로 지정하기 때문에 밖에서 대조할 수
+ * 있어야 한다(게임 층의 온보딩 진도표 `STEP_WILD_NAMES` 가 이 이름을 쓴다 · 어긋나면 세계가 조용히
+ * "내 종 혼자"가 되므로 테스트가 이 목록과 대조한다). sim 은 진도도 시대도 모른다 — 이름만 안다.
  */
-export const FIRST_ERA_WILD_NAMES: readonly string[] = ["초식 경쟁자", "포식자"];
-
-/** 첫 시대에 남는 종인가 — 내 종 + 위 둘. 친척·바이옴 특화종·맵 전용 종·챔피언은 전부 감춘다. */
-export function survivesFirstEra(sp: Species): boolean {
-  return sp.isPlayer || FIRST_ERA_WILD_NAMES.includes(sp.name);
-}
+export const WILD_ARCHETYPE_NAMES: readonly string[] = WILD_ARCHETYPES.map((a) => a.name);
 
 /** 형질 값을 0~100 자연수로 강제(반올림 + 범위 클램프). */
 const clampTrait = (v: number): number => {

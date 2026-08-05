@@ -13,7 +13,7 @@ import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { mapKind, type MapType } from "@/sim/mapType";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
-import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeMapSpecies, mapSpeciesHabitat, makeChampionSpecies, survivesFirstEra, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
+import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeMapSpecies, mapSpeciesHabitat, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
 import type { Biome } from "@/sim/environment";
 import { stepEntity, visionRadius, leadBiteTarget } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
@@ -99,6 +99,49 @@ export interface VisualEvent {
   ty?: number;
 }
 
+/**
+ * 세계를 좁히는 옵션 — **처음 겪는 판을 단순하게** 만드는 데 쓴다(게임 층의 온보딩 진도가 정한다).
+ *
+ * ⚠ **sim 은 "시대"도 "온보딩 진도"도 모른다.** 여기 오는 것은 game 이 이미 해석해 둔 값뿐이다
+ *   (world 의 `foodScarcity` 와 같은 구조 · 진도표는 game/config.ts 의 `stepWorldOptions`).
+ * ⚠ **아무것도 안 주면(빈 객체) 지금까지의 온전한 세계다.** 모든 기본값이 "예전 그대로"라야
+ *   기존 테스트·골든 지문이 산다 — 새 항목을 더할 때도 이 규칙을 지킬 것.
+ */
+export interface WorldOptions {
+  /**
+   * 세계에 남길 **야생종 이름 목록**. 생략 = 전부 남긴다. 내 종은 언제나 남는다.
+   * ⚠ 목록에 없는 종도 **생성·스폰을 그대로 다 한 뒤** 마지막에 개체만 걸러낸다 — 아키타입 하나가
+   *   메인 rng 7회라 생성을 건너뛰면 세계가 통째로 갈리고, 스폰을 건너뛰면 개체 id 가 밀린다.
+   */
+  keepWildNames?: readonly string[];
+  /**
+   * 우호 무리(친척 무리 · 챔피언)를 남기는가. 생략 = true(온전한 세계).
+   * false 면 초록 계열 무리가 내 종 하나뿐이라 "누가 내 편인지"를 나중에 배우게 된다.
+   */
+  kin?: boolean;
+  /**
+   * 기후를 평탄하게 못박아 맵 전체를 한 바이옴(초원)으로 만드는가. 생략 = false(시드로 뽑은 기후).
+   * 켜면 바이옴 특화종 3종과 바이옴 전용 먹이가 **기존 게이트로 저절로** 사라진다.
+   */
+  flatClimate?: boolean;
+  /**
+   * 사냥하는 야생 무리를 내 종에서 일정 거리에 옮기는가. 생략 = false(시드가 놓은 자리 그대로).
+   * 켜면 "시작하자마자 물림"도 "끝까지 못 봄"도 없어진다(rng 미사용 · 결과값만 평행이동).
+   */
+  spacedPredators?: boolean;
+}
+
+/**
+ * 이 종을 이번 세계에서 감추는가. 내 종은 절대 안 감춘다.
+ * 우호 무리(친척 · 챔피언 — 둘 다 `friendly`)는 `kin` 하나가 가르고, 나머지 야생은 이름 목록이 가른다.
+ * (챔피언은 애초에 game 이 진도 3 전에는 넘기지 않으므로 여기 걸릴 일이 거의 없다.)
+ */
+function isHidden(sp: Species, opt: WorldOptions): boolean {
+  if (sp.isPlayer) return false;
+  if (sp.friendly) return opt.kin === false;
+  return opt.keepWildNames !== undefined && !opt.keepWildNames.includes(sp.name);
+}
+
 export class World {
   readonly width: number;
   readonly height: number;
@@ -119,7 +162,7 @@ export class World {
   /** 이번 판의 세계 종류(대륙·판게아·군도·대양). 지형 파라미터와 먹이 배수를 정한다. */
   readonly mapType: MapType;
   /**
-   * 이번 세계에서 **감춘 종**의 id. 첫 시대(단순화 세계)에서만 비어 있지 않다.
+   * 이번 세계에서 **감춘 종**의 id. 좁힌 세계(온보딩 초반)에서만 비어 있지 않다.
    * 종을 만드는 것도, 스폰 추첨도 그대로 두고 **마지막에 개체만 걸러낸다** — 그래야 rng 소비·개체 id·
    * 남은 종의 스폰 좌표가 1비트도 안 밀린다. `species` 배열에는 감춘 종도 그대로 남는다(길이 불변).
    */
@@ -244,7 +287,7 @@ export class World {
     champions: ChampionSeed[] = [],
     mapType: MapType = "continent",
     foodScarcity = 1,
-    simplified = false,
+    options: WorldOptions = {},
   ) {
     this.width = width;
     this.height = height;
@@ -256,14 +299,14 @@ export class World {
     this.mutRng = new Rng(String(seed) + "-mut"); // 개체 변이 전용 독립 스트림(메인 rng 불변)
     this.genome = genome;
     // 환경(바이옴)도 지형처럼 "독립된 rng"로 생성 → 앞으로 환경을 손봐도 메인 sim 동역학 스트림과 무관.
-    // 단순화 세계(첫 시대)는 기후를 평탄하게 못박아 맵 전체가 초원 하나가 된다(spread 0 = 공간 변동 없음).
+    // 좁힌 세계는 기후를 평탄하게 못박아 맵 전체가 초원 하나가 된다(spread 0 = 공간 변동 없음).
     // 부수 효과로 바이옴 특화종 3종과 바이옴 전용 먹이가 기존 게이트로 저절로 사라진다.
     this.environment = Environment.generate(
       new Rng(String(seed) + "-env"),
       width,
       height,
       SIM.cellSize,
-      simplified ? { tempBase: 0.5, moistBase: 0.35, spread: 0 } : {},
+      options.flatClimate === true ? { tempBase: 0.5, moistBase: 0.35, spread: 0 } : {},
     );
     // 지형은 메인 rng 와 "독립된 rng"로 생성 → 기존 sim 동역학(결정론·밸런스)을 1비트도 안 건드린다.
     // 맵 종류가 지형 파라미터를 덮어쓴다(대륙 = 빈 덮어쓰기 = 기존과 동일).
@@ -300,9 +343,10 @@ export class World {
     this.species = [this.playerSpecies, kin, ...wild, ...biomeSpecies, ...mapSpecies, ...championSpecies];
     // 감출 종을 **여기서 정해 두기만** 한다(배열에서 빼지 않는다 · 스폰도 건너뛰지 않는다).
     // 실제로 빼는 것은 모든 스폰이 끝난 뒤 딱 한 번(아래 grid.rebuild 직전)이다.
-    this.hiddenSpeciesIds = simplified
-      ? new Set(this.species.filter((s) => !survivesFirstEra(s)).map((s) => s.id))
-      : new Set<number>();
+    // 옵션을 안 주면 감추는 종이 하나도 없다 = 지금까지의 온전한 세계.
+    this.hiddenSpeciesIds = new Set(
+      this.species.filter((s) => isHidden(s, options)).map((s) => s.id),
+    );
     this.spawnFood();
     this.spawnEntities();
     // 친척은 spawnEntities(메인 rng) 대신 "독립 rng"로 내 종 근처에 스폰 → 메인 소비 순서 보존(밸런스 불변).
@@ -321,12 +365,13 @@ export class World {
     this.spawnMapAnimals(new Rng(String(seed) + "-mappos"), mapSpecies);
     // 챔피언(비동기 생물)도 독립 rng 로 소수만, 친척처럼 맵의 독립 영역에 — 메인 스트림·밸런스 불변.
     this.spawnChampions(new Rng(String(seed) + "-champpos"));
-    // ── 첫 시대 단순화: 감추기와 자리 잡기는 **모든 스폰이 끝난 이 자리에서만** 한다 ──
+    // ── 세계 좁히기: 감추기와 자리 잡기는 **모든 스폰이 끝난 이 자리에서만** 한다 ──
     // 위쪽을 하나도 안 건드리므로 rng 소비·nextId·먹이 좌표·남은 종의 스폰 좌표가 1비트도 안 밀린다.
     if (this.hiddenSpeciesIds.size > 0) {
       this.entities = this.entities.filter((e) => !this.hiddenSpeciesIds.has(e.species.id));
-      this.placeFirstPredators();
     }
+    // 포식자 자리 잡기는 **감추기 뒤**에 — 감춘 사냥 무리까지 평균에 넣으면 엉뚱한 자리로 옮겨진다.
+    if (options.spacedPredators === true) this.spaceOutPredators();
     this.grid.rebuild(this.entities);
     // 먹이 위치는 불변이라 격자를 한 번만 빌드한다(available 토글은 탐색 시 거른다).
     this.foodGrid = new FoodGrid(width, height, SIM.gridCellSize);
@@ -823,7 +868,7 @@ export class World {
     for (const e of this.entities) counts.set(e.species.id, (counts.get(e.species.id) ?? 0) + 1);
     for (const sp of this.species) {
       // 친척·바이옴 특화종은 이주로 보충 안 함(친척=내 편, 바이옴종=제 바이옴에서만 산다 — 멸종하면 사라짐).
-      // 감춘 종(첫 시대)도 마찬가지다 — 안 막으면 걸러낸 종이 10초마다 이주로 되살아난다.
+      // 감춘 종(좁힌 세계)도 마찬가지다 — 안 막으면 걸러낸 종이 10초마다 이주로 되살아난다.
       if (sp.isPlayer || sp.friendly || sp.homeBiome || this.hiddenSpeciesIds.has(sp.id)) continue;
       if ((counts.get(sp.id) ?? 0) >= floor) continue;
       const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
@@ -904,16 +949,16 @@ export class World {
   }
 
   /**
-   * 첫 시대에만: 사냥하는 야생 무리를 내 종에서 **일정 거리**에 옮겨 둔다.
+   * (옵션 `spacedPredators`) 사냥하는 야생 무리를 내 종에서 **일정 거리**에 옮겨 둔다.
    *
    * 왜: 실측에서 내 종과 가장 가까운 포식자까지의 거리가 시드에 따라 32px~1090px(34배)로 갈렸다.
    * 어떤 판은 시작하자마자 물리고 어떤 판은 끝까지 포식자를 못 본다 — 그건 난이도가 아니라 운이고,
-   * "포식자가 있는 세계"라는 첫 판의 배울 거리가 시드 절반에서 통째로 사라진다.
+   * "포식자가 있는 세계"라는 배울 거리가 시드 절반에서 통째로 사라진다.
    *
    * ⚠ rng 를 한 번도 안 쓴다. 보금자리 추첨은 그대로 두고 **결과값만 평행이동**한다
    *   (물 전용 내 종을 큰 바다로 스냅하는 기존 처리와 같은 안전한 형태).
    */
-  private placeFirstPredators(): void {
+  private spaceOutPredators(): void {
     // 맵 짧은 변 대비 거리 — 이 띠 안이면 그대로 두고, 벗어난 판만 가운데 값으로 옮긴다.
     const NEAR = 0.3;
     const FAR = 0.4;

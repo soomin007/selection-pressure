@@ -2,6 +2,7 @@
 // (참고: Everything is Crab ≈ 20분/보스3 → 모바일 호흡에 맞게 축소)
 
 import { MAP_SCALE } from "@/config";
+import type { WorldOptions } from "@/sim/world";
 
 export const GAME = {
   roundSeconds: 16, // 채집 라운드 길이(초) — 통과 기준 없어 짧혀도 밸런스 영향 없음
@@ -87,26 +88,124 @@ export function eraScarcity(era: number): number {
   return Math.pow(1 + GAME.eraScarcityStep, Math.max(0, era));
 }
 
+// ─────────────────────────────── 온보딩 진도(step) ───────────────────────────────
+//
+// **세계의 복잡도를 시대가 아니라 "플레이어가 이 게임을 얼마나 겪었는가"로 연다.**
+// 예전에는 era 0 이면 무조건 좁은 세계였다 — 그건 백 판을 한 사람에게도 매 런 첫 시대를 유아용으로
+// 만들어 시대 하나를 통째로 버리게 했다(2026-08-05 사용자 지적). 진도는 런을 거듭할수록만 오르고,
+// 한 번 오르면 내려가지 않는다.
+//
+//   step = min(3, 끝낸 런 수 + 지금 시대)
+//
+//   첫 런  : 시대 0=step 0 · 1=step 1 · 2=step 2 · 3+=step 3
+//   두 번째: 시대 0 부터 step 1
+//   세 번째: 시대 0 부터 step 2
+//   네 번째부터: 늘 step 3 = 지금까지의 온전한 세계(단순화가 완전히 사라진다)
+//
+// 한 단계에 한 가지씩만 늘어야 절벽이 안 생긴다:
+//   step 0  종 셋(내 종·초식 경쟁자·포식자) · 평평한 초원 · 맵 1.0 · 시험 없음 · 친척 없음 · 챔피언 없음
+//   step 1  + 시험(불씨) · 먹이 3종을 나눠 먹는 경쟁자 둘 (지형은 아직 평평 · 맵 1.4)
+//   step 2  + 지형·바이옴(뽑힌 세계 · 산·험지·수풀) · 그 삶터의 종들 · 친척 무리 (맵 1.7)
+//   step 3  + 예전의 나(챔피언) · 맵 2.0 = 온보딩 이전의 세계 그대로
+
+/** 온보딩 진도의 상한 · 여기 닿으면 단순화가 하나도 남지 않는다(= 지금까지의 온전한 세계). */
+export const ONBOARDING_MAX_STEP = 3;
+
 /**
- * 시대(era)별 맵 크기 배율 · 월드 치수 = 기준 화면 치수(논리 해상도) × 이 값. Game.makeWorld 가
- * 매 시대 이 함수로 치수를 새로 계산한다(회의 합의 2 "맵이 시대마다 넓어진다"의 배관).
+ * 온보딩 진도 — 끝낸 런 수와 지금 시대를 더해 상한에서 자른다. game 이 세계를 만들 때마다 부른다.
+ * 순수 함수(저장소·시드·rng 와 무관)라 테스트로 계약을 못박기 쉽다.
+ */
+export function onboardingStep(runsCompleted: number, era: number): number {
+  const runs = Math.max(0, Math.trunc(runsCompleted));
+  const e = Math.max(0, Math.trunc(era));
+  return Math.min(ONBOARDING_MAX_STEP, runs + e);
+}
+
+/**
+ * 진도별 맵 크기 배율 · 월드 치수 = 기준 화면 치수(논리 해상도) × 이 값. Game.makeWorld 가
+ * 세계를 만들 때마다 이 함수로 치수를 계산한다.
  * 단일 근원은 src/config.ts 의 MAP_SCALE 이고 이 함수는 그 상한(넓어질 대로 넓어진 세계)을
- * 시대에 따라 파생만 한다 (두 개의 진실 금지 · 2026-08-04 격퇴율 72% 사고).
+ * 진도에 따라 파생만 한다 (두 개의 진실 금지 · 2026-08-04 격퇴율 72% 사고).
  *
- * **첫 시대(era 0)는 1.0 = 월드가 화면 그대로다.** 지금까지는 전 시대가 2.0 이라 화면에 보이는 범위가
+ * **진도 0 은 1.0 = 월드가 화면 그대로다.** 예전엔 전 시대가 2.0 이라 화면에 보이는 범위가
  * 월드의 정확히 1/4 이었고, 그래서 내 무리도 보스도 늘 화면 밖이었다(실측: 보스전 20표본 중 격퇴
- * 체력 바가 화면에 잡힌 것 0회). 첫 판은 "지금 무슨 일이 일어나는지"가 화면 안에서 다 보여야 한다.
- * 시대가 오르면 넓어져(1.4 · 1.7 · 2.0) 탐험과 미니맵이 그때 의미를 갖는다.
+ * 체력 바가 화면에 잡힌 것 0회). 처음 겪는 판은 "지금 무슨 일이 일어나는지"가 화면 안에서 다 보여야 한다.
+ * 진도가 오르면 넓어져(1.4 · 1.7 · 2.0) 탐험과 미니맵이 그때 의미를 갖는다.
+ * ⚠ **era 가 아니라 step 을 넣어라.** era 를 넣으면 숙련자도 매 런 첫 시대가 좁아진다(고친 결함이 그것이다).
  *
  * ⚠ 면적 배율(areaScale = 이 값의 제곱)이 먹이 수·이주량·스폰 퍼짐을 함께 움직인다 · 개체 수만
  *   절대값이라 맵이 좁아지면 **밀도가 오른다**. 값을 만질 때는 반드시 프로브(`npm run probe -- era0`)로
  *   단계별 개체 수와 사망 원인 분포를 다시 재라.
  */
-export function mapScale(era: number): number {
-  if (era <= 0) return 1.0; // 첫 시대 · 월드 = 화면 (모든 것이 한 화면에 담긴다)
-  if (era === 1) return 1.4;
-  if (era === 2) return 1.7;
-  return MAP_SCALE; // 시대 3 이상 · 넓어질 대로 넓어진 세계(2.0)
+export function mapScale(step: number): number {
+  if (step <= 0) return 1.0; // 처음 겪는 판 · 월드 = 화면 (모든 것이 한 화면에 담긴다)
+  if (step === 1) return 1.4;
+  if (step === 2) return 1.7;
+  return MAP_SCALE; // 진도 3 · 넓어질 대로 넓어진 세계(2.0)
+}
+
+/** 이 진도에 라운드 시험(불씨)이 있는가 — 진도 1 부터. 이 하나가 판정·불씨·목표 줄·예고를 함께 켠다. */
+export function stepHasTrial(step: number): boolean {
+  return step >= 1;
+}
+
+/** 이 진도에 지난 런의 챔피언(예전의 나)이 등장하는가 — 마지막 진도에서만. */
+export function stepHasChampions(step: number): boolean {
+  return step >= ONBOARDING_MAX_STEP;
+}
+
+/**
+ * 이 진도가 **이번 런에 뽑힌 세계**(대륙·판게아·군도·대양)를 쓰는가. 진도 0~1 은 지형이 읽을 것 없이
+ * 평평한 전용 세계(「초원」)를 쓴다 — 산·험지·수풀이 한 칸도 없다.
+ */
+export function stepUsesDrawnMap(step: number): boolean {
+  return step >= 2;
+}
+
+/**
+ * 진도별로 세계에 남기는 야생종 이름. `undefined` = 전부 남긴다(온전한 세계).
+ * **앞 단계의 목록을 반드시 포함한다**(종이 줄어드는 구간이 없어야 한다 · 테스트로 못박음).
+ * ⚠ 이름은 `WILD_ARCHETYPES`(sim/species.ts)의 이름과 정확히 같아야 한다. 아키타입에서 종을 지우거나
+ *   스폰을 건너뛰는 게 아니라 **다 만들고 마지막에 개체만 걸러낸다**(rng 소비·개체 id 보존).
+ *   이름이 어긋나면 세계가 조용히 "내 종 혼자"가 되므로 game.test 가 아키타입 이름과 대조한다.
+ */
+const STEP_WILD_NAMES: readonly (readonly string[] | undefined)[] = [
+  // 진도 0 — 관계 둘만 배운다: 내 먹이를 뺏는 자 · 나를 잡아먹는 자.
+  ["초식 경쟁자", "포식자"],
+  // 진도 1 — 먹이가 세 종류로 나뉘고 각 종류마다 전문 경쟁자가 있다는 것이 보인다.
+  ["초식 경쟁자", "들풀 무리", "작은 풀벌레", "포식자"],
+  // 진도 2~3 — 전부. 지형·바이옴이 열리므로 그 삶터의 종(바다·산·사막·설원·우림)도 함께 나온다.
+  undefined,
+  undefined,
+];
+
+/**
+ * 진도 → World 생성 옵션. **sim 은 진도도 시대도 모른다** — game 이 여기서 해석한 값만 넘긴다
+ * (world.ts 의 foodScarcity 와 같은 구조). 진도 3 은 빈 옵션 = 지금까지의 온전한 세계다.
+ */
+export function stepWorldOptions(step: number): WorldOptions {
+  const s = Math.max(0, Math.min(ONBOARDING_MAX_STEP, Math.trunc(step)));
+  const keep = STEP_WILD_NAMES[s];
+  const opt: WorldOptions = {};
+  if (keep !== undefined) opt.keepWildNames = keep;
+  if (s < 2) {
+    opt.kin = false; // 친척 무리는 지형·바이옴과 함께 열린다(그 전에는 초록 무리가 둘이라 헷갈린다)
+    opt.flatClimate = true; // 맵 전체가 초원 하나 — 바이옴 특화종과 바이옴 먹이가 기존 게이트로 저절로 빠진다
+    opt.spacedPredators = true; // 포식자와의 첫 만남이 시드 운에 안 걸리게 일정 거리에 둔다
+  }
+  return opt;
+}
+
+/**
+ * 이 진도에서 **새로 열린 것** 한 줄. 시대 보상 드래프트(시대를 넘은 직후 반드시 지나는 화면)의
+ * 안내에 실어, 무엇이 늘었는지 화면 안에서 알아채게 한다(대백과에 기대지 않는다).
+ * 진도가 안 올랐으면 빈 문자열이다. 과설명 금지 · 한 줄.
+ */
+export function onboardingOpenedLine(step: number): string {
+  if (step === 1) return "이번 시대부터 라운드마다 시험이 하나 걸립니다. 못 채우면 불씨가 하나 꺼집니다.";
+  if (step === 2) return "이번 시대부터 땅이 다양해집니다. 산과 험한 곳, 수풀이 생기고 그곳에 사는 종들이 나타납니다.";
+  if (step === 3) return "이번 시대부터 세계가 온전히 열립니다. 넓어진 땅에 예전에 기르던 종까지 돌아옵니다.";
+  return "";
 }
 
 // 한 런의 라운드 계획. 각 단계 앞에는 드래프트가 붙는다.

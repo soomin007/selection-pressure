@@ -61,6 +61,14 @@ export function saveChampion(c: Champion): void {
 export interface MetaState {
   metaXp: number; // 누적 메타 경험치(런마다 적립) — 플레이어 레벨의 원천
   conquered: boolean; // 시대 상한(정복) 달성 여부(표시용)
+  /**
+   * **끝낸 런 수** — 멸종·불씨 소진으로 지거나 정복해서 한 판이 온전히 끝난 횟수(중간 시대 승리는 안 센다).
+   * 온보딩 진도(`onboardingStep`, game/config.ts)의 재료다: "이 사람이 이 게임을 얼마나 겪었는가"를
+   * 시대가 아니라 이 값으로 잰다. 메타 경험치(레벨)는 잘 한 판일수록 크게 오르지만, 온보딩은
+   * **잘했는가가 아니라 겪었는가**를 물어야 해서 별도의 세는 값이 필요하다.
+   * 옛 저장본에는 이 칸이 없다 → 0 으로 읽는다(그 사람도 처음부터 한 단계씩 열린다. 한 판이면 따라잡는다).
+   */
+  runsCompleted: number;
 }
 
 // 메타 레벨 곡선 — 레벨 L→L+1 에 드는 경험치. 초반은 싸서 첫 런에도 여러 번 오른다("탕탕탕"). 뒤로 갈수록 늘어난다.
@@ -148,12 +156,18 @@ function readState(): MetaState {
     const raw = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
     if (raw) {
       const p = JSON.parse(raw) as Partial<MetaState>;
-      return { metaXp: Math.max(0, Math.floor(p.metaXp ?? 0)), conquered: !!p.conquered };
+      return {
+        metaXp: Math.max(0, Math.floor(p.metaXp ?? 0)),
+        conquered: !!p.conquered,
+        // 옛 저장본(이 칸이 없던 시절)은 0 으로 시작한다 — 마이그레이션 단계가 따로 필요 없다.
+        runsCompleted: Math.max(0, Math.floor(p.runsCompleted ?? 0)),
+      };
     }
   } catch {
     // 파싱/접근 실패(사생활 모드 등) → 첫 플레이로 취급
   }
-  return { metaXp: 0, conquered: false };
+  // localStorage 가 없는 곳(테스트·프로브·사생활 모드)에서는 늘 이 기본값 = 첫 플레이. 조용히 넘어간다.
+  return { metaXp: 0, conquered: false, runsCompleted: 0 };
 }
 
 function writeState(s: MetaState): void {
@@ -196,7 +210,12 @@ export interface RunProgress {
   levelUps: { level: number; unlocks: UnlockTier[] }[];
 }
 
-/** 런 완료 기록 — 성적만큼 메타 경험치 적립 + 정복 갱신. 진척도(경험치·레벨·레벨별 해금)를 반환(종료 화면용). */
+/**
+ * 런 완료 기록 — 성적만큼 메타 경험치 적립 + 정복 갱신 + **끝낸 런 수 +1**.
+ * 진척도(경험치·레벨·레벨별 해금)를 반환(종료 화면용).
+ * ⚠ 부르는 곳은 런이 진짜 끝났을 때 하나뿐이다(game.endRun 의 runOver) — 중간 시대 승리는 이어지므로
+ *   안 부른다. 그래서 runsCompleted 는 "한 판을 끝까지 겪은 횟수"가 된다.
+ */
 export function recordRunComplete(inRunLevel: number, era: number, conquered: boolean): RunProgress {
   const s = readState();
   const beforeXp = s.metaXp;
@@ -204,6 +223,7 @@ export function recordRunComplete(inRunLevel: number, era: number, conquered: bo
   const gained = runMetaXp(inRunLevel, era, conquered);
   s.metaXp = beforeXp + gained;
   if (conquered) s.conquered = true;
+  s.runsCompleted += 1; // 온보딩 진도의 재료 — 이겼든 졌든 "한 판을 겪었다"를 센다
   writeState(s);
   const afterLevel = metaLevel(s.metaXp);
   const levelUps: { level: number; unlocks: UnlockTier[] }[] = [];

@@ -2,11 +2,11 @@ import { describe, it, expect } from "vitest";
 import { World, adaptWildTraits, type WildPressure } from "@/sim/world";
 import { SIM } from "@/sim/params";
 import { TILE } from "@/sim/terrain";
-import { GAME } from "@/game/config";
+import { GAME, ONBOARDING_MAX_STEP, mapScale, stepUsesDrawnMap, stepWorldOptions } from "@/game/config";
 import { createBoss } from "@/sim/boss";
 import { cloneGenome, defaultGenome, mutateGenome, randomGenome, type Genome } from "@/sim/genome";
 import { nightVisionFactor, makeFovTest, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome, grazeEfficiency, huntEfficiency, huntSprintFactor, carnivory01, gorgeFactor, maxEnergyFor, packShareGain, packHerdFactor, herdShieldedBy, isApex, sizeDev, sizeSpeedFactor, sizeDrainFactor, sizeFertilityFactor, effectiveCamo, camoVisionFactor } from "@/sim/behavior";
-import { areFriends, generateWildSpecies, FIRST_ERA_WILD_NAMES, BIOME_FOOD_KIND, type Species } from "@/sim/species";
+import { areFriends, generateWildSpecies, WILD_ARCHETYPE_NAMES, BIOME_FOOD_KIND, type Species } from "@/sim/species";
 import { FIRST_ERA_MAP } from "@/sim/mapType";
 import { createEntity, type Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
@@ -1384,82 +1384,153 @@ describe("레이드 관측값의 매 틱 리셋 (화면이 읽는 숫자는 한 
   });
 });
 
-describe("첫 시대 단순화 세계 (생성은 그대로 · 마지막에 걸러내기)", () => {
+describe("온보딩 진도별 세계 (생성은 그대로 · 마지막에 걸러내기)", () => {
   const G = defaultGenome();
-  /** 첫 시대 세계 — 「초원」 맵 + simplified=true. 게임 층(Game.makeWorld)이 era 0 에 주는 것과 같은 인자. */
-  const first = (seed: string): World => new World(seed, W, H, G, 1, [], FIRST_ERA_MAP, 1, true);
-  /** 지금까지의 기본 세계(대륙) — 아무것도 안 바뀌었음을 나란히 확인하는 대조군. */
-  const plain = (seed: string): World => new World(seed, W, H, G);
+  /**
+   * 진도 step 의 세계 — **게임 층(Game.makeWorld)이 그 진도에 주는 것과 같은 인자**로 만든다.
+   * 맵 크기만 여기선 고정(W,H)이다: 종·지형·기후 계약을 재는 테스트라 치수는 따로 검사한다.
+   */
+  const worldAt = (step: number, seed: string): World =>
+    new World(
+      seed,
+      W,
+      H,
+      G,
+      1,
+      [],
+      stepUsesDrawnMap(step) ? "continent" : FIRST_ERA_MAP,
+      1,
+      stepWorldOptions(step),
+    );
+  /** 이 세계에 실제로 살아 있는 종 이름들. */
+  const aliveNames = (w: World): Set<string> => new Set(w.entities.map((e) => e.species.name));
 
-  it("첫 시대에 남길 야생종 이름이 실제 아키타입에 있다(아키타입 이름을 바꾸면 여기서 걸린다)", () => {
-    // 이름으로 거르므로 아키타입 이름이 바뀌면 첫 시대가 조용히 "내 종 혼자"가 된다 — 그 사고를 막는다.
-    const names = generateWildSpecies(new Rng("fe-names")).map((s) => s.name);
-    for (const n of FIRST_ERA_WILD_NAMES) expect(names).toContain(n);
+  it("진도표가 부르는 야생종 이름이 실제 아키타입에 있다(아키타입 이름을 바꾸면 여기서 걸린다)", () => {
+    // 이름으로 거르므로 아키타입 이름이 바뀌면 좁힌 세계가 조용히 "내 종 혼자"가 된다 — 그 사고를 막는다.
+    const names = generateWildSpecies(new Rng("st-names")).map((s) => s.name);
+    expect(names).toEqual([...WILD_ARCHETYPE_NAMES]);
+    for (let step = 0; step <= ONBOARDING_MAX_STEP; step++) {
+      for (const n of stepWorldOptions(step).keepWildNames ?? []) expect(names).toContain(n);
+    }
   });
 
-  it("종 배열 길이는 그대로 13이고, 실제로 사는 종만 셋으로 줄어든다", () => {
-    const w = first("fe-1");
+  it("진도 0 — 종 셋만 산다(종 배열 길이는 그대로 13)", () => {
+    const w = worldAt(0, "st0-1");
     // 종을 만드는 것도 스폰 추첨도 그대로다 — 마지막에 개체만 걸러낸다(rng·id 보존).
     expect(w.species.length).toBe(13);
     expect(w.hiddenSpeciesIds.size).toBe(10);
-    const alive = new Set(w.entities.map((e) => e.species.name));
-    expect([...alive].sort()).toEqual(["내 종", "초식 경쟁자", "포식자"].sort());
+    expect([...aliveNames(w)].sort()).toEqual(["내 종", "초식 경쟁자", "포식자"].sort());
+  });
+
+  it("진도 1 — 먹이 세 종류를 나눠 먹는 경쟁자가 보인다(친척은 아직 없다)", () => {
+    const w = worldAt(1, "st1-1");
+    expect([...aliveNames(w)].sort()).toEqual(
+      ["내 종", "초식 경쟁자", "들풀 무리", "작은 풀벌레", "포식자"].sort(),
+    );
+    expect(w.entities.some((e) => e.species.friendly)).toBe(false);
+  });
+
+  it("진도 2 — 친척 무리가 함께 살고 감추는 종이 하나도 없다", () => {
+    const w = worldAt(2, "st2-1");
+    expect(w.hiddenSpeciesIds.size).toBe(0);
+    expect(w.entities.some((e) => e.species.name === "친척 무리")).toBe(true);
+  });
+
+  it("진도가 오를 때 사는 종 수가 줄어드는 구간이 없다(단조 증가)", () => {
+    for (const seed of ["st-mono-1", "st-mono-2", "st-mono-3"]) {
+      const counts: number[] = [];
+      for (let step = 0; step <= ONBOARDING_MAX_STEP; step++) {
+        counts.push(aliveNames(worldAt(step, seed)).size);
+      }
+      for (let i = 1; i < counts.length; i++) {
+        expect(counts[i]).toBeGreaterThanOrEqual(counts[i - 1] as number);
+      }
+      expect(counts[0]).toBe(3); // 시작은 늘 셋
+      expect(counts[ONBOARDING_MAX_STEP]).toBeGreaterThan(3);
+    }
   });
 
   it("감춘 종은 이주로도 되살아나지 않는다(10초마다 보충되던 자리)", () => {
-    const w = first("fe-immigrate");
+    const w = worldAt(0, "st-immigrate");
     for (let i = 0; i < SIM.immigrationInterval * 12; i++) w.step();
     for (const e of w.entities) expect(w.hiddenSpeciesIds.has(e.species.id)).toBe(false);
   });
 
-  it("지형이 평평하다 — 산·험지·수풀이 시드와 무관하게 0칸, 물은 작은 호수만", () => {
-    for (const seed of ["fe-t1", "fe-t2", "fe-t3"]) {
-      const t = first(seed).terrain;
+  it("진도 0~1 은 지형이 평평하다 — 산·험지·수풀이 시드와 무관하게 0칸, 물은 작은 호수만", () => {
+    for (const step of [0, 1]) {
+      for (const seed of ["st-t1", "st-t2", "st-t3"]) {
+        const t = worldAt(step, seed).terrain;
+        const count = (k: number): number => t.tiles.filter((x) => x === k).length;
+        expect(count(TILE.mountain)).toBe(0);
+        expect(count(TILE.rough)).toBe(0);
+        expect(count(TILE.grass)).toBe(0);
+        const sea = count(TILE.water) / t.tiles.length;
+        expect(sea).toBeGreaterThan(0.03);
+        expect(sea).toBeLessThan(0.1);
+      }
+    }
+  });
+
+  it("진도 2 부터 지형이 열린다 — 산·험지·수풀이 실제로 생긴다", () => {
+    for (const step of [2, ONBOARDING_MAX_STEP]) {
+      const t = worldAt(step, "st-terrain-open").terrain;
       const count = (k: number): number => t.tiles.filter((x) => x === k).length;
-      expect(count(TILE.mountain)).toBe(0);
-      expect(count(TILE.rough)).toBe(0);
-      expect(count(TILE.grass)).toBe(0);
-      const sea = count(TILE.water) / t.tiles.length;
-      expect(sea).toBeGreaterThan(0.03);
-      expect(sea).toBeLessThan(0.1);
+      expect(count(TILE.mountain)).toBeGreaterThan(0);
+      expect(count(TILE.rough)).toBeGreaterThan(0);
+      expect(count(TILE.grass)).toBeGreaterThan(0);
     }
   });
 
-  it("바이옴이 하나(초원)뿐이라 사막·빙하·우림이 안 섞인다", () => {
-    for (const seed of ["fe-b1", "fe-b2"]) {
-      const w = first(seed);
-      expect(new Set(w.environment.biome)).toEqual(new Set(["grassland"]));
-      // 바이옴 전용 먹이는 그 바이옴이 없으면 안 놓인다(기존 게이트가 저절로 처리).
-      expect(w.food.some((f) => f.kind === BIOME_FOOD_KIND)).toBe(false);
+  it("진도 0~1 은 바이옴이 하나(초원)라 사막·빙하·우림이 안 섞인다", () => {
+    for (const step of [0, 1]) {
+      for (const seed of ["st-b1", "st-b2"]) {
+        const w = worldAt(step, seed);
+        expect(new Set(w.environment.biome)).toEqual(new Set(["grassland"]));
+        // 바이옴 전용 먹이는 그 바이옴이 없으면 안 놓인다(기존 게이트가 저절로 처리).
+        expect(w.food.some((f) => f.kind === BIOME_FOOD_KIND)).toBe(false);
+      }
     }
   });
 
-  it("포식자가 시드와 무관하게 일정 거리대에서 시작한다(만남이 운에 안 걸리게)", () => {
+  it("진도 2 부터 기후가 갈려 바이옴이 여럿이 된다", () => {
+    const kinds = new Set<string>();
+    for (const seed of ["st-b3", "st-b4", "st-b5"]) {
+      for (const b of worldAt(2, seed).environment.biome) kinds.add(b);
+    }
+    expect(kinds.size).toBeGreaterThan(1);
+  });
+
+  it("진도 0~1 은 포식자가 시드와 무관하게 일정 거리대에서 시작한다(만남이 운에 안 걸리게)", () => {
     const side = Math.min(W, H);
-    for (let s = 0; s < 12; s++) {
-      const w = first(`fe-pred-${s}`);
-      const mine = w.entities.filter((e) => e.species.isPlayer);
-      const pred = w.entities.filter((e) => e.species.name === "포식자");
-      expect(pred.length).toBeGreaterThan(0);
-      const c = w.playerCentroid();
-      let nearest = Infinity;
-      for (const p of pred) nearest = Math.min(nearest, Math.hypot(p.x - c.x, p.y - c.y));
-      expect(mine.length).toBeGreaterThan(0);
-      // 무리 퍼짐(spawnSpread)과 통행 타일 스냅 때문에 정확히 0.35 는 아니지만, 예전처럼 32px~1090px
-      // (34배)로 갈리지는 않는다 — "시작하자마자 물림"도 "끝까지 못 봄"도 없어야 한다.
-      expect(nearest).toBeGreaterThan(0.15 * side);
-      expect(nearest).toBeLessThan(0.6 * side);
+    for (const step of [0, 1]) {
+      for (let s = 0; s < 8; s++) {
+        const w = worldAt(step, `st-pred-${s}`);
+        const mine = w.entities.filter((e) => e.species.isPlayer);
+        const pred = w.entities.filter((e) => e.species.name === "포식자");
+        expect(pred.length).toBeGreaterThan(0);
+        const c = w.playerCentroid();
+        let nearest = Infinity;
+        for (const p of pred) nearest = Math.min(nearest, Math.hypot(p.x - c.x, p.y - c.y));
+        expect(mine.length).toBeGreaterThan(0);
+        // 무리 퍼짐(spawnSpread)과 통행 타일 스냅 때문에 정확히 0.35 는 아니지만, 예전처럼 32px~1090px
+        // (34배)로 갈리지는 않는다 — "시작하자마자 물림"도 "끝까지 못 봄"도 없어야 한다.
+        expect(nearest).toBeGreaterThan(0.15 * side);
+        expect(nearest).toBeLessThan(0.6 * side);
+      }
     }
   });
 
-  it("기본 세계(era 1+)는 1비트도 안 변한다 — 새 인자의 기본값이 지금 세계다", () => {
-    // 단순화 인자를 안 주면 예전과 완전히 같은 세계여야 한다(골든 지문의 근거).
+  it("마지막 진도 = 온보딩 도입 이전의 세계 그대로(옵션을 안 준 것과 1비트도 안 다르다)", () => {
+    // 골든 지문(lead.test.ts)이 초록인 근거가 여기다 — 새 인자의 기본값이 곧 지금까지의 세계다.
     const fp = (w: World): string =>
       w.entities.map((e) => `${e.id}:${e.species.id}:${e.x.toFixed(3)},${e.y.toFixed(3)}`).join("|");
-    const a = plain("fe-baseline");
-    const b = new World("fe-baseline", W, H, G, 1, [], "continent", 1, false);
-    expect(fp(a)).toBe(fp(b));
-    expect(a.hiddenSpeciesIds.size).toBe(0);
-    expect(a.species.length).toBe(13);
+    const plain = new World("st-baseline", W, H, G); // 옵션 없음 = 예전 그대로
+    const last = worldAt(ONBOARDING_MAX_STEP, "st-baseline");
+    expect(fp(last)).toBe(fp(plain));
+    expect(stepWorldOptions(ONBOARDING_MAX_STEP)).toEqual({}); // 남은 단순화가 하나도 없다
+    expect(plain.hiddenSpeciesIds.size).toBe(0);
+    expect(plain.species.length).toBe(13);
+    expect(stepUsesDrawnMap(ONBOARDING_MAX_STEP)).toBe(true); // 세계 종류도 이 런에 뽑힌 것
+    expect(mapScale(ONBOARDING_MAX_STEP)).toBe(2.0); // 맵 배율도 상한
   });
 });

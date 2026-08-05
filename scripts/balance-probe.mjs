@@ -25,12 +25,14 @@
 //   npm run probe -- sweep        공격력 스윕 x 약탈자
 //   npm run probe -- era0         첫 시대 한 판 전체(실제 일정) · 단계별 개체 수 + 사망 원인 전 항목
 //   npm run probe -- encounter    내 종과 가장 가까운 포식자의 초기 거리 · 첫 감지 시각
-//   옵션: --seeds=6 --presets=omni,herd --boss=raider --era=0 --cards=first|skip
+//   npm run probe -- steps        온보딩 진도 0~3 의 세계를 나란히(종 수·지형 비율·맵 치수·개체 수)
+//   옵션: --seeds=6 --presets=omni,herd --boss=raider --era=0 --step=2 --cards=first|skip
 //
-// ⚠ **시대(era)를 반드시 의식하라.** 시대마다 세계가 다르다: 맵 크기(mapScale)·종 구성(첫 시대는 셋)·
-//   세계 종류(첫 시대는 초원)·척박도·챔피언 유무. 이 파일의 세계 생성은 game.ts 의 makeWorld 를
-//   그대로 옮긴 buildWorld() 한 자리로 모아 뒀다 — 새 갈래가 생기면 거기만 고친다.
-//   기본값은 `--era=0`(첫 시대) · 옛 대륙 세계를 재려면 `--era=3` 을 준다.
+// ⚠ **온보딩 진도(step)를 반드시 의식하라.** 진도마다 세계가 다르다: 맵 크기(mapScale)·종 구성
+//   (진도 0 은 셋)·세계 종류(진도 0~1 은 초원)·챔피언 유무. 척박도만 시대(era)를 따른다.
+//   진도 = min(3, 끝낸 런 수 + 시대)이고, 프로브는 **처음 하는 사람**(끝낸 런 0)을 기준으로 하므로
+//   `--era=N` 이 곧 진도 N 이다. 진도만 따로 보려면 `--step=N`(이때 척박도는 --era 를 따른다).
+//   세계 생성은 game.ts 의 makeWorld 를 그대로 옮긴 buildWorld() 한 자리로 모아 뒀다.
 
 import { createServer } from "vite";
 
@@ -50,38 +52,46 @@ const server = await createServer({
 
 const { World } = await server.ssrLoadModule("/src/sim/world.ts");
 const { SIM, ORDER } = await server.ssrLoadModule("/src/sim/params.ts");
-const { GAME, SCHEDULE, mapScale, eraScarcity } = await server.ssrLoadModule("/src/game/config.ts");
+const { GAME, SCHEDULE, mapScale, eraScarcity, onboardingStep, stepUsesDrawnMap, stepWorldOptions } =
+  await server.ssrLoadModule("/src/game/config.ts");
 const { createBoss, bossRaidable } = await server.ssrLoadModule("/src/sim/boss.ts");
 const { defaultGenome } = await server.ssrLoadModule("/src/sim/genome.ts");
 const { PRESET_CARDS, applyCard } = await server.ssrLoadModule("/src/game/cards.ts");
 const { FIRST_ERA_MAP } = await server.ssrLoadModule("/src/sim/mapType.ts");
+const { TILE } = await server.ssrLoadModule("/src/sim/terrain.ts");
 const { Game } = await server.ssrLoadModule("/src/game/game.ts");
 
-// --- 실제 플레이 세계 치수 · 단일 근원 src/config.ts + mapScale(era) 에서 읽는다(main.ts 와 같은 길) ---
+// --- 실제 플레이 세계 치수 · 단일 근원 src/config.ts + mapScale(진도) 에서 읽는다(main.ts 와 같은 길) ---
 const { MOBILE } = await server.ssrLoadModule("/src/config.ts");
 const ERA = Number(opt("era", "0")); // 기본은 첫 시대(지금 튜닝 대상). 옛 대륙 세계는 --era=3.
-const SCALE = mapScale(ERA);
+// 프로브 기준은 **처음 하는 사람**(끝낸 런 0)이라 진도 = 시대다. --step 으로 따로 지정할 수 있다.
+const STEP = Number(opt("step", String(onboardingStep(0, ERA))));
+const SCALE = mapScale(STEP);
 const W = Math.round(MOBILE.width * SCALE);
 const H = Math.round(MOBILE.height * SCALE);
 const AREA_SCALE = SCALE * SCALE;
 
+/** 이 진도가 쓰는 세계 종류(진도 0~1 은 평평한 「초원」 · 그 뒤는 뽑힌 세계 · 기본 대륙). */
+function mapTypeForStep(step) {
+  return stepUsesDrawnMap(step) ? opt("map", "continent") : FIRST_ERA_MAP;
+}
+
 /**
- * 이 시대의 세계를 만든다 — **game.ts 의 makeWorld 와 같은 인자**로. 첫 시대는 단순화 세계(종 셋 ·
+ * 이 진도의 세계를 만든다 — **game.ts 의 makeWorld 와 같은 인자**로. 진도 0~1 은 좁힌 세계(종 셋·넷 ·
  * 평평한 초원 · 챔피언 없음)이고 그 뒤로는 뽑힌 맵 종류다. 프로브가 존재하지 않는 세계를 재던
  * 2026-08-04 사고의 재발 방지선이 여기다.
  */
-function buildWorld(seed, genome, mapTypeOverride) {
-  const first = ERA === 0;
+function buildWorld(seed, genome, mapTypeOverride, step = STEP, scale = SCALE) {
   return new World(
     seed,
-    W,
-    H,
+    Math.round(MOBILE.width * scale),
+    Math.round(MOBILE.height * scale),
     genome,
-    AREA_SCALE,
-    [], // 챔피언 — 첫 시대는 없음이 정상. 그 뒤는 저장본에 달려 있어 프로브에선 재현 불가 → 늘 없음.
-    mapTypeOverride ?? (first ? FIRST_ERA_MAP : opt("map", "continent")),
+    scale * scale,
+    [], // 챔피언 — 마지막 진도 전에는 없음이 정상. 그 뒤는 저장본에 달려 프로브에선 재현 불가 → 늘 없음.
+    mapTypeOverride ?? mapTypeForStep(step),
     eraScarcity(ERA),
-    first,
+    stepWorldOptions(step),
   );
 }
 
@@ -149,7 +159,7 @@ async function runOrder() {
   const MARKS = [30, 150, 480]; // 1초 · 5초 · 16초
   const ORDER_DIST = Number(opt("dist", "600")); // 지시점까지의 거리(px)
 
-  console.log(`# order · era ${ERA} · 세계 ${W}x${H}(배율 ${SCALE}) · areaScale ${AREA_SCALE} · 시드 ${SEEDS.length} · 워밍업 ${WARMUP}틱 → 지시 ${ORDER_TICKS}틱`);
+  console.log(`# order · era ${ERA} · 진도 ${STEP} · 세계 ${W}x${H}(배율 ${SCALE}) · areaScale ${AREA_SCALE} · 시드 ${SEEDS.length} · 워밍업 ${WARMUP}틱 → 지시 ${ORDER_TICKS}틱`);
   console.log(`# ORDER.pull=${ORDER.pull} arriveRadius=${ORDER.arriveRadius}`);
   console.log(
     [
@@ -303,7 +313,7 @@ async function runRaid() {
   const mapType = opt("map", "") === "" ? undefined : opt("map", ""); // 안 주면 이 시대의 기본 세계
   const drive = args.includes("--drive"); // 사람이 무리를 떼 쪽으로 모는 판(지시 on)
 
-  console.log(`# raid · era ${ERA} · 세계 ${W}x${H}(배율 ${SCALE}) · areaScale ${AREA_SCALE} · ${mapType ?? (ERA === 0 ? FIRST_ERA_MAP : "continent")} · diffMul ${diffMul} · 시드 ${SEEDS.length} · ${GAME.bossSeconds}초${drive ? " · 몰기(지시)" : " · 지시 없음"}`);
+  console.log(`# raid · era ${ERA} · 진도 ${STEP} · 세계 ${W}x${H}(배율 ${SCALE}) · areaScale ${AREA_SCALE} · ${mapType ?? mapTypeForStep(STEP)} · diffMul ${diffMul} · 시드 ${SEEDS.length} · ${GAME.bossSeconds}초${drive ? " · 몰기(지시)" : " · 지시 없음"}`);
   console.log(`# 지표: 최소체력% = 라운드 중 격퇴 바가 내려간 가장 낮은 지점(사용자가 보는 양). 무흠집 = 99% 이상으로 끝난 라운드.`);
   console.log(["프리셋".padEnd(18), "보스".padEnd(10), "격퇴", "최소체력%", "무흠집", "전사(근/원)", "보스사망", "생존"].join("\t"));
 
@@ -337,7 +347,7 @@ async function runSweep() {
   const type = opt("boss", "raider");
   const base = PRESETS.find((p) => p.key === "omni");
   const values = opt("values", "44,50,55,58,64,70,80,100").split(",").map(Number);
-  console.log(`# sweep · ${type} · 균형 잡식에서 공격력만 바꿈 · era ${ERA} · ${W}x${H} · areaScale ${AREA_SCALE} · 시드 ${SEEDS.length}`);
+  console.log(`# sweep · ${type} · 균형 잡식에서 공격력만 바꿈 · era ${ERA} · 진도 ${STEP} · ${W}x${H} · areaScale ${AREA_SCALE} · 시드 ${SEEDS.length}`);
   console.log(`# 문턱: raidWarriorAttack=${SIM.raidWarriorAttack} · floor=${SIM.raidAttackFloor} · hitDamage=${SIM.raidHitDamage} · maxHp=${SIM.bossMaxHp}`);
   console.log(["공격력", "격퇴", "최소체력%", "무흠집", "전사(근/원)", "격퇴틱(중앙값)"].join("\t"));
   for (const atk of values) {
@@ -536,10 +546,74 @@ function threatens(sp, myAttack) {
   );
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// steps 모드 · "진도가 오를 때 세계가 실제로 넓어지는가(줄어드는 구간이 없는가)"
+// ────────────────────────────────────────────────────────────────────────────
+/**
+ * 온보딩 진도 0~3 의 세계를 **같은 시드로 나란히** 만들어 종 수·지형 비율·맵 치수·개체 수를 찍는다.
+ * 테스트는 계약(단조 증가)을 못박고, 이 표는 그 계단이 실제로 어떤 크기인지를 눈으로 보게 한다.
+ * ⚠ 여기 나오는 수치를 코드에 기준선으로 박지 말 것(sim 을 바꾸면 통째로 이동한다).
+ */
+async function runSteps() {
+  const genome = defaultGenome();
+  const WARM = GAME.roundSeconds * SIM.stepsPerSecond; // 채집 한 판(16초)
+  console.log(`# steps · 온보딩 진도 0~3 · 균형 기본 게놈 · 시드 ${SEEDS.length} · 워밍업 ${WARM}틱(채집 한 판)`);
+  console.log(`# 진도 = min(3, 끝낸 런 수 + 시대) · 척박도는 era ${ERA} 기준`);
+  console.log(
+    [
+      "진도", "배율", "맵", "치수", "사는종", "종이름",
+      "물%", "수풀%", "험지%", "산%", "바이옴", "먹이", "개체", "내종", `내종@${WARM}틱`,
+    ].join("\t"),
+  );
+  for (let step = 0; step <= 3; step++) {
+    const scale = mapScale(step);
+    const names = new Set();
+    const acc = { sp: [], water: [], grass: [], rough: [], mtn: [], biome: [], food: [], ents: [], mine: [], warm: [] };
+    for (const seed of SEEDS) {
+      const w = buildWorld(seed, genome, undefined, step, scale);
+      const alive = new Set(w.entities.map((e) => e.species.name));
+      for (const n of alive) names.add(n);
+      acc.sp.push(alive.size);
+      const tiles = w.terrain.tiles;
+      const frac = (k) => tiles.filter((x) => x === k).length / tiles.length;
+      acc.water.push(100 * frac(TILE.water));
+      acc.grass.push(100 * frac(TILE.grass));
+      acc.rough.push(100 * frac(TILE.rough));
+      acc.mtn.push(100 * frac(TILE.mountain));
+      acc.biome.push(new Set(w.environment.biome).size);
+      acc.food.push(w.food.length);
+      acc.ents.push(w.entities.length);
+      acc.mine.push(w.playerPopulation);
+      for (let i = 0; i < WARM; i++) w.step();
+      acc.warm.push(w.playerPopulation);
+    }
+    const avg = (a) => (a.length === 0 ? NaN : a.reduce((x, y) => x + y, 0) / a.length);
+    console.log(
+      [
+        String(step),
+        fmt(scale, 2),
+        mapTypeForStep(step),
+        `${Math.round(MOBILE.width * scale)}x${Math.round(MOBILE.height * scale)}`,
+        fmt(avg(acc.sp), 1),
+        [...names].join("·"),
+        fmt(avg(acc.water), 1),
+        fmt(avg(acc.grass), 1),
+        fmt(avg(acc.rough), 1),
+        fmt(avg(acc.mtn), 1),
+        fmt(avg(acc.biome), 1),
+        fmt(avg(acc.food), 0),
+        fmt(avg(acc.ents), 1),
+        fmt(avg(acc.mine), 1),
+        fmt(avg(acc.warm), 1),
+      ].join("\t"),
+    );
+  }
+}
+
 async function runEncounter() {
   const presets = pickPresets();
   const TICKS = GAME.roundSeconds * SIM.stepsPerSecond * 2; // 채집 두 판(첫 보스 전까지)
-  console.log(`# encounter · era ${ERA} · 세계 ${W}x${H}(배율 ${SCALE}) · 시드 ${SEEDS.length} · 감지 반경 ${SIM.predatorSenseRange}px · ${TICKS}틱`);
+  console.log(`# encounter · era ${ERA} · 진도 ${STEP} · 세계 ${W}x${H}(배율 ${SCALE}) · 시드 ${SEEDS.length} · 감지 반경 ${SIM.predatorSenseRange}px · ${TICKS}틱`);
   console.log(`# 초기거리 = 시작 순간 내 무리와 가장 가까운 포식자까지(px) · 첫감지 = 그 반경 안에 처음 든 시각(초)`);
   console.log(["프리셋".padEnd(18), "초기거리", "최소", "최대", "첫감지(초)", "못만남"].join("\t"));
 
@@ -597,8 +671,9 @@ try {
   else if (MODE === "sweep") await runSweep();
   else if (MODE === "era0") await runEra0();
   else if (MODE === "encounter") await runEncounter();
+  else if (MODE === "steps") await runSteps();
   else {
-    console.error(`알 수 없는 모드: ${MODE} (order | raid | sweep | era0 | encounter)`);
+    console.error(`알 수 없는 모드: ${MODE} (order | raid | sweep | era0 | encounter | steps)`);
     process.exitCode = 1;
   }
   // bossRaidable 은 보스 풀이 늘 때 프로브가 조용히 빈 표를 찍는 걸 막는 안전장치로만 참조한다.

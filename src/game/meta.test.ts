@@ -150,4 +150,38 @@ describe("recordRunComplete / debug — 인메모리 저장소", () => {
       expect(metaLevel(loadMeta().metaXp)).toBe(9);
     });
   });
+
+  it("끝낸 런 수가 한 판마다 1씩 쌓인다(온보딩 진도의 재료)", () => {
+    withStorage({}, () => {
+      expect(loadMeta().runsCompleted).toBe(0); // 첫 플레이
+      recordRunComplete(3, 0, false);
+      expect(loadMeta().runsCompleted).toBe(1);
+      recordRunComplete(6, 2, true);
+      expect(loadMeta().runsCompleted).toBe(2);
+      // 디버그로 레벨을 바꿔도 끝낸 런 수는 안 지워진다(같은 저장본의 다른 칸).
+      debugSetMetaLevel(9);
+      expect(loadMeta().runsCompleted).toBe(2);
+    });
+  });
+
+  it("이 칸이 없던 옛 저장본은 0 으로 읽는다(마이그레이션 단계 불필요)", () => {
+    withStorage({ selpress_meta_v1: JSON.stringify({ metaXp: 300, conquered: true }) }, () => {
+      const m = loadMeta();
+      expect(m.metaXp).toBe(300); // 나머지 칸은 그대로 살아난다
+      expect(m.conquered).toBe(true);
+      expect(m.runsCompleted).toBe(0);
+    });
+  });
+
+  it("저장소가 아예 없으면(테스트·프로브·사생활 모드) 조용히 첫 플레이로 읽는다", () => {
+    const gl = globalThis as unknown as { localStorage?: Storage | undefined };
+    const prev = gl.localStorage;
+    gl.localStorage = undefined;
+    try {
+      expect(loadMeta()).toEqual({ metaXp: 0, conquered: false, runsCompleted: 0 });
+      expect(() => recordRunComplete(3, 0, false)).not.toThrow(); // 저장 실패해도 플레이는 계속된다
+    } finally {
+      gl.localStorage = prev;
+    }
+  });
 });

@@ -2,7 +2,19 @@
 // Game 은 순수 TS(Pixi 무관)라 headless 로 런을 끝까지 돌려 관찰할 수 있다.
 import { describe, it, expect } from "vitest";
 import { Game, type RunHistory, type Trial, type TrialVerdict } from "@/game/game";
-import { GAME, eraDifficulty, eraScarcity, mapScale } from "@/game/config";
+import {
+  GAME,
+  ONBOARDING_MAX_STEP,
+  eraDifficulty,
+  eraScarcity,
+  mapScale,
+  onboardingOpenedLine,
+  onboardingStep,
+  stepHasChampions,
+  stepHasTrial,
+  stepUsesDrawnMap,
+  stepWorldOptions,
+} from "@/game/config";
 import { MAP_SCALE } from "@/config";
 import { createBoss } from "@/sim/boss";
 import { CARD_POOL, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
@@ -15,10 +27,45 @@ import { debugResetAchievements, debugUnlockAchievement } from "@/game/achieveme
 // 대멸종 이름 4종(game.ts extinctionName 과 일치) — 예고 title 이 보스 예고와 섞이지 않게 거른다.
 const EXTINCTION_NAMES = ["혹독한 추위", "대가뭄", "폭염", "대역병"] as const;
 
+/**
+ * 메타 저장소(localStorage)를 인메모리로 흉내 — Game 이 loadMeta 로 읽는 값(레벨·끝낸 런 수)을 세팅한다.
+ * 테스트는 기본적으로 localStorage 가 아예 없는 환경에서 돈다 = 끝낸 런 0 = 온보딩 진도가 시대와 같다.
+ */
+function memStorage(store: Record<string, string>): Storage {
+  return {
+    get length(): number {
+      return Object.keys(store).length;
+    },
+    clear: (): void => {
+      for (const k of Object.keys(store)) delete store[k];
+    },
+    getItem: (k: string): string | null => store[k] ?? null,
+    key: (i: number): string | null => Object.keys(store)[i] ?? null,
+    removeItem: (k: string): void => {
+      delete store[k];
+    },
+    setItem: (k: string, v: string): void => {
+      store[k] = v;
+    },
+  } as unknown as Storage;
+}
+
+/** 저장본을 흉내 낸 상태로 fn 을 실행하고 원래 상태로 되돌린다. */
+function withMeta<T>(state: Record<string, unknown>, fn: () => T): T {
+  const gl = globalThis as unknown as { localStorage?: Storage | undefined };
+  const prev = gl.localStorage;
+  gl.localStorage = memStorage({ selpress_meta_v1: JSON.stringify(state) });
+  try {
+    return fn();
+  } finally {
+    gl.localStorage = prev;
+  }
+}
+
 /** 한 런을 시작해 첫 프리셋을 고른 상태(watch)로 만든다. */
 function startRun(seed: string): Game {
-  // 배율 1 고정(3번째 인자): 생성자 의미가 "월드 치수"에서 "기준 화면 치수 × mapScale(era)"로 바뀌었다.
-  // 1 을 못박아 예전과 같은 세계(월드 240x400 · areaScale 1)를 만든다 · 시대별 배율이 켜져도 안 변한다.
+  // 배율 1 고정(3번째 인자): 생성자 의미가 "월드 치수"에서 "기준 화면 치수 × mapScale(진도)"로 바뀌었다.
+  // 1 을 못박아 예전과 같은 세계(월드 240x400 · areaScale 1)를 만든다 · 진도별 배율이 켜져도 안 변한다.
   const g = new Game(240, 400, 1);
   g.fixedSeed = seed;
   g.beginRun(); // draft(프리셋 선택)
@@ -180,26 +227,7 @@ describe("난이도 루프(승리 후 진행)", () => {
 });
 
 describe("다시 뽑기(리롤)", () => {
-  // 메타 저장소(localStorage)를 인메모리로 흉내 — Game 생성 시 loadMeta 가 이걸 읽어 리롤 해금 상태가 된다.
-  function memStorage(store: Record<string, string>): Storage {
-    return {
-      get length(): number {
-        return Object.keys(store).length;
-      },
-      clear: (): void => {
-        for (const k of Object.keys(store)) delete store[k];
-      },
-      getItem: (k: string): string | null => store[k] ?? null,
-      key: (i: number): string | null => Object.keys(store)[i] ?? null,
-      removeItem: (k: string): void => {
-        delete store[k];
-      },
-      setItem: (k: string, v: string): void => {
-        store[k] = v;
-      },
-    } as unknown as Storage;
-  }
-
+  // 메타 저장소(localStorage)는 파일 위쪽 memStorage 로 흉내 낸다 — Game 생성 시 loadMeta 가 이걸 읽는다.
   it("해금 상태면 드래프트에서 새로 뽑고 횟수가 1회로 제한된다", () => {
     const store: Record<string, string> = {
       // metaXp 300 → 메타 레벨 여러 단계(리롤 티어 레벨 2 이상) 해금.
@@ -431,8 +459,9 @@ describe("라운드 시험과 혈통의 불씨", () => {
 
   /**
    * 둘째 시대(era 1)의 첫 채집 단계까지 진행한 런.
-   * **첫 시대(era 0)에는 시험이 안 걸린다**(첫 판 좁히기 · 2026-08-05) — 시험·불씨 검증은 시험이
-   * 실제로 등장하는 시점에서 해야 한다. 기능을 지운 게 아니라 등장 시점을 옮긴 것이므로 테스트도 따라간다.
+   * 테스트 환경에는 저장본이 없어 **끝낸 런 수 0** = 온보딩 진도가 곧 시대다 → era 0 은 진도 0(시험 없음),
+   * era 1 이 진도 1(시험 등장)이다. 시험·불씨 검증은 시험이 실제로 열리는 진도에서 해야 한다
+   * (기능을 지운 게 아니라 등장 시점을 옮긴 것이므로 테스트도 따라간다).
    */
   function startRunEra1(seed: string): Game {
     const g = startRun(seed);
@@ -466,15 +495,26 @@ describe("라운드 시험과 혈통의 불씨", () => {
     expect(labels.size).toBeGreaterThan(1);
   });
 
-  it("첫 시대에는 시험이 안 걸린다(첫 판은 무리를 먹여 키우는 것만)", () => {
-    // 첫 판부터 시험·불씨·예고가 한꺼번에 나오면 배울 것이 너무 많다 → 등장 시점을 둘째 시대로 옮겼다.
+  it("진도 0(처음 하는 사람의 첫 시대)에는 시험이 안 걸린다 · 진도 1 부터 걸린다", () => {
+    // 처음부터 시험·불씨·예고가 한꺼번에 나오면 배울 것이 너무 많다 → 등장 시점을 한 칸 뒤로 옮겼다.
     // 이 한 가지가 꺼지면 판정·불씨 감소·목표 줄의 불씨 점·첫 안내 배너·드래프트 예고가 연쇄로 꺼진다.
     for (let s = 0; s < 12; s++) {
-      const g = startRun(`no-trial-era0-${s}`);
+      const g = startRun(`no-trial-step0-${s}`);
       expect(g.era).toBe(0);
       expect(g.trial).toBeNull();
       expect(g.upcomingTrial).toBeNull();
-      expect(startRunEra1(`no-trial-era0-${s}`).trial).not.toBeNull(); // 둘째 시대에는 걸린다
+      expect(startRunEra1(`no-trial-step0-${s}`).trial).not.toBeNull(); // 진도 1 에는 걸린다
+    }
+  });
+
+  it("한 판을 끝낸 사람은 첫 시대(진도 1)부터 시험이 걸린다 — 시대가 아니라 겪은 양이 기준", () => {
+    // 이것이 2026-08-05 수정의 핵심이다: 예전엔 era 0 로 갈라서 몇 판을 하든 첫 시대가 늘 유아용이었다.
+    for (let s = 0; s < 6; s++) {
+      const g = withMeta({ metaXp: 0, conquered: false, runsCompleted: 1 }, () =>
+        startRun(`veteran-trial-${s}`),
+      );
+      expect(g.era).toBe(0);
+      expect(g.trial).not.toBeNull();
     }
   });
 
@@ -635,10 +675,65 @@ describe("라운드 시험과 혈통의 불씨", () => {
 });
 
 
-describe("시대별 맵 크기 (첫 판은 화면에 담긴다)", () => {
-  it("첫 시대 월드는 기준 화면 그대로다 — 미니맵이 저절로 꺼지는 조건", () => {
-    // main 은 화면(논리 해상도) 치수만 넘기고 Game 이 mapScale(era) 로 월드를 만든다.
-    // era 0 배율이 1 이라야 "월드 ≤ 화면"이 성립해 main 의 worldFitsScreen 이 미니맵을 거둔다.
+describe("온보딩 진도 (시대가 아니라 겪은 양으로 세계가 열린다)", () => {
+  it("진도 = min(3, 끝낸 런 수 + 시대) — 처음 하는 사람만 0 에서 시작한다", () => {
+    expect(onboardingStep(0, 0)).toBe(0); // 첫 런 첫 시대
+    expect(onboardingStep(0, 1)).toBe(1);
+    expect(onboardingStep(0, 2)).toBe(2);
+    expect(onboardingStep(0, 3)).toBe(ONBOARDING_MAX_STEP);
+    expect(onboardingStep(1, 0)).toBe(1); // 두 번째 런은 첫 시대부터 한 칸 위
+    expect(onboardingStep(2, 0)).toBe(2);
+    expect(onboardingStep(3, 0)).toBe(ONBOARDING_MAX_STEP); // 네 번째 런부터는 늘 온전한 세계
+    expect(onboardingStep(99, 0)).toBe(ONBOARDING_MAX_STEP);
+    expect(onboardingStep(99, 99)).toBe(ONBOARDING_MAX_STEP);
+    // 이상한 입력에도 진도는 0~3 안에 있다(저장본이 손상돼도 세계가 깨지지 않게).
+    expect(onboardingStep(-5, -5)).toBe(0);
+    expect(onboardingStep(1.9, 0.9)).toBe(1);
+  });
+
+  it("한 칸에 한 가지씩만 열린다 — 줄어드는 구간이 없다(맵 크기·지형·시험·챔피언)", () => {
+    for (let step = 1; step <= 8; step++) {
+      expect(mapScale(step)).toBeGreaterThanOrEqual(mapScale(step - 1));
+      // 남길 종 목록은 앞 단계를 반드시 포함한다(undefined = 전부 = 최대).
+      const prev = stepWorldOptions(step - 1).keepWildNames;
+      const now = stepWorldOptions(step).keepWildNames;
+      if (prev !== undefined) {
+        expect(now === undefined || prev.every((n) => now.includes(n))).toBe(true);
+        if (now !== undefined) expect(now.length).toBeGreaterThanOrEqual(prev.length);
+      } else {
+        expect(now).toBeUndefined(); // 한 번 다 열린 뒤에는 다시 닫히지 않는다
+      }
+      // 켜진 기능은 다시 안 꺼진다.
+      if (stepHasTrial(step - 1)) expect(stepHasTrial(step)).toBe(true);
+      if (stepUsesDrawnMap(step - 1)) expect(stepUsesDrawnMap(step)).toBe(true);
+      if (stepHasChampions(step - 1)) expect(stepHasChampions(step)).toBe(true);
+    }
+    expect(mapScale(ONBOARDING_MAX_STEP)).toBe(MAP_SCALE); // 마지막 진도는 상한(src/config.ts 단일 근원)
+    expect(mapScale(99)).toBe(MAP_SCALE);
+    // 시험은 진도 1 부터 · 챔피언은 마지막 진도부터.
+    expect(stepHasTrial(0)).toBe(false);
+    expect(stepHasTrial(1)).toBe(true);
+    expect(stepHasChampions(ONBOARDING_MAX_STEP - 1)).toBe(false);
+    expect(stepHasChampions(ONBOARDING_MAX_STEP)).toBe(true);
+  });
+
+  it("새로 열린 것은 시대 보상 화면이 한 줄로 알린다(대백과 없이 알아챌 수 있게)", () => {
+    expect(onboardingOpenedLine(0)).toBe(""); // 처음엔 알릴 것이 없다
+    for (let step = 1; step <= ONBOARDING_MAX_STEP; step++) {
+      expect(onboardingOpenedLine(step).length).toBeGreaterThan(0);
+    }
+    expect(onboardingOpenedLine(ONBOARDING_MAX_STEP + 1)).toBe(""); // 더 열릴 것이 없으면 침묵
+    // 실제로 시대를 넘으면 그 문구가 카드 고르는 화면의 안내에 실린다.
+    const g = startRun("opened-line");
+    g.result = "win";
+    g.continueToNextEra();
+    expect(g.era).toBe(1);
+    expect(g.draftNotice).toContain(onboardingOpenedLine(1));
+  });
+
+  it("진도 0 월드는 기준 화면 그대로다 — 미니맵이 저절로 꺼지는 조건", () => {
+    // main 은 화면(논리 해상도) 치수만 넘기고 Game 이 mapScale(진도) 로 월드를 만든다.
+    // 진도 0 배율이 1 이라야 "월드 ≤ 화면"이 성립해 main 의 worldFitsScreen 이 미니맵을 거둔다.
     expect(mapScale(0)).toBe(1);
     const g = new Game(540, 960);
     expect(g.width).toBe(540);
@@ -646,15 +741,7 @@ describe("시대별 맵 크기 (첫 판은 화면에 담긴다)", () => {
     expect(g.areaScale).toBe(1); // 면적 배율은 늘 배율의 제곱
   });
 
-  it("시대가 오를수록 넓어지고 좁아지는 일은 없다", () => {
-    for (let era = 1; era <= 8; era++) {
-      expect(mapScale(era)).toBeGreaterThanOrEqual(mapScale(era - 1));
-    }
-    expect(mapScale(3)).toBe(MAP_SCALE); // 시대 3 이상은 상한(src/config.ts 단일 근원)
-    expect(mapScale(99)).toBe(MAP_SCALE);
-  });
-
-  it("시대를 넘으면 그 시대 배율로 월드가 다시 만들어진다", () => {
+  it("시대를 넘으면 그 진도의 배율로 월드가 다시 만들어진다", () => {
     const g = startRun("era-map-scale");
     expect(g.width).toBe(240); // startRun 은 배율 1 고정(예전 소형 테스트 세계 보존)
     const free = new Game(540, 960); // 고정 없이 = 실제 게임과 같은 길
@@ -667,5 +754,33 @@ describe("시대별 맵 크기 (첫 판은 화면에 담긴다)", () => {
     expect(free.era).toBe(1);
     expect(free.width).toBe(Math.round(540 * mapScale(1)));
     expect(free.areaScale).toBeCloseTo(mapScale(1) * mapScale(1), 6);
+  });
+
+  it("네 판을 끝낸 사람은 첫 시대부터 온전한 세계에서 시작한다(맵 2.0 · 뽑힌 세계 · 야생 전 종)", () => {
+    // 예전 결함: era 0 로 갈라서 숙련자도 매 런 첫 시대가 종 셋짜리 초원이었다(시대 하나를 통째로 버렸다).
+    const g = withMeta({ metaXp: 0, conquered: false, runsCompleted: 4 }, () => {
+      const free = new Game(540, 960);
+      free.fixedSeed = "veteran-world";
+      free.beginRun();
+      free.pickCard(0);
+      return free;
+    });
+    expect(g.era).toBe(0);
+    expect(g.width).toBe(Math.round(540 * MAP_SCALE));
+    expect(g.mapType).not.toBe("meadow"); // 이 런에 뽑힌 세계(대륙 등)
+    expect(g.world.hiddenSpeciesIds.size).toBe(0); // 감추는 종이 하나도 없다
+    expect(g.world.entities.some((e) => e.species.name === "친척 무리")).toBe(true);
+  });
+
+  it("처음 하는 사람의 첫 시대는 좁은 세계다(같은 코드 경로 · 저장본만 다르다)", () => {
+    const free = new Game(540, 960);
+    free.fixedSeed = "veteran-world";
+    free.beginRun();
+    free.pickCard(0);
+    expect(free.width).toBe(540); // 배율 1.0
+    expect(free.mapType).toBe("meadow");
+    expect(free.world.hiddenSpeciesIds.size).toBeGreaterThan(0);
+    const alive = new Set(free.world.entities.map((e) => e.species.name));
+    expect([...alive].sort()).toEqual(["내 종", "초식 경쟁자", "포식자"].sort());
   });
 });

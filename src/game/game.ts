@@ -10,7 +10,20 @@ import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, isApexTrait, MUTABLE_TRAITS, TRAIT_CEILING, TRAIT_KEYS, type Genome, type MutableTrait, type Traits } from "@/sim/genome";
 import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, PRESET_CARDS, PRESET_LINEAGE, type Card, type Lineage } from "@/game/cards";
 import { cardAvailable, debugResetAchievements, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
-import { GAME, SCHEDULE, eraDifficulty, eraScarcity, mapScale, type StageKind } from "@/game/config";
+import {
+  GAME,
+  SCHEDULE,
+  eraDifficulty,
+  eraScarcity,
+  mapScale,
+  onboardingStep,
+  onboardingOpenedLine,
+  stepHasChampions,
+  stepHasTrial,
+  stepUsesDrawnMap,
+  stepWorldOptions,
+  type StageKind,
+} from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import { grazeEfficiency } from "@/sim/behavior";
@@ -225,6 +238,10 @@ export class Game {
 
   /** 비동기 생물(S2) — 이 런의 세계에 등장시킬 지난 챔피언들. 런 시작 시 저장본에서 읽어 makeWorld 로 넘긴다. */
   private champions: Champion[] = [];
+
+  /** 저장본의 **끝낸 런 수** — 온보딩 진도의 재료(진도 = 끝낸 런 수 + 시대). 런 시작 시 읽어 고정한다.
+   * localStorage 가 없는 곳(테스트·프로브)에서는 늘 0 이라 "처음 하는 사람"의 세계가 된다. */
+  private runsDone = 0;
 
   // 레벨업(형질 성장) — 시간/단계 전환이 아니라 "먹이 경험치"로 레벨을 올려 형질을 얻는다.
   // 레벨 = 세대: 레벨업해서 고른 형질은 그 뒤로 태어난 개체에게만 물려진다(세대별 적용 — 후속 슬라이스).
@@ -777,45 +794,53 @@ export class Game {
   }
 
   /**
-   * 첫 시대(era 0)인가 — 첫 판만 세계를 좁힌다(종 셋·평평한 초원·챔피언 없음·시험 없음).
-   * 메타 언락이 "선택지"만 늘리게 설계돼 있어 세계의 복잡도가 첫 판부터 최대였다(로그라이크 관례와 반대).
+   * 지금의 **온보딩 진도**(0~3) — 세계를 얼마나 여느냐의 유일한 기준.
+   * 시대가 아니라 "끝낸 런 수 + 지금 시대"다(game/config.ts `onboardingStep`). 그래서 숙련자는
+   * 첫 시대부터 온전한 세계에서 시작하고, 처음 하는 사람만 한 단계씩 열린다.
+   * (예전엔 `era === 0` 로 갈라서 백 판을 한 사람도 매 런 첫 시대가 유아용이 됐다 · 2026-08-05 수정.)
    */
-  private get firstEra(): boolean {
-    return this.era === 0;
+  private get onboarding(): number {
+    return onboardingStep(this.runsDone, this.era);
   }
 
   /**
-   * 이 시대의 세계 종류. 첫 시대는 늘 「초원」(산·험지·수풀 없는 평평한 땅 + 작은 호수 몇 개)이고,
-   * 그 뒤로는 이 런에서 뽑힌 세계(currentMapType)를 쓴다. 시대를 넘어도 뽑기를 다시 하지 않으므로
-   * 여기서 시대만 보고 갈라야 첫 시대 이후가 「초원」에 갇히지 않는다.
+   * 이 진도의 세계 종류. 진도 0~1 은 늘 「초원」(산·험지·수풀 없는 평평한 땅 + 작은 호수 몇 개)이고,
+   * 그 뒤로는 이 런에서 뽑힌 세계(currentMapType)를 쓴다. 뽑기는 런 시작에 한 번뿐이므로
+   * 여기서 진도만 보고 갈라야 지형이 열린 뒤 「초원」에 갇히지 않는다.
    */
-  private eraMapType(era: number): MapType {
-    return era === 0 ? FIRST_ERA_MAP : this.currentMapType;
+  private stepMapType(step: number): MapType {
+    return stepUsesDrawnMap(step) ? this.currentMapType : FIRST_ERA_MAP;
   }
 
   private makeWorld(): World {
-    // 시대별 맵 크기 · 매 시대 치수를 새로 계산한다(첫 시대 1.0 = 월드가 화면 그대로 → 무리도 보스도
-    // 화면 안. 시대가 오르면 1.4·1.7·2.0 으로 넓어진다). fixedMapScale 은 테스트 전용 고정.
-    const s = this.fixedMapScale ?? mapScale(this.era);
+    // 진도별 맵 크기 · 세계를 만들 때마다 치수를 새로 계산한다(진도 0 은 1.0 = 월드가 화면 그대로 →
+    // 무리도 보스도 화면 안. 진도가 오르면 1.4·1.7·2.0 으로 넓어진다). fixedMapScale 은 테스트 전용 고정.
+    const step = this.onboarding;
+    const s = this.fixedMapScale ?? mapScale(step);
     return new World(
       `${this.currentSeed}-env`,
       this.baseW * s,
       this.baseH * s,
       this.genome,
       s * s, // 면적 배율 · 개체는 절대 수(소수)지만 먹이 밀도·상한은 면적 비례
-      // 첫 시대에는 지난 챔피언(비동기 생물)을 부르지 않는다 — 08-05 실측에서 챔피언 2종이 100초 시점
-      // 내 종을 22.9 → 9.8마리로 깎았다. this.champions 자체는 그대로 두고(다음 시대에 다시 쓴다),
-      // 챔피언 경로는 이미 독립 rng 라 끄는 비용이 0이다.
-      this.firstEra ? [] : this.champions,
-      this.eraMapType(this.era),
+      // 마지막 진도 전에는 지난 챔피언(비동기 생물)을 부르지 않는다 — 08-05 실측에서 챔피언 2종이
+      // 100초 시점 내 종을 22.9 → 9.8마리로 깎았다. this.champions 자체는 그대로 두고(진도가 차면
+      // 다시 쓴다), 챔피언 경로는 이미 독립 rng 라 끄는 비용이 0이다.
+      stepHasChampions(step) ? this.champions : [],
+      this.stepMapType(step),
       eraScarcity(this.era), // 시대가 지날수록 세계가 척박(먹이↓·재생↓) — era 0 = 1.0 = 기존과 동일
-      this.firstEra, // 첫 시대만 종을 셋으로 좁히고 기후를 평탄하게 한다
+      // 진도가 해석한 세계 옵션(남길 종·친척·기후·포식자 자리). sim 은 진도도 시대도 모른다.
+      stepWorldOptions(step),
     );
   }
 
-  /** 지금 시대의 세계 종류(첫 시대는 초원 · 그 뒤는 이 런에 뽑힌 대륙·판게아·군도·대양). */
+  /**
+   * 지금 세계의 종류(진도 0~1 은 초원 · 그 뒤는 이 런에 뽑힌 대륙·판게아·군도·대양).
+   * **지금 살고 있는 월드에게 직접 묻는다** — 진도로 다시 계산하면(로비 복귀·저장 데이터 지우기처럼
+   * 월드를 안 새로 만들고 진도만 바뀌는 순간에) 화면 설명과 실제 지형이 갈린다.
+   */
   get mapType(): MapType {
-    return this.eraMapType(this.era);
+    return this.world.mapType;
   }
 
   get mapKindNow(): MapKind {
@@ -939,10 +964,11 @@ export class Game {
       this.preview = "";
       this.threatText = ""; // 채집 라운드에는 도는 위협이 없다
       this.stageTicksLeft = GAME.roundSeconds * SIM.stepsPerSecond;
-      // 첫 시대에는 시험을 안 건다 — 첫 판이 답해야 할 질문은 "무리를 먹여 키운다" 하나뿐이다.
-      // 이 한 줄로 판정·불씨 감소·목표 줄의 불씨 점·첫 안내 배너·드래프트 예고가 전부 연쇄로 꺼진다
-      // (전부 game.trial 을 보고 켜지므로). pickTrial 은 전용 해시 Rng 라 건너뛰어도 스트림이 안 밀린다.
-      if (this.firstEra) {
+      // 진도 0(이 게임을 처음 겪는 판의 첫 시대)에는 시험을 안 건다 — 그때 답해야 할 질문은
+      // "무리를 먹여 키운다" 하나뿐이다. 이 한 줄로 판정·불씨 감소·목표 줄의 불씨 점·첫 안내 배너·
+      // 드래프트 예고가 전부 연쇄로 꺼진다(전부 game.trial 을 보고 켜지므로).
+      // pickTrial 은 전용 해시 Rng 라 건너뛰어도 스트림이 안 밀린다.
+      if (!stepHasTrial(this.onboarding)) {
         this.currentTrial = null;
         this.pendingTrial = null;
       }
@@ -1023,10 +1049,13 @@ export class Game {
     this.world.herdOrder = null;
   }
 
-  /** 저장본에서 메타(누적 경험치 → 레벨·리롤 해금)를 다시 읽어 필드에 반영. 런 시작·디버그 변경 시 호출. */
+  /** 저장본에서 메타(누적 경험치 → 레벨·리롤 해금 · 끝낸 런 수)를 다시 읽어 필드에 반영.
+   *  런 시작·디버그 변경 시 호출. 런 도중에는 안 바뀌므로 진도가 판 중간에 튀지 않는다. */
   private reloadMeta(): void {
-    this.metaLvl = metaLevel(loadMeta().metaXp);
+    const meta = loadMeta();
+    this.metaLvl = metaLevel(meta.metaXp);
     this.metaRerollUnlocked = isRerollUnlockedAtLevel(this.metaLvl);
+    this.runsDone = meta.runsCompleted;
   }
 
   private endRun(result: RunResult): void {
@@ -1168,7 +1197,8 @@ export class Game {
     this.eraReward = true;
     // 곧 시작할 단계가 채집이면 시험을 **지금** 뽑아 얼려 둔다 · upcomingTrial 예고와 beginStage 실물이
     // 같은 객체다. pickTrial 은 전용 해시 Rng 라 어떤 기존 스트림도 소비하지 않는다(결정론 불변).
-    if ((SCHEDULE[this.stageIndex] ?? "forage") === "forage") {
+    // 시험이 아직 안 열린 진도면 예고도 하지 않는다(예고와 실물은 같은 게이트를 봐야 한다).
+    if (stepHasTrial(this.onboarding) && (SCHEDULE[this.stageIndex] ?? "forage") === "forage") {
       this.pendingTrial = this.pickTrial();
       this.trialSkipBroodBase = this.skipBroodTotal; // pop 기준점: 이 순간의 개체 수(스킵 새끼 이전)
     } else {
@@ -1187,8 +1217,14 @@ export class Game {
     );
     this.draftCards = drawn.map((c) => boostCard(c, GAME.eraRewardBoost));
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
+    // 시대를 넘으면 온보딩 진도도 한 칸 오른다 → **이번에 새로 열린 것**을 여기서 한 줄로 알린다.
+    // 시대 전환 직후 반드시 지나는 화면이라 가장 싼 자리다(따로 배너를 만들지 않는다). 진도가 안 올랐으면
+    // (이미 온전한 세계면) 빈 줄이라 아무것도 안 붙는다.
+    const step = this.onboarding;
+    const opened = step > onboardingStep(this.runsDone, this.era - 1) ? onboardingOpenedLine(step) : "";
     this.preview =
-      "새로운 시대에 들어섭니다. 지난 시대를 넘어선 보상으로, 크게 강해진 형질 하나를 고르세요. 지금 무리에 바로 물려집니다.";
+      "새로운 시대에 들어섭니다. 지난 시대를 넘어선 보상으로, 크게 강해진 형질 하나를 고르세요. 지금 무리에 바로 물려집니다." +
+      (opened === "" ? "" : ` ${opened}`);
     this.onDraft?.(this.draftCards, this.preview);
   }
 
