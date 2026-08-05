@@ -717,7 +717,8 @@ export class Game {
       const bt = this.peekBossType(); // 실제로 나올 보스(무의미 보스는 건너뛴 결과) — 예고가 진실이어야 한다
       // 살아남아야 하는 수를 **위협이 시작되기 전에** 못박는다. 판정과 같은 함수(bossPassNeeded)를 읽으므로
       // 예고가 거짓말이 될 수 없다. 모르고 지면 "허무하게 졌다"가 되지만, 알고도 못 지킨 것은 허무하지 않다.
-      const hold = survivalLine(bossPassNeeded(this.era));
+      // 때릴 수 있는 보스(개체형)는 물리치기만 해도 통과한다 · 전역 시련은 생존만이 길이다.
+      const hold = survivalLine(bossPassNeeded(this.era), bt ? isPredatorBoss(bt) : false);
       // 카운터 힌트 + 만능 수단 안내: 공격력·원거리가 높으면 어떤 보스든 맞서 잡는다(원거리로 시작해도 보스전 가능).
       if (bt) return { title: `곧 ${bossName(bt)}!`, sub: `${bossCounter(bt)} 공격력이나 원거리가 높으면 어떤 보스든 맞서 잡습니다.${hold}` };
       return { title: "곧 위협이 닥칩니다", sub: hold.trim() };
@@ -1031,7 +1032,7 @@ export class Game {
       this.world.boss = createBoss(bt, this.world.width, this.world.height, this.world.terrain, diff, true);
       // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
-      this.preview = `다가오는 위협. ${bossPreview(bt)}${survivalLine(bossPassNeeded(this.era))}`;
+      this.preview = `다가오는 위협. ${bossPreview(bt)}${survivalLine(bossPassNeeded(this.era), isPredatorBoss(bt))}`;
       // 드래프트가 화면을 덮어도 무엇과 싸우는 중인지 보이게, 대응 힌트만 짧게 붙들어 둔다.
       // 전문(preview)은 배너가 이미 띄웠고, 카드 고르는 자리에서 필요한 건 "무엇을 키워야 하나"다.
       this.threatText = `지금 위협 「${bossName(bt)}」 · ${bossCounter(bt)}`;
@@ -1465,8 +1466,13 @@ function shuffle<T>(items: readonly T[], rng: Rng): T[] {
  * 기준을 3 → 1 로 내린 이유가 바로 그것이었다). 미리 못박아 두면 같은 패배가 **"알고도 못 지켰다"** 가
  * 된다. 첫 시대(1마리)는 곧 "완전 멸종만 패배"라 굳이 겁을 주지 않는다.
  */
-function survivalLine(need: number): string {
+function survivalLine(need: number, killable = false): string {
   if (need <= 1) return "";
+  // ⚠ 보스는 **물리치기만 하면 개체 수와 무관하게 통과**한다(finishStage: bossDefeated || pop >= need).
+  //   그래서 조건 없이 "N마리가 살아남아야 합니다"라고만 하면 화면이 실제 규칙보다 겁을 준다.
+  //   때릴 수 있는 보스에는 "물리치지 못하면"을 붙여 두 갈래를 다 말한다. 대멸종·전역 시련은 때릴
+  //   대상이 없어 생존만이 길이므로 그대로 단언한다.
+  if (killable) return ` 물리치지 못하면 ${need}마리가 살아남아야 합니다.`;
   return ` 이 시대를 넘으려면 ${need}마리가 살아남아야 합니다.`;
 }
 
