@@ -729,6 +729,12 @@ async function boot(): Promise<void> {
           controls.setSpeed(game.speed);
           goalBar.setSpeed(game.speed); // 표시 동기화 — 키로 바꿔도 goalBar 패널의 배속 버튼이 맞게
           return true;
+        case "KeyI":
+          // 자세한 정보(목표 줄 아래 상세 패널) 펼치기/접기 · 폰은 탭, 데스크톱은 이 키.
+          // 알약은 button 이지만 이 라우터가 keydown 마다 포커스를 걷어내므로(keys.ts) Tab+Enter 로는
+          // 못 연다 → 키보드 경로를 여기서 따로 준다.
+          goalBar.toggle();
+          return true;
         case "Equal":
         case "NumpadAdd":
           userZoom = clampUserZoom(userZoom * 1.25);
