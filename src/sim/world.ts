@@ -811,6 +811,15 @@ export class World {
     return this.terrain.nearestLargePassable(x, y, canSwim, canLand, canFly, minRegion);
   }
 
+  /**
+   * 스폰 뭉침 반경(보금자리 퍼짐) — 맵 크기(면적의 제곱근 = 길이 배율)에 비례. 절대값이면 큰 맵에서
+   * 좁은 점에 과밀해 국소 먹이를 빨리 소진한다. 모든 스폰(내 종·야생·친척·챔피언·바이옴종)이 이
+   * 한 값을 쓴다 — 흩어져 있던 `72 * sqrt(areaScale)` 복사 여섯 곳을 모은 것(값 동일).
+   */
+  private get spawnSpread(): number {
+    return 72 * Math.sqrt(this.areaScale);
+  }
+
   private spawnEntities(): void {
     for (const sp of this.species) {
       // 친척(우호 종)·바이옴 특화종은 여기서 스폰하지 않는다 — 각자 독립 rng 스폰이 맡아 메인 rng 소비 순서 보존.
@@ -839,7 +848,7 @@ export class World {
       // 빨리 소진하고 집단 아사한다(맵 3배에서 야생 급감의 원인). 비례하면 밀도가 유지된다.
       // 모든 종(내 종 포함)이 한 무리로 모여 태어난다 — 내 종이 맵 전체에 흩어지면 무게중심이 안
       // 움직여 카메라가 못 따라가고 개체 하나하나 관찰이 안 된다(소수 개체 게임의 핵심).
-      const spread = 72 * Math.sqrt(this.areaScale);
+      const spread = this.spawnSpread;
       // 야생은 종 정체성(상대 비율)은 유지하며 전체만 절반으로(소수 생태). 개체는 절대 수(맵 크기와
       // 무관하게 소수) — areaScale(면적 배율)은 먹이 밀도·상한에만 써서, 큰 맵일수록 개체당 먹이가 넉넉하다.
       const count = Math.max(1, Math.round(sp.isPlayer ? sp.initialCount : sp.initialCount * SIM.wildCountScale));
@@ -869,7 +878,7 @@ export class World {
     const canFly = kin.genome.traits.wings >= SIM.flyThreshold;
     const homeX = rng.range(0.14, 0.86) * this.width;
     const homeY = rng.range(0.14, 0.86) * this.height;
-    const spread = 72 * Math.sqrt(this.areaScale);
+    const spread = this.spawnSpread;
     for (let i = 0; i < kin.initialCount; i++) {
       const x = Math.max(0, Math.min(this.width, homeX + rng.range(-spread, spread)));
       const y = Math.max(0, Math.min(this.height, homeY + rng.range(-spread, spread)));
@@ -883,7 +892,7 @@ export class World {
    * 같은 격리 패턴이라 메인 스트림·밸런스에 안 걸린다. 챔피언이 없으면(첫 플레이·headless) 아무 일도 안 한다.
    */
   private spawnChampions(rng: Rng): void {
-    const spread = 72 * Math.sqrt(this.areaScale);
+    const spread = this.spawnSpread;
     for (const sp of this.species) {
       if (!sp.champion) continue;
       const tr = sp.genome.traits;
@@ -915,7 +924,7 @@ export class World {
    * (맵 크기 무관 — 소수 개체 게임). areaScale 은 위치 분산에만(길이라 제곱근), 개수엔 안 쓴다.
    */
   private spawnWildHerdPadding(rng: Rng): void {
-    const spread = 72 * Math.sqrt(this.areaScale);
+    const spread = this.spawnSpread;
     for (const sp of this.species) {
       if (sp.isPlayer || sp.friendly || sp.homeBiome) continue; // 바이옴 특화종은 자기 스폰이 따로(중복 방지)
       const tr = sp.genome.traits;
@@ -949,7 +958,7 @@ export class World {
    */
   private spawnBiomeAnimals(rng: Rng): void {
     const terr = this.terrain;
-    const spread = 72 * Math.sqrt(this.areaScale);
+    const spread = this.spawnSpread;
     for (const sp of this.species) {
       if (!sp.homeBiome) continue;
       // 고향 바이옴이면서 통행 가능한 육지 타일을 후보로 모은다(물·산 제외 — 바이옴종은 육지 거주).
@@ -984,7 +993,7 @@ export class World {
    */
   private spawnMapAnimals(rng: Rng, mapSpecies: Species[]): void {
     const terr = this.terrain;
-    const spread = 72 * Math.sqrt(this.areaScale);
+    const spread = this.spawnSpread;
     for (const sp of mapSpecies) {
       const habitat = mapSpeciesHabitat(this.mapType, sp.name);
       const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;

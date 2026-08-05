@@ -7,8 +7,8 @@
 // 재현조차 불가능했다. 이 파일이 그 재발을 막는다.
 //
 // 세 가지 규칙(docs/design/known_issues.md 에 규칙으로 올라가 있다):
-//   1. 반드시 **실제 플레이 세계 치수**로 만든다 (main.ts: layout 540x960 x MAP_SCALE 2 = 1080x1920,
-//      areaScale = MAP_SCALE^2 = 4).
+//   1. 반드시 **실제 플레이 세계 치수**로 만든다 · 단일 근원 src/config.ts 의 MOBILE(540x960) x
+//      MAP_SCALE(2) = 1080x1920, areaScale = MAP_AREA_SCALE = 4. 이 파일은 복사본을 두지 않는다.
 //   2. **합친 비율을 보고하지 않는다** · 프리셋 x 보스 x 시대 축을 쪼개고, 표본 5 미만이면 "표본 부족".
 //   3. 지표는 **사용자가 화면에서 보는 양**으로 · 보스는 "라운드 중 최소 체력 비율"(바가 얼마나
 //      움직였나)이지 처치/버팀 이진이 아니다.
@@ -35,14 +35,6 @@ const opt = (name, dflt) => {
   return hit === undefined ? dflt : hit.slice(name.length + 3);
 };
 
-// --- 실제 플레이 세계 치수 (main.ts 와 동일) ---
-const LAYOUT_W = 540;
-const LAYOUT_H = 960;
-const MAP_SCALE = 2.0;
-const W = LAYOUT_W * MAP_SCALE; // 1080
-const H = LAYOUT_H * MAP_SCALE; // 1920
-const AREA_SCALE = MAP_SCALE * MAP_SCALE; // 4
-
 const server = await createServer({
   server: { middlewareMode: true },
   appType: "custom",
@@ -55,6 +47,12 @@ const { GAME } = await server.ssrLoadModule("/src/game/config.ts");
 const { createBoss, bossRaidable } = await server.ssrLoadModule("/src/sim/boss.ts");
 const { defaultGenome } = await server.ssrLoadModule("/src/sim/genome.ts");
 const { PRESET_CARDS, applyCard } = await server.ssrLoadModule("/src/game/cards.ts");
+
+// --- 실제 플레이 세계 치수 · 단일 근원 src/config.ts 에서 읽는다(main.ts 와 같은 값, 복사본 아님) ---
+const { MOBILE, MAP_SCALE, MAP_AREA_SCALE } = await server.ssrLoadModule("/src/config.ts");
+const W = MOBILE.width * MAP_SCALE; // 1080
+const H = MOBILE.height * MAP_SCALE; // 1920
+const AREA_SCALE = MAP_AREA_SCALE; // 4
 
 const SEEDS_ALL = ["p-1", "p-2", "p-3", "p-4", "p-5", "p-6", "p-7", "p-8"];
 const SEEDS = SEEDS_ALL.slice(0, Number(opt("seeds", "8")));
