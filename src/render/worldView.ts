@@ -33,6 +33,8 @@ import {
   sizeDev,
   effectiveCamo,
   herdShielded,
+  isApex,
+  outrunsHunters,
   leadTargetRange,
 } from "@/sim/behavior";
 import type { CosmeticId } from "@/game/achievements";
@@ -433,8 +435,15 @@ export class WorldView {
             nightVisionFactor(world.daylight, v01) *
             grassVisionFactor(world, e.x, e.y, v01);
           const hd = this.heading.get(e.id);
+          // **정점 시야(100)는 부채꼴 규칙에서 벗어난다** — 달리면서도 사방을 본다(`behavior.makeFovTest`).
+          // sim 이 늘 전방위인데 화면만 부채꼴이면 "뒤에 있는 것을 어떻게 봤지?"가 되고, 애써 얻은
+          // 정점 보상이 화면에서 영영 안 읽힌다(known_issues: sim 효과를 넣으면 그리는 곳도 함께 고친다).
+          const apexEye = isApex(e.genome.traits.vision);
           if (eVision > 1) {
-            if (hd && Math.hypot(hd.x, hd.y) > 0.02) {
+            if (apexEye) {
+              // 사방 · 정점은 금빛으로 갈라 "이건 보통 눈이 아니다"를 한눈에 알린다.
+              this.playerG.circle(rx, ry, eVision).stroke({ color: 0xffe27a, width: 1.4, alpha: 0.16 });
+            } else if (hd && Math.hypot(hd.x, hd.y) > 0.02) {
               const fa = Math.atan2(hd.y, hd.x);
               this.playerG
                 .moveTo(rx, ry)
@@ -471,6 +480,29 @@ export class WorldView {
         // 링을 얹어 "이 무리는 지금 지켜지고 있다"를 그 자리에서 보인다. 초록 강조 고리(내 종)와 다른
         // 색·바깥 반경이라 겹쳐도 구분된다. 무리에서 떨어지면(낙오) 링이 사라져 "혼자면 위험"도 읽힌다.
         // herding 문턱을 먼저 걸러 야생·비무리 종의 판정 비용(격자 순회)을 0 으로 둔다(herdShielded 내부).
+        // **정점 속도(100) 표식** — 사냥하는 것들이 표적을 고르는 단계에서 이 개체를 아예 뺀다
+        // (`behavior.outrunsHunters`). "안 쫓아온다"는 그 자체로는 눈에 안 보이는 보상이라, 무리 방어가
+        // 파란 보호 링을 얻은 것과 같은 이유로 표식을 준다. 링을 하나 더 얹지 않고 **뒤로 흐르는 잔상
+        // 두 줄**로 그리는 이유: 이미 초록 고리·파란 방패 링이 겹치는 자리라 세 번째 링은 도형 밭이 되고,
+        // 잔상은 그 자체로 "너무 빨라 못 잡는다"를 말한다. 판정은 sim 함수를 그대로 읽는다(시각=로직 1:1).
+        if (outrunsHunters(e)) {
+          const hd = this.heading.get(e.id);
+          const hm = hd ? Math.hypot(hd.x, hd.y) : 0;
+          if (hd && hm > 0.02) {
+            const ux = hd.x / hm;
+            const uy = hd.y / hm;
+            // 진행 방향의 좌우로 살짝 벌린 두 줄이 뒤로 흐른다(맥동으로 길이가 숨쉰다).
+            const len = 15 + 5 * ringPulse;
+            for (const s of [-1, 1]) {
+              const ox = -uy * 5 * s;
+              const oy = ux * 5 * s;
+              this.playerG
+                .moveTo(rx - ux * 8 + ox, ry - uy * 8 + oy)
+                .lineTo(rx - ux * (8 + len) + ox, ry - uy * (8 + len) + oy)
+                .stroke({ color: 0xffe27a, width: 1.8, alpha: 0.5 });
+            }
+          }
+        }
         if (e.genome.traits.herding > SIM.herdShieldThreshold && herdShielded(e, world)) {
           // 초록 강조 고리(반경 12.5)보다 바깥에 둬 두 링이 분리돼 보이게 한다. 파란빛 채움 + 밝은
           // 스트로크로 "보호막" 느낌. 숨쉬듯 맥동해 살아 있는 방어로 읽힌다.

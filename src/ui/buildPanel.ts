@@ -3,7 +3,7 @@
 // 위치도 우상단이 아니라 칩 아래(좌상단, 종 안내 패널과 같은 자리 — 서로 배타적으로 열린다).
 // 캔버스 위 HTML 오버레이(인라인 스타일).
 
-import { TRAIT_KEYS, TRAIT_LABELS, traitCeiling, type Traits } from "@/sim/genome";
+import { APEX_TRAITS, TRAIT_CEILING, TRAIT_KEYS, TRAIT_LABELS, traitCeiling, type Traits } from "@/sim/genome";
 import { ABILITY_KEYS, abilityFillPct, traitColor, traitWord } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { huntingBuild, dietNote } from "@/game/runReport";
@@ -109,12 +109,30 @@ export function createBuildPanel(): BuildPanel {
       row.appendChild(top);
       if (key !== "diet") {
         const track = document.createElement("div");
-        track.style.cssText = "margin-top:2px; height:4px; border-radius:3px; background:rgba(255,255,255,0.06); overflow:hidden;";
+        const ceiling = traitCeiling(key);
+        // 눈금 한 칸 = 형질 10 (드래프트 막대와 같은 규칙 · 두 화면이 다른 자로 재면 안 된다).
+        // 값형질만 눈금을 준다 — 능력형은 값이 아니라 단계라 10 이라는 자가 뜻을 갖지 않는다.
+        const ticks = isAbility
+          ? ""
+          : ` background-image:linear-gradient(90deg, rgba(255,255,255,0.14) 0 1px, transparent 1px);` +
+            ` background-repeat:repeat-x; background-size:${(10 / ceiling) * 100}% 100%;`;
+        track.style.cssText =
+          "margin-top:2px; height:4px; border-radius:3px; background-color:rgba(255,255,255,0.06);" +
+          " overflow:hidden; position:relative;" + ticks;
         const fill = document.createElement("div");
         // 능력형은 눈금(세분 능력=값 그대로, 나머지=0/50/100%), 값형질은 상한 기준 비율. 색은 형질 6색 매핑.
-        const pct = isAbility ? abilityFillPct(key, v) : Math.round(Math.max(0, Math.min(100, (v / traitCeiling(key)) * 100)));
+        const pct = isAbility ? abilityFillPct(key, v) : Math.round(Math.max(0, Math.min(100, (v / ceiling) * 100)));
         fill.style.cssText = `height:100%; width:${pct}%; border-radius:3px; background:${traitColor(key)};`;
         track.appendChild(fill);
+        // 정점선 — 형질 100 이 어디인가. 천장이 100 위로 열린 시대에만(첫 시대는 막대 끝과 같은 자리).
+        if (APEX_TRAITS.has(key) && ceiling > TRAIT_CEILING[key]) {
+          const mark = document.createElement("div");
+          const apexPct = (TRAIT_CEILING[key] / ceiling) * 100;
+          mark.style.cssText =
+            `position:absolute; top:0; bottom:0; left:${apexPct}%; width:2px; margin-left:-1px;` +
+            " background:#FFE27A; box-shadow:0 0 4px rgba(245,195,59,0.9);";
+          track.appendChild(mark);
+        }
         row.appendChild(track);
       }
       traitsBox.appendChild(row);

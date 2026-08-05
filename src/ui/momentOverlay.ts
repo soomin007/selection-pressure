@@ -18,6 +18,14 @@ export interface MomentOverlay {
    * 열렸는지(`boon`) 함께 말해 주지 않으면 화면에서 영영 안 읽힌다(도감에만 있으면 미달).
    */
   apex: (traitLabel: string, value: number, boon: string) => void;
+  /**
+   * **시대 전환** — "다음 시대로"를 누른 순간, 새 세계가 만들어지기 전에 짧고 굵게 한 번.
+   *
+   * 시대가 올라도 화면이 그대로면 무엇이 험해졌는지 어디에서도 안 읽힌다. 여기서 무엇이 늘고
+   * 무엇이 열리는지 세 줄로 못박고, 연출이 끝나면 `onDone` 으로 실제 전환을 넘긴다(호출부가
+   * 순서를 쥔다 — 세계를 먼저 만들면 곧바로 뜨는 드래프트가 이 연출을 덮는다).
+   */
+  era: (title: string, lines: string[], onDone: () => void) => void;
   /** 남은 오버레이를 지운다(새 월드 시작 등). */
   clear: () => void;
 }
@@ -37,6 +45,9 @@ function ensureStyles(): void {
 /* 정점 — 승리보다 작고 짧게(런이 안 끊긴다). 금빛 고리가 한 번 퍼지고, 글자는 솟았다 스러진다. */
 @keyframes moment-apex-ring { 0%{transform:scale(0.35);opacity:0} 20%{opacity:0.85} 100%{transform:scale(2.2);opacity:0} }
 @keyframes moment-apex-word { 0%{transform:translateY(14px) scale(0.82);opacity:0} 22%{transform:translateY(0) scale(1.06);opacity:1} 74%{transform:translateY(0) scale(1);opacity:1} 100%{transform:translateY(-10px) scale(1);opacity:0} }
+/* 시대 전환 — 어두운 붉은 기운이 위에서 덮쳐 내려온다("세계가 험해졌다"). 글자는 솟았다 잠시 머물고 스러진다. */
+@keyframes moment-era-sweep { 0%{transform:translateY(-100%);opacity:0} 18%{transform:translateY(0);opacity:1} 76%{opacity:1} 100%{opacity:0} }
+@keyframes moment-era-word { 0%{transform:translateY(18px) scale(0.86);opacity:0} 18%{transform:translateY(0) scale(1.04);opacity:1} 78%{transform:translateY(0) scale(1);opacity:1} 100%{transform:translateY(-8px) scale(1);opacity:0} }
 `;
   document.head.appendChild(s);
 }
@@ -177,15 +188,75 @@ export function createMomentOverlay(): MomentOverlay {
     }, 2200);
   };
 
+  // 시대 전환 연출 — 결과 화면(z-index 20대)이 아직 떠 있을 수 있으므로 자기 레이어를 그 위에 둔다.
+  const eraRoot = document.createElement("div");
+  eraRoot.style.cssText =
+    "position:fixed; inset:0; z-index:34; pointer-events:none; display:none; overflow:hidden;" +
+    "font-family:system-ui,-apple-system,sans-serif;";
+  document.body.appendChild(eraRoot);
+  let eraTimer = 0;
+
+  const era = (title: string, lines: string[], onDone: () => void): void => {
+    window.clearTimeout(eraTimer);
+    eraRoot.replaceChildren();
+    eraRoot.style.display = "block";
+
+    eraRoot.appendChild(
+      layer(
+        "position:absolute; inset:0; background:linear-gradient(180deg, rgba(88,18,10,0.96), rgba(14,10,8,0.97))",
+        "moment-era-sweep 2.6s ease-out forwards",
+      ),
+    );
+
+    const stack = document.createElement("div");
+    stack.style.cssText =
+      "position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;" +
+      "justify-content:center; gap:10px; text-align:center; padding:0 26px;" +
+      "animation:moment-era-word 2.6s ease-out forwards;";
+
+    const word = document.createElement("div");
+    word.textContent = title;
+    word.style.cssText =
+      "color:#FFD9A0; font-family:'Black Han Sans',sans-serif; font-size:min(15vw,80px);" +
+      "letter-spacing:0.06em; text-shadow:0 3px 24px rgba(0,0,0,0.9);";
+
+    const head = document.createElement("div");
+    head.textContent = "세계가 험해집니다";
+    head.style.cssText =
+      "color:#F5C33B; font-size:min(5.4vw,23px); font-weight:800; letter-spacing:0.02em;" +
+      "text-shadow:0 2px 10px rgba(0,0,0,0.9);";
+
+    stack.append(word, head);
+    for (const t of lines) {
+      const line = document.createElement("div");
+      line.textContent = t;
+      line.style.cssText =
+        "color:#EAD9B8; font-size:min(4.1vw,16px); font-weight:600; line-height:1.5; max-width:24em;" +
+        "word-break:keep-all; text-shadow:0 2px 10px rgba(0,0,0,0.9);";
+      stack.appendChild(line);
+    }
+    eraRoot.appendChild(stack);
+
+    // 연출이 다 스러진 뒤에 실제 전환을 넘긴다 — 세계를 먼저 만들면 곧장 뜨는 시대 보상 드래프트가
+    // 이 화면을 덮어 아무도 못 본다(known_issues "전체 화면 패널이 곧바로 뜨는 자리").
+    eraTimer = window.setTimeout(() => {
+      eraRoot.style.display = "none";
+      eraRoot.replaceChildren();
+      onDone();
+    }, 2500);
+  };
+
   const clear = (): void => {
     root.style.display = "none";
     root.replaceChildren();
     window.clearTimeout(apexTimer);
     apexRoot.style.display = "none";
     apexRoot.replaceChildren();
+    // ⚠ 시대 연출은 여기서 지우지 않는다 — 새 월드가 만들어지는 순간(onWorldChanged)에 clear 가 불리는데,
+    //   시대 연출은 바로 그 전환을 감싸며 재생 중이다. 지우면 자기 자신을 지운다.
   };
 
-  return { play, apex, clear };
+  return { play, apex, era, clear };
 }
 
 function wordLayer(text: string, color: string, shadow: string, anim: string): HTMLDivElement {

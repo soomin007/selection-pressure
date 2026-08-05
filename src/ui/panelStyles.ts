@@ -379,8 +379,21 @@ export function ensurePanelStyles(): void {
   .draft-stats { display: flex; flex-direction: column; gap: 9px; margin-top: 18px; }
   .draft-stat { display: flex; align-items: center; gap: 9px; }
   .draft-stat-label { font-size: 11px; color: var(--sub); width: 58px; flex: none; }
-  .draft-stat-track { flex: 1; height: 7px; background: rgba(255,255,255,0.12); border-radius: 4px; position: relative; }
+  /* 막대 한 칸 = 형질 10 · 눈금은 배경 무늬로 그린다(요소를 열 개 만들지 않는다).
+     왜 10 인가: 실측에서 형질 1칸의 차이는 시드 노이즈에 묻히고, 화면에서 읽히는 최소 단위가 약 10 이었다
+     (2026-08-05). 눈금이 있으면 "+11" 이 곧 "한 칸"으로 보여 카드 한 장의 크기가 손에 잡힌다.
+     칸 폭(background-size)은 시대 천장에 따라 달라지므로 draftPanel 이 계산해 넣는다. */
+  .draft-stat-track { flex: 1; height: 7px; background-color: rgba(255,255,255,0.12); border-radius: 4px;
+    position: relative; background-image: linear-gradient(90deg, rgba(255,255,255,0.16) 0 1px, transparent 1px);
+    background-repeat: repeat-x; }
   .draft-stat-fill { height: 100%; border-radius: 4px; }
+  /* 정점선 — 형질 100 이 막대 어디인가. 시대가 오르면 천장이 넓어져 이 금색 선이 왼쪽으로 물러나고,
+     그 오른쪽으로 새로 생긴 여백이 곧 "이번 시대에 더 오를 수 있는 만큼"이다(천장 상승이 눈금으로 읽힌다). */
+  .draft-stat-apexline { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px;
+    background: #FFE27A; box-shadow: 0 0 5px rgba(245,195,59,0.9); border-radius: 1px; }
+  /* 정점을 넘어선 구간 — 그냥 큰 숫자가 아니라 화면에서 다르게 보여야 한다(금빛 + 발광). */
+  .draft-stat-over { position: absolute; top: 0; bottom: 0;
+    background: linear-gradient(90deg, #FFE27A, #FFF6C8); box-shadow: 0 0 8px rgba(255,226,122,0.8); }
   .draft-stat-gain { position: absolute; top: 0; bottom: 0; border-radius: 0 4px 4px 0;
     background: rgba(143,209,79,0.3); border: 1px dashed rgba(143,209,79,0.7); box-sizing: border-box; }
   .draft-stat-loss { position: absolute; top: -1px; bottom: -1px; border-radius: 2px; background: rgba(232,92,67,0.55); }

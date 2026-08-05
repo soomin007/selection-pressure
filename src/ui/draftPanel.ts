@@ -22,6 +22,8 @@ import {
   cloneGenome,
   isApexTrait,
   traitCeiling,
+  APEX_TRAITS,
+  TRAIT_CEILING,
   TRAIT_LABELS,
   type Genome,
   type Traits,
@@ -477,10 +479,29 @@ export function createDraftPanel(
       const label = el("span", "draft-stat-label");
       label.textContent = TRAIT_LABELS[key];
       const track = el("div", "draft-stat-track");
+      // 눈금 한 칸 = 형질 10. 형질 1칸의 차이는 시드 노이즈에 묻히고 화면에서 읽히는 최소 단위가
+      // 약 10 이라는 실측(2026-08-05)에 맞춘 눈금이다 — "+11" 이 곧 "한 칸"으로 보인다.
+      // 시대 천장이 오르면 칸이 촘촘해져 "막대가 길어졌다"가 눈금으로 읽힌다.
+      track.style.backgroundSize = `${(10 / ceiling) * 100}% 100%`;
       const fill = el("div", "draft-stat-fill");
       fill.style.width = `${clamp(basePct, 0, 100)}%`;
       fill.style.background = traitColor(key);
       track.appendChild(fill);
+
+      // **정점선**(형질 100 자리) + **정점을 넘어선 구간**. 천장이 100 위로 열린 시대에만 그린다
+      // (첫 시대는 선이 막대 끝과 겹쳐 아무 정보도 없다 → 예전 화면 그대로 둔다).
+      const apexPct = (TRAIT_CEILING[key] / ceiling) * 100;
+      if (APEX_TRAITS.has(key) && ceiling > TRAIT_CEILING[key]) {
+        const mark = el("div", "draft-stat-apexline");
+        mark.style.left = `${clamp(apexPct, 0, 100)}%`;
+        track.appendChild(mark);
+        if (basePct > apexPct) {
+          const over = el("div", "draft-stat-over");
+          over.style.left = `${apexPct}%`;
+          over.style.width = `${clamp(basePct - apexPct, 0, 100 - apexPct)}%`;
+          track.appendChild(over);
+        }
+      }
 
       if (delta > 0) {
         const ghost = el("div", "draft-stat-gain");

@@ -903,3 +903,61 @@ describe("지수 성장 · 지수 난이도 (2026-08-05 · 성장 곡선과 난�
     }
   });
 });
+
+/**
+ * 2단계 — **성장과 난이도가 화면에서 읽히는가**의 계약.
+ *
+ * 값은 1단계에서 섰다(천장 상승·통과 기준 상승·포식 압력). 여기서 못박는 것은 "그 값을 화면이
+ * 같은 함수에서 읽는가" 하나다. 화면이 자기 식으로 다시 계산하면 그 순간 두 진실이 생기고,
+ * 이 저장소는 그 사고(예고와 실제가 갈린 시험·격퇴율 72%)를 이미 두 번 겪었다.
+ */
+describe("시대 전환 연출이 말하는 것 (nextEraBriefing)", () => {
+  function readyRun(seed: string): Game {
+    const g = new Game(540, 960);
+    g.fixedSeed = seed;
+    g.beginRun();
+    g.pickCard(0); // 시작 프리셋
+    return g;
+  }
+
+  it("이길 때까지는 아무 말도 하지 않는다", () => {
+    const g = readyRun("brief-none");
+    expect(g.nextEraBriefing()).toBeNull();
+  });
+
+  it("다음 시대에 무엇이 늘고 무엇이 열리는지를 실제 적용 값 그대로 말한다", () => {
+    const g = readyRun("brief-win");
+    g.result = "win";
+    const b = g.nextEraBriefing();
+    expect(b).not.toBeNull();
+    const brief = b as { title: string; lines: string[] };
+    expect(brief.title).toBe("시대 2");
+    // ① 사냥하는 짐승이 늘어난다 — 화면에서 붉은 것이 늘어나는 그 변화.
+    expect(brief.lines.some((l) => l.includes("사냥"))).toBe(true);
+    // ② 관문 기준 · 판정과 같은 함수(bossPassNeeded)의 값이어야 한다.
+    expect(brief.lines.some((l) => l.includes(`${bossPassNeeded(1)}마리`))).toBe(true);
+    // ③ 천장 · 카드가 실제로 올릴 수 있는 그 값이어야 한다.
+    expect(brief.lines.some((l) => l.includes(String(eraTraitCeiling(1))))).toBe(true);
+  });
+
+  it("마지막 시대에서는 이어갈 곳이 없으니 예고도 없다", () => {
+    const g = readyRun("brief-final");
+    g.result = "win";
+    g.era = GAME.eraCap - 1;
+    expect(g.nextEraBriefing()).toBeNull();
+  });
+
+  it("시대가 갈수록 예고의 숫자도 함께 커진다(연출이 매번 같은 말을 하지 않는다)", () => {
+    const g = readyRun("brief-grow");
+    g.result = "win";
+    const at = (era: number): string => {
+      g.era = era;
+      const b = g.nextEraBriefing() as { lines: string[] };
+      return b.lines.join(" ");
+    };
+    const early = at(0);
+    const late = at(GAME.eraCap - 2);
+    expect(early).not.toBe(late);
+    expect(late).toContain(String(eraTraitCeiling(GAME.eraCap - 1)));
+  });
+});

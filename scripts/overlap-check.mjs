@@ -227,6 +227,42 @@ const SCREENS = {
       if (!(await waitForPixiText(page, /불합격/))) throw new Error("판정 플래시가 안 떴다");
     },
   },
+  watchGateChip: {
+    label: "관전 + 관문 생존 칩(후반 시대)",
+    async go(page) {
+      await toWatch(page);
+      // 후반 시대(생존 기준 6마리)의 보스 판 = 알약 첫 줄이 "위협: 그림자 매복자" + 생존 칩으로
+      // 가장 붐비는 상태다. 시대를 안 올리면 기준이 1이라 칩이 아예 안 떠서 이 최악을 못 잰다.
+      await page.evaluate(() => {
+        window.__ov.setEra(4);
+        window.__ov.summon("stalker");
+      });
+      await page.waitForTimeout(900);
+      // 칩이 실제로 붙었는지 확인 — 안 붙었으면 이 장면은 아무것도 안 재고 있는 것이다.
+      const chip = await page.locator(".goal-follow").first().innerText();
+      if (!/생존/.test(chip)) throw new Error(`생존 칩이 안 떴다: ${chip}`);
+    },
+  },
+  watchEraMoment: {
+    label: "시대 전환 연출(험해지는 세 줄)",
+    async go(page) {
+      await toWatch(page);
+      await page.evaluate(() => window.__ov.eraMoment());
+      await page.waitForTimeout(900); // 쓸려 내려오는 애니메이션이 끝난 뒤에 잰다
+    },
+  },
+  draftMineLateEra: {
+    label: "드래프트 + 내 종 팝업(후반 시대 · 천장 194)",
+    async go(page) {
+      await toWatch(page);
+      // 시대를 올려 형질 천장이 100 위로 열린 상태로 막대를 그린다 — 눈금 간격과 정점선이 그때만 생긴다.
+      await page.evaluate(() => window.__ov.setEra(4));
+      await page.locator(".draft-root").waitFor({ state: "visible", timeout: 150000 });
+      await page.waitForTimeout(2400);
+      await page.getByRole("button", { name: /내 종/ }).first().click();
+      await page.waitForTimeout(700);
+    },
+  },
   levelUp: {
     label: "런 종료 진척도(해금 여러 개 + 도전 과제)",
     async go(page) {
@@ -270,6 +306,14 @@ const SCENES = [
   { screen: "watchThreatBanner", viewport: PHONE_SHORT, query: "?ovhook" },
   { screen: "watchThreatBanner", viewport: DESKTOP, query: "?ovhook" },
   { screen: "watchVerdictFlash", viewport: PHONE_NARROW, query: "?ovhook" },
+  // 관문 생존 칩 · 알약 첫 줄을 "긴 보스 이름 + 칩"이 나눠 쓴다. 좁은 폰이 최악.
+  { screen: "watchGateChip", viewport: PHONE_NARROW, query: "?ovhook" },
+  { screen: "watchGateChip", viewport: PHONE, query: "?ovhook" },
+  // 시대 전환 연출 · 세 줄이 좁은 폰·짧은 폰에서 화면 밖으로 안 나가는지.
+  { screen: "watchEraMoment", viewport: PHONE_NARROW, query: "?ovhook" },
+  { screen: "watchEraMoment", viewport: PHONE_SHORT, query: "?ovhook" },
+  // 후반 시대의 형질 막대(눈금·정점선) · 값 열이 길어져도 이름·막대와 안 겹치는지.
+  { screen: "draftMineLateEra", viewport: PHONE_NARROW, query: "?ovhook" },
   // 런 종료 진척도 · 내용이 길면 위(제목)가 잘렸다. 짧은 화면이 최악.
   { screen: "levelUp", viewport: PHONE_SHORT, query: "?ovhook" },
   { screen: "levelUp", viewport: PHONE_NARROW, query: "?ovhook" },

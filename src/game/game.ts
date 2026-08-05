@@ -670,8 +670,15 @@ export class Game {
   debugSummon(kind: BossType | ExtinctionType): void {
     if (this.phase !== "watch") return;
     this.clearStageState();
+    const isBoss = (BOSS_TYPES as readonly string[]).includes(kind);
+    // **관문 자리로 옮겨 앉는다.** 예전에는 채집 라운드 한복판에 위협만 얹었다 → 화면이 "위협: 큰수리"
+    // 라고 말하면서도 생존 기준(`survivorsNeeded`)은 0(=관문 없음)이라, 목표 줄이 "끝까지 살아남으면
+    // 통과합니다"라는 거짓말을 했다. 소환으로 만드는 상태는 실제 관문과 같은 값을 봐야 한다
+    // (검사기·dev 패널이 재는 것이 진짜 화면이어야 한다는 이 저장소의 규칙).
+    const at = (SCHEDULE as readonly StageKind[]).indexOf(isBoss ? "boss" : "extinction");
+    if (at >= 0) this.stageIndex = at;
     const diff = eraDifficulty(this.era);
-    if ((BOSS_TYPES as readonly string[]).includes(kind)) {
+    if (isBoss) {
       const bt = kind as BossType;
       this.world.boss = createBoss(bt, this.world.width, this.world.height, this.world.terrain, diff, true); // 레이드 첫 시대부터
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
@@ -708,17 +715,47 @@ export class Game {
     const next = SCHEDULE[this.stageIndex + 1];
     if (next === "boss") {
       const bt = this.peekBossType(); // 실제로 나올 보스(무의미 보스는 건너뛴 결과) — 예고가 진실이어야 한다
+      // 살아남아야 하는 수를 **위협이 시작되기 전에** 못박는다. 판정과 같은 함수(bossPassNeeded)를 읽으므로
+      // 예고가 거짓말이 될 수 없다. 모르고 지면 "허무하게 졌다"가 되지만, 알고도 못 지킨 것은 허무하지 않다.
+      const hold = survivalLine(bossPassNeeded(this.era));
       // 카운터 힌트 + 만능 수단 안내: 공격력·원거리가 높으면 어떤 보스든 맞서 잡는다(원거리로 시작해도 보스전 가능).
-      if (bt) return { title: `곧 ${bossName(bt)}!`, sub: `${bossCounter(bt)} 공격력이나 원거리가 높으면 어떤 보스든 맞서 잡습니다.` };
-      return { title: "곧 위협이 닥칩니다", sub: "" };
+      if (bt) return { title: `곧 ${bossName(bt)}!`, sub: `${bossCounter(bt)} 공격력이나 원거리가 높으면 어떤 보스든 맞서 잡습니다.${hold}` };
+      return { title: "곧 위협이 닥칩니다", sub: hold.trim() };
     }
     if (next === "extinction") {
       // 대멸종 종류도 미리 정해 저장하므로(extinctionQueue) 무엇이 오는지·어떻게 버티는지 예고한다.
+      const hold = survivalLine(extinctionPassNeeded(this.era));
       const et = this.extinctionQueue[0];
-      if (et) return { title: `곧 ${extinctionName(et)}!`, sub: extinctionCounter(et) };
-      return { title: "곧 대멸종이 닥칩니다", sub: "형태를 갖추고 수를 늘려 대비하세요" };
+      if (et) return { title: `곧 ${extinctionName(et)}!`, sub: `${extinctionCounter(et)}${hold}` };
+      return { title: "곧 대멸종이 닥칩니다", sub: `형태를 갖추고 수를 늘려 대비하세요${hold}` };
     }
     return null;
+  }
+
+  /**
+   * **다음 시대에 무엇이 달라지는가** — 결과 화면에서 "다음 시대로"를 누른 순간 띄우는 짧은 연출의 내용.
+   *
+   * 시대가 올라도 화면이 똑같으면 "세계가 험해졌다"가 어디에서도 안 읽힌다(사용자: 정밀 분석을 해야
+   * 아는 게 아니라 직관적으로 체감되게). 여기 세 줄은 전부 **실제로 적용되는 값과 같은 함수**를 읽는다
+   * (`eraTraitCeiling` · `eraPredatorPressure` · `bossPassNeeded`) — 화면과 실제가 갈릴 수 없다.
+   *
+   * 이어갈 수 없는 상태(패배·정복)면 null.
+   */
+  nextEraBriefing(): { title: string; lines: string[] } | null {
+    if (this.result !== "win" || this.isFinalEra) return null;
+    const next = this.era + 1;
+    const lines: string[] = [];
+    // ① 무엇이 험해지나 — 화면에서 붉은 것이 늘어나는 그 변화.
+    const pressure = eraPredatorPressure(next);
+    if (pressure > eraPredatorPressure(this.era)) {
+      lines.push(`나를 사냥하는 짐승이 ${pressure.toFixed(1)}배로 늘어납니다.`);
+    }
+    // ② 무엇을 지켜야 하나 — 관문 판정 그 값.
+    const need = bossPassNeeded(next);
+    if (need > 1) lines.push(`관문마다 ${need}마리가 살아남아야 합니다.`);
+    // ③ 무엇이 열리나 — 성장의 천장. 험해지는 소식 뒤에 오는 이 줄이 이 연출의 보상이다.
+    lines.push(`걸음·눈·이빨·새끼를 ${eraTraitCeiling(next)}까지 키울 수 있습니다.`);
+    return { title: `시대 ${next + 1}`, lines };
   }
 
   /**
@@ -835,6 +872,16 @@ export class Game {
   /** 이번 시대에 형질을 어디까지 올릴 수 있는가(화면 표시용 · 드래프트 안내와 목표 줄이 읽는다). */
   get traitCeilingNow(): number {
     return eraTraitCeiling(this.era);
+  }
+
+  /**
+   * 디버그 · 지금 판의 시대를 갈아 끼운다(생존 기준·천장·포식 압력이 뒤 시대 값이 된다).
+   * `era` 를 직접 대입하면 **형질 천장이 안 따라와** 화면이 첫 시대 눈금을 그린다 → 반드시 이 문으로.
+   * 겹침 검사기(`?ovhook`)와 `?dev` 패널이 후반 시대 화면을 만들 때 쓴다. 세계는 다시 만들지 않는다.
+   */
+  debugSetEra(era: number): void {
+    this.era = Math.max(0, Math.min(GAME.eraCap - 1, Math.trunc(era)));
+    this.applyEraCeilings();
   }
 
   /**

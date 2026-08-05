@@ -44,6 +44,14 @@ export interface GoalData {
    *  쓰면 도착한 개체가 불복종처럼 읽힌다(2026-08-05). 문구를 main 이 만드는 이유: 도착 여부처럼
    *  월드를 봐야 아는 것이 섞여 있다(여기선 그리기만). */
   follow: string;
+  /**
+   * 그 칩의 성격. 관문(보스·대멸종) 동안에는 이 자리가 **"지금 몇 / 살아남아야 하는 수"** 를 말한다
+   * ("생존 21/8"). 기준선에 가까워지면 색이 변해 "이대로면 진다"가 숫자를 읽기 전에 먼저 보인다.
+   *   plain  평소(따르는 중 · 무리 도착)
+   *   warn   여유가 얼마 안 남았다(기준의 두 배 아래)
+   *   danger 기준 밑이다 · 지금 관문이 끝나면 진다
+   */
+  followTone: "plain" | "warn" | "danger";
   seconds: number;
   night: boolean;
 }
@@ -70,6 +78,26 @@ export interface GoalBar {
    * 매 프레임 재면 레이아웃 비용이 드니 크기가 바뀔 때만(ResizeObserver) 다시 잰다.
    */
   bottomPx: () => number;
+}
+
+/**
+ * **관문 동안 알약에 붙는 생존 칩** — "지금 몇 마리 / 살아남아야 하는 수".
+ *
+ * 왜 필요한가: 기준(N마리)만 말하고 지금 수를 안 보여 주면, 플레이어는 관문이 끝나고 나서야 자기가
+ * 기준 아래였다는 걸 안다. 둘을 한 자리에 붙여야 "지금 위험한가"가 계산 없이 읽힌다.
+ * 기준이 1(첫 시대 = 완전 멸종만 패배)이면 굳이 겁을 주지 않는다 → null(칩을 안 띄운다).
+ *
+ * 순수 함수(DOM 무관)라 테스트로 문턱을 못박는다. 색 문턱: 기준 미만 = danger · 기준의 두 배 미만 = warn.
+ */
+export function survivalChip(
+  now: number,
+  need: number,
+): { text: string; tone: "plain" | "warn" | "danger" } | null {
+  if (need <= 1) return null;
+  const tone = now < need ? "danger" : now < need * 2 ? "warn" : "plain";
+  // "마리"를 뒤에 붙이는 이유: 보스를 때려 잡는 판에서는 안내 줄이 "체력 바를 깎으세요"로 채워져
+  // 기준을 다시 말할 자리가 없다. 칩 하나만 봐도 "지금 20마리, 6마리는 남아야 한다"가 읽혀야 한다.
+  return { text: `생존 ${now}/${need}마리`, tone };
 }
 
 export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
@@ -211,6 +239,8 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
       setText(followEl, d.follow);
       const followVis = d.follow ? "inline-block" : "none";
       if (followEl.style.display !== followVis) followEl.style.display = followVis;
+      const toneCls = `goal-follow ${d.followTone}`;
+      if (followEl.className !== toneCls) followEl.className = toneCls;
       if (!open) return; // 패널이 닫혀 있으면 상세 갱신도 생략(비용 0)
       setText(stageRow, d.stage);
       setText(levelRow, `레벨 ${d.level} · 다음 카드까지 ${Math.round(d.xp01 * 100)}%`);
@@ -294,6 +324,13 @@ function ensureGoalStyles(): void {
     overflow: hidden; text-overflow: ellipsis; }
   .goal-follow { flex: none; font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap;
     padding: 2px 6px; border-radius: 999px; background: rgba(255,255,255,0.09); opacity: 0.85; }
+  /* 관문 동안 이 칩은 "생존 21/8"이 된다 · 기준에 다가갈수록 색이 세진다(숫자를 읽기 전에 먼저 보인다).
+     글씨 크기를 한 단계 키워 관문에서는 이 칩이 알약에서 가장 먼저 눈에 들어오게 한다. */
+  .goal-follow.warn, .goal-follow.danger { font-size: 11.5px; font-weight: 700; opacity: 1; }
+  .goal-follow.warn { background: rgba(245,195,59,0.22); color: #F5C33B; }
+  .goal-follow.danger { background: rgba(232,92,67,0.30); color: #FFC9BE;
+    animation: goal-follow-danger 1.1s ease-in-out infinite; }
+  @keyframes goal-follow-danger { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
   /* nowrap 이면 긴 안내가 "..."로 잘려 나간다(사용자 지적). 두 줄까지 접히게 두고, 그걸 넘기면
      그때만 자른다. 문구 자체를 한 줄에 들어오게 짧게 쓰는 게 먼저다(main 의 goalSub 참고). */
   .goal-sub { font-family: var(--font-mono); font-size: 11.5px; opacity: 0.75; margin-top: 2px;
@@ -339,6 +376,8 @@ function ensureGoalStyles(): void {
     .goal-caret { transition: none; }
     .goal-caret.hint { animation: none; opacity: 0.85; }
     .goal-pill, .goal-pause, .goal-btn { transition: none; }
+    /* 깜빡임을 멈춰도 색은 남는다 — 경고는 움직임이 아니라 색으로도 읽혀야 한다. */
+    .goal-follow.danger { animation: none; }
   }
   `;
   document.head.appendChild(s);

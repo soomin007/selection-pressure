@@ -8,7 +8,7 @@ import { chooseLayout, COLORS, uiScale } from "@/config";
 import { DEBUG, DEBUG_ACTIVE, TUNE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
-import { createGoalBar } from "@/ui/goalBar";
+import { createGoalBar, survivalChip } from "@/ui/goalBar";
 import { Game, type ExtinctionType, type TrialKind, type TrialVerdict } from "@/game/game";
 import { GAME } from "@/game/config";
 import { BOSS_TYPES, bossName, type BossType } from "@/sim/boss";
@@ -32,8 +32,8 @@ import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
 import { ThreatBanner } from "@/render/threatBanner";
 import { publishPixiTextRects } from "@/render/pixiTextRects";
-import { TRAIT_LABELS } from "@/sim/genome";
-import { APEX_BOON } from "@/ui/traitDisplay";
+import { TRAIT_KEYS, TRAIT_LABELS, type Traits } from "@/sim/genome";
+import { ABILITY_KEYS, APEX_BOON } from "@/ui/traitDisplay";
 import { isPredatorBoss, bossRaidable } from "@/sim/boss";
 import { ORDER } from "@/sim/params";
 import { leadCapsOf } from "@/render/leadVision";
@@ -176,6 +176,10 @@ async function boot(): Promise<void> {
 
   const draft = createDraftPanel(app.renderer, app.canvas, {
     onPick: (i) => {
+      // 고르기 **전** 게놈을 떠 둔다 — 아래에서 "무엇이 얼마나 세졌는지"를 실제 차이로 말하기 위해서다.
+      // 카드에 적힌 수치가 아니라 게놈의 전후 차이를 쓰는 이유: 감쇠·정점 고정·클램프가 걸리면 카드
+      // 숫자와 실제가 다르다(그 차이를 화면이 감추면 그게 거짓말이다).
+      const before = { ...game.genome.traits };
       game.pickCard(i);
       refreshBuild(); // 방금 고른 카드를 빌드 패널(설계도=최신 게놈)에 반영
       // 세대별 형질: 텍스처를 새로 만들지 않는다 — 이미 태어난 개체는 옛 모습을 유지하고, 이후 태어난
@@ -184,12 +188,20 @@ async function boot(): Promise<void> {
       // **정점(만렙) 도달** — 반드시 draft.hide() 뒤에. 드래프트 화면이 떠 있는 동안 띄우면 카드 뒤에
       // 가려 아무도 못 본다. 한 카드가 둘을 동시에 올리는 일은 드물지만, 생기면 차례로 보여준다
       // (하나만 띄우고 나머지를 삼키면 무엇이 열렸는지 영영 모른다).
-      game.takeNewApex().forEach((key, k) => {
+      const apexKeys = game.takeNewApex();
+      apexKeys.forEach((key, k) => {
         const boon = APEX_BOON[key] ?? "";
         const value = game.genome.traits[key];
         if (k === 0) moment.apex(TRAIT_LABELS[key], value, boon);
         else window.setTimeout(() => moment.apex(TRAIT_LABELS[key], value, boon), k * 2300);
       });
+      // **고른 직후 무엇이 얼마나 세졌는가.** 지금까지는 숫자가 조용히 바뀌고 끝이라 성장이 사건으로
+      // 안 읽혔다. 전후를 나란히("속도 68 → 79") 보여야 카드 한 장이 무리를 실제로 바꿨다는 게 남는다.
+      // 정점 연출이 나가는 판에는 생략한다 — 그쪽이 훨씬 큰 소식이고, 같은 순간에 둘을 겹치면 서로 덮는다.
+      if (apexKeys.length === 0) {
+        const line = growthLine(before, game.genome.traits);
+        if (line) highlights.flash(line, 0x8fd14f);
+      }
     },
     onSkip: () => {
       // 스킵 — 형질 대신 새끼 몇 마리를 낳고 관전으로 복귀.
@@ -239,9 +251,17 @@ async function boot(): Promise<void> {
       reportScreen.hide();
       result.hide();
       applyCosmetics();
-      game.continueToNextEra();
-      refreshBuild();
-      controls.setVisible(true);
+      // 시대가 올라도 화면이 그대로면 "세계가 험해졌다"가 어디에서도 안 읽힌다 → 전환하기 전에 짧게 한 번
+      // 못박는다(무엇이 늘고 무엇이 열리는지). 문구는 game 이 실제 적용 함수에서 뽑는다(화면=실제).
+      // ⚠ 연출이 끝난 **뒤에** 전환한다 · 먼저 전환하면 곧장 뜨는 시대 보상 드래프트가 이 화면을 덮는다.
+      const brief = game.nextEraBriefing();
+      const go = (): void => {
+        game.continueToNextEra();
+        refreshBuild();
+        controls.setVisible(true);
+      };
+      if (brief) moment.era(brief.title, brief.lines, go);
+      else go();
     },
     () => reportScreen.show(game.runHistory), // "이 혈통의 기록 보기"
     applyCosmetics, // 결과 화면에서 꾸밈을 바꾸면 즉시 반영(다음 런에 그대로 적용)
@@ -536,6 +556,14 @@ async function boot(): Promise<void> {
     summon: (kind: string) => void;
     /** 런 종료 진척도 화면 · 실제 해금표(경험치 적립)와 실제 도전 과제 앞 n개로 최악 길이를 만든다. */
     levelUp: (xp: number, achCount: number) => void;
+    /**
+     * 지금 판의 시대를 갈아 끼운다. 관문의 생존 기준은 시대마다 오르므로(1 · 2 · 3 · 4 · 6마리),
+     * 목표 줄의 생존 칩("생존 21/6")은 **후반 시대에만** 뜬다 — 시대를 못 올리면 그 칩이 붙은
+     * 최악의 알약(긴 보스 이름 + 칩)을 영영 못 잰다. 값은 게임의 진짜 판정 경로로 흘러간다.
+     */
+    setEra: (n: number) => void;
+    /** 시대 전환 연출을 지금 재생한다(문구는 game.nextEraBriefing 이 만든 진짜 세 줄). */
+    eraMoment: () => void;
   }
   if (new URLSearchParams(window.location.search).has("ovhook")) {
     const hooks: OverlapHooks = {
@@ -545,6 +573,15 @@ async function boot(): Promise<void> {
       levelUp: (xp, achCount) => {
         controls.setVisible(false);
         levelScreen.play(game.debugGrantMetaXp(xp), ACHIEVEMENTS.slice(0, achCount), () => {});
+      },
+      setEra: (n) => game.debugSetEra(n),
+      eraMoment: () => {
+        // 문구는 게임이 만든다(nextEraBriefing) · 여기서 지어내면 검사가 거짓말이 된다.
+        const was = game.result;
+        game.result = "win";
+        const b = game.nextEraBriefing();
+        game.result = was;
+        if (b) moment.era(b.title, b.lines, () => {});
       },
     };
     (window as unknown as { __ov: OverlapHooks }).__ov = hooks;
@@ -859,6 +896,11 @@ async function boot(): Promise<void> {
           : herdArrived() || gw.orderPending === 0
             ? "무리 도착"
             : `따르는 중 ${gw.orderFollowers}/${gw.orderPending}`;
+      // **관문 동안에는 이 칩 자리를 생존 수가 가져간다.** 순종보다 판정이 급하다 — 이 라운드가 끝날 때
+      // 기준 아래면 런이 끝난다. 기준(game.survivorsNeeded)은 판정과 같은 값이라 화면이 거짓말할 수 없다.
+      const gate = survivalChip(mineCount, game.survivorsNeeded);
+      const followText = gate ? gate.text : follow;
+      const followTone = gate ? gate.tone : "plain";
       goalBar.update({
         visible: game.phase === "watch",
         text: goalText,
@@ -871,7 +913,8 @@ async function boot(): Promise<void> {
         // 순종의 질 · 지금 뜻을 향해 움직이는 수. sim 이 규칙을 판정한 그 자리에서 센 값을 그대로 읽는다.
         // 뜻을 안 내렸으면 셀 것이 없으므로 줄을 숨긴다(-1).
         followers: gw.herdOrder !== null ? gw.orderFollowers : -1,
-        follow, // 접힌 알약에 상시로 붙는 짧은 칩(빈 문자열이면 숨김)
+        follow: followText, // 접힌 알약에 상시로 붙는 짧은 칩(빈 문자열이면 숨김)
+        followTone,
         seconds: game.secondsLeft,
         night: gw.daylight < 0.5,
       });
@@ -1048,6 +1091,30 @@ async function boot(): Promise<void> {
     prevThreat = threatKey;
   }
 
+}
+
+/**
+ * 카드를 고른 직후의 성장 한 줄 — "속도 68 → 79 · 시야 51 → 55". 안 바뀐 게 없으면 빈 문자열.
+ *
+ * 값형질은 **전후를 나란히** 적는다(+11 만 적으면 지금 얼마인지 모른다 · 성장은 누적으로 느껴진다).
+ * 능력형(수영·날개·초음파·독·원거리·무리·은신)은 값이 아니라 단계라 "강화/약화"로만 말한다
+ * (드래프트 칩·설계도와 같은 규칙 · 낱말과 숫자를 섞으면 읽히지 않는다 · known_issues).
+ * 한 줄 배너라 세 개까지만 — 그보다 많으면 화면을 덮고 아무것도 안 읽힌다.
+ */
+function growthLine(before: Traits, after: Traits): string {
+  const parts: string[] = [];
+  for (const key of TRAIT_KEYS) {
+    const b = before[key];
+    const a = after[key];
+    if (a === b) continue;
+    parts.push(
+      ABILITY_KEYS.has(key)
+        ? `${TRAIT_LABELS[key]} ${a > b ? "강화" : "약화"}`
+        : `${TRAIT_LABELS[key]} ${b} → ${a}`,
+    );
+    if (parts.length >= 3) break;
+  }
+  return parts.join(" · ");
 }
 
 /** 불씨 점 5칸: 남은 만큼 ●, 꺼진 만큼 ○. */
