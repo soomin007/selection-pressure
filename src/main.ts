@@ -45,7 +45,7 @@ const LEAD_CAM_EASE = 9; // 지시 모드 카메라 이징(기본 3.5 는 시상
 const LEAD_BANNER_DELAY_MS = 3000; // "아무도 안 따라옵니다" 안내까지의 유예(바로 띄우면 잔소리)
 const PEEK_RETURN_MS = 1500; // 훔쳐보기(드래그·미니맵·2손가락 팬) 입력이 끝나고 무리로 복귀까지의 시간
 const ORDER_DENY_MS = 1800; // 갈 수 없는 곳을 탭했을 때 목표 줄에 그 사실을 남겨 두는 시간
-const ORDER_ARRIVED_PAD = 60; // 도착 판정 여유(무리는 한 점에 겹치지 않는다) · 기준 반경은 sim 과 공유
+const ORDER_ARRIVED_PAD = 60; // 무리 도착 표시 여유(무리는 한 점에 겹치지 않는다) · 기준 반경(무리 단위 arriveRadius)은 sim 상수 공유
 
 async function boot(): Promise<void> {
   const layout = chooseLayout();
@@ -645,9 +645,10 @@ async function boot(): Promise<void> {
   }
 
   /**
-   * 무리가 내려 둔 뜻에 사실상 도착했나. 도착한 개체는 sim 이 순종 수(orderFollowers)에서 빼므로,
-   * 이걸 안 가르면 "다 왔다"가 "아무도 안 따른다"로 표시된다(화면이 거짓말한다).
-   * 기준 반경은 sim 과 **같은 상수**(ORDER.arriveRadius)에서 끌어와 둘이 갈라질 수 없게 한다.
+   * 무리가 내려 둔 뜻에 사실상 도착했나 · **무리 단위**(무게중심 기준, ORDER.arriveRadius 200).
+   * sim 의 개체별 게이트는 따로 있다(ORDER.releaseRadius 64 · behavior 지시 블록) · 개체 하나가
+   * 지시를 놓는 문턱과 "무리가 도착했다"는 화면 표시는 척도가 달라 상수도 다르다(params.ts 주석).
+   * 이걸 안 가르면 목표 근방에 모여 사는 무리가 "아무도 안 따른다"로 표시된다(화면이 거짓말한다).
    */
   function herdArrived(): boolean {
     const o = game.world.herdOrder;
@@ -803,15 +804,19 @@ async function boot(): Promise<void> {
       // 갈 수 없는 곳을 탭했으면 이 줄의 뒷말만 잠깐 바꾼다(기한은 그대로 남긴다 · 새 줄을 안 만든다).
       if (denyMs > 0) goalSub = `${left} · 그곳으로는 갈 수 없습니다`;
       // 접힌 기본 상태에서 순종을 알리는 표시가 하나도 없었다 → 명령이 먹혔는지 알 방법이 없으니
-      // "말을 안 듣는다"로 읽힌다. 도착한 개체는 sim 이 순종 수에서 빼므로 도착을 따로 말한다.
+      // "말을 안 듣는다"로 읽힌다.
+      // 분모는 **아직 목표에 못 닿은 수**(sim 의 orderPending)다 · 살아 있는 내 종 전부를 분모로
+      // 쓰면 이미 도착한 개체가 불복종처럼 세여 "4/24"가 뜬다(2026-08-05 사고 · 실은 20마리 도착).
+      // 분자(orderFollowers)가 분모보다 작은 것은 정상이다 · 못 닿은 개체 중 일부는 달아나는 중이거나
+      // 눈앞의 먹이·사냥에 붙들려 있다(그 사정은 0명 배너가 말한다 · 칩은 숫자만).
+      // "무리 도착"은 무리 단위 판정(herdArrived)이 먼저다 · 개체 몇이 근방을 들락여도(orderPending 이
+      // 0 과 소수를 오간다) 무리가 목표에 살면 도착이 맞다. orderPending === 0 은 그 안전망이다.
       const follow =
         gw.herdOrder === null || mineCount === 0
           ? ""
-          : gw.orderFollowers > 0
-            ? `따르는 중 ${gw.orderFollowers}/${mineCount}`
-            : herdArrived()
-              ? "무리 도착"
-              : `따르는 중 0/${mineCount}`;
+          : herdArrived() || gw.orderPending === 0
+            ? "무리 도착"
+            : `따르는 중 ${gw.orderFollowers}/${gw.orderPending}`;
       goalBar.update({
         visible: game.phase === "watch",
         text: goalText,
@@ -857,9 +862,10 @@ async function boot(): Promise<void> {
         highlights.flash("화면을 탭하면 무리가 그곳으로 갑니다", 0xf0f8ff);
       }
       // 뜻을 내렸는데 아무도 그쪽으로 안 움직이면 잠시 뒤 한 번만 알린다.
-      // ⚠ 원인을 단정하지 않는다 · 도망·눈앞의 먹이·막힌 길이 다 같은 0 으로 나온다. 그리고 이미
-      //   도착해 모여 있는 것도 0 이므로(도착한 개체는 안 센다) 거리로 갈라야 거짓말이 안 된다.
-      if (gw.herdOrder !== null && gw.orderFollowers === 0 && mineCount > 1 && !herdArrived()) {
+      // ⚠ 원인을 단정하지 않는다 · 도망·눈앞의 먹이가 다 같은 0 으로 나온다. 조건은 칩과 같은
+      //   기준이다: 못 닿은 개체가 있는데(orderPending > 0) 아무도 안 움직이고(orderFollowers 0)
+      //   무리 도착도 아니어야(herdArrived) 한다 · 도착해 모여 사는 무리에게 띄우면 거짓말이 된다.
+      if (gw.herdOrder !== null && gw.orderFollowers === 0 && gw.orderPending > 0 && mineCount > 1 && !herdArrived()) {
         leadZeroMs += ticker.deltaMS;
         if (leadZeroMs >= LEAD_BANNER_DELAY_MS && !leadZeroShown) {
           highlights.flash("지금은 아무도 뜻을 따르지 않습니다. 달아나는 중이거나 눈앞의 일에 붙들려 있습니다.", 0xffba3a);

@@ -160,6 +160,17 @@ export class World {
   orderFollowers = 0;
 
   /**
+   * 이번 틱에 **아직 목표에 못 닿은**(해제 반경 ORDER.releaseRadius 밖) 내 종 개체 수.
+   * 화면 "따르는 중 N/M" 의 분모다 · 분모를 살아 있는 내 종 전부로 잡으면 이미 도착한 개체까지
+   * 불복종처럼 읽힌다(2026-08-05, "20마리 도착 + 4마리 오는 중"이 "4/24"로 뜨던 사고).
+   * 도망 중이라 이번 틱 이동을 지시에 못 준 개체도 세므로 orderFollowers < orderPending 이
+   * 정상 상태다(도망·먹이·사냥에 붙들린 수만큼 차이 난다).
+   * ⚠ 세는 곳은 behavior 의 지시 블록 한 자리뿐(orderFollowers 와 같은 규칙) · 매 틱 리셋 ·
+   * rng 미사용·단순 합계라 순회 순서와 무관하다.
+   */
+  orderPending = 0;
+
+  /**
    * 지금 이 보스에 **맞설 수 있는** 내 종 개체 수(근접 / 원거리). 화면이 "왜 아무도 안 싸우는가"를
    * 말할 수 있게 하는 유일한 숫자다 · 이게 0 이면 격퇴 체력 바를 보여 주는 것 자체가 거짓말이다.
    *
@@ -337,6 +348,7 @@ export class World {
     // HUD 표시용 집계는 매 틱 여기서만 0 으로 되돌린다(세는 곳은 behavior 의 cohesion 한 자리뿐).
     L.followerCount = 0;
     this.orderFollowers = 0; // 뜻을 향해 움직인 수도 같은 규칙으로 매 틱 리셋(세는 곳은 behavior 한 자리)
+    this.orderPending = 0; // "아직 못 닿은" 수(따르는 중 N/M 의 분모)도 같은 자리에서 매 틱 리셋
     // 맞설 수 있는 개체 수도 같은 자리에서 매 틱 0 으로. 보스가 있으면 stepBoss 가 다시 채운다
     // (보스가 사라진 틱에 낡은 수가 남아 "싸울 수 있다"고 거짓말하지 않게).
     this.raidMeleeFighters = 0;

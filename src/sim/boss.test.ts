@@ -544,7 +544,7 @@ describe("레이드 관측값 (world.raid* · entity.raidFighter)", () => {
    * 격퇴 뒤에는 전사가 정의상 0 이 된다(맞설 대상이 사라졌으니 맞다). 그 뒤까지 돌려 놓고 "전사가
    * 0 이다"라고 재면 자기가 만든 상태를 잘못 읽는 것이다.
    */
-  function driveRound(genome: Genome, ticks: number): World {
+  function driveRound(genome: Genome, ticks: number, stopOnFighters = false): World {
     const w = new World("env-1", W, H, genome);
     for (let i = 0; i < 600; i++) w.step();
     w.boss = createBoss("raider", W, H, w.terrain, 1, true);
@@ -560,6 +560,11 @@ describe("레이드 관측값 (world.raid* · entity.raidFighter)", () => {
       }
       if (b.members.length > 0) w.herdOrder = { x: mx / b.members.length, y: my / b.members.length };
       w.step();
+      // "보스가 살아 있고 전사가 서 있는" 첫 틱에서 멈추는 선택지(상태 기반). 고정 틱 수로 끝까지
+      // 돌리면 무리가 빨라질 때마다 격퇴 완료 뒤(전사 0 이 정의상 맞는 상태 · 위 주석)를 재게 된다 ·
+      // 2026-08-05 지시 게이트 개선(releaseRadius) 때 실제로 그랬다(공격 80·원거리 85 무리가
+      // 67틱 만에 격퇴를 끝내 200틱 뒤 스냅이 낡았다).
+      if (stopOnFighters && w.boss !== null && w.boss.hp > 0 && w.raidMeleeFighters + w.raidRangedFighters > 0) break;
     }
     return w;
   }
@@ -590,7 +595,9 @@ describe("레이드 관측값 (world.raid* · entity.raidFighter)", () => {
   });
 
   it("전사 표식이 붙은 개체 수 = 근접 + 원거리(둘을 겸하면 근접으로만 센다)", () => {
-    const w = driveRound(tune({ attack: 80, ranged: 85, speed: 66 }), 200);
+    // 격퇴가 끝나기 전, 전사가 서 있는 틱의 상태를 잰다(stopOnFighters) · 고정 틱 수 스냅은
+    // 무리가 빨라지는 개선마다 깨진다(driveRound 주석 참조).
+    const w = driveRound(tune({ attack: 80, ranged: 85, speed: 66 }), 200, true);
     let flagged = 0;
     for (const e of w.entities) if (e.raidFighter) flagged += 1;
     expect(flagged).toBe(w.raidMeleeFighters + w.raidRangedFighters);

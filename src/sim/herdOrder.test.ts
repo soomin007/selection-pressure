@@ -108,16 +108,38 @@ describe("무리 지시 — 뜻은 분명하다 (방향은 반드시 따른다)"
     expect(n > 0 ? spread / n : 0).toBeGreaterThan(1); // 겹쳐 있지 않다
   });
 
-  it("순종의 질 집계(orderFollowers)가 실물과 맞는다", () => {
+  it("순종의 질 집계(orderFollowers·orderPending)가 실물과 맞는다", () => {
     const target = { x: 60, y: 900 };
     const w = run("order-count", tune({ herding: 40 }), 200, target);
     let mine = 0;
     for (const e of w.entities) if (e.alive && e.species.isPlayer) mine += 1;
     expect(w.orderFollowers).toBeGreaterThan(0); // 누군가는 향하고 있다
     expect(w.orderFollowers).toBeLessThanOrEqual(mine); // 내 종 수를 넘을 수 없다
-    // 뜻이 없으면 아무도 안 센다.
+    // 화면 "따르는 중 N/M" 의 계약: 분모(orderPending · 아직 못 닿은 수)는 분자 이상, 내 종 수 이하.
+    // 도망 중인 개체는 분모에만 들 수 있으므로 N < M 이 정상 상태다.
+    expect(w.orderPending).toBeGreaterThanOrEqual(w.orderFollowers);
+    expect(w.orderPending).toBeLessThanOrEqual(mine);
+    // 뜻이 없으면 아무도 안 센다(분자·분모 모두).
     const idle = run("order-count", tune({ herding: 40 }), 200, null);
     expect(idle.orderFollowers).toBe(0);
+    expect(idle.orderPending).toBe(0);
+  });
+
+  it("무리 코앞(해제 반경 밖 · 무리 도착 반경 안)을 탭해도 지시가 걸린다", () => {
+    // 2026-08-05 결함의 재발 방지: 개체 게이트가 arriveRadius(200)와 겸직이라, 무리 근처
+    // (무게중심에서 150px)를 탭하면 개체 대부분이 게이트 안 = 아무도 안 움직였다.
+    // 게이트는 releaseRadius(64) · 개체 단위여야 한다. 값을 하드코딩하지 않고 상수 관계로 잰다.
+    expect(ORDER.releaseRadius).toBeLessThan(ORDER.arriveRadius); // 전제: 해제 < 도착 표시
+    const g = tune({ herding: 40 });
+    const c0 = playerCentroid(run("order-near", g, 1, null));
+    const off = (ORDER.releaseRadius + ORDER.arriveRadius) / 2; // 해제 밖 · 옛 게이트(200) 안
+    const target = {
+      x: Math.max(40, Math.min(W - 40, c0.x + off)),
+      y: Math.max(40, Math.min(H - 40, c0.y)),
+    };
+    const w = run("order-near", g, 10, target); // 같은 시드 = 같은 초기 배치
+    expect(w.orderPending).toBeGreaterThan(0); // 아직 못 닿은 개체가 있고
+    expect(w.orderFollowers).toBeGreaterThan(0); // 그중 누군가는 실제로 움직인다
   });
 
   it("야생 종은 지시를 안 따른다(내 종에게만 내리는 뜻)", () => {
