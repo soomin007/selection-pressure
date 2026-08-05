@@ -18,10 +18,12 @@ import {
   rarityWeightsAtLevel,
   cardPrereqMet,
   cardRedundant,
+  cardGenomeDeltas,
   cardDelta,
   effectiveDelta,
   type Card,
 } from "@/game/cards";
+import { isCardUnlocked } from "@/game/meta";
 import { defaultGenome, type Traits } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 
@@ -686,12 +688,19 @@ describe("무의미 카드 필터(cardRedundant)", () => {
     return c;
   };
 
-  it("수영 문턱을 넘으면 지느러미·물갈퀴는 무의미해진다(이미 헤엄치는데 또 뜨던 버그)", () => {
+  it("수영 문턱을 넘으면 지느러미는 무의미해진다(이미 헤엄치는데 또 뜨던 버그)", () => {
     // 예전엔 물전용 문턱(90)을 봤는데, 카드로 수영은 89 까지만 오르게 막혀 있어(applyCard) 90 에 영영
     // 못 닿아 필터가 안 걸렸다 — 게다가 수영값은 문턱(65) 위에선 아무 효과도 없다(전부 임계 비교뿐).
     expect(cardRedundant(card("fins"), withSwim(SIM.swimThreshold - 1))).toBe(false); // 아직 못 헤엄침 → 유효
     expect(cardRedundant(card("fins"), withSwim(SIM.swimThreshold))).toBe(true); // 이미 헤엄침 → 무의미
-    expect(cardRedundant(card("webbed"), withSwim(SIM.aquaticOnlyThreshold - 1))).toBe(true); // 카드 상한(89)서도 무의미
+  });
+
+  it("수영이 막혀도 걸음이 실제로 오르는 「물갈퀴 발」은 남는다(부분 무효는 후보다)", () => {
+    // 카드 상한(89)이라 수영은 한 칸도 안 오르지만 걸음은 실제로 오른다 → 고를 만한 카드다.
+    // 전에는 "주효과(수영)가 문턱 위"라는 이유로 통째로 뺐다 — 실제로 바뀌는 것이 있는데 뺀 것.
+    const t = withSwim(SIM.aquaticOnlyThreshold - 1);
+    expect(cardGenomeDeltas(card("webbed"), t)).toEqual({ speed: 5 });
+    expect(cardRedundant(card("webbed"), t)).toBe(false);
   });
 
   it("날개는 비행 문턱을 넘으면 무의미(수영과 같은 관문 규칙)", () => {
@@ -718,16 +727,25 @@ describe("무의미 카드 필터(cardRedundant)", () => {
     expect(cardRedundant(card("swift"), t)).toBe(true); // 상한
   });
 
-  it("초음파로 사는 종에겐 시야가 주효과인 카드가 무의미하다 (backlog ② 낚시 방지)", () => {
+  it("초음파로 사는 종에겐 시야밖에 안 주는 카드가 무의미하다 (backlog ② 낚시 방지)", () => {
     const eye = defaultGenome().traits; // echo 0 — 눈으로 산다
     const ear = defaultGenome().traits;
     ear.echo = 70; // 초음파 관문을 켠 종(눈이 멀었다)
     ear.vision = 0;
-    // 시야가 주효과인 카드 — 눈으로 사는 종엔 유효, 귀로 사는 종엔 무의미(뽑아도 감지 반경이 안 바뀐다).
-    for (const id of ["keen", "eagle_eye", "hunter_eye", "farsight"]) {
+    // 눈으로 사는 종엔 유효, 귀로 사는 종엔 무의미 — 시야를 올려도 감지 반경이 안 바뀌고(죽은 값),
+    // 「사냥꾼의 눈」·「천리안」은 그 위에 대가(번식 -·걸음 -)만 남는다.
+    for (const id of ["keen", "hunter_eye", "farsight"]) {
       expect(cardRedundant(card(id), eye), `${id}: 눈으로 사는 종엔 유효`).toBe(false);
       expect(cardRedundant(card(id), ear), `${id}: 귀로 사는 종엔 무의미`).toBe(true);
     }
+  });
+
+  it("눈이 먼 종이어도 걸음이 오르는 「매의 눈」은 남는다(부분 무효는 후보다)", () => {
+    const ear = defaultGenome().traits;
+    ear.echo = 70;
+    ear.vision = 0;
+    // 시야 +20 은 죽은 값이지만 걸음 +5 는 실제로 붙는다 → 남긴다. 죽은 시야는 칩이 그 자리에서 알린다.
+    expect(cardRedundant(card("eagle_eye"), ear)).toBe(false);
   });
 
   it("시야가 부수효과인 카드(우뚝한 몸집·매복 사냥꾼)는 초음파 종에게도 남는다 — 주효과가 시야가 아니므로", () => {
@@ -755,6 +773,83 @@ describe("무의미 카드 필터(cardRedundant)", () => {
       expect(drawn.length).toBe(3);
       // 뽑힌 카드에 "시야가 주효과"인 죽은 카드가 없다(낚시가 사라졌다).
       for (const c of drawn) expect(cardRedundant(c, ear), `${c.id} 가 낚시로 떴다`).toBe(false);
+    }
+  });
+
+  // ── 정점을 여럿 찍은 후반 게놈 — 2026-08-05 폰 실기(레벨 13)에서 「철벽 대형」이 세 효과가 전부
+  //    무효인 채로 후보에 떴다. 주효과(herding) 하나만 보던 옛 판정이 나머지 둘을 아예 안 봤기 때문이다.
+  const apexTraits = (): Traits => {
+    const t = defaultGenome().traits;
+    t.speed = 100; // 정점 넷
+    t.vision = 100;
+    t.attack = 100;
+    t.fertility = 100;
+    t.herding = 100; // 무리 성향 최대
+    return t;
+  };
+
+  it("정점 게놈에서 「철벽 대형」은 세 효과가 전부 막혀 후보에서 빠진다(2026-08-05 폰 실기)", () => {
+    const t = apexTraits();
+    // 무리 성향 이미 최대 · 공격력 이미 최대 · 번식력은 정점 고정이라 안 내려감 → 게놈이 한 칸도 안 움직인다.
+    expect(cardGenomeDeltas(card("phalanx"), t)).toEqual({});
+    expect(cardRedundant(card("phalanx"), t)).toBe(true);
+  });
+
+  it("정점 게놈이어도 하나라도 실제로 바뀌면 남는다(듬직한 몸·두꺼운 털가죽)", () => {
+    const t = apexTraits();
+    expect(cardGenomeDeltas(card("omni_sturdy"), t)).toEqual({ size: 16 }); // 시야는 최대, 몸집은 오른다
+    expect(cardRedundant(card("omni_sturdy"), t)).toBe(false);
+    expect(cardGenomeDeltas(card("thick_fur"), t)).toEqual({ metabolism: 16 }); // 무리는 최대, 대사는 오른다
+    expect(cardRedundant(card("thick_fur"), t)).toBe(false);
+  });
+
+  /** 서로 다른 결의 게놈들 — 한 게놈에서만 통하는 판정이 아님을 확인한다. */
+  const GENOMES = (): [string, Traits][] => {
+    const blind = defaultGenome().traits;
+    blind.echo = 70;
+    blind.vision = 0;
+    const flyer = defaultGenome().traits;
+    flyer.wings = SIM.flyThreshold + 3;
+    const swimmer = defaultGenome().traits;
+    swimmer.swimming = SIM.aquaticOnlyThreshold - 1;
+    const hidden = defaultGenome().traits;
+    hidden.camouflage = 100;
+    hidden.size = 100;
+    const maxed = apexTraits();
+    for (const key of Object.keys(maxed) as (keyof Traits)[]) maxed[key] = 100; // 전 형질 상한
+    return [
+      ["기본", defaultGenome().traits],
+      ["정점 넷 + 무리 최대", apexTraits()],
+      ["눈이 먼 초음파 종", blind],
+      ["나는 종", flyer],
+      ["헤엄치는 종", swimmer],
+      ["숨는 큰 몸", hidden],
+      ["전 형질 상한", maxed],
+    ];
+  };
+
+  it("어떤 게놈에서도 '아무 형질도 안 바뀌는 카드'는 후보에 하나도 안 남는다", () => {
+    for (const [name, t] of GENOMES()) {
+      for (const c of CARD_POOL) {
+        if (!cardPrereqMet(c, t) || cardRedundant(c, t)) continue;
+        const deltas = cardGenomeDeltas(c, t);
+        expect(Object.keys(deltas).length, `${name} / ${c.id}: 후보인데 게놈이 안 바뀐다`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("정점 게놈에서도 드래프트 후보 3장이 채워진다(필터가 풀을 말리지 않는다)", () => {
+    const t = apexTraits();
+    const lineages: (Lineage | undefined)[] = [undefined, "omni", "herd", "scout", "hunter", "ranged", "sea", "sky", "venom"];
+    for (const lin of lineages) {
+      // 최악의 경우 — 갓 시작한 플레이어(메타 레벨 1)라 특화 카드가 아직 잠겨 있다.
+      const allow = (c: Card): boolean =>
+        isCardUnlocked(c.id, 1) && cardPrereqMet(c, t) && !cardRedundant(c, t);
+      const rng = new Rng(`apex-${lin ?? "none"}`);
+      for (let i = 0; i < 40; i++) {
+        const drawn = drawCards(rng, 3, allow, 7, undefined, lin);
+        expect(drawn.length, `${lin ?? "갈래 없음"}: 후보가 모자란다`).toBe(3);
+      }
     }
   });
 });

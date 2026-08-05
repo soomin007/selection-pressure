@@ -7,7 +7,7 @@
 
 import type { Rng } from "@/sim/rng";
 import type { Genome, Traits } from "@/sim/genome";
-import { clampTraitValue, isApexTrait, TRAIT_CEILING } from "@/sim/genome";
+import { clampTraitValue, GENOME_VERSION, isApexTrait, TRAIT_CEILING, TRAIT_KEYS } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 
 // 값형질(속도·시야·공격·번식·무리)의 카드 증가폭을 이만큼으로 줄인다 — 한 판 동안 여러 장을 쌓아야 상한
@@ -159,44 +159,74 @@ export function cardPrereqMet(card: Card, traits: Traits): boolean {
 const ECHO_BLINDS_VISION = 55;
 
 /**
- * 이 카드가 지금 종에게 무의미한가(드래프트에서 뺄지) — 가장 크게 올리는 형질(주 효과)이 이미 "쓸모의
- * 상한"에 닿아 더 골라도 이득이 없으면 true. 손해/헛 카드가 드래프트에 반복해 뜨는 걸 막는다.
+ * **좋고 나쁨이 없는(또는 양방향인) 축** — 내려가는 것도 "이 카드가 내 종에게 주는 것"이다.
+ * 대사(추위↔더위)·식성(초식↔육식)은 이번 판 환경이 어느 쪽을 이득으로 만들지 정하고, 몸집은 50 이 중립인
+ * 양방향 축이라(크게 버티기 ↔ 작게 숨기) 줄어드는 것도 하나의 선택이다.
+ * (표시 쪽 `ui/traitDisplay.NEUTRAL_TRAITS` 와 같은 뜻 + 몸집. game 은 ui 를 import 하지 않아 여기 둔다.)
+ */
+const BIDIRECTIONAL_TRAITS = new Set<keyof Traits>(["metabolism", "diet", "size"]);
+
+/**
+ * 이 카드가 이 종의 게놈을 **실제로** 어떻게 바꾸는가 — 형질별 변화량(0 인 형질은 빠진다).
  *
- * 관문형(문턱만 넘으면 되는 능력)은 **문턱을 넘는 순간** 무의미해진다 — 값이 더 올라도 하는 일이 같다.
- * 날개=비행 문턱, 수영=바다 먹이 문턱(swimThreshold). ⚠ 수영은 예전에 물전용 문턱(90)을 봤는데, 카드로
- * 수영은 89 까지만 오르게 막혀 있어(applyCard) 90 에 영영 못 닿아 필터가 안 걸렸다 — 게다가 수영값은
- * swimThreshold(65) 위에선 크기가 아무 효과도 없다(전부 임계 비교뿐). 그래서 날개와 똑같이 "문턱 넘으면
- * 그만"으로 고친다(물갈퀴·지느러미가 이미 헤엄치는 종에게 또 뜨던 버그).
- * 능력형(초음파·독·원거리)은 상한 100, 연속형은 상한(200). diet·대사는 방향/절충이라 늘 유효(제외 안 함).
- * (전제 미달 강화 카드는 cardPrereqMet 이 걸러 낸다.)
+ * 재는 방법이 곧 규칙이다: **진짜 적용 함수(`applyCard`)를 게놈 사본에 돌려 전후를 뺀다.** 성장 스케일·
+ * 상한 근접 감쇠·정점 고정·희생·상한 클램프·수영 뚜껑을 여기 옮겨 적지 않는다 — 규칙을 두 곳에 적으면
+ * 반드시 갈라진다(known_issues: 「철벽 대형」이 세 효과가 전부 막혔는데도 후보로 떴다).
+ */
+export function cardGenomeDeltas(card: Card, t: Traits): Partial<Record<keyof Traits, number>> {
+  const after: Genome = { genomeVersion: GENOME_VERSION, traits: { ...t } };
+  applyCard(after, card);
+  const out: Partial<Record<keyof Traits, number>> = {};
+  for (const key of TRAIT_KEYS) {
+    const d = after.traits[key] - t[key];
+    if (d !== 0) out[key] = d;
+  }
+  return out;
+}
+
+/**
+ * 이 변화가 **이 종에게 실제로 뭔가를 주는가.** 게놈 숫자가 움직여도 세계가 그 변화를 못 느끼거나,
+ * 잃기만 하는 변화라면 "주는 것"이 아니다. 항목마다 그렇게 만드는 sim 규칙을 함께 적는다
+ * (여기 있는 것만이 "숫자는 변하는데 아무 일도 안 일어나는" 자리다 — 늘어나면 여기에 적는다).
+ */
+function deltaGivesSomething(card: Card, key: keyof Traits, t: Traits, delta: number): boolean {
+  // ① sim 이 못 느끼는 변화.
+  //   · 초음파로 사는 종의 시야: 감지 반경이 max(시야, 초음파)라(behavior.chooseGoal) 눈을 올려도 그대로다.
+  //     초음파를 조금만 켠 종(echo ≤ 55)은 아직 눈도 쓰므로 해당 없다.
+  if (key === "vision" && t.echo > ECHO_BLINDS_VISION) return false;
+  //   · 수영: 문턱(swimThreshold) 위에서는 전부 임계 비교뿐이라 값이 아무 일도 안 한다. 게다가 applyCard 가
+  //     89 에서 뚜껑을 씌워 물 전용 문턱(90)에는 영영 못 닿는다.
+  if (key === "swimming" && t.swimming >= SIM.swimThreshold) return false;
+  //   · 날개: **관문 카드**(「날개」)가 열려는 문이 이미 열려 있다 — "날개가 돋는다"가 거짓말이 된다.
+  //     문턱 위의 날개값 자체는 비행 대사를 덜어 주므로(behavior.flyDrainMultiplier) 죽은 값이 아니다.
+  //     그 몫은 **강화 카드**(requiresTrait 가 붙은 「튼튼한 날개」)의 것이라 여기서 안 걸린다.
+  if (key === "wings" && !card.requiresTrait && t.wings >= SIM.flyThreshold) return false;
+  // ② 잃기만 하는 변화는 "주는 것"이 아니다 — 이득은 전부 막히고 대가만 남은 카드도 죽은 카드다
+  //    (눈이 먼 종의 「천리안」: 시야는 아무 일도 안 하고 걸음만 -6). 양방향 축은 내려가는 것도 한 방향.
+  return delta > 0 || BIDIRECTIONAL_TRAITS.has(key);
+}
+
+/**
+ * 이 카드가 지금 이 종에게 무의미한가(드래프트 후보에서 뺄지).
+ *
+ * **판정 기준은 하나다: 이 카드를 골랐을 때 게놈이 실제로 바뀌는가.** `cardGenomeDeltas` 가 진짜 적용
+ * 함수를 돌려 재므로, 표시(칩)와 판정이 같은 규칙을 본다 — 갈라질 수 없다.
+ *
+ * - **하나라도 실제로 바뀌면 정상 후보다**(부분 무효는 남긴다). 「듬직한 몸」이 시야가 이미 최대라도
+ *   몸집을 올린다면 고를 만한 카드다. 칩이 "시야 이미 최대"라고 그 자리에서 알려 준다.
+ * - **전부 막힌 것만 뺀다.** 예전엔 주효과(가장 큰 양수 효과) 하나만 봐서, 「철벽 대형」처럼 주효과가
+ *   판정 대상 밖(herding)이면 나머지 두 효과가 막혔는지 아예 안 봤다 → 세 효과가 전부 무효인 카드가
+ *   후보 한 칸을 차지했다(2026-08-05 폰 실기).
+ * - 이득이 전부 막히고 **대가만 남은** 카드도 뺀다(`deltaGivesSomething` ②).
+ *
+ * (전제 미달 강화 카드는 `cardPrereqMet` 이 따로 걸러 낸다.)
  */
 export function cardRedundant(card: Card, t: Traits): boolean {
-  // 강화 카드(전제 조건이 붙은 카드)는 그 능력이 **상한에 닿았을 때만** 무의미하다.
-  if (card.requiresTrait) {
-    const key = card.requiresTrait.key;
-    return t[key] >= TRAIT_CEILING[key];
+  const deltas = cardGenomeDeltas(card, t);
+  for (const key of Object.keys(deltas) as (keyof Traits)[]) {
+    if (deltaGivesSomething(card, key, t, deltas[key] ?? 0)) return false;
   }
-  let primary: keyof Traits | null = null;
-  let best = 0;
-  for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
-    const v = card.effects[key] ?? 0;
-    if (v > best) {
-      best = v;
-      primary = key;
-    }
-  }
-  if (!primary) return false;
-  // **초음파 시야 낚시 방지(backlog ②).** 눈이 먼 초음파 종에게 시야가 주효과인 카드는 죽은 카드다 —
-  // 뽑아도 감지 반경이 안 바뀐다("매의 눈" "천리안" "넓은 시야" 등). 후보에서 뺀다. 부수 효과(속도 등)를
-  // 잃는 손해가 조금 있지만, "시야를 원해서 뽑았는데 아무 일도 안 일어나는" 낚시가 더 나쁘다.
-  // 초음파를 조금만 켠 종(echo ≤ 55)은 아직 눈도 쓰므로 안 뺀다.
-  if (primary === "vision" && t.echo > ECHO_BLINDS_VISION) return true;
-  const cur = t[primary];
-  if (primary === "wings") return cur >= SIM.flyThreshold; // 관문: 이미 날면 무의미
-  if (primary === "swimming") return cur >= SIM.swimThreshold; // 관문: 이미 헤엄치면 무의미(값은 문턱 위서 무효)
-  if (primary === "echo" || primary === "venom" || primary === "ranged") return cur >= 100;
-  if (GROWTH_TRAITS.has(primary)) return cur >= TRAIT_CEILING[primary]; // 값형질 상한(100)에 닿으면 무의미
-  return false;
+  return true;
 }
 
 // 런 첫 드래프트 — 시작 프리셋(빌드 방향)을 정한다. 식성(set diet) + 특화 형질 두엇.
