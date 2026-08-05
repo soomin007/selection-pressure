@@ -811,10 +811,17 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         e.energy = SIM.maxEnergy;
         for (let k = 0; k < SIM.mountainTreasureSpawn; k++) {
           if (world.entities.length + newborns.length >= world.cap) break;
-          const bx = e.x + world.rng.range(-12, 12);
-          const by = e.y + world.rng.range(-12, 12);
+          // 출생 자리를 극좌표(각도+거리)로 뽑는다. draw 2회 그대로(스트림 보존), 해석만 바꿨다.
+          // 예전 ±12px 사각 분산은 몸 반길이보다 좁아 대박 새끼들이 한 자리에 겹쳐 태어났다.
+          const broodAngle = world.rng.range(0, Math.PI * 2);
+          const broodDist = world.rng.range(10, 24);
+          // 경계 클램프 필수: isPassable 은 경계 밖 좌표도 타일만 통행 가능하면 그대로 돌려준다.
+          const bx = Math.max(0, Math.min(world.width, e.x + Math.cos(broodAngle) * broodDist));
+          const by = Math.max(0, Math.min(world.height, e.y + Math.sin(broodAngle) * broodDist));
           const spot = world.terrain.nearestPassable(bx, by, canSwim, canLand, canFly);
-          newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, SIM.startEnergy));
+          const brood = createEntity(world.nextId(), spot.x, spot.y, e.species, SIM.startEnergy);
+          brood.wanderAngle = broodAngle; // 태어난 방향 그대로 부모 바깥쪽으로 첫걸음(연속 id 라도 흩어진다)
+          newborns.push(brood);
           world.emit("birth", spot.x, spot.y, e.species.isPlayer); // 연출: 대박 탄생(초록 반짝 여럿)
           if (e.species.isPlayer) world.roundCounts.births += 1; // 시험 계수: 산 보물 대박 탄생도 새끼로 센다
         }
@@ -896,8 +903,15 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   ) {
     const childEnergy = e.energy * 0.5; // 새끼가 받는 기운 — 정점이어도 그대로(새끼를 더 살찌우는 게 아니다)
     e.energy -= isApex(t.fertility) ? childEnergy * SIM.apexBreedCost : childEnergy;
-    const cx = e.x + world.rng.range(-6, 6);
-    const cy = e.y + world.rng.range(-6, 6);
+    // 출생 자리를 극좌표(각도+거리)로 뽑는다. draw 2회 그대로(스트림 보존), 해석만 바꿨다.
+    // 예전 ±6px 사각 분산은 몸 반길이(약 13.5px)보다 좁아 새끼가 부모와 겹친 채 태어났고,
+    // 초기 헤딩(entity.ts wanderAngle)까지 순번이라 무리가 한 덩어리로 같은 경로를 돌았다(2026-08-05 수정).
+    const birthAngle = world.rng.range(0, Math.PI * 2);
+    const birthDist = world.rng.range(10, 24);
+    // 경계 클램프 필수: isPassable 은 경계 밖 좌표도 타일만 통행 가능하면 그대로 돌려준다.
+    // 구석에 몰린 무리의 새끼가 월드 밖에 태어나던 회귀를 실측으로 잡았다("월드 밖으로 못 나간다" 테스트).
+    const cx = Math.max(0, Math.min(world.width, e.x + Math.cos(birthAngle) * birthDist));
+    const cy = Math.max(0, Math.min(world.height, e.y + Math.sin(birthAngle) * birthDist));
     // 막힌 타일에 태어나면 갇히므로 가장 가까운 통행 타일로 스냅(rng 미사용 → 결정론·밸런스 보존).
     const spot = world.terrain.nearestPassable(cx, cy, canSwim, canLand, canFly);
     // 개체별 진화 — 내 종 새끼는 부모 게놈을 물려받아 조금 변이한다(독립 mutRng → 메인 스트림 불변).
@@ -905,7 +919,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     const childGenome = e.species.isPlayer
       ? mutateGenome(cloneGenome(e.genome), world.mutRng, SIM.mutationStrength)
       : undefined;
-    newborns.push(createEntity(world.nextId(), spot.x, spot.y, e.species, childEnergy, childGenome));
+    const child = createEntity(world.nextId(), spot.x, spot.y, e.species, childEnergy, childGenome);
+    child.wanderAngle = birthAngle; // 태어난 방향 그대로 부모 바깥쪽으로 첫걸음
+    newborns.push(child);
     world.emit("birth", spot.x, spot.y, e.species.isPlayer); // 연출: 탄생(초록 반짝)
     if (e.species.isPlayer) world.roundCounts.births += 1; // 시험 계수: 내 종 새끼 탄생
   }

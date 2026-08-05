@@ -17,6 +17,20 @@ function hashSeed(seed: string): number {
 }
 
 /**
+ * 정수 해시 → [0,1). 같은 입력은 항상 같은 값(결정론). rng 상태를 전혀 소비하지 않는다.
+ * 연속된 정수(개체 id 순번 등)를 넣어도 결과가 [0,1) 에 고르게 흩어진다. "id % N" 류의
+ * 순번 기반 분산(연속 id 가 거의 같은 값이 되는 함정)을 대신한다.
+ * render 쪽 개체 개성(creatureLook)과 같은 식이다.
+ */
+export function hash01(n: number): number {
+  let h = (Math.trunc(n) * 2654435761) >>> 0;
+  h ^= h >>> 15;
+  h = (h * 2246822519) >>> 0;
+  h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
+}
+
+/**
  * mulberry32 기반 결정론 난수 생성기.
  * 내부 상태(state)를 직렬화/복원할 수 있어, 시뮬 중간 지점부터 재현이 가능하다.
  */

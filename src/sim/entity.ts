@@ -1,6 +1,7 @@
 // 개체(Entity) — 한 마리. 어떤 종(Species)에 속하며, 게놈은 그 종이 공유한다.
 
 import { cloneGenome, type Genome } from "@/sim/genome";
+import { hash01 } from "@/sim/rng";
 import type { Species } from "@/sim/species";
 import type { Food } from "@/sim/food";
 
@@ -79,8 +80,10 @@ export function createEntity(
     prevY: y,
     targetFood: null,
     targetPrey: null,
-    // 초기 헤딩을 id 로 결정론적으로 분산(같은 시드면 동일). 처음 배회 때 방향이 한쪽으로 쏠리지 않게.
-    wanderAngle: ((id % 360) * Math.PI) / 180,
+    // 초기 헤딩: id 정수 해시로 [0, 2π) 에 고르게 분산(rng 미소비·같은 시드면 동일).
+    // ⚠ 예전엔 (id % 360)° 라 연속 id 개체들이 1도씩만 달랐다(초기 18마리가 0°~17°).
+    //   "분산"이라던 주석이 거짓이었고, 무리가 한 덩어리로 같은 경로를 돌았다(2026-08-05 수정).
+    wanderAngle: hash01(id) * Math.PI * 2,
     path: [],
     pathGoalTile: -1,
     poison: 0,
