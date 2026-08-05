@@ -6,7 +6,8 @@ import { World } from "@/sim/world";
 import { SIM } from "@/sim/params";
 import { TILE } from "@/sim/terrain";
 import { GAME } from "@/game/config";
-import { MOBILE, MAP_SCALE, MAP_AREA_SCALE } from "@/config";
+import { MOBILE } from "@/config";
+import { mapScale } from "@/game/config";
 import {
   createBoss,
   bossCanHunt,
@@ -26,9 +27,10 @@ const H = 960;
 const SEEDS = ["env-1", "env-2", "env-3", "env-4"];
 
 /**
- * **실제 플레이 세계 치수** · main.ts 는 `new Game(layout.width × MAP_SCALE, layout.height × MAP_SCALE,
- * MAP_AREA_SCALE)` 로 만든다. 폰 레이아웃(MOBILE 540x960)·MAP_SCALE 은 src/config.ts 가 단일 근원이라
- * 여기서도 거기서 파생시킨다(복사본이면 맵 크기 변경 때 이 테스트가 다른 세계를 잰다 · 2026-08-04 사고).
+ * **실제 플레이 세계 치수** · main.ts 는 화면 치수만 넘기고, Game 이 시대별 배율 `mapScale(era)`
+ * (src/game/config.ts · MAP_SCALE 파생, 지금은 전 시대 2.0)로 월드 치수를 만든다. 폰 레이아웃
+ * (MOBILE 540x960)은 src/config.ts, 배율은 mapScale(0)(첫 시대)이 단일 근원이라 여기서도 거기서
+ * 파생시킨다(복사본이면 맵 크기 변경 때 이 테스트가 다른 세계를 잰다 · 2026-08-04 사고).
  * 위의 W/H(540x960 · areaScale 1)는 층위 규칙처럼 치수와 무관한 검증에만 쓴다.
  *
  * 왜 나눠 두나: "테스트 434개 통과"가 "균형 잡식으로 약탈자를 깎을 수 있다"를 전혀 보증하지 못했던
@@ -36,9 +38,9 @@ const SEEDS = ["env-1", "env-2", "env-3", "env-4"];
  * 떼가 무리에 닿기까지 걸리는 시간이 라운드의 절반을 먹는다). 격퇴·밸런스를 묻는 테스트는 반드시
  * 아래 치수로 잰다.
  */
-const GAME_W: number = MOBILE.width * MAP_SCALE; // 1080
-const GAME_H: number = MOBILE.height * MAP_SCALE; // 1920
-const GAME_AREA: number = MAP_AREA_SCALE; // 4
+const GAME_W: number = MOBILE.width * mapScale(0); // 1080
+const GAME_H: number = MOBILE.height * mapScale(0); // 1920
+const GAME_AREA: number = mapScale(0) * mapScale(0); // 4
 
 function tune(over: Partial<Traits>): Genome {
   const g = defaultGenome();

@@ -4,7 +4,7 @@
 // 월드는 스케일 컨테이너(root)에, HUD/UI 는 화면 픽셀 그대로(선명).
 
 import { Application, Container, Graphics } from "pixi.js";
-import { chooseLayout, COLORS, uiScale, MAP_SCALE, MAP_AREA_SCALE } from "@/config";
+import { chooseLayout, COLORS, uiScale } from "@/config";
 import { DEBUG, DEBUG_ACTIVE, TUNE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
@@ -37,8 +37,9 @@ import { isPredatorBoss, bossRaidable } from "@/sim/boss";
 import { ORDER } from "@/sim/params";
 import { leadCapsOf } from "@/render/leadVision";
 
-// 맵 배율(MAP_SCALE)·면적 배율(MAP_AREA_SCALE)은 src/config.ts 가 단일 근원 — 측정 도구
-// (boss.test.ts·balance-probe.mjs)와 같은 값을 공유한다(복사본 금지, 2026-08-04 사고).
+// 맵 배율은 src/config.ts 의 MAP_SCALE 이 단일 근원 · main 은 이제 그 값을 직접 읽지 않는다.
+// Game 이 시대별 배율 mapScale(era)(src/game/config.ts · MAP_SCALE 파생)로 월드 치수를 만들고,
+// 측정 도구(boss.test.ts·balance-probe.mjs)도 같은 근원을 읽는다(복사본 금지, 2026-08-04 사고).
 
 // --- 무리 지시(기본 모드) 전용 화면 상수. 밸런스가 아니라 카메라·안내 표시에만 쓰인다. ---
 const LEAD_CAM_EASE = 9; // 지시 모드 카메라 이징(기본 3.5 는 시상수 286ms 라 물먹은 느낌의 주범)
@@ -118,9 +119,10 @@ async function boot(): Promise<void> {
   applyUiScale();
   app.renderer.on("resize", applyUiScale);
 
-  // 소수 개체 게임: 월드를 약간 크게(MAP_SCALE) + 개체는 절대 수(소수)지만 먹이 밀도·상한은 면적 비례
-  // (areaScale=면적배율) → 큰 맵일수록 개체당 먹이가 넉넉해 굶지 않는다. 카메라가 한 무리를 따라다닌다.
-  const game = new Game(layout.width * MAP_SCALE, layout.height * MAP_SCALE, MAP_AREA_SCALE);
+  // 소수 개체 게임: main 은 화면(논리 해상도) 치수만 넘긴다. 월드 치수는 Game 이 시대별 배율
+  // mapScale(era) 로 매 시대 파생한다(치수 = 화면 × 배율 · 먹이 밀도·상한은 면적 비례라 큰 맵일수록
+  // 개체당 먹이가 넉넉해 굶지 않는다). 카메라가 한 무리를 따라다닌다.
+  const game = new Game(layout.width, layout.height);
 
   // 디버그: URL 에 ?seed=… 가 있으면 그 시드로 고정(맵·카드·보스 완전 재현). 없으면 런마다 랜덤.
   const seedParam = new URLSearchParams(window.location.search).get("seed");

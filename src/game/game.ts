@@ -10,7 +10,7 @@ import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, isApexTrait, MUTABLE_TRAITS, TRAIT_CEILING, TRAIT_KEYS, type Genome, type MutableTrait, type Traits } from "@/sim/genome";
 import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, PRESET_CARDS, PRESET_LINEAGE, type Card, type Lineage } from "@/game/cards";
 import { cardAvailable, debugResetAchievements, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
-import { GAME, SCHEDULE, eraDifficulty, eraScarcity, type StageKind } from "@/game/config";
+import { GAME, SCHEDULE, eraDifficulty, eraScarcity, mapScale, type StageKind } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import { grazeEfficiency } from "@/sim/behavior";
@@ -73,10 +73,25 @@ export interface RunHistory {
 const REPORT_SAMPLE_STEPS = 30;
 
 export class Game {
-  readonly width: number;
-  readonly height: number;
+  /** 기준 화면 치수(논리 해상도). 월드 치수는 makeWorld 가 매 시대 여기에 mapScale(era) 를 곱해 만든다. */
+  private readonly baseW: number;
+  private readonly baseH: number;
+  /** 테스트 전용 배율 고정 · 지정하면 mapScale(era) 대신 이 값을 쓴다. 생성자 의미가 "월드 치수"에서
+   * "기준 화면 치수"로 바뀔 때 기존 소형 테스트 세계(예: 240x400 · areaScale 1)가 조용히 달라지지 않게. */
+  private readonly fixedMapScale: number | undefined;
+
+  /** 현재 월드 치수 · 시대별 맵 크기의 단일 진실은 world 라 여기서도 world 를 그대로 읽는다.
+   * (Game 이 따로 들고 있으면 시대별 크기가 켜지는 순간 보스 스폰·카메라와 어긋난다.) */
+  get width(): number {
+    return this.world.width;
+  }
+  get height(): number {
+    return this.world.height;
+  }
   /** 월드 면적 배율(화면 1개=1). 맵 확장 시 개체·먹이·통과기준을 면적 비례로 키운다. */
-  readonly areaScale: number;
+  get areaScale(): number {
+    return this.world.areaScale;
+  }
 
   genome: Genome;
   world: World;
@@ -276,10 +291,10 @@ export class Game {
     | null = null;
   onWorldChanged: ((world: World) => void) | null = null;
 
-  constructor(width: number, height: number, areaScale = 1) {
-    this.width = width;
-    this.height = height;
-    this.areaScale = areaScale;
+  constructor(baseW: number, baseH: number, fixedMapScale?: number) {
+    this.baseW = baseW;
+    this.baseH = baseH;
+    this.fixedMapScale = fixedMapScale;
     this.genome = defaultGenome();
     this.draftRng = new Rng("draft-0");
     this.stageRng = new Rng("stage-0");
@@ -631,7 +646,7 @@ export class Game {
     const diff = eraDifficulty(this.era);
     if ((BOSS_TYPES as readonly string[]).includes(kind)) {
       const bt = kind as BossType;
-      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff, true); // 레이드 첫 시대부터
+      this.world.boss = createBoss(bt, this.world.width, this.world.height, this.world.terrain, diff, true); // 레이드 첫 시대부터
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협. ${bossPreview(bt)}`;
       this.threatText = `지금 위협 「${bossName(bt)}」 · ${bossCounter(bt)}`;
@@ -762,12 +777,15 @@ export class Game {
   }
 
   private makeWorld(): World {
+    // 시대별 맵 크기 배관 · 매 시대 치수를 새로 계산한다. 지금은 mapScale 이 모든 시대에 같은 값(2.0)을
+    // 돌려줘 어떤 세계도 변하지 않는다(값이 시대별로 갈리는 것은 다음 단계에서).
+    const s = this.fixedMapScale ?? mapScale(this.era);
     return new World(
       `${this.currentSeed}-env`,
-      this.width,
-      this.height,
+      this.baseW * s,
+      this.baseH * s,
       this.genome,
-      this.areaScale,
+      s * s, // 면적 배율 · 개체는 절대 수(소수)지만 먹이 밀도·상한은 면적 비례
       this.champions,
       this.currentMapType,
       eraScarcity(this.era), // 시대가 지날수록 세계가 척박(먹이↓·재생↓) — era 0 = 1.0 = 기존과 동일
@@ -819,7 +837,8 @@ export class Game {
    */
   private eligibleBossIndex(): number {
     return this.bossQueue.findIndex((bt) =>
-      bossEligible(bt, this.genome.traits, this.world.terrain, this.width, this.height),
+      // ⚠ 반드시 world 의 치수로 판정한다 · 시대별 맵 크기가 켜지면 Game 의 기준 치수와 어긋날 수 있다.
+      bossEligible(bt, this.genome.traits, this.world.terrain, this.world.width, this.world.height),
     );
   }
 
@@ -876,7 +895,9 @@ export class Game {
       const bt = this.takeBossType();
       // 레이드는 첫 시대(era 0)부터 켠다 — 격퇴 체력바·직접 잡기는 핵심 메커니즘이라 첫 판부터 보여야 한다
       // (era 1+ 로 미뤘더니 한 판 이겨 다음 시대로 가기 전엔 아예 안 보였다 — 사용자: "레이드 체력바가 안 보인다").
-      this.world.boss = createBoss(bt, this.width, this.height, this.world.terrain, diff, true);
+      // ⚠ 보스는 world 의 치수로 태어난다 · Game 기준 치수를 쓰면 시대별 맵 크기가 켜지는 순간
+      //   보스가 맵 밖에 태어나 아무 일도 안 일어난다.
+      this.world.boss = createBoss(bt, this.world.width, this.world.height, this.world.terrain, diff, true);
       // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협. ${bossPreview(bt)}`;

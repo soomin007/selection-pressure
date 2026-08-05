@@ -1,6 +1,8 @@
 // 런/라운드 구조 상수 (Phase 4~5). 한 라운드 길이·런당 라운드 수.
 // (참고: Everything is Crab ≈ 20분/보스3 → 모바일 호흡에 맞게 축소)
 
+import { MAP_SCALE } from "@/config";
+
 export const GAME = {
   roundSeconds: 16, // 채집 라운드 길이(초) — 통과 기준 없어 짧혀도 밸런스 영향 없음
   bossSeconds: 35, // 보스 게이트 관전 길이(초). 20 → 35: 무리가 보스를 잡을 시간을 넉넉히(사용자: 시간을 훨씬
@@ -83,6 +85,18 @@ export function eraDifficulty(era: number): number {
  */
 export function eraScarcity(era: number): number {
   return Math.pow(1 + GAME.eraScarcityStep, Math.max(0, era));
+}
+
+/**
+ * 시대(era)별 맵 크기 배율 · 월드 치수 = 기준 화면 치수(논리 해상도) × 이 값. Game.makeWorld 가
+ * 매 시대 이 함수로 치수를 새로 계산한다(회의 합의 2 "맵이 시대마다 넓어진다"의 배관).
+ * 단일 근원은 src/config.ts 의 MAP_SCALE 이고 이 함수는 그것을 시대에 따라 파생만 한다
+ * (두 개의 진실 금지 · 2026-08-04 격퇴율 72% 사고).
+ * ⚠ 지금은 배관만 깔린 상태라 **모든 시대가 같은 값(MAP_SCALE=2.0)** 이다. 값이 시대별로 갈리는 것은
+ * 다음 단계(첫 시대 좁히기)에서 · 그 전까지 이 함수 때문에 변하는 세계는 하나도 없어야 한다.
+ */
+export function mapScale(_era: number): number {
+  return MAP_SCALE;
 }
 
 // 한 런의 라운드 계획. 각 단계 앞에는 드래프트가 붙는다.

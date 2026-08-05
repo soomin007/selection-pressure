@@ -10,7 +10,8 @@ import { GAME } from "@/game/config";
 
 /** 한 런을 시작해 첫 프리셋을 고른 상태(watch)로 만든다(game.test.ts 의 startRun 과 같은 절차). */
 function startRun(seed: string, commandEnabled: boolean): Game {
-  const g = new Game(240, 400);
+  // 배율 1 고정(3번째 인자): 예전 생성자와 같은 세계(월드 240x400 · areaScale 1)를 보존한다(game.test.ts 참고).
+  const g = new Game(240, 400, 1);
   g.fixedSeed = seed;
   g.leadEnabled = commandEnabled; // 입력 층(main)이 URL 플래그를 읽어 넘기는 그 불리언(?watch 면 false)
   g.beginRun(); // draft(프리셋 선택)
@@ -50,7 +51,7 @@ describe("무리 지시 — game 층 배선", () => {
   });
 
   it("드래프트 중에는 뜻이 안 닿는다(카드 고르다 화면을 탭해도 무리가 안 움직인다)", () => {
-    const g = new Game(240, 400);
+    const g = new Game(240, 400, 1); // 배율 1 고정 · 위 startRun 과 같은 이유
     g.fixedSeed = "order-game-draft";
     g.leadEnabled = true;
     g.beginRun(); // 프리셋 선택 드래프트 — 관전이 아니다

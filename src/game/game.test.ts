@@ -16,7 +16,9 @@ const EXTINCTION_NAMES = ["혹독한 추위", "대가뭄", "폭염", "대역병"
 
 /** 한 런을 시작해 첫 프리셋을 고른 상태(watch)로 만든다. */
 function startRun(seed: string): Game {
-  const g = new Game(240, 400);
+  // 배율 1 고정(3번째 인자): 생성자 의미가 "월드 치수"에서 "기준 화면 치수 × mapScale(era)"로 바뀌었다.
+  // 1 을 못박아 예전과 같은 세계(월드 240x400 · areaScale 1)를 만든다 · 시대별 배율이 켜져도 안 변한다.
+  const g = new Game(240, 400, 1);
   g.fixedSeed = seed;
   g.beginRun(); // draft(프리셋 선택)
   g.pickCard(0); // 첫 프리셋 → 첫 채집 단계 시작(watch)
