@@ -77,10 +77,12 @@ const server = await createServer({
 
 const { World } = await server.ssrLoadModule("/src/sim/world.ts");
 const { SIM, ORDER } = await server.ssrLoadModule("/src/sim/params.ts");
-const { GAME, SCHEDULE, mapScale, eraScarcity, eraDifficulty, onboardingStep, stepUsesDrawnMap, stepWorldOptions } =
-  await server.ssrLoadModule("/src/game/config.ts");
+const {
+  GAME, SCHEDULE, mapScale, eraScarcity, eraDifficulty, eraPredatorPressure, eraTraitCeiling,
+  eraRewardBoostAt, bossPassNeeded, extinctionPassNeeded, onboardingStep, stepUsesDrawnMap, stepWorldOptions,
+} = await server.ssrLoadModule("/src/game/config.ts");
 const { createBoss, bossRaidable } = await server.ssrLoadModule("/src/sim/boss.ts");
-const { defaultGenome, TRAIT_KEYS, TRAIT_LABELS, TRAIT_CEILING } =
+const { defaultGenome, TRAIT_KEYS, TRAIT_LABELS, TRAIT_CEILING, setTraitCeilings, resetTraitCeilings } =
   await server.ssrLoadModule("/src/sim/genome.ts");
 const {
   PRESET_CARDS, applyCard, cardDelta, cardRedundant, cardPrereqMet, drawCards,
@@ -124,7 +126,8 @@ function buildWorld(seed, genome, mapTypeOverride, step = STEP, scale = SCALE) {
     [], // 챔피언 — 마지막 진도 전에는 없음이 정상. 그 뒤는 저장본에 달려 프로브에선 재현 불가 → 늘 없음.
     mapTypeOverride ?? mapTypeForStep(step),
     eraScarcity(ERA),
-    stepWorldOptions(step),
+    // game.makeWorld 와 같은 형태 — 시대별 포식 압력도 함께 넘긴다(안 넘기면 --era=3 세계가 실제보다 순하다).
+    { ...stepWorldOptions(step), predatorPressure: eraPredatorPressure(ERA) },
   );
 }
 
@@ -787,7 +790,7 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
   const eraRow = (era) => {
     let r = eraRows.get(era);
     if (r === undefined) {
-      r = { era, minPop: Infinity, endPop: 0, cards: 0, deaths: {}, embers: 0, level: 0, reached: 0 };
+      r = { era, minPop: Infinity, endPop: 0, cards: 0, deaths: {}, embers: 0, level: 0, reached: 0, apexSum: 0 };
       eraRows.set(era, r);
     }
     return r;
@@ -852,6 +855,8 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
       r.level = game.level;
       r.deaths = { ...game.world.deaths };
       r.reached = 1;
+      // 이 시대를 끝낼 때 정점 넷(속도·시야·공격력·번식력)이 실제로 얼마까지 올라와 있나 — 성장 곡선의 눈금.
+      r.apexSum = APEX_KEYS.reduce((a, k) => a + game.genome.traits[k], 0) / APEX_KEYS.length;
       if (game.result === "win" && !game.isFinalEra) {
         game.continueToNextEra();
         continue;
@@ -918,7 +923,12 @@ async function runGrowth() {
       `${veteran ? "숙련자(끝낸 런 3 = 늘 진도 3)" : "첫 런(진도 0→3)"} · 메타 경험치 ${metaXp} · 시드 ${SEEDS.length} · ${drive ? "손이 붙은 판(1초마다 지시)" : "지시 없음(손 놓음)"}`,
   );
   console.log(
-    `# 일정 ${SCHEDULE.join("→")} × ${GAME.eraCap} 시대 · 패배는 개체 0 과 불씨 0 둘뿐 · 관문 통과 기준 ${GAME.bossPassThreshold}마리`,
+    `# 일정 ${SCHEDULE.join("→")} × ${GAME.eraCap} 시대 · 패배 = 개체 0 · 불씨 0 · 관문 생존 기준 미달
+` +
+      `# 시대별 형질 천장 ${[0, 1, 2, 3, 4].map((e) => eraTraitCeiling(e)).join("·")} · ` +
+      `대멸종 생존 기준 ${[0, 1, 2, 3, 4].map((e) => extinctionPassNeeded(e)).join("·")}마리 · ` +
+      `보스 생존 기준 ${[0, 1, 2, 3, 4].map((e) => bossPassNeeded(e)).join("·")}마리 · ` +
+      `시대 보상 배수 ${[1, 2, 3, 4].map((e) => eraRewardBoostAt(e).toFixed(1)).join("·")}`,
   );
 
   const all = [];
@@ -967,13 +977,13 @@ async function runGrowth() {
 
   console.log(`\n# 표3 · 시대별 난이도와 실제 위험 (전 런 평균 · 그 시대까지 간 런만)`);
   console.log(
-    ["시대", "위협배율", "척박배율", "도달런", "카드누계", "레벨", "최소개체", "끝개체", "사망", "최다 사인", "불씨", "여기서끝난런"].join("\t"),
+    ["시대", "천장", "정점4평균", "위협배율", "포식압", "통과기준", "도달런", "카드누계", "레벨", "최소개체", "끝개체", "사망", "최다 사인", "불씨", "여기서끝난런"].join("\t"),
   );
   for (let era = 0; era < GAME.eraCap; era++) {
     const rows = [];
     for (const r of all) for (const e of r.eraRows) if (e.era === era) rows.push({ e, r });
     if (rows.length === 0) {
-      console.log([String(era + 1), fmt(eraDifficulty(era), 2), fmt(eraScarcity(era), 2), "0", "-", "-", "-", "-", "-", "-", "-", "-"].join("\t"));
+      console.log([String(era + 1), String(eraTraitCeiling(era)), "-", fmt(eraDifficulty(era), 2), fmt(eraPredatorPressure(era), 2), String(extinctionPassNeeded(era)), "0", "-", "-", "-", "-", "-", "-", "-", "-"].join("\t"));
       continue;
     }
     const cum = rows.map(({ r, e }) => r.eraRows.filter((x) => x.era <= era).reduce((a, x) => a + x.cards, 0));
@@ -982,8 +992,11 @@ async function runGrowth() {
     console.log(
       [
         String(era + 1),
+        String(eraTraitCeiling(era)),
+        fmt(rows.reduce((a, { e }) => a + e.apexSum, 0) / rows.length, 1),
         fmt(eraDifficulty(era), 2),
-        fmt(eraScarcity(era), 2),
+        fmt(eraPredatorPressure(era), 2),
+        String(extinctionPassNeeded(era)),
         String(rows.length),
         fmt(cum.reduce((a, b) => a + b, 0) / cum.length, 1),
         fmt(rows.reduce((a, { e }) => a + e.level, 0) / rows.length, 1),

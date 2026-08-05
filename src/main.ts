@@ -819,14 +819,19 @@ async function boot(): Promise<void> {
         goalText = `위협: ${gBoss.name}`;
         // 깎을 수 없는 판에서 "깎으세요"라고 말하는 것이 이 화면의 가장 큰 거짓말이었다. 판단 근거를
         // 격퇴 체력(있기만 하면 참)에서 **맞설 수 있는 개체 수**로 바꾼다 · 0 이면 그렇다고 말한다.
+        // 살아남아야 하는 수는 시대마다 오른다 — **판정과 같은 값**(game.survivorsNeeded)을 그대로 쓴다.
+        // 기준을 안 보여 주면 관문에서 지는 순간이 "허무하게 졌다"가 된다(2026-07-16 에 기준을 내린 이유).
+        const need = game.survivorsNeeded;
+        const hold = need > 1 ? `${need}마리가 살아남아야 합니다` : "끝까지 살아남으면 통과합니다";
         goalSub = !bossRaidable(gBoss)
-          ? `${left} · 끝까지 살아남으면 통과합니다`
+          ? `${left} · ${hold}`
           : raidFighters === 0
-            ? `${left} · 맞설 수 있는 개체가 없습니다. 끝까지 버티세요`
+            ? `${left} · 맞설 개체가 없습니다 · ${hold}`
             : `${left} · 맞서는 개체 ${raidFighters}마리 · 체력 바를 깎으세요`;
       } else if (extName) {
         goalText = `대멸종: ${extName}`;
-        goalSub = `${left} · 환경이 바뀌었습니다. 버티세요`;
+        const need = game.survivorsNeeded;
+        goalSub = need > 1 ? `${left} · ${need}마리가 살아남아야 합니다` : `${left} · 환경이 바뀌었습니다. 버티세요`;
       } else {
         // 라운드 시험: "이번 16초가 답해야 할 질문"을 목표 줄로. 진행 숫자는 sim 계수기 그대로.
         // 기한(남은 시간)과 대가(불씨)를 나란히 둔다 · 시험이 걸린 판돈이 한눈에 읽혀야 한다.

@@ -2,7 +2,7 @@
 // 3단계(없음/보통/강함)로 보여준다. 프리셋 화면·설계도·대백과가 같은 규칙을 쓰도록 한 곳에 모은다(폰 피드백).
 
 import { SIM } from "@/sim/params";
-import { isApexTrait, TRAIT_CEILING, TRAIT_LABELS, type Traits } from "@/sim/genome";
+import { isApexTrait, traitCeiling, TRAIT_LABELS, type Traits } from "@/sim/genome";
 import { cardDelta, effectiveDelta, type Card } from "@/game/cards";
 
 /**
@@ -133,8 +133,8 @@ export interface EffectChip {
  * ⚠ sim 의 실제 규칙과 반드시 같은 뜻이어야 한다. 규칙을 바꾸면 이 문구도 함께 바꾼다.
  */
 export const APEX_BOON: Partial<Record<keyof Traits, string>> = {
-  speed: "험한 땅도 발을 잡지 못해요",
-  vision: "어둠도 수풀도 눈을 가리지 못해요",
+  speed: "험한 땅도 발을 잡지 못하고, 이제 아무도 우리를 따라잡지 못해요",
+  vision: "어둠도 수풀도 눈을 가리지 못하고, 뒤도 보이고 숨은 것도 보여요",
   attack: "덩치 큰 상대도 개의치 않고 물어요",
   // ⚠ 이 줄은 `sim/behavior` 의 번식 규칙과 한 쌍이다. 2026-07-15 에 정점 번식 보상을 "번식 문턱 완화"
   // 에서 "어미가 치르는 대가 완화"로 바꿨는데 여기를 안 고쳐, 화면이 **폐기된 규칙을 말하고 있었다**
@@ -193,7 +193,7 @@ export function cardEffectChips(card: Card, traits?: Traits): EffectChip[] {
       if (raw < 0 && isApexTrait(key, cur)) {
         // 정점 고정 — 100 을 찍은 형질은 카드의 곁가지 대가로 안 내려간다. 대가가 사라진 셈이니 이득이다.
         chips.push(chip(label, "정점 · 안 내려감", "gain", true, { apexLocked: true }));
-      } else if (raw > 0 && cur >= TRAIT_CEILING[key]) {
+      } else if (raw > 0 && cur >= traitCeiling(key)) {
         // 더 올릴 자리가 없다 — 이건 알려야 한다("이 카드의 속도 보너스는 나한텐 헛것").
         chips.push(chip(label, "이미 최대", "neutral", true));
       }

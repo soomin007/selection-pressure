@@ -577,8 +577,9 @@ describe("낮/밤 순환", () => {
 });
 
 describe("시야각(부채꼴)", () => {
-  // makeFovTest 는 e 의 x,y,vx,vy 만 본다 → 부분 mock 으로 충분.
-  const ent = (vx: number, vy: number): Entity => ({ x: 0, y: 0, vx, vy }) as unknown as Entity;
+  // makeFovTest 는 e 의 x,y,vx,vy 와 **시야 형질**(정점이면 늘 전방위)만 본다 → 부분 mock 으로 충분.
+  const ent = (vx: number, vy: number, vision = 50): Entity =>
+    ({ x: 0, y: 0, vx, vy, genome: { traits: { vision } } }) as unknown as Entity;
 
   it("움직이면 보는 방향(앞)은 보고 등 뒤는 못 본다", () => {
     const test = makeFovTest(ent(1, 0)); // 동쪽(+x)으로 이동 = 동쪽을 봄
@@ -590,6 +591,13 @@ describe("시야각(부채꼴)", () => {
     const test = makeFovTest(ent(0, 0));
     expect(test(10, 0)).toBe(true);
     expect(test(-10, 0)).toBe(true); // 뒤도 보임
+  });
+
+  it("정점 시야(100)는 달리면서도 뒤를 본다 — 부채꼴 규칙 면제", () => {
+    // 정점 보상을 "수치를 조금 더"가 아니라 **규칙에서 벗어나는** 것으로 준 자리다. 같은 속도로
+    // 달려도 시야 50 은 등 뒤를 못 보고 시야 100 은 본다.
+    expect(makeFovTest(ent(1, 0, 50))(-10, 0)).toBe(false);
+    expect(makeFovTest(ent(1, 0, 100))(-10, 0)).toBe(true);
   });
 });
 
@@ -1183,6 +1191,26 @@ describe("정점 (형질 100 — 상한에 닿으면 그 형질의 약점이 사
     // 여기서는 "정점 아래에선 감쇠가 실재한다"를 못 박아 둔다(정점의 값어치가 곧 이 감쇠의 크기다).
     expect(nightVisionFactor(0, 0.5)).toBeLessThan(1); // 자정엔 시야가 준다
     expect(isApex(100)).toBe(true);
+  });
+
+  it("정점 속도(100) — 아무도 따라잡지 못한다(사냥하는 야생의 표적에서 빠진다)", () => {
+    // 예전 속도 정점 보상(험지 감속 면제)은 실측에서 **사실상 0**이었다(+0.15%) — 99 에서 이미 다 얻은
+    // 것의 나머지였기 때문이다. 그래서 규칙 자체에서 벗어나는 쪽으로 다시 설계했다. 방향으로 검증한다:
+    // 속도 99 무리는 잡아먹히고, 100 무리는 한 마리도 안 잡아먹힌다(포식 사망 0).
+    let apexEaten = 0;
+    let nearEaten = 0;
+    for (const seed of ["outrun-0", "outrun-1", "outrun-2", "outrun-3"]) {
+      const a = new World(seed, W, H, tune({ speed: 100 }));
+      const b = new World(seed, W, H, tune({ speed: 99 }));
+      for (let i = 0; i < 1500; i++) {
+        a.step();
+        b.step();
+      }
+      apexEaten += a.deaths.predation;
+      nearEaten += b.deaths.predation;
+    }
+    expect(apexEaten).toBe(0); // 규칙에서 벗어났다 — 확률이 준 게 아니라 표적에서 빠진 것이다
+    expect(nearEaten).toBeGreaterThan(0); // 1 차이인 99 는 여전히 잡아먹힌다(그게 "정점"의 뜻이다)
   });
 
   it("정점 번식력(100) — 새끼를 쳐도 어미가 덜 지쳐 무리가 더 크게 유지된다", () => {

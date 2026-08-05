@@ -165,10 +165,14 @@ const clampTrait = (v: number): number => {
   return n < 0 ? 0 : n > TRAIT_MAX ? TRAIT_MAX : n;
 };
 
-// 형질별 상한 — 전부 100. 화면에 날값(속도 68)을 그대로 보여줄 때 "68 = 68%"로 한눈에 읽히게 상한을 100 에
-// 맞춘다(사용자 방향: 직관성). 카드 성장 스케일(cards.ts CARD_GROWTH_SCALE)은 값형질에 그대로 유지해 실제
-// 증가폭이 안 바뀌므로(카드 +15 → 여전히 +9 적용) 밸런스는 거의 불변 — 바뀌는 건 "빌드가 100 에서 멈춘다"뿐.
-// 시뮬 공식은 ÷TRAIT_MAX(100) 정규화라 상한과 무관(behavior 무변경). 야생종은 카드가 없어 늘 0~100 이라 불변.
+// 형질별 **기본 천장** — 전부 100. 화면에 날값(속도 68)을 그대로 보여줄 때 "68 = 68%"로 한눈에 읽히게
+// 100 에 맞춘다(사용자 방향: 직관성). 시뮬 공식은 ÷TRAIT_MAX(100) 정규화라 천장과 무관(behavior 무변경).
+// 야생종은 카드가 없어 늘 0~100 이라 불변.
+//
+// ⚠ **이 값은 "첫 시대의 천장"이자 "정점(만렙)의 문턱"이다.** 지금 실제로 쓰이는 천장은 시대마다
+// 올라가므로(아래 `traitCeiling`) 카드가 얼마나 올릴 수 있는지를 묻는 자리는 이 상수가 아니라
+// **`traitCeiling(key)`** 를 봐야 한다. 정점 판정(`isApexTrait`)만 이 상수(100)를 계속 본다 —
+// 정점은 "100 을 찍었다"는 한 번의 성취라, 천장이 올라도 빼앗기지 않는다.
 export const TRAIT_CEILING: Record<keyof Traits, number> = {
   speed: 100,
   vision: 100,
@@ -186,10 +190,43 @@ export const TRAIT_CEILING: Record<keyof Traits, number> = {
   camouflage: 100,
 };
 
-/** 형질값을 그 형질의 상한(TRAIT_CEILING)까지 자연수로 강제. 카드 누적·프리셋 적용에 쓴다(연속 형질만 200). */
+/**
+ * **지금 이 판에서 형질을 어디까지 올릴 수 있는가** — 카드·표시·감쇠가 전부 이 하나를 본다.
+ *
+ * 왜 필요한가: 천장이 늘 100 이면 넷을 찍는 순간 성장이 끝난다(사용자: "지수적으로 성장해서
+ * 내가 성장한다는 게 느껴지고 쾌감이 있어야 하는데 지금 건 전혀 그렇지 않다"). 시대가 열릴 때마다
+ * 천장이 올라가면 정점은 **도착점이 아니라 통과점**이 되고, 다음 시대에 다시 오를 여지가 생긴다.
+ *
+ * ⚠ **sim 은 시대를 모른다.** 시대를 아는 game 이 `setTraitCeilings` 로 해석한 값만 넣어 준다
+ * (world 의 `foodScarcity`·`stepWorldOptions` 와 같은 구조). 기본 상태는 첫 시대(전부 100)라
+ * 아무도 안 넣으면 지금까지의 세계 그대로다 — 테스트·프로브·야생종이 흔들리지 않는다.
+ */
+let activeCeiling: Record<keyof Traits, number> = { ...TRAIT_CEILING };
+
+/** 지금 이 판의 형질 천장(시대에 따라 오른다). 카드 적용·감쇠·화면 표시가 전부 이걸 읽는다. */
+export function traitCeiling(key: keyof Traits): number {
+  return activeCeiling[key];
+}
+
+/** 지금 천장 전부(읽기 전용 사본이 필요한 화면·프로브용). */
+export function currentTraitCeilings(): Readonly<Record<keyof Traits, number>> {
+  return activeCeiling;
+}
+
+/** 이 판의 천장을 갈아 끼운다 — **game 만 부른다**(시대가 바뀔 때). sim 은 이 값을 쓰기만 한다. */
+export function setTraitCeilings(next: Readonly<Record<keyof Traits, number>>): void {
+  activeCeiling = { ...next };
+}
+
+/** 천장을 기본(첫 시대 · 전부 100)으로 되돌린다. 로비 복귀·테스트 격리용. */
+export function resetTraitCeilings(): void {
+  activeCeiling = { ...TRAIT_CEILING };
+}
+
+/** 형질값을 **지금 시대의 천장**까지 자연수로 강제. 카드 누적·프리셋 적용에 쓴다. */
 export function clampTraitValue(key: keyof Traits, v: number): number {
   const n = Math.round(v);
-  const hi = TRAIT_CEILING[key];
+  const hi = activeCeiling[key];
   return n < 0 ? 0 : n > hi ? hi : n;
 }
 
@@ -207,7 +244,14 @@ export function clampTraitValue(key: keyof Traits, v: number): number {
  */
 export const APEX_TRAITS = new Set<keyof Traits>(["speed", "vision", "attack", "fertility"]);
 
-/** 이 형질이 정점(만렙)에 닿았는가 — 정점이 있는 형질이면서 상한(100)에 도달. sim·카드·UI 가 이 하나를 본다. */
+/**
+ * 이 형질이 정점(만렙)에 닿았는가 — 정점이 있는 형질이면서 **100** 에 도달. sim·카드·UI 가 이 하나를 본다.
+ *
+ * ⚠ **문턱은 시대가 올라도 100 그대로다**(`traitCeiling` 이 아니라 `TRAIT_CEILING`). 정점은 한 번 얻으면
+ * 빼앗기지 않는 성취라야 한다 — 시대가 열릴 때마다 문턱이 같이 올라가면 애써 얻은 규칙 면제(험지 면제·
+ * 표적 제외 등)가 매 시대 사라진다. 천장이 오르는 것은 "정점 위로 더 올라갈 여지"이지 정점의 박탈이 아니다.
+ * sim 의 `isApex`(behavior.ts)도 같은 100 을 본다 — 두 곳이 갈라지면 화면이 거짓말을 한다.
+ */
 export function isApexTrait(key: keyof Traits, v: number): boolean {
   return APEX_TRAITS.has(key) && v >= TRAIT_CEILING[key];
 }

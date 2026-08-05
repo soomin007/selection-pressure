@@ -7,7 +7,7 @@
 
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
-import { defaultGenome, cloneGenome, isApexTrait, MUTABLE_TRAITS, TRAIT_CEILING, TRAIT_KEYS, type Genome, type MutableTrait, type Traits } from "@/sim/genome";
+import { defaultGenome, cloneGenome, isApexTrait, MUTABLE_TRAITS, setTraitCeilings, TRAIT_KEYS, type Genome, type MutableTrait, type Traits } from "@/sim/genome";
 import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, PRESET_CARDS, PRESET_LINEAGE, type Card, type Lineage } from "@/game/cards";
 import { cardAvailable, debugResetAchievements, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
 import {
@@ -15,6 +15,12 @@ import {
   SCHEDULE,
   eraDifficulty,
   eraScarcity,
+  eraPredatorPressure,
+  eraTraitCeiling,
+  eraTraitCeilings,
+  eraRewardBoostAt,
+  bossPassNeeded,
+  extinctionPassNeeded,
   mapScale,
   onboardingStep,
   onboardingOpenedLine,
@@ -346,6 +352,8 @@ export class Game {
     this.paused = false;
     this.result = null;
     this.currentSeed = randomSeed();
+    this.era = 0;
+    this.applyEraCeilings(); // 로비는 첫 시대의 세계 — 지난 런에서 오른 천장을 반드시 되돌린다
     this.genome = defaultGenome();
     this.world = this.makeWorld();
     this.phase = "lobby";
@@ -411,9 +419,11 @@ export class Game {
         // 기준선보다 낮은 개체는 같은 카드로 덜 오른다) 기준선은 100 인데 무리는 95~99 에 흩어진 채
         // 남는다. 그러면 화면은 "정점!"이라 외치는데 정작 무리는 정점 효과(험지 면제 등)를 못 누린다.
         // 변이는 정점을 **만들지 않으므로**(genome.mutateGenome) 이 스냅이 정점의 유일한 입구다.
+        // ⚠ 기준선 값을 그대로 물려준다(예전엔 상수 100 을 박았다). 천장이 시대마다 오르면서 기준선이
+        // 한 번에 100 을 지나칠 수 있는데(예: 95 → 108), 그때 100 을 박으면 무리가 기준선보다 낮아진다.
         for (const key of this.newApex) {
           for (const e of this.world.entities) {
-            if (e.species.isPlayer && e.alive) e.genome.traits[key] = TRAIT_CEILING[key];
+            if (e.species.isPlayer && e.alive) e.genome.traits[key] = this.genome.traits[key];
           }
         }
         this.logEvent("card", `레벨 ${this.level} · ${card.name}`);
@@ -752,6 +762,7 @@ export class Game {
     this.reloadMeta(); // 이전 런들의 해금(누적 경험치 → 레벨)을 이번 런부터 반영
     this.champions = loadChampions(); // 지난 챔피언들을 이 런 세계에 등장(비동기 생물)
     this.era = 0; // 새 런은 첫 시대부터
+    this.applyEraCeilings(); // 형질 천장을 첫 시대(전부 100)로 되돌린다 — 지난 런의 천장이 새 런에 새면 안 된다
     this.playerColor = undefined;
     this.genome = defaultGenome();
     this.pickedCardNames = [];
@@ -812,6 +823,32 @@ export class Game {
     return stepUsesDrawnMap(step) ? this.currentMapType : FIRST_ERA_MAP;
   }
 
+  /**
+   * 이 시대의 형질 천장을 sim 에 넣어 준다 — **시대를 아는 것은 game 뿐이다.** sim(genome.ts)은 받은
+   * 숫자를 쓰기만 하고, 카드 적용·감쇠·드래프트 표시가 전부 그 하나를 읽으므로 표시와 적용이 갈릴 수 없다.
+   * 시대가 바뀌는 모든 입구(새 런·다음 시대·로비 복귀)에서 부른다.
+   */
+  private applyEraCeilings(): void {
+    setTraitCeilings(eraTraitCeilings(this.era));
+  }
+
+  /** 이번 시대에 형질을 어디까지 올릴 수 있는가(화면 표시용 · 드래프트 안내와 목표 줄이 읽는다). */
+  get traitCeilingNow(): number {
+    return eraTraitCeiling(this.era);
+  }
+
+  /**
+   * **이번 관문을 넘으려면 몇 마리가 살아남아야 하는가.** 판정(`finishStage`)과 예고 문구가 같은 이
+   * 값을 읽는다 — 화면에 "3마리"라 써 놓고 2마리로 통과시키면 그건 거짓말이다.
+   * 채집 라운드에는 관문이 없으므로 0(= 기준 없음).
+   */
+  get survivorsNeeded(): number {
+    const kind = this.currentKind();
+    if (kind === "boss") return bossPassNeeded(this.era);
+    if (kind === "extinction") return extinctionPassNeeded(this.era);
+    return 0;
+  }
+
   private makeWorld(): World {
     // 진도별 맵 크기 · 세계를 만들 때마다 치수를 새로 계산한다(진도 0 은 1.0 = 월드가 화면 그대로 →
     // 무리도 보스도 화면 안. 진도가 오르면 1.4·2.0 으로 넓어진다). fixedMapScale 은 테스트 전용 고정.
@@ -830,7 +867,8 @@ export class Game {
       this.stepMapType(step),
       eraScarcity(this.era), // 시대가 지날수록 세계가 척박(먹이↓·재생↓) — era 0 = 1.0 = 기존과 동일
       // 진도가 해석한 세계 옵션(남길 종·친척·기후·포식자 자리). sim 은 진도도 시대도 모른다.
-      stepWorldOptions(step),
+      // 시대별 포식 압력도 여기서 숫자 하나로만 넘긴다(era 0 = 1.0 = 첫 시대 불변).
+      { ...stepWorldOptions(step), predatorPressure: eraPredatorPressure(this.era) },
     );
   }
 
@@ -946,7 +984,7 @@ export class Game {
       this.world.boss = createBoss(bt, this.world.width, this.world.height, this.world.terrain, diff, true);
       // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
-      this.preview = `다가오는 위협. ${bossPreview(bt)}`;
+      this.preview = `다가오는 위협. ${bossPreview(bt)}${survivalLine(bossPassNeeded(this.era))}`;
       // 드래프트가 화면을 덮어도 무엇과 싸우는 중인지 보이게, 대응 힌트만 짧게 붙들어 둔다.
       // 전문(preview)은 배너가 이미 띄웠고, 카드 고르는 자리에서 필요한 건 "무엇을 키워야 하나"다.
       this.threatText = `지금 위협 「${bossName(bt)}」 · ${bossCounter(bt)}`;
@@ -956,7 +994,7 @@ export class Game {
       const et = this.extinctionQueue.shift() ?? this.extRng.pick(EXTINCTION_TYPES);
       applyExtinction(this.world, et, diff);
       this.stageLabel = `대멸종 · ${extinctionName(et)}`;
-      this.preview = `대멸종. ${extinctionPreview(et)}`;
+      this.preview = `대멸종. ${extinctionPreview(et)}${survivalLine(extinctionPassNeeded(this.era))}`;
       this.threatText = `지금 위협 「${extinctionName(et)}」 · ${extinctionCounter(et)}`;
       this.stageTicksLeft = GAME.extinctionSeconds * SIM.stepsPerSecond;
     } else {
@@ -996,9 +1034,10 @@ export class Game {
     // 통과기준은 절대 수(소수 개체 게임) — 개체가 맵 크기와 무관하게 소수라 기준도 고정.
     // 레이드: 보스를 **격퇴**했으면 개체 수와 무관하게 통과("직접 잡았다"). 못 잡아도 3마리 버티면 통과
     // (사용자 방향: 버티기도 통과는 되되 — 처치 보상·버티기 페널티는 후속 단계). 대멸종은 형질 필터.
+    // 기준은 시대마다 오른다(1 · 2 · 3 · 4 · 6마리). 예고 문구가 읽는 함수와 같은 함수라 어긋날 수 없다.
     let passed = true;
-    if (kind === "boss") passed = bossDefeated || this.world.playerPopulation >= GAME.bossPassThreshold;
-    else if (kind === "extinction") passed = this.world.playerPopulation >= GAME.extinctionPassThreshold;
+    if (kind === "boss") passed = bossDefeated || this.world.playerPopulation >= bossPassNeeded(this.era);
+    else if (kind === "extinction") passed = this.world.playerPopulation >= extinctionPassNeeded(this.era);
 
     if (!passed) {
       this.endRun("lose");
@@ -1159,6 +1198,7 @@ export class Game {
   continueToNextEra(): void {
     if (this.result !== "win") return; // 승리 직후에만 유효
     this.era += 1;
+    this.applyEraCeilings(); // 새 시대의 천장을 먼저 연다 — 곧 뜰 시대 보상 카드가 이 천장 안에서 커진다
     this.embers = Math.min(GAME.emberMax, this.embers + 1); // 시대를 넘긴 보상: 불씨 하나 회복
     this.currentTrial = null;
     this.logEvent("era", `시대 ${this.era + 1} 진입`);
@@ -1215,15 +1255,21 @@ export class Game {
       this.level, // 시대 보상도 지금까지 키운 레벨의 보정을 받는다
       this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
     );
-    this.draftCards = drawn.map((c) => boostCard(c, GAME.eraRewardBoost));
+    // 보상 배수는 시대마다 커진다(×2.0 → 2.7 → 3.6 → 4.9). 시대를 넘은 쾌감은 "다음 판이 세진다"가
+    // 아니라 그 자리에서 손에 쥐는 것이 만든다 — 배수가 고정이면 시대 5 보상이 시대 2 와 똑같다.
+    this.draftCards = drawn.map((c) => boostCard(c, eraRewardBoostAt(this.era)));
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
     // 시대를 넘으면 온보딩 진도도 한 칸 오른다 → **이번에 새로 열린 것**을 여기서 한 줄로 알린다.
     // 시대 전환 직후 반드시 지나는 화면이라 가장 싼 자리다(따로 배너를 만들지 않는다). 진도가 안 올랐으면
     // (이미 온전한 세계면) 빈 줄이라 아무것도 안 붙는다.
     const step = this.onboarding;
     const opened = step > onboardingStep(this.runsDone, this.era - 1) ? onboardingOpenedLine(step) : "";
+    // 천장이 오른 것은 **이 화면에서 알아채게 한다.** 대백과에만 적으면 그건 안 끝난 작업이다
+    // (CLAUDE.md 전달 규칙). 여기서 알리면 곧바로 이어지는 드래프트에서 막대가 실제로 더 오르는 걸 본다.
+    const ceilingLine = `이 시대부터 걸음·눈·이빨·새끼를 ${this.traitCeilingNow}까지 키울 수 있습니다.`;
     this.preview =
-      "새로운 시대에 들어섭니다. 지난 시대를 넘어선 보상으로, 크게 강해진 형질 하나를 고르세요. 지금 무리에 바로 물려집니다." +
+      "새로운 시대에 들어섭니다. 지난 시대를 넘어선 보상으로, 크게 강해진 형질 하나를 고르세요. 지금 무리에 바로 물려집니다. " +
+      ceilingLine +
       (opened === "" ? "" : ` ${opened}`);
     this.onDraft?.(this.draftCards, this.preview);
   }
@@ -1363,6 +1409,18 @@ function shuffle<T>(items: readonly T[], rng: Rng): T[] {
     out[j] = a;
   }
   return out;
+}
+
+/**
+ * 위협 예고 끝에 붙는 **생존 기준 한 줄** — "이번 시대를 넘으려면 몇 마리가 살아남아야 하는가".
+ *
+ * 왜 반드시 붙이나: 기준을 안 보여 주면 관문에서 지는 순간이 "허무하게 졌다"가 된다(2026-07-16 에
+ * 기준을 3 → 1 로 내린 이유가 바로 그것이었다). 미리 못박아 두면 같은 패배가 **"알고도 못 지켰다"** 가
+ * 된다. 첫 시대(1마리)는 곧 "완전 멸종만 패배"라 굳이 겁을 주지 않는다.
+ */
+function survivalLine(need: number): string {
+  if (need <= 1) return "";
+  return ` 이 시대를 넘으려면 ${need}마리가 살아남아야 합니다.`;
 }
 
 function extinctionName(type: ExtinctionType): string {

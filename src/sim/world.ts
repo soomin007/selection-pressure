@@ -129,6 +129,18 @@ export interface WorldOptions {
    * 켜면 "시작하자마자 물림"도 "끝까지 못 봄"도 없어진다(rng 미사용 · 결과값만 평행이동).
    */
   spacedPredators?: boolean;
+  /**
+   * **사냥하는 야생을 이 배수만큼 늘린다.** 생략·1 = 지금까지 그대로. game 이 시대 배율을 넘긴다
+   * (`eraPredatorPressure` · 첫 시대는 1.0 이라 기존 세계·테스트가 1비트도 안 흔들린다).
+   *
+   * 왜 여기인가: 위협 배율(보스 체력·즉사 반경·떼 수)은 전부 관문 **안**에서만 살아, 관문 밖의 하루하루가
+   * 시대마다 똑같았다(실측: 위협 ×2.22 에 시대 끝 개체 수 22.9 → 22.7). 나를 잡아먹는 것의 수는
+   * 채집 라운드 내내 개체 수를 실제로 깎고, **화면에서 붉은 것이 늘어나는 것으로 곧장 읽힌다.**
+   *
+   * ⚠ 늘리는 개체는 **모든 스폰이 끝난 뒤 독립 rng** 로 붙인다(친척·챔피언과 같은 안전한 패턴) —
+   *   메인 rng 소비 순서를 안 건드려야 같은 시드의 세계가 이 옵션 하나로 통째로 갈리지 않는다.
+   */
+  predatorPressure?: number;
 }
 
 /**
@@ -372,6 +384,9 @@ export class World {
     }
     // 포식자 자리 잡기는 **감추기 뒤**에 — 감춘 사냥 무리까지 평균에 넣으면 엉뚱한 자리로 옮겨진다.
     if (options.spacedPredators === true) this.spaceOutPredators();
+    // 시대별 포식 압력 — 감추기·자리 잡기까지 끝난 **맨 마지막**에, 살아남은 사냥 무리 옆에만 붙인다
+    // (감춘 종에 붙이면 곧바로 지워질 개체를 만들고, 자리 잡기 전에 붙이면 평균이 흔들린다).
+    this.spawnEraPredators(new Rng(String(seed) + "-erapred"), options.predatorPressure ?? 1);
     this.grid.rebuild(this.entities);
     // 먹이 위치는 불변이라 격자를 한 번만 빌드한다(available 토글은 탐색 시 거른다).
     this.foodGrid = new FoodGrid(width, height, SIM.gridCellSize);
@@ -943,6 +958,52 @@ export class World {
         const spot = sp.isPlayer
           ? this.snapSpawn(x, y, canSwim, canLand, canFly)
           : this.terrain.nearestPassable(x, y, canSwim, canLand, canFly);
+        this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
+      }
+    }
+  }
+
+  /**
+   * (옵션 `predatorPressure`) 사냥하는 야생을 배수만큼 **불려서** 세계를 시대에 맞게 험하게 만든다.
+   *
+   * 늘어난 개체는 자기 종의 기존 개체 곁(보금자리 반경 안)에 태어난다 — 새 무리를 아무 데나 만들면
+   * 종의 영역성(경쟁 배제를 늦추는 장치)이 깨진다. 우호 무리(친척·챔피언)와 감춘 종은 건드리지 않는다.
+   *
+   * ⚠ 전용 rng 다. 메인 스트림을 안 건드리므로 배수 1(첫 시대)이면 세계가 1비트도 안 달라진다.
+   */
+  private spawnEraPredators(rng: Rng, pressure: number): void {
+    if (!(pressure > 1)) return;
+    // 종별로 지금 살아 있는 개체를 모은다(감추기가 끝난 뒤라 화면에 실제로 있는 것만 센다).
+    const bySpecies = new Map<number, Entity[]>();
+    for (const e of this.entities) {
+      const sp = e.species;
+      if (sp.isPlayer || sp.friendly) continue;
+      if (sp.genome.traits.diet <= SIM.dietHuntMin) continue; // 사냥하는 종만
+      const list = bySpecies.get(sp.id);
+      if (list === undefined) bySpecies.set(sp.id, [e]);
+      else list.push(e);
+    }
+    const spread = this.spawnSpread;
+    // 종 id 오름차순으로 돌아 Map 삽입 순서에 결과가 안 걸리게 한다(결정론).
+    for (const id of [...bySpecies.keys()].sort((a, b) => a - b)) {
+      const list = bySpecies.get(id) as Entity[];
+      const seed0 = list[0] as Entity;
+      const sp = seed0.species;
+      const extra = Math.round(list.length * (pressure - 1));
+      if (extra <= 0) continue;
+      const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
+      const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
+      const canFly = sp.genome.traits.wings >= SIM.flyThreshold;
+      let hx = 0;
+      let hy = 0;
+      for (const e of list) {
+        hx += e.x;
+        hy += e.y;
+      }
+      hx /= list.length;
+      hy /= list.length;
+      for (let i = 0; i < extra; i++) {
+        const spot = this.snapSpawn(hx + rng.range(-spread, spread), hy + rng.range(-spread, spread), canSwim, canLand, canFly);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }

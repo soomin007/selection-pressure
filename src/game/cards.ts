@@ -7,7 +7,7 @@
 
 import type { Rng } from "@/sim/rng";
 import type { Genome, Traits } from "@/sim/genome";
-import { clampTraitValue, GENOME_VERSION, isApexTrait, TRAIT_CEILING, TRAIT_KEYS } from "@/sim/genome";
+import { clampTraitValue, GENOME_VERSION, isApexTrait, traitCeiling, TRAIT_KEYS, TRAIT_MAX } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 
 // 값형질(속도·시야·공격·번식·무리)의 카드 증가폭을 이만큼으로 줄인다 — 한 판 동안 여러 장을 쌓아야 상한
@@ -961,23 +961,43 @@ export function cardRarity(card: Card): Rarity {
  * 카드 몇 장이면 상한이라 뒤쪽 드래프트가 시시해진다.
  *
  * **50 이하에선 감쇠가 정확히 1(없음)** 이다 — 모든 종이 50 에서 시작하므로 초반 성장·기존 밸런스가
- * 그대로 보존된다. 50 위에서만 남은 여유에 비례해 증가폭이 준다:
- *   현재 50 → ×1.00 · 65 → ×0.84 · 80 → ×0.63 · 90 → ×0.45 · 97 → ×0.24
- * 100 에 점근하되 닿기는 어렵다 — "극단은 값비싸다"가 성장 곡선이 된다.
+ * 그대로 보존된다. 50 위에서만 **남은 여유**에 비례해 증가폭이 준다(첫 시대 · 천장 100 기준):
+ *   현재 50 → ×1.00 · 65 → ×0.76 · 80 → ×0.48 · 90 → ×0.25 · 97 → ×0.09
+ * 천장에 점근하되 닿기는 어렵다 — "극단은 값비싸다"가 성장 곡선이 된다.
  * 값을 **내리는**(음수) 효과에는 안 걸린다(내리는 건 원래대로).
+ *
+ * ⚠ **여유는 "지금 시대의 천장"까지다**(`traitCeiling`). 그래서 시대가 열려 천장이 오르면 같은 형질값에서
+ * 감쇠가 확 풀린다 — 이것이 "시대를 넘으면 다시 쑥쑥 자란다"의 실체다. 시대 5(천장 194)에서 속도 100 이면
+ * 여유가 (194-100)/(194-50)=0.65 → ×0.72 로, 첫 시대의 속도 65 와 비슷한 속도로 다시 자란다.
+ *
+ * 0.5 → 0.85: 예전 곡선은 95 → 100 이 카드 한두 장이라 정점이 공짜로 지나쳐졌다(카드 예산 17장 대
+ * 정점 넷에 필요한 14.7~19장이 겹쳤다 = 큰 수치만 보고 골라도 런 끝에 반드시 정점 넷). 지수를 올려
+ * 한 시대의 천장에 닿는 것 자체를 그 시대의 목표로 만든다. ⚠ 이 값만 올리면 **성장만 느려지고
+ * 난이도는 그대로**라 프리셋이 전반적으로 약해진다(전례: 도달 5.0 → 4.2) — 그래서 천장 상승·시대 보상
+ * 강화와 반드시 한 묶음으로 움직인다.
  */
 const FALLOFF_FROM = 50; // 이 값 이하에선 감쇠 없음
-const FALLOFF_POWER = 0.5;
+const FALLOFF_POWER = 0.85;
 
 /** 감쇠가 걸리는 값 형질(많을수록 강함). 능력형(문턱을 넘겨야 켜짐)·대사·식성(중립/스펙트럼)은 제외. */
 const FALLOFF_TRAITS = new Set<keyof Traits>(["speed", "vision", "attack", "fertility", "size"]);
 
 export function growthFalloff(key: keyof Traits, current: number): number {
   if (!FALLOFF_TRAITS.has(key)) return 1;
-  const ceiling = TRAIT_CEILING[key];
+  const ceiling = traitCeiling(key);
   if (current <= FALLOFF_FROM) return 1;
   const room = Math.max(0, (ceiling - current) / (ceiling - FALLOFF_FROM));
-  return Math.pow(room, FALLOFF_POWER);
+  // **정점(100) 문턱은 천장이 올라도 싸지지 않는다.** 천장만 보면 시대가 열릴 때마다 100 근처가 확
+  // 헐거워져 "정점 도달을 늦춘다"(사용자 지시)가 무너진다 — 실제로 그렇게 만들어 재 봤더니 정점이
+  // 오히려 **더 빨리** 찍혔다(시야 정점 도달 시대 2.7 → 2.5). 그래서 100 아래에서는 "천장 100 기준의
+  // 여유"와 "이 시대 천장 기준의 여유"를 **기하평균**으로 섞는다: 문턱은 늘 비싸되, 시대가 오르면
+  // 그래도 조금 수월해진다(둘 다 살린다). 100 을 넘어선 뒤로는 오직 이 시대의 천장만 본다 —
+  // 정점을 뚫는 순간 성장이 다시 트이는 것, 그것이 정점의 보상 중 하나다.
+  const gate =
+    current < TRAIT_MAX
+      ? Math.sqrt(room * Math.max(0, (TRAIT_MAX - current) / (TRAIT_MAX - FALLOFF_FROM)))
+      : room;
+  return Math.pow(gate, FALLOFF_POWER);
 }
 
 /** 카드가 게놈에 실제로 더하는 값(표시용) — 카드에 적힌 값과 실제 적용값이 다르다(전엔 원값 +15 를
@@ -991,7 +1011,13 @@ export function growthFalloff(key: keyof Traits, current: number): number {
 export function effectiveDelta(key: keyof Traits, raw: number, current?: number): number {
   let d = GROWTH_TRAITS.has(key) ? raw * CARD_GROWTH_SCALE : raw;
   if (d > 0 && current !== undefined) d *= growthFalloff(key, current);
-  return Math.round(d);
+  const rounded = Math.round(d);
+  // **올리는 카드는 적어도 1은 올린다.** 감쇠 지수를 0.85 로 올린 순간 이게 없으면 천장 바로 아래에
+  // **벽**이 생긴다: 99 에서 여유가 2%뿐이라 어떤 카드도 반올림하면 0 이 되고, 정점이 영영 도달
+  // 불가능해진다(실측: 「날쌘 걸음」을 30장 쌓아도 99 에서 멈췄다). 비싼 것과 불가능한 것은 다르다 —
+  // 정점은 여러 장을 갈아 넣어야 닿는 **값비싼 목표**이지 닫힌 문이 아니다.
+  // 표시(칩·막대)도 같은 함수를 읽으므로 "+1"이라 뜨고 실제로 +1 이 붙는다(거짓말 없음).
+  return d > 0 && rounded === 0 ? 1 : rounded;
 }
 
 /**
@@ -1011,7 +1037,7 @@ export function effectiveDelta(key: keyof Traits, raw: number, current?: number)
  */
 export function cardDelta(card: Card, key: keyof Traits, current?: number): number {
   // 1. 희생 — "얼마를 빼느냐"가 아니라 "그 감각을 버리느냐". 현재값이 얼마든 0 이 된다.
-  if (card.sacrifice?.includes(key)) return current === undefined ? -TRAIT_CEILING[key] : -current;
+  if (card.sacrifice?.includes(key)) return current === undefined ? -traitCeiling(key) : -current;
   const raw = card.effects[key] ?? 0;
   // 2. 정점 고정 — 한 번 100 을 찍었으면 카드의 곁가지 대가로는 안 내려간다(만렙).
   if (raw < 0 && current !== undefined && isApexTrait(key, current)) return 0;

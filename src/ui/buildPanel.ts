@@ -3,7 +3,7 @@
 // 위치도 우상단이 아니라 칩 아래(좌상단, 종 안내 패널과 같은 자리 — 서로 배타적으로 열린다).
 // 캔버스 위 HTML 오버레이(인라인 스타일).
 
-import { TRAIT_KEYS, TRAIT_LABELS, TRAIT_CEILING, type Traits } from "@/sim/genome";
+import { TRAIT_KEYS, TRAIT_LABELS, traitCeiling, type Traits } from "@/sim/genome";
 import { ABILITY_KEYS, abilityFillPct, traitColor, traitWord } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { huntingBuild, dietNote } from "@/game/runReport";
@@ -112,7 +112,7 @@ export function createBuildPanel(): BuildPanel {
         track.style.cssText = "margin-top:2px; height:4px; border-radius:3px; background:rgba(255,255,255,0.06); overflow:hidden;";
         const fill = document.createElement("div");
         // 능력형은 눈금(세분 능력=값 그대로, 나머지=0/50/100%), 값형질은 상한 기준 비율. 색은 형질 6색 매핑.
-        const pct = isAbility ? abilityFillPct(key, v) : Math.round(Math.max(0, Math.min(100, (v / TRAIT_CEILING[key]) * 100)));
+        const pct = isAbility ? abilityFillPct(key, v) : Math.round(Math.max(0, Math.min(100, (v / traitCeiling(key)) * 100)));
         fill.style.cssText = `height:100%; width:${pct}%; border-radius:3px; background:${traitColor(key)};`;
         track.appendChild(fill);
         row.appendChild(track);

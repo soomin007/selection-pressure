@@ -7,6 +7,11 @@ import {
   ONBOARDING_MAX_STEP,
   eraDifficulty,
   eraScarcity,
+  eraPredatorPressure,
+  eraTraitCeiling,
+  eraRewardBoostAt,
+  bossPassNeeded,
+  extinctionPassNeeded,
   mapScale,
   onboardingOpenedLine,
   onboardingStep,
@@ -14,12 +19,13 @@ import {
   stepHasTrial,
   stepUsesDrawnMap,
   stepWorldOptions,
+  eraTraitCeilings,
 } from "@/game/config";
 import { MAP_SCALE } from "@/config";
 import { createBoss } from "@/sim/boss";
-import { CARD_POOL, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
+import { applyCard, CARD_POOL, cardPrereqMet, cardRedundant, drawCards, effectiveDelta } from "@/game/cards";
 import { Rng } from "@/sim/rng";
-import { defaultGenome } from "@/sim/genome";
+import { defaultGenome, isApexTrait, resetTraitCeilings, setTraitCeilings, traitCeiling } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 import { debugSetMetaLevel } from "@/game/meta";
 import { debugResetAchievements, debugUnlockAchievement } from "@/game/achievements";
@@ -127,12 +133,13 @@ describe("대멸종 종류 예고", () => {
 
 describe("난이도 루프(승리 후 진행)", () => {
   it("era 0 은 배율 1.0(기존과 동일), 이후 **복리**로 오른다", () => {
+    const step = 1 + GAME.eraDifficultyStep;
     expect(eraDifficulty(0)).toBe(1);
-    expect(eraDifficulty(1)).toBeCloseTo(1.22);
-    // 지수(복리)다 — 선형이면 1.44 겠지만 1.22² = 1.4884 다. 카드 성장이 곱셈처럼 쌓이는데 위협만
-    // 덧셈으로 오르면 후반이 시시해진다(사용자: "난이도는 선형이 아니라 지수적으로 상승해야 해").
-    expect(eraDifficulty(2)).toBeCloseTo(1.4884);
-    expect(eraDifficulty(5)).toBeCloseTo(Math.pow(1.22, 5));
+    expect(eraDifficulty(1)).toBeCloseTo(step);
+    // 지수(복리)다 — 선형이면 1 + 2×0.30 = 1.60 이겠지만 1.30² = 1.69 다. 카드 성장이 곱셈처럼 쌓이는데
+    // 위협만 덧셈으로 오르면 후반이 시시해진다(사용자: "난이도는 선형이 아니라 지수적으로 상승해야 해").
+    expect(eraDifficulty(2)).toBeCloseTo(step ** 2);
+    expect(eraDifficulty(5)).toBeCloseTo(step ** 5);
     // 뒤 시대일수록 계단이 가팔라진다(복리의 정의).
     expect(eraDifficulty(5) - eraDifficulty(4)).toBeGreaterThan(eraDifficulty(2) - eraDifficulty(1));
     // 음수 방어(0으로 clamp).
@@ -782,5 +789,117 @@ describe("온보딩 진도 (시대가 아니라 겪은 양으로 세계가 열�
     expect(free.world.hiddenSpeciesIds.size).toBeGreaterThan(0);
     const alive = new Set(free.world.entities.map((e) => e.species.name));
     expect([...alive].sort()).toEqual(["내 종", "초식 경쟁자", "포식자"].sort());
+  });
+});
+
+
+describe("지수 성장 · 지수 난이도 (2026-08-05 · 성장 곡선과 난이도 곡선의 경주)", () => {
+  it("형질 천장은 시대마다 오르고, 첫 시대는 100(=지금까지의 세계) 그대로다", () => {
+    expect(eraTraitCeiling(0)).toBe(100);
+    for (let era = 1; era < GAME.eraCap; era++) {
+      expect(eraTraitCeiling(era)).toBeGreaterThan(eraTraitCeiling(era - 1));
+    }
+    // 복리(지수)다 — 뒤 시대의 계단이 앞 시대보다 크다.
+    expect(eraTraitCeiling(4) - eraTraitCeiling(3)).toBeGreaterThan(eraTraitCeiling(1) - eraTraitCeiling(0));
+    expect(eraTraitCeiling(-2)).toBe(100); // 음수 방어
+  });
+
+  it("정점(만렙) 문턱은 천장이 올라도 100 그대로다 — 한 번 얻은 정점은 안 빼앗긴다", () => {
+    setTraitCeilings(eraTraitCeilings(4)); // 천장 194 인 마지막 시대
+    try {
+      expect(isApexTrait("speed", 100)).toBe(true);
+      expect(isApexTrait("speed", 150)).toBe(true);
+      expect(traitCeiling("speed")).toBe(eraTraitCeiling(4));
+      // 정점이 없는 형질(양방향 축·능력형)의 천장은 안 오른다.
+      expect(traitCeiling("size")).toBe(100);
+      expect(traitCeiling("metabolism")).toBe(100);
+      expect(traitCeiling("swimming")).toBe(100);
+    } finally {
+      resetTraitCeilings();
+    }
+  });
+
+  it("관문 생존 기준은 시대마다 지수로 오르고, 첫 시대는 1(완전 멸종만 패배)이다", () => {
+    expect(bossPassNeeded(0)).toBe(1);
+    expect(extinctionPassNeeded(0)).toBe(1);
+    for (let era = 1; era < GAME.eraCap; era++) {
+      expect(extinctionPassNeeded(era)).toBeGreaterThanOrEqual(extinctionPassNeeded(era - 1));
+    }
+    // 마지막 시대는 첫 시대의 몇 배여야 한다 — 이 계단이 없으면 위협을 아무리 세게 만들어도
+    // 판정이 안 바뀐다(2026-08-05 실측: 위협 ×2.22 에 시대 끝 개체 수 22.9 → 22.7).
+    expect(extinctionPassNeeded(GAME.eraCap - 1)).toBeGreaterThan(extinctionPassNeeded(0) * 3);
+  });
+
+  it("포식 압력·시대 보상도 시대마다 오르고, 첫 시대는 손대지 않는다", () => {
+    expect(eraPredatorPressure(0)).toBe(1);
+    expect(eraPredatorPressure(2)).toBeGreaterThan(1);
+    expect(eraPredatorPressure(9)).toBeLessThanOrEqual(GAME.eraPredatorCap); // 상한에서 멈춘다
+    expect(eraRewardBoostAt(1)).toBeCloseTo(GAME.eraRewardBoost);
+    expect(eraRewardBoostAt(4)).toBeGreaterThan(eraRewardBoostAt(1));
+  });
+
+  it("난이도 곡선이 성장 곡선보다 가파르다 — 안 그러면 후반이 시시해진다", () => {
+    const last = GAME.eraCap - 1;
+    const growth = eraTraitCeiling(last) / eraTraitCeiling(0);
+    const threat = eraDifficulty(last);
+    expect(threat).toBeGreaterThan(growth);
+  });
+
+  it("화면에 못박은 생존 기준과 실제 판정 기준이 같은 함수에서 나온다", () => {
+    // 예고 문구가 다른 수를 말하고 판정이 다른 수로 자르면 그건 거짓말이다(2026-07-16 "허무하게 졌다"의 재발).
+    const g = new Game(540, 960);
+    g.fixedSeed = "pass-line";
+    g.beginRun();
+    g.pickCard(0);
+    // 채집 라운드에는 관문이 없다.
+    expect(g.survivorsNeeded).toBe(0);
+    // 첫 시대는 1마리 = 완전 멸종만 패배 → 겁주는 문구를 붙이지 않는다.
+    expect(bossPassNeeded(0)).toBe(1);
+  });
+
+  it("천장이 오르면 카드가 100 위로 올린다 — 정점이 도착점이 아니라 통과점이 된다", () => {
+    const swift = CARD_POOL.find((c) => c.id === "swift") as (typeof CARD_POOL)[number];
+    const at = (era: number): number => {
+      setTraitCeilings(eraTraitCeilings(era));
+      const g = defaultGenome();
+      g.traits.speed = 100; // 정점을 이미 찍은 종
+      applyCard(g, swift);
+      return g.traits.speed;
+    };
+    try {
+      expect(at(0)).toBe(100); // 첫 시대에는 100 이 끝이다
+      expect(at(2)).toBeGreaterThan(100); // 시대가 열리면 그 위로 오른다
+      expect(at(4)).toBeGreaterThan(at(2)); // 뒤 시대일수록 더 오른다(여유가 넓다)
+      expect(at(4)).toBeLessThanOrEqual(eraTraitCeiling(4));
+    } finally {
+      resetTraitCeilings();
+    }
+  });
+
+  it("정점(100) 문턱은 천장이 올라도 값비싸다 — 정점 도달을 늦추는 자리", () => {
+    // 천장만 보고 감쇠를 재면 시대가 열릴 때마다 100 근처가 헐거워져 정점이 오히려 더 빨리 찍힌다
+    // (실측으로 확인하고 되돌린 함정). 100 아래에서는 천장이 올라도 90 → 100 이 여전히 여러 장이다.
+    /** 속도 90 에서 정점(100)까지 「날쌘 걸음」류(+15) 카드가 몇 장 드는가. */
+    const cardsToApex = (era: number): number => {
+      setTraitCeilings(eraTraitCeilings(era));
+      let v = 90;
+      let n = 0;
+      while (v < 100 && n < 99) {
+        v += effectiveDelta("speed", 15, v);
+        n += 1;
+      }
+      return n;
+    };
+    try {
+      // 한 시대에 손에 쥐는 카드가 서너 장이다 — 문턱이 그보다 비싸야 "그 시대 안에서 값진 목표"가 된다.
+      expect(cardsToApex(0)).toBeGreaterThanOrEqual(4);
+      expect(cardsToApex(4)).toBeGreaterThanOrEqual(3);
+      // 다만 **닫힌 문이 아니다** — 비싼 것과 불가능한 것은 다르다(감쇠만 올렸을 때 99 에서 영영 멈췄다).
+      expect(cardsToApex(4)).toBeLessThan(99);
+      // 시대가 열리면 그래도 조금은 수월해진다(문턱은 비싸되 천장 상승이 아주 무의미하진 않게).
+      expect(cardsToApex(4)).toBeLessThanOrEqual(cardsToApex(0));
+    } finally {
+      resetTraitCeilings();
+    }
   });
 });

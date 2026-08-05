@@ -131,8 +131,15 @@ export function maxEnergyFor(diet: number): number {
  * 예전엔 그냥 멈춤(clamp)일 뿐이라 "최고조"에 아무 의미가 없었다.
  *
  * 정점 효과는 **그 형질의 약점을 지우는** 쪽으로 준다 — 수치를 더 키우는 게 아니라 "규칙에서 벗어난다":
- *   · 속도 100 — 험한 땅도 이 걸음을 늦추지 못한다(험지 감속 면제)
- *   · 시야 100 — 어둠도 수풀도 눈을 가리지 못한다(밤·수풀 시야 감쇠 면제)
+ *   · 속도 100 — 험한 땅도 이 걸음을 늦추지 못하고(험지 감속 면제), **아무도 따라잡지 못한다**
+ *               (사냥하는 야생이 표적으로 삼는 단계에서 통째로 빠진다 · `outrunsHunters`)
+ *   · 시야 100 — 어둠도 수풀도 눈을 가리지 못하고(밤·수풀 감쇠 면제), **뒤통수에도 눈이 있으며**
+ *               (앞만 보는 부채꼴 규칙 면제 · `makeFovTest`) **숨은 것도 보인다**(은신 무효)
+ *
+ * ⚠ 2026-08-05 에 속도·시야의 보상을 다시 설계했다. 예전 둘은 **사실상 0** 이었다(실측: 험지 면제
+ * +0.15% · 수풀 면제 +0.50%) — 99 에서 이미 거의 다 얻은 것의 나머지였기 때문이다. 수치를 조금 더
+ * 주는 방식으로는 절대 보상이 되지 않는다. **규칙 자체에서 벗어나는** 쪽(표적 제외 · 부채꼴 면제 ·
+ * 은신 무효)이라야 "정점을 찍었다"가 화면에서 읽힌다.
  *   · 공격력 100 — 어떤 가죽도 이빨을 막지 못한다(체급 차로 "안 박힘"이 안 걸린다)
  *   · 번식력 100 — 한 배에 둘을 친다(쌍둥이)
  *   · 몸집 100 — 따로 안 준다. 이미 체급만으로 보통 포식자의 이빨이 안 박힌다(그 자체가 정점 보상).
@@ -298,6 +305,20 @@ export function herdShieldedBy(herding: number, neighbors: number): boolean {
  */
 // export: 렌더(worldView)가 "방패가 선 무리 개체"에 보호 링을 그리려고 같은 판정을 읽는다. 시각=로직
 // 1:1 — 화면의 방패 링이 실제로 포식자가 안 오는 개체와 정확히 일치해야 한다(안 그러면 표시가 거짓말).
+/**
+ * **정점 속도(100)의 보상 — 아무도 나를 따라잡지 못한다.** 사냥하는 개체가 표적을 고르는 단계에서
+ * 이 개체를 통째로 뺀다(무리 방어 `herdShielded` 와 같은 형태의 이진 규칙).
+ *
+ * 왜 표적 제외인가: "물릴 확률을 깎는" 방식은 이 저장소에서 이미 두 번 실패했다 — 잡히는 개체는
+ * 이미 쫓기기 시작한 뒤라 확률 보정이 늦다. 규칙에서 벗어나려면 **쫓기 전에** 빠져야 한다.
+ *
+ * ⚠ 보스는 안 봐준다(`boss.ts` 는 이 함수를 안 부른다). 관문은 관문으로 남아야 한다 — 정점 하나로
+ *   시대의 시험을 통째로 건너뛰면 성장과 난이도의 경주가 그 자리에서 끝난다.
+ */
+export function outrunsHunters(p: Entity): boolean {
+  return isApex(p.genome.traits.speed);
+}
+
 export function herdShielded(p: Entity, world: World): boolean {
   const herding = p.genome.traits.herding;
   if (herding <= SIM.herdShieldThreshold) return false;
@@ -1100,11 +1121,13 @@ function chooseGoal(
    * 초음파는 못 속인다: 눈을 속이는 것이지 소리를 지우는 게 아니다. 숨는 종은 초음파 사냥꾼 앞에서
    * 무력하다(감각 축끼리의 가위바위보). 큰 몸은 잘 못 숨는다(effectiveCamo).
    */
+  // **정점 시야(100)** — 숨은 것도 보인다. 은신은 눈을 속이는 것인데, 이 눈은 안 속는다(규칙 면제).
+  const apexEye = isApex(e.genome.traits.vision);
   const canSensePrey = (p: Entity): boolean => {
     const dx = p.x - e.x;
     const dy = p.y - e.y;
     const d2 = dx * dx + dy * dy;
-    const camoF = camoVisionFactor(p.genome.traits.camouflage, p.genome.traits.size);
+    const camoF = apexEye ? 1 : camoVisionFactor(p.genome.traits.camouflage, p.genome.traits.size);
     const hidden2 = vision2 * camoF * camoF; // 반경에 곱하므로 제곱거리엔 제곱으로
     return (d2 < hidden2 && inFov(p.x, p.y)) || d2 < echo2;
   };
@@ -1123,6 +1146,8 @@ function chooseGoal(
         // 물속 물고기를 노리고 물가에 머리를 박은 채 굶어 죽었다(프로브: 내 종 개체틱의 31%).
         // 끼임 감지(stuckTicks)로는 못 푼다 — 물가에서 튕기며 진동해 "움직였다"로 판정된다.
         world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly) &&
+        // **정점 속도(100)는 아예 안 쫓는다** — 따라잡을 수 없는 것을 쫓는 것은 굶는 길이다.
+        !outrunsHunters(p) &&
         // **뭉친 무리는 아예 안 건드린다**(무리 방어). 사자가 물소 떼 한가운데를 덮치지 않고 가장자리·
         // 낙오자를 노리는 것과 같다. 물기 확률을 깎는 방식으로도 해 봤으나 소용없었다 — 애초에 잡히는
         // 개체는 이미 무리에서 떨어져 나온 낙오자라 "이웃 수" 보정이 걸리지 않았다(프로브: 저항을 걸어도
@@ -1146,7 +1171,7 @@ function chooseGoal(
     // 그 목표를 붙들어 물가에서 계속 머리를 박는다. 쫓던 먹잇감이 **무리로 돌아가 버려도** 놓아준다
     // (무리 방어) — 안 그러면 표적 제외를 뚫고 무리 한가운데까지 쫓아 들어간다.
     const reachable = world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly);
-    if (p.alive && p.species.id !== e.species.id && reachable && !herdShielded(p, world)) {
+    if (p.alive && p.species.id !== e.species.id && reachable && !herdShielded(p, world) && !outrunsHunters(p)) {
       const cur2 = dist2(e, p);
       if (cur2 <= keep2 && cand2 >= cur2 * SIM.targetSwitchGain) return { x: p.x, y: p.y };
     }
@@ -1265,6 +1290,9 @@ function nearestFood(
  * (단위 테스트용 export.)
  */
 export function makeFovTest(e: Entity): (tx: number, ty: number) => boolean {
+  // **정점 시야(100)** — 앞만 본다는 규칙에서 벗어난다(달리면서도 사방을 본다). 정지·저속일 때만
+  // 전방위이던 것이 늘 전방위가 되므로, 달리는 내내 놓치던 먹이·위협이 시야에 들어온다.
+  if (isApex(e.genome.traits.vision)) return () => true;
   const speed = Math.hypot(e.vx, e.vy);
   if (speed <= SIM.fovMinSpeed) return () => true;
   const fvx = e.vx / speed;

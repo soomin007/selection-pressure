@@ -21,7 +21,7 @@ import {
 import {
   cloneGenome,
   isApexTrait,
-  TRAIT_CEILING,
+  traitCeiling,
   TRAIT_LABELS,
   type Genome,
   type Traits,
@@ -461,7 +461,7 @@ export function createDraftPanel(
     const rows = el("div", "draft-stats");
     for (const key of STAT_KEYS) {
       const value = c.genome.traits[key];
-      const ceiling = TRAIT_CEILING[key];
+      const ceiling = traitCeiling(key); // 이 시대의 천장 — 시대가 오르면 막대의 눈금 자체가 넓어진다
       // `cardDelta` 는 applyCard 가 쓰는 바로 그 함수다 — 성장 스케일·상한 근접 감쇠·정점 고정·희생이
       // 전부 반영된 **실제로 붙을 값**이 나온다. 다른 식으로 계산하면 표시와 적용이 언젠가 갈라진다.
       const delta = cardDelta(card, key, value);
