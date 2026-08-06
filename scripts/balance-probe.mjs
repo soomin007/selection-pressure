@@ -78,15 +78,18 @@ const server = await createServer({
 const { World } = await server.ssrLoadModule("/src/sim/world.ts");
 const { SIM, ORDER } = await server.ssrLoadModule("/src/sim/params.ts");
 const {
-  GAME, SCHEDULE, mapScale, eraScarcity, eraDifficulty, eraPredatorPressure, eraTraitCeiling,
+  GAME, SCHEDULE, mapScale, eraScarcity, eraDifficulty, eraPredatorPressure,
   eraRewardBoostAt, bossPassNeeded, extinctionPassNeeded, onboardingStep, stepUsesDrawnMap, stepWorldOptions,
 } = await server.ssrLoadModule("/src/game/config.ts");
 const { createBoss, bossRaidable } = await server.ssrLoadModule("/src/sim/boss.ts");
-const { defaultGenome, TRAIT_KEYS, TRAIT_LABELS, TRAIT_CEILING, setTraitCeilings, resetTraitCeilings } =
-  await server.ssrLoadModule("/src/sim/genome.ts");
+const { defaultGenome, refreshDerived, TRAIT_KEYS, TRAIT_LABELS } = await server.ssrLoadModule("/src/sim/genome.ts");
+// v8 — 성장은 형질 숫자가 아니라 **도장과 티어**로 잰다. 이 모듈이 그 단일 진실이다.
 const {
-  PRESET_CARDS, applyCard, cardDelta, cardRedundant, cardPrereqMet, drawCards,
-  growthFalloff, effectiveDelta, cardPoolFor, PRESET_LINEAGE, boostCard,
+  CATEGORIES, CATEGORY_LABELS, TIER_STEPS, MAX_TIER, tierOf, tiersOf, tierSum, activeDuos,
+} = await server.ssrLoadModule("/src/sim/tiers.ts");
+const {
+  PRESET_CARDS, applyCard, cardPips, cardCategories, cardRedundant, cardPrereqMet, drawCards,
+  cardCrossesThreshold, cardPoolFor, PRESET_LINEAGE, boostCard,
 } = await server.ssrLoadModule("/src/game/cards.ts");
 const { cardAvailable } = await server.ssrLoadModule("/src/game/achievements.ts");
 // 정점 보상의 크기를 재는 데만 쓴다 — 화면·sim 과 **같은 함수**여야 표가 거짓말을 안 한다.
@@ -388,7 +391,8 @@ async function runSweep() {
   console.log(["공격력", "격퇴", "최소체력%", "무흠집", "전사(근/원)", "격퇴틱(중앙값)"].join("\t"));
   for (const atk of values) {
     const g = structuredClone(base.genome);
-    g.traits.attack = atk;
+    g.pips.fang = atk; // v8 — 스윕 축이 「공격력 값」에서 「이빨 도장 수」로 바뀌었다
+    refreshDerived(g);
     const rows = [];
     for (const seed of SEEDS) {
       const w = buildWorld(seed, g);
@@ -658,32 +662,37 @@ async function runSteps() {
 const APEX_KEYS = ["speed", "vision", "attack", "fertility"];
 
 /**
- * 이 카드가 이 게놈에 실제로 일으키는 변화. **드래프트 칩이 화면에 보여주는 것과 같은 함수**(cardDelta)를
- * 쓴다 — 카드에 적힌 원값(+15)이 아니라 성장 스케일·상한 근접 감쇠·정점 고정·클램프를 다 거친 값이다.
- * 그래서 "효과 0" 판정이 화면과 어긋나지 않는다.
+ * 이 카드가 이 종에 실제로 찍는 도장. **드래프트 칩이 화면에 보여주는 것과 같은 함수**(cardPips)를
+ * 쓴다 — 표시와 적용이 같은 함수에서 나오므로 "효과 0" 판정이 화면과 어긋날 수 없다.
  */
-function cardEffect(card, traits) {
+function cardEffect(card, pips) {
   const deltas = {};
   let pos = 0;
   let neg = 0;
   let n = 0;
-  for (const key of TRAIT_KEYS) {
-    const d = cardDelta(card, key, traits[key]);
+  for (const cat of CATEGORIES) {
+    const d = cardPips(card, cat);
     if (d === 0) continue;
-    deltas[key] = d;
+    deltas[cat] = d;
     n += 1;
     if (d > 0) pos += d;
     else neg -= d;
   }
-  return { deltas, pos, neg, n };
+  return { deltas, pos, neg, n, crosses: cardCrossesThreshold(card, pips) };
 }
 
-/** 카드 한 장의 갈래 · dead=아무것도 안 바뀜 / size=몸집만 / live=그 밖(가장 크게 바뀌는 형질과 함께). */
-function classifyCard(card, traits) {
-  const eff = cardEffect(card, traits);
+/**
+ * 카드 한 장의 갈래.
+ *   dead  = 도장을 하나도 안 준다(열쇠도 없다)
+ *   save  = 도장은 주는데 이번엔 어느 문턱도 못 넘긴다(저축 · 나쁜 게 아니다)
+ *   live  = 이 자리에서 문턱을 넘긴다(가장 크게 찍히는 범주와 함께)
+ * **[사용자 2026-08-06]** 확정한 「3장 중 최소 한 장은 문턱을 넘긴다」 보장이 실제로 지켜지는지를
+ * 이 분류로 잰다. save 가 100% 인 드래프트가 쌓이면 스킵(새끼 2)이 늘 정답이 된다.
+ */
+function classifyCard(card, pips) {
+  const eff = cardEffect(card, pips);
   const keys = Object.keys(eff.deltas);
-  if (keys.length === 0) return { kind: "dead", key: null, eff };
-  if (keys.length === 1 && keys[0] === "size") return { kind: "size", key: "size", eff };
+  if (keys.length === 0 && card.key === undefined) return { kind: "dead", key: null, eff };
   let best = null;
   let bestAbs = -1;
   for (const k of keys) {
@@ -693,7 +702,7 @@ function classifyCard(card, traits) {
       best = k;
     }
   }
-  return { kind: "live", key: best, eff };
+  return { kind: eff.crosses ? "live" : "save", key: best, eff };
 }
 
 /**
@@ -797,9 +806,9 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
   };
 
   const noteApex = () => {
-    const t = game.genome.traits;
+    const tiers = tiersOf(game.pipsNow);
     for (const k of APEX_KEYS) {
-      if (apexAt[k] === undefined && t[k] >= TRAIT_CEILING[k]) apexAt[k] = { card: picks.length, era: game.era };
+      if (apexAt[k] === undefined && tiers[k] >= MAX_TIER) apexAt[k] = { card: picks.length, era: game.era };
     }
     if (apexAllAt === null && APEX_KEYS.every((k) => apexAt[k] !== undefined)) {
       apexAllAt = { card: picks.length, era: game.era, level: game.level };
@@ -815,22 +824,26 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
     guard += 1;
     if (game.phase === "draft") {
       const postApex = APEX_KEYS.every((k) => apexAt[k] !== undefined);
-      const traits = game.genome.traits;
+      const pips = game.pipsNow;
       const cs = game.draftCards;
       for (const c of cs) {
-        const cl = classifyCard(c, traits);
+        const cl = classifyCard(c, pips);
         offers.push({ era: game.era, postApex, kind: cl.kind, key: cl.key, id: c.id });
       }
       let idx = 0;
-      if (policy === "best" || policy === "apexrush") {
+      if (policy === "best" || policy === "apexrush" || policy === "focus") {
+        // **정책이 곧 「어떻게 파는가」다.** 공급 산수(tiers.ts TIER_STEPS 주석의 표)를 실제 풀로
+        // 검산하려면 이 셋이 필요하다:
+        //   best  = 도장을 가장 많이 주는 장(정책 없이 큰 숫자만 고르는 사람)
+        //   focus = 지금 가장 많이 판 범주에 들어가는 장(한 우물)
+        //   apexrush = focus 와 같되 최고 티어까지 밀어붙인다
         let bestScore = -Infinity;
+        const ranked = [...CATEGORIES].sort((a, b) => pips[b] - pips[a]);
+        const target = ranked[0];
         for (let i = 0; i < cs.length; i++) {
-          const eff = cardEffect(cs[i], traits);
+          const eff = cardEffect(cs[i], pips);
           let s = eff.pos;
-          if (policy === "apexrush") {
-            s = 0;
-            for (const k of APEX_KEYS) s += Math.max(0, eff.deltas[k] ?? 0);
-          }
+          if (policy !== "best") s = Math.max(0, eff.deltas[target] ?? 0) * 10 + eff.pos;
           if (s > bestScore) {
             bestScore = s;
             idx = i;
@@ -855,8 +868,10 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
       r.level = game.level;
       r.deaths = { ...game.world.deaths };
       r.reached = 1;
-      // 이 시대를 끝낼 때 정점 넷(속도·시야·공격력·번식력)이 실제로 얼마까지 올라와 있나 — 성장 곡선의 눈금.
-      r.apexSum = APEX_KEYS.reduce((a, k) => a + game.genome.traits[k], 0) / APEX_KEYS.length;
+      // 이 시대를 끝낼 때 티어가 얼마나 올라와 있나 — 성장 곡선의 눈금(다섯 범주 티어의 합).
+      r.apexSum = tierSum(game.pipsNow);
+      r.pips = { ...game.pipsNow };
+      r.duos = activeDuos(game.pipsNow).length;
       if (game.result === "win" && !game.isFinalEra) {
         game.continueToNextEra();
         continue;
@@ -925,7 +940,7 @@ async function runGrowth() {
   console.log(
     `# 일정 ${SCHEDULE.join("→")} × ${GAME.eraCap} 시대 · 패배 = 개체 0 · 불씨 0 · 관문 생존 기준 미달
 ` +
-      `# 시대별 형질 천장 ${[0, 1, 2, 3, 4].map((e) => eraTraitCeiling(e)).join("·")} · ` +
+      `# 티어 문턱 ${TIER_STEPS.join("·")} · ` +
       `대멸종 생존 기준 ${[0, 1, 2, 3, 4].map((e) => extinctionPassNeeded(e)).join("·")}마리 · ` +
       `보스 생존 기준 ${[0, 1, 2, 3, 4].map((e) => bossPassNeeded(e)).join("·")}마리 · ` +
       `시대 보상 배수 ${[1, 2, 3, 4].map((e) => eraRewardBoostAt(e).toFixed(1)).join("·")}`,
@@ -983,7 +998,7 @@ async function runGrowth() {
     const rows = [];
     for (const r of all) for (const e of r.eraRows) if (e.era === era) rows.push({ e, r });
     if (rows.length === 0) {
-      console.log([String(era + 1), String(eraTraitCeiling(era)), "-", fmt(eraDifficulty(era), 2), fmt(eraPredatorPressure(era), 2), String(extinctionPassNeeded(era)), "0", "-", "-", "-", "-", "-", "-", "-", "-"].join("\t"));
+      console.log([String(era + 1), "-", "-", fmt(eraDifficulty(era), 2), fmt(eraPredatorPressure(era), 2), String(extinctionPassNeeded(era)), "0", "-", "-", "-", "-", "-", "-", "-", "-"].join("\t"));
       continue;
     }
     const cum = rows.map(({ r, e }) => r.eraRows.filter((x) => x.era <= era).reduce((a, x) => a + x.cards, 0));
@@ -992,7 +1007,7 @@ async function runGrowth() {
     console.log(
       [
         String(era + 1),
-        String(eraTraitCeiling(era)),
+        fmt(rows.reduce((a, { e }) => a + (e.duos ?? 0), 0) / rows.length, 2),
         fmt(rows.reduce((a, { e }) => a + e.apexSum, 0) / rows.length, 1),
         fmt(eraDifficulty(era), 2),
         fmt(eraPredatorPressure(era), 2),
@@ -1056,333 +1071,76 @@ async function runGrowth() {
  * growth 모드의 표4 는 실제 런에서 나온 후보라 표본이 그 런의 갈래에 묶인다 — 이쪽은 갈래 8종을 전부
  * 쓸어 "구조적으로 무엇이 남는가"를 본다. sim 을 안 돌리므로 빠르다.
  */
+// ⚠ v8 에서 뜻이 사라진 모드 둘(apex · scale).
+//   · apex  — 「정점 넷을 찍은 뒤의 드래프트 구성」을 재던 모드. 티어 구조에서는 4단이 범주마다 따로이고
+//              카드가 도장만 주므로 「정점 후」라는 상태가 없다. 죽은 카드 비율은 growth 모드가 이미 잰다.
+//   · scale — 0~100 스케일의 산수(상한 근접 감쇠·형질 1의 실제 크기)를 재던 모드. 그 스케일 자체를
+//              폐기했다(2026-08-06 회의: 「형질 1칸은 시드 노이즈에 묻힌다」가 재설계의 출발점이었다).
 async function runApex() {
-  const DRAFTS = Number(opt("drafts", "400"));
-  const level = Number(opt("level", "13")); // 사용자의 실기 스크린샷과 같은 런 레벨
-  const metaLvl = Number(opt("metalvl", "9")); // 갈래 8종이 다 열린 숙련자(잠긴 갈래를 재면 안 되는 세계)
-
-  /** 이 게놈 상태 앞에서 드래프트가 무엇을 내놓는가 · filtered=false 면 cardRedundant 를 끈다. */
-  function survey(traits, lineage, filtered, tag) {
-    const allow = (c) =>
-      cardAvailable(c.id, metaLvl) && cardPrereqMet(c, traits) && (!filtered || !cardRedundant(c, traits));
-    const pool = cardPoolFor(lineage).filter(allow);
-    const rng = new Rng(`${tag}-${lineage}-${filtered}`);
-    let dead = 0;
-    let size = 0;
-    let n = 0;
-    const byKey = new Map();
-    for (let i = 0; i < DRAFTS; i++) {
-      for (const c of drawCardsCompat(rng, 3, allow, level, lineage)) {
-        n += 1;
-        const cl = classifyCard(c, traits);
-        if (cl.kind === "dead") dead += 1;
-        else if (cl.kind === "size") size += 1;
-        else byKey.set(cl.key, (byKey.get(cl.key) ?? 0) + 1);
-      }
-    }
-    // 풀 자체의 구성(뽑기 확률과 무관한 "장 수") — 후보가 몇 갈래로 남았는지를 본다.
-    let poolDead = 0;
-    let poolSize = 0;
-    for (const c of pool) {
-      const cl = classifyCard(c, traits);
-      if (cl.kind === "dead") poolDead += 1;
-      else if (cl.kind === "size") poolSize += 1;
-    }
-    const top = [...byKey.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([k, c]) => `${TRAIT_LABELS[k]} ${fmt((100 * c) / n, 0)}%`)
-      .join(" · ");
-    return { pool: pool.length, poolDead, poolSize, n, dead, size, live: n - dead - size, top };
-  }
-
-  /** 게놈 상태 셋 — 정점 전(프리셋 그대로) · 정점 4개 · 실기(정점 4개 + 무리 성향 100 · 대사 28). */
-  const STATES = [
-    { key: "before", name: "정점 전(프리셋)", make: (p) => structuredClone(p.genome).traits },
-    {
-      key: "apex4",
-      name: "정점 4개",
-      make: (p) => {
-        const t = structuredClone(p.genome).traits;
-        for (const k of APEX_KEYS) t[k] = TRAIT_CEILING[k];
-        return t;
-      },
-    },
-    {
-      // 2026-08-05 폰 실기 스크린샷: 레벨 13 · 속도·시야·공격력·번식력 100 · 무리 성향 최대 · 대사 28.
-      // 정점 넷만 재면 "무리 성향" 카드가 아직 살아 있는 것으로 잡혀 실제보다 후해 보인다.
-      key: "real",
-      name: "실기(정점4 + 무리 100 · 대사 28)",
-      make: (p) => {
-        const t = structuredClone(p.genome).traits;
-        for (const k of APEX_KEYS) t[k] = TRAIT_CEILING[k];
-        t.herding = 100;
-        t.metabolism = 28;
-        return t;
-      },
-    },
-  ];
-
-  console.log(`# apex · 정점을 찍은 게놈 앞에 드래프트가 무엇을 내놓는가 · 갈래별 ${DRAFTS} 드래프트(카드 ${DRAFTS * 3}장) · 런 레벨 ${level} · 메타 레벨 ${metaLvl}`);
-  console.log(`# 분류는 화면과 같은 함수(cardDelta)로 · dead=게놈이 한 칸도 안 움직임 · size=몸집만 움직임`);
-
-  for (const st of STATES) {
-    console.log(`\n# ${st.name} · **현재 코드의 필터 그대로**(cardRedundant 켬 = 죽은 카드를 후보에서 뺀다)`);
-    console.log(["갈래".padEnd(16), "후보풀(장)", "풀 중 죽음", "풀 중 몸집만", "뽑힌 카드 죽음", "몸집만", "그밖", "그밖의 주형질"].join("\t"));
-    for (const p of PRESETS) {
-      const lineage = PRESET_LINEAGE[`preset_${p.key}`];
-      const t = st.make(p);
-      const r = survey(t, lineage, true, st.key);
-      console.log(
-        [
-          p.name.padEnd(16),
-          String(r.pool),
-          String(r.poolDead),
-          String(r.poolSize),
-          `${fmt((100 * r.dead) / r.n, 1)}%`,
-          `${fmt((100 * r.size) / r.n, 1)}%`,
-          `${fmt((100 * r.live) / r.n, 1)}%`,
-          r.top,
-        ].join("\t"),
-      );
-    }
-  }
-
-  // 필터를 끈 판 — **사용자가 폰에서 실제로 본 화면**이다(「철벽 대형」처럼 세 효과가 전부 막힌 카드가
-  // 후보에 그대로 떴다). 필터는 이 조사와 같은 날 다른 세션이 넣는 중이라, 둘을 나란히 둬야
-  // "필터가 무엇을 고치고 무엇을 못 고치는가"가 갈린다.
-  console.log(`\n# 필터를 끄면(= 이 수정 전, 사용자가 실기에서 본 상태) · 실기 게놈`);
-  console.log(["갈래".padEnd(16), "후보풀(장)", "풀 중 죽음", "뽑힌 카드 죽음", "몸집만", "그밖"].join("\t"));
-  for (const p of PRESETS) {
-    const lineage = PRESET_LINEAGE[`preset_${p.key}`];
-    const t = STATES[2].make(p);
-    const r = survey(t, lineage, false, "nofilter");
-    console.log(
-      [
-        p.name.padEnd(16),
-        String(r.pool),
-        String(r.poolDead),
-        `${fmt((100 * r.dead) / r.n, 1)}%`,
-        `${fmt((100 * r.size) / r.n, 1)}%`,
-        `${fmt((100 * r.live) / r.n, 1)}%`,
-      ].join("\t"),
-    );
-  }
-
-  // 남은 의사결정이 실제로 몇 갈래인가 — 후보풀을 "무엇을 바꾸는 카드인가"로 묶는다.
-  // 형질 하나하나가 아니라 **선택의 갈래**를 세는 표다(몸집 ↕ · 대사 ↕ · 식성 ↕ · 아직 안 연 능력).
-  console.log(`\n# 실기 게놈에서 남은 의사결정의 갈래 (후보풀을 바꾸는 형질로 묶음 · 필터 켬)`);
-  console.log(["갈래".padEnd(16), "남은 카드", "몸집↑", "몸집↓", "대사↑", "대사↓", "식성↑", "식성↓", "아직 안 연 능력", "그 밖"].join("\t"));
-  for (const p of PRESETS) {
-    const lineage = PRESET_LINEAGE[`preset_${p.key}`];
-    const t = STATES[2].make(p);
-    const allow = (c) => cardAvailable(c.id, metaLvl) && cardPrereqMet(c, t) && !cardRedundant(c, t);
-    const pool = cardPoolFor(lineage).filter(allow);
-    const bucket = { sizeUp: 0, sizeDown: 0, metaUp: 0, metaDown: 0, dietUp: 0, dietDown: 0, ability: 0, other: 0 };
-    const ABILITY = ["swimming", "wings", "echo", "venom", "ranged", "camouflage", "herding"];
-    for (const c of pool) {
-      const cl = classifyCard(c, t);
-      const d = cl.eff.deltas;
-      if (ABILITY.some((k) => (d[k] ?? 0) > 0)) bucket.ability += 1;
-      else if ((d.size ?? 0) > 0) bucket.sizeUp += 1;
-      else if ((d.size ?? 0) < 0) bucket.sizeDown += 1;
-      else if ((d.metabolism ?? 0) > 0) bucket.metaUp += 1;
-      else if ((d.metabolism ?? 0) < 0) bucket.metaDown += 1;
-      else if ((d.diet ?? 0) > 0) bucket.dietUp += 1;
-      else if ((d.diet ?? 0) < 0) bucket.dietDown += 1;
-      else bucket.other += 1;
-    }
-    console.log(
-      [
-        p.name.padEnd(16),
-        String(pool.length),
-        String(bucket.sizeUp),
-        String(bucket.sizeDown),
-        String(bucket.metaUp),
-        String(bucket.metaDown),
-        String(bucket.dietUp),
-        String(bucket.dietDown),
-        String(bucket.ability),
-        String(bucket.other),
-      ].join("\t"),
-    );
-  }
+  console.log("apex 모드는 v8(티어 구조)에서 뜻이 사라졌습니다. growth 모드를 쓰세요.");
 }
-/** drawCards 를 게임과 같은 인자로 부르는 얇은 껍데기(인자 순서를 한 자리에 묶어 둔다). */
-function drawCardsCompat(rng, n, allow, level, lineage) {
-  return drawCards(rng, n, allow, level, undefined, lineage);
-}
-
-/**
- * scale 모드 · **0~100 자연수 스케일 자체의 산수**. 시뮬을 안 돌린다(시드 노이즈가 안 섞인다).
- *   ① 상한 근접 감쇠가 카드 한 장의 실효 상승폭을 어떻게 깎는가
- *   ② 50 에서 100 까지 몇 장이 드는가
- *   ③ 정점(100) 보상이 99 대비 실제로 몇 % 인가
- *   ④ 형질 1 이 시뮬 수치에서 몇 % 인가
- */
 async function runScale() {
-  console.log(`# scale · 0~100 스케일의 산수(시뮬 없음) · 감쇠 FALLOFF_FROM=50 POWER=0.5 · 성장 스케일 0.75`);
-  console.log(`\n# 표1 · 카드 한 장의 실효 상승폭(값형질) — 카드에 적힌 원값 대비`);
-  const raws = [15, 22, 26];
-  console.log(["현재값", "감쇠배율", ...raws.map((r) => `원값+${r}`)].join("\t"));
-  for (let v = 50; v <= 99; v += 5) {
-    console.log(
-      [
-        String(v),
-        fmt(growthFalloff("speed", v), 3),
-        ...raws.map((r) => `+${effectiveDelta("speed", r, v)}`),
-      ].join("\t"),
-    );
-  }
-  console.log(["99", fmt(growthFalloff("speed", 99), 3), ...raws.map((r) => `+${effectiveDelta("speed", r, 99)}`)].join("\t"));
-
-  console.log(`\n# 표2 · 50 에서 100 까지 카드 몇 장이 드는가(같은 카드를 반복해 뽑는다고 가정)`);
-  console.log(["카드 원값", "50→100 장수", "50→80", "80→95", "95→100"].join("\t"));
-  for (const raw of [12, 15, 18, 22, 26, 30]) {
-    const stepsTo = (from, to) => {
-      let v = from;
-      let n = 0;
-      while (v < to && n < 500) {
-        const d = effectiveDelta("speed", raw, v);
-        if (d <= 0) break;
-        v += d;
-        n += 1;
-      }
-      return v >= to ? String(n) : `못 닿음(${v})`;
-    };
-    console.log([`+${raw}`, stepsTo(50, 100), stepsTo(50, 80), stepsTo(80, 95), stepsTo(95, 100)].join("\t"));
-  }
-
-  console.log(`\n# 표3 · 정점(100) 보상이 99 대비 실제로 얼마나 센가`);
-  console.log(["형질".padEnd(10), "보상", "99 일 때", "100 일 때", "차이"].join("\t"));
-  const rf = (v01) => Math.min(1, SIM.roughSpeedFloor + SIM.roughSpeedBonus * v01);
-  console.log(["속도".padEnd(10), "험지 감속 면제", fmt(rf(0.99), 4), "1.0000", `+${fmt(100 * (1 / rf(0.99) - 1), 2)}%`].join("\t"));
-  const nv = (v01, day) => nightVisionFactor(day, v01);
-  console.log(["시야".padEnd(10), "자정 시야 면제", fmt(nv(0.99, 0), 4), "1.0000", `+${fmt(100 * (1 / nv(0.99, 0) - 1), 2)}%`].join("\t"));
-  console.log(["시야".padEnd(10), "수풀 시야 면제", fmt(Math.min(1, SIM.grassVisionFloor + SIM.grassVisionBonus * 0.99), 4), "1.0000", `+${fmt(100 * (1 / Math.min(1, SIM.grassVisionFloor + SIM.grassVisionBonus * 0.99) - 1), 2)}%`].join("\t"));
-  console.log(["공격력".padEnd(10), `체급 무시(diff01 ≤ -${SIM.biteIgnoreDiff} 도 문다)`, "이빨 안 박힘", "무조건 박힘", "이진(조건부)"].join("\t"));
-  console.log(["번식력".padEnd(10), "번식 대가 감소", "기운 50% 잃음", `기운 ${fmt(50 * SIM.apexBreedCost, 0)}% 잃음`, `대가 -${fmt(100 * (1 - SIM.apexBreedCost), 0)}%`].join("\t"));
-
-  console.log(`\n# 표4 · 형질 1 이 시뮬에서 얼마나 큰가(60 → 61 · 그리고 전 구간 폭)`);
-  console.log(["형질".padEnd(10), "식", "60", "61", "1 당 변화", "0→100 전체 폭"].join("\t"));
-  const sp = (v) => SIM.maxSpeedBase * (0.4 + v / 100);
-  console.log(["속도".padEnd(10), "maxSpeed = 1.7×(0.4+속도/100)", fmt(sp(60), 4), fmt(sp(61), 4), `+${fmt(100 * (sp(61) / sp(60) - 1), 2)}%`, `×${fmt(sp(100) / sp(0), 2)}`].join("\t"));
-  const vs = (v) => SIM.visionBase * (v / 100);
-  console.log(["시야".padEnd(10), "반경 = 200×(시야/100)", fmt(vs(60), 1), fmt(vs(61), 1), `+${fmt(100 * (vs(61) / vs(60) - 1), 2)}%`, `0 → 200px`].join("\t"));
-  const fr = (v) => SIM.reproduceRate * (0.3 + v / 100);
-  console.log(["번식력".padEnd(10), "확률 = 0.01×(0.3+번식/100)", fmt(fr(60), 5), fmt(fr(61), 5), `+${fmt(100 * (fr(61) / fr(60) - 1), 2)}%`, `×${fmt(fr(100) / fr(0), 2)}`].join("\t"));
-  console.log(["공격력".padEnd(10), "물기 판정 diff01 = (내-상대)/100", "0.00", "0.01", `문턱까지 ${fmt(SIM.biteIgnoreDiff * 100, 0)}점`, "-0.35 이하면 안 박힘"].join("\t"));
-  console.log(
-    `\n# 참고 · 한 장(+15)의 실효 상승폭은 형질 50 에서 +11, 80 에서 +7, 95 에서 +4 다. ` +
-      `속도로 치면 각각 최대 속도 +11.0% · +5.6% · +2.9% 다.`,
-  );
-
-  // ── 카드 경제만 떼어 본다 · **시뮬을 안 돌린다.** 살아남기(생존)와 자라기(성장)를 갈라 놓아야
-  //    "정점이 쉬운가"에 답할 수 있다 — sim 을 태우면 일찍 죽은 판이 성장 곡선을 가려 버린다.
-  //    드래프트는 게임과 완전히 같은 규칙으로 돈다(해금·전제·cardRedundant·레벨별 등급 보정·소프트 디듑).
-  const ECON_N = Number(opt("econ", "24")); // 한 런에 실제로 얻는 카드 수의 상한 언저리(아래 표7 참조)
-  const ECON_TRIES = Number(opt("tries", "40"));
-  const metaLvlE = Number(opt("metalvl", "9"));
-  console.log(`\n# 표6 · **카드 경제만** — 카드 ${ECON_N}장을 순서대로 고르면 형질이 어디까지 가나(시뮬 없음 · ${ECON_TRIES}회 평균)`);
-  console.log(`# 정책 best=효과 합이 가장 큰 장 · apexrush=정점 넷의 상승분이 가장 큰 장 · first=늘 첫 장 · random=무작위. 시대 보상(×2)은 4·8·12·16번째 카드로 넣는다(런당 4회).`);
-  console.log(["갈래".padEnd(16), "정책".padEnd(8), "정점1", "정점2", "정점3", "정점4(4개 완성)", "12장뒤", "17장뒤", "24장뒤", "속도/시야/공격/번식"].join("\t"));
-  for (const p of PRESETS) {
-    const lineage = PRESET_LINEAGE[`preset_${p.key}`];
-    for (const policy of ["best", "apexrush", "first", "random"]) {
-      const hitN = [[], [], [], []];
-      const finals = [];
-      const at = { 12: 0, 17: 0 };
-      const traitSum = { speed: 0, vision: 0, attack: 0, fertility: 0 };
-      for (let tryI = 0; tryI < ECON_TRIES; tryI++) {
-        const g = structuredClone(p.genome);
-        const rng = new Rng(`econ-${p.key}-${policy}-${tryI}`);
-        const picked = new Map();
-        const hits = [];
-        for (let n = 1; n <= ECON_N; n++) {
-          const t = g.traits;
-          const level = Math.min(20, 1 + n);
-          const allow = (c) => cardAvailable(c.id, metaLvlE) && cardPrereqMet(c, t) && !cardRedundant(c, t);
-          let cs = drawCards(rng, 3, allow, level, picked, lineage);
-          if (n % 4 === 0) cs = cs.map((c) => boostCard(c, GAME.eraRewardBoost));
-          if (cs.length === 0) break;
-          let idx = 0;
-          if (policy === "best" || policy === "apexrush") {
-            // apexrush = **정점 넷(속도·시야·공격력·번식력)만 보고** 고른다. 화면의 큰 숫자 넷을 올리려는
-            // 사람의 근사 · 이 게임에서 "수치를 키운다"고 하면 사실상 이 넷을 가리킨다.
-            let bs = -Infinity;
-            for (let i = 0; i < cs.length; i++) {
-              const eff = cardEffect(cs[i], t);
-              let s = 0;
-              if (policy === "best") s = eff.pos;
-              else for (const k of APEX_KEYS) s += Math.max(0, eff.deltas[k] ?? 0);
-              if (s > bs) {
-                bs = s;
-                idx = i;
-              }
-            }
-          } else if (policy === "random") idx = rng.int(0, cs.length - 1);
-          const before = APEX_KEYS.filter((k) => t[k] >= TRAIT_CEILING[k]).length;
-          applyCard(g, cs[idx]);
-          picked.set(cs[idx].id, (picked.get(cs[idx].id) ?? 0) + 1);
-          const after = APEX_KEYS.filter((k) => g.traits[k] >= TRAIT_CEILING[k]).length;
-          for (let a = before; a < after; a++) hits[a] = n;
-          if (n === 12 || n === 17) at[n] = at[n] + after;
-        }
-        for (let a = 0; a < 4; a++) if (hits[a] !== undefined) hitN[a].push(hits[a]);
-        finals.push(APEX_KEYS.filter((k) => g.traits[k] >= TRAIT_CEILING[k]).length);
-        for (const k of APEX_KEYS) traitSum[k] += g.traits[k];
-      }
-      const col = (i) =>
-        hitN[i].length === 0
-          ? "-"
-          : `${fmt(hitN[i].reduce((a, b) => a + b, 0) / hitN[i].length, 1)}장(${hitN[i].length}/${ECON_TRIES})`;
-      console.log(
-        [
-          p.name.padEnd(16),
-          policy.padEnd(8),
-          col(0),
-          col(1),
-          col(2),
-          col(3),
-          fmt(at[12] / ECON_TRIES, 2),
-          fmt(at[17] / ECON_TRIES, 2),
-          fmt(finals.reduce((a, b) => a + b, 0) / finals.length, 2),
-          APEX_KEYS.map((k) => fmt(traitSum[k] / ECON_TRIES, 0)).join("/"),
-        ].join("\t"),
-      );
-    }
-  }
-
-  console.log(`\n# 표7 · 한 런에 얻을 수 있는 카드 수의 **상한** — 단계별 경험치 상한(leadStageXpCap ${GAME.leadStageXpCap})이 정한다`);
-  console.log(`# 경험치 필요량 = ${GAME.xpBase} + (레벨-1)×${GAME.xpPerLevel} · 한 런 = ${SCHEDULE.length}단계 × ${GAME.eraCap}시대 = ${SCHEDULE.length * GAME.eraCap}단계`);
-  console.log(["단계 수", "상한 경험치", "도달 레벨", "레벨 카드", "시대 보상", "카드 합"].join("\t"));
-  for (const stages of [6, 12, 18, 24, 30]) {
-    const budget = stages * GAME.leadStageXpCap;
-    let lv = 1;
-    let spent = 0;
-    while (spent + GAME.xpBase + (lv - 1) * GAME.xpPerLevel <= budget) {
-      spent += GAME.xpBase + (lv - 1) * GAME.xpPerLevel;
-      lv += 1;
-    }
-    const eras = Math.max(0, Math.ceil(stages / SCHEDULE.length) - 1);
-    console.log([String(stages), String(budget), String(lv), String(lv - 1), String(eras), String(lv - 1 + eras)].join("\t"));
-  }
-
-  console.log(`\n# 표5 · 시대 곡선(복리) — 위협 강도와 척박도`);
-  console.log(["시대", "위협배율", "전 시대 대비", "척박배율", "보스 격퇴체력", "즉사반경 배수"].join("\t"));
-  for (let era = 0; era < GAME.eraCap; era++) {
-    const d = eraDifficulty(era);
-    const prev = era === 0 ? 1 : eraDifficulty(era - 1);
-    console.log(
-      [String(era + 1), fmt(d, 3), `+${fmt(100 * (d / prev - 1), 1)}%`, fmt(eraScarcity(era), 3), fmt(SIM.bossMaxHp * d, 0), `×${fmt(d, 2)}`].join("\t"),
-    );
-  }
+  console.log("scale 모드는 0~100 스케일과 함께 폐기됐습니다. tiers 모드를 쓰세요.");
 }
 
 /**
- * sens 모드 · **형질 한 칸이 실제 시뮬에서 읽히는가**. scale 모드의 산수(속도 +1 = 최대 속도 +1.0%)가
- * 화면에서 체감되는 크기인지 답하려면, 그 차이를 **시드 편차와 나란히** 놓아야 한다.
- * 같은 세계에서 형질만 바꿔 한 라운드를 돌리고, 값 사이의 차이와 시드 사이의 흩어짐을 함께 찍는다.
+ * **티어 사다리 검산** — 시뮬 없이 산수만. 카드 예산 띠(12~22장) 전체에서 사다리가 성립하는지 본다.
+ * 실제 72장 풀에 실제 희귀도 가중치를 걸고 「3장 중 1장」을 몬테카를로로 굴린다.
  */
+async function runTiers() {
+  const N = Number(opt("runs", "4000"));
+  const budgets = [12, 17, 22];
+  const policies = ["focus", "two", "best", "random"];
+  console.log("# 티어 사다리 검산 · 실제 72장 풀 · " + N + "런 · 3장 중 1장");
+  console.log("# 문턱 " + TIER_STEPS.join("·") + " · 프리셋 시작 도장 6(주 4 + 부 2)");
+  console.log(["정책", "카드", "최고범주", "2위", "T4", "T3이상", "듀오", "저축픽%"].join("	"));
+  for (const policy of policies) {
+    for (const cards of budgets) {
+      const acc = { top: 0, second: 0, t4: 0, t3: 0, duo: 0, dead: 0, picks: 0 };
+      for (let run = 0; run < N; run++) {
+        const rng = new Rng("tiers-" + policy + "-" + cards + "-" + run);
+        const g = defaultGenome();
+        applyCard(g, PRESET_CARDS[run % PRESET_CARDS.length]);
+        const picked = new Map();
+        for (let i = 0; i < cards; i++) {
+          const level = 1 + Math.floor((i / cards) * 12);
+          const cs = drawCards(rng, 3, (c) => cardPrereqMet(c, g) && !cardRedundant(c, g), level, picked, undefined, g.pips);
+          if (cs.length === 0) break;
+          const ranked = [...CATEGORIES].sort((a, b) => g.pips[b] - g.pips[a]);
+          let idx = 0;
+          if (policy === "focus") {
+            let best = -1;
+            for (let k = 0; k < cs.length; k++) { const v = cardPips(cs[k], ranked[0]); if (v > best) { best = v; idx = k; } }
+          } else if (policy === "two") {
+            let best = -1;
+            for (let k = 0; k < cs.length; k++) { const v = cardPips(cs[k], ranked[0]) + cardPips(cs[k], ranked[1]); if (v > best) { best = v; idx = k; } }
+          } else if (policy === "best") {
+            let best = -1;
+            for (let k = 0; k < cs.length; k++) { let v = 0; for (const c of CATEGORIES) v += Math.max(0, cardPips(cs[k], c)); if (v > best) { best = v; idx = k; } }
+          } else { idx = rng.int(0, cs.length - 1); }
+          const chosen = cs[idx];
+          if (!cardCrossesThreshold(chosen, g.pips)) acc.dead += 1;
+          acc.picks += 1;
+          picked.set(chosen.id, (picked.get(chosen.id) ?? 0) + 1);
+          applyCard(g, chosen);
+        }
+        const sorted = [...CATEGORIES].map((c) => g.pips[c]).sort((a, b) => b - a);
+        const ts = tiersOf(g.pips);
+        acc.top += sorted[0];
+        acc.second += sorted[1];
+        acc.t4 += CATEGORIES.filter((c) => ts[c] >= 4).length;
+        acc.t3 += CATEGORIES.filter((c) => ts[c] >= 3).length;
+        acc.duo += activeDuos(g.pips).length;
+      }
+      console.log([
+        policy, String(cards), fmt(acc.top / N, 1), fmt(acc.second / N, 1),
+        fmt(acc.t4 / N, 2), fmt(acc.t3 / N, 2), fmt(acc.duo / N, 2),
+        fmt((100 * acc.dead) / Math.max(1, acc.picks), 1),
+      ].join("	"));
+    }
+  }
+}
+
 async function runSens() {
   const key = opt("trait", "speed");
   const values = opt("values", "50,51,60,61,70,80,90,100").split(",").map(Number);
@@ -1486,6 +1244,7 @@ try {
   else if (MODE === "growth") await runGrowth();
   else if (MODE === "apex") await runApex();
   else if (MODE === "scale") await runScale();
+  else if (MODE === "tiers") await runTiers();
   else if (MODE === "sens") await runSens();
   else {
     console.error(
