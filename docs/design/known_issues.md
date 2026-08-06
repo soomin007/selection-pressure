@@ -1287,8 +1287,16 @@
 - 확인 방법(빌드 문제와 가르는 법 · 이걸 먼저 하라):
   · `gh run view <id> --json jobs -q '.jobs[] | "\(.name): \(.conclusion)"'` → `build: success` 면 우리 잘못이 아니다.
   · `curl -s <사이트> | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'` 로 실제 서빙 중인 번들 해시를 본다.
+- ⚠⚠ **Pages 배포 ID는 커밋 SHA와 같다. 그래서 한 번 취소한 커밋은 영영 배포가 안 된다.**
+  멈춘 배포를 치우려고 취소 API(`pages/deployments/<sha>/cancel`)를 불렀더니, 그 뒤 **같은 커밋으로
+  돌린 모든 시도가 5초 만에 `Deployment cancelled.` 로 즉사**했다. 그런데 `deploy-pages` 액션은
+  타임아웃 때 **스스로 같은 취소를 부른다**(로그의 `Canceling Pages deployment...`) — 즉 한 번
+  타임아웃 난 커밋은 **재시도해도 원리적으로 소용이 없다.**
+  → **`gh run rerun` 을 쓰지 마라. 새 커밋을 push 하라.** 새 SHA = 새 배포 ID다.
+    (이걸 모르고 같은 SHA 로 세 번 재시도해서 실패 메일 세 통을 더 보냈다. 2026-08-06.)
 - 재발 방지책:
-  · **세 번 넘게 재시도하지 마라.** 재시도마다 사용자에게 실패 메일이 간다(push 를 몰아 하는 이유와 같다).
-    세 번 실패하면 GitHub 쪽 문제로 판단하고 **사용자에게 알린 뒤 멈춘다.**
-  · 코드는 이미 `origin/main` 에 올라가 있으므로, **큐가 풀린 뒤 아무 커밋이나 하나 push 하면**
-    그때 함께 배포된다. 급하면 Actions 탭에서 workflow 를 수동 실행(`workflow_dispatch`)한다.
+  · 워크플로의 `concurrency.cancel-in-progress` 는 **반드시 false**(`.github/workflows/deploy.yml` 주석).
+  · 잡 안에서 1차 실패 시 90초 뒤 2차를 시도하고 **둘 다 실패할 때만** 빨갛게 알린다 — 잠깐 밀린
+    큐 때문에 실패 메일이 가는 것은 잘못된 신호다. 다만 조용히 넘기지는 않는다(옛 번들을 새 것으로
+    착각하게 두는 게 실패 메일보다 훨씬 나쁘다).
+  · 실패했으면 **재시도가 아니라 새 커밋**. 세 번 실패하면 멈추고 사용자에게 알린다.
