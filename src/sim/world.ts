@@ -5,7 +5,8 @@
 // 초식은 식물(food)을, 육식은 다른 종을 먹는다. 먹이/사냥 경쟁이 창발한다.
 
 import { Rng } from "@/sim/rng";
-import { TRAIT_KEYS, TRAIT_MAX, type Genome, type Traits } from "@/sim/genome";
+import { TRAIT_MAX, type Genome, type Traits } from "@/sim/genome";
+import { carnivory01, grazeEfficiency, huntEfficiency } from "@/sim/diet";
 import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
 import { Environment } from "@/sim/environment";
@@ -43,6 +44,23 @@ const clampTrait = (v: number): number => {
   return n < 0 ? 0 : n > TRAIT_MAX ? TRAIT_MAX : n;
 };
 
+/**
+ * **야생 진화가 흔드는 능치 열 개 · 이 순서 그대로.** `wildEvoRng` 소비 횟수와 순서가 야생 생태
+ * 밸런스 그 자체다(`species.ts` 의 `WILD_RNG_KEYS` 와 같은 계열의 제약). 만지려면 프로브부터 돌려라.
+ */
+const WILD_DRIFT_KEYS = [
+  "speed",
+  "attack",
+  "vision",
+  "herding",
+  "metabolism",
+  "fertility",
+  "diet",
+  "echo",
+  "venom",
+  "ranged",
+] as const satisfies readonly (keyof Traits)[];
+
 /** 야생종 한 무리가 겪는 압력 측정치(0~1). maybeEvolveWild 가 재서 adaptWildTraits 에 넘긴다. */
 export interface WildPressure {
   /** 무리 평균 추위(0=따뜻 ~ 1=한랭) */
@@ -75,6 +93,28 @@ export function adaptWildTraits(t: Traits, p: WildPressure): void {
     t.speed = clampTrait(t.speed + (speedTarget - t.speed) * SIM.wildAdaptRate);
     t.herding = clampTrait(t.herding + (herdTarget - t.herding) * SIM.wildAdaptRate);
   }
+
+  // (3) **파생 축을 따라오게 한다.** v8 에서 소모·채집·사냥이 `traits` 의 파생 필드(upkeep·graze·
+  //     hunt·carnivory)로 옮겨 갔는데, 그 값은 게놈을 만들 때 한 번 계산된다. 야생이 대사를 진화시켜도
+  //     유지비가 안 따라가면 **"추운 곳 무리가 고대사로 수렴한다"는 적응이 세계에 아무 영향을 못 준다**
+  //     (실측: 빙하 야생의 대사가 40.8 까지 올라도 소모는 시작값 그대로였다 · world.test 회귀).
+  //     v7 에서는 매 틱 `0.5 + 대사/100` 을 다시 계산했으므로, 여기서 다시 계산하는 것이 v7 복원이다.
+  syncWildDerived(t);
+}
+
+/**
+ * 야생 능치가 드리프트한 뒤 **파생 축을 v7 공식으로 다시 낸다.** 야생 진화·개체 변이가 값을 흔든
+ * 모든 자리에서 부른다.
+ *
+ * ⚠ 플레이어 종에는 부르지 않는다 — 그쪽은 도장에서 파생되므로 `refreshDerived` 가 맡는다.
+ *   여기서 부르면 티어가 정한 값을 식성 곡선이 덮어써 화면과 실제가 갈린다.
+ */
+export function syncWildDerived(t: Traits): void {
+  t.defense = t.attack;
+  t.upkeep = 0.5 + t.metabolism / TRAIT_MAX;
+  t.graze = grazeEfficiency(t.diet);
+  t.hunt = t.diet > SIM.dietHuntMin ? huntEfficiency(t.diet) : 0;
+  t.carnivory = carnivory01(t.diet);
 }
 
 /** 화면 연출용 1회성 사건(전 종, 위치 포함). 렌더가 매 프레임 읽고 비운다. rng 미사용 → 결정론 무관. */
@@ -896,14 +936,19 @@ export class World {
         predFrac: exposed / n, // 0~1 — 무리 중 포식자에 노출된 비율
       });
 
-      // 형질별 미세 드리프트(독립 rng). swimming·wings 는 수생/비행 정체성이라 제외(드리프트로 뒤집히면
-      // 어색 — 비행 종이 날개를 잃으면 산에서 굶는다).
-      // v7(size·camouflage)도 제외한다 — **rng 소비 횟수를 늘리면 이 독립 스트림 안에서 순서가 밀려
-      // 야생 진화 결과가 통째로 달라진다**(밸런스 이동). 야생 몸집·은신을 진화시키려면 별도 설계로.
-      for (const key of TRAIT_KEYS) {
-        if (key === "swimming" || key === "wings" || key === "size" || key === "camouflage") continue;
+      // 형질별 미세 드리프트(독립 rng).
+      //
+      // ⚠⚠ **이 목록과 순서가 야생 진화 밸런스 그 자체다.** 예전에는 `TRAIT_KEYS` 를 순회하며 몇 개만
+      //   건너뛰는 방식이었는데, v8 에서 능치 목록이 열넷에서 스물둘로 늘면서 **소비 횟수가 10 → 18 로
+      //   조용히 늘어날 뻔했다.** 그러면 `wildEvoRng` 스트림이 밀려 야생 진화가 통째로 다른 세계가 된다
+      //   (known_issues: rng 스트림을 늘리면 분포가 통째로 이동한다). 그래서 명시 목록으로 못 박는다 —
+      //   v7 이 실제로 흔들던 열 개를 그 순서대로.
+      //   수영·날개·몸집·은신은 정체성이라 제외한다(비행 종이 날개를 잃으면 산에서 굶는다).
+      for (const key of WILD_DRIFT_KEYS) {
         t[key] = clampTrait(t[key] + this.wildEvoRng.range(-SIM.wildDriftStep, SIM.wildDriftStep));
       }
+      // 드리프트한 값에 파생 축을 맞춘다 — 안 그러면 진화한 대사·식성이 세계에 아무 영향을 못 준다.
+      syncWildDerived(t);
     }
   }
 
