@@ -559,23 +559,104 @@ export function nearestTierGoal(pips: Pips): { cat: Category; tier: number; need
 
 /**
  * 티어 하나가 켜질 때 화면에 뜨는 한 줄 — **무엇이 켜졌고 무엇을 잃었는가**.
- * 승급 연출·카드 각주·내 종 패널이 전부 이 함수만 부른다(두 곳에 적으면 조용히 어긋난다).
+ * 승급 연출·카드 각주·내 종 패널·대백과가 전부 이 함수만 부른다.
+ *
+ * ⚠ **배수는 문구에 박지 않고 위 파생표에서 계산한다.** 처음엔 "빠르기 ×1.19" 처럼 손으로 적었는데,
+ *   그 뒤 파생표를 세 번 튜닝하는 동안 문구는 그대로 남아 **화면이 거짓말을 하게 됐다**. 이 저장소의
+ *   규칙("수치가 화면 표시와 다르면 그건 거짓말이다")을 지키는 유일한 방법은 표를 읽는 것이다.
+ *
+ * ⚠ **모든 줄은 자립형이다.** 「×0.5」처럼 앞줄에 기대는 축약을 쓰지 않는다 — 이 문구는 카드 각주 ·
+ *   도감 · 승급 연출에 **단독으로** 뜨므로, 무엇의 ×0.5 인지가 그 줄 안에 있어야 한다.
  */
 export function tierLine(cat: Category, tier: number): { gain: string; cost: string } {
-  const g: Record<Category, readonly string[]> = {
-    fang: ["", "사냥이 열립니다", "무는 힘 ×1.7 · 보스에 맞설 수 있습니다", "무는 힘 ×2.4 · 사냥 수입이 크게 늡니다", "나보다 큰 것도 뭅니다"],
-    leg: ["", "빠르기 ×1.19", "빠르기 ×1.35 · 사냥 질주", "빠르기 ×1.53 · 험한 땅을 평지처럼", "쫓기지 않습니다"],
-    eye: ["", "보는 거리 ×1.4", "보는 거리 ×1.8 · 밤에도 봅니다", "보는 거리 ×2.25 · 수풀 속이 보입니다", "밤·수풀·숨은 것이 다 보입니다"],
-    hide: ["", "물려도 덜 다칩니다 · 추위 저항", "한파를 거의 안 탑니다", "보스를 버텨서 넘을 수 있습니다", "환경이 통째로 바뀌어도 안 죽습니다"],
-    herd: ["", "새끼가 늘고 명령이 멀리 갑니다", "잡은 것을 나눠 먹습니다", "무리 방어 · 보스를 에워쌉니다", "무리 안에서는 즉사하지 않습니다"],
-  };
-  const c: Record<Category, readonly string[]> = {
-    fang: ["", "풀에서 얻는 것 ×0.75", "×0.5", "×0.32", "×0.18"],
-    leg: ["", "몸이 작아지고 달리면 배가 고픕니다", "더 작아지고 더 고픕니다", "많이 지칩니다", "가장 가볍고 가장 배고픕니다"],
-    eye: ["", "옆이 조금 좁아집니다", "더 좁아집니다", "뒤가 거의 안 보입니다", "뒤는 끝까지 캄캄합니다"],
-    hide: ["", "몸이 커지고 더위에 약해집니다", "더 커지고 더 약해집니다", "느리고 새끼가 줍니다", "가장 무겁고 더위에 가장 약합니다"],
-    herd: ["", "개체당 풀 수입 ×0.94 · 병이 돕니다", "×0.88 · 병이 더 돕니다", "×0.8", "×0.7 · 역병이 무리를 휩씁니다"],
-  };
   const i = Math.max(0, Math.min(MAX_TIER, tier));
-  return { gain: g[cat][i] as string, cost: c[cat][i] as string };
+  if (i === 0) return { gain: "", cost: "" };
+  /** 0단 대비 배수 — 표를 직접 읽어 계산한다. */
+  const rel = (table: readonly number[], base = table[0] as number): string =>
+    `×${((table[i] as number) / base).toFixed(2).replace(/0$/, "")}`;
+  /** 최고 속도는 `1.7 × (0.4 + 값/100)` 이라 값의 비가 아니다 — 실제 공식으로 잰다. */
+  const speedRel = (): string => {
+    const f = (v: number): number => 0.4 + v / 100;
+    return `×${(f(LEG_SPEED[i] as number) / f(LEG_SPEED[0] as number)).toFixed(2).replace(/0$/, "")}`;
+  };
+  /** 새끼 확률은 `0.3 + 번식/100` 에 비례한다. */
+  const broodRel = (): string => {
+    const f = (v: number): number => 0.3 + v / 100;
+    return `×${(f(HERD_FERT[i] as number) / f(HERD_FERT[0] as number)).toFixed(2).replace(/0$/, "")}`;
+  };
+  const gain: Record<Category, readonly string[]> = {
+    fang: [
+      "",
+      `사냥이 열립니다 · 무는 힘 ${rel(FANG_ATTACK)}`,
+      `무는 힘 ${rel(FANG_ATTACK)} · 보스에 맞설 수 있습니다`,
+      `무는 힘 ${rel(FANG_ATTACK)} · 한 번 잡으면 오래 버팁니다`,
+      "나보다 큰 것도 뭅니다 · 어떤 가죽도 이빨을 못 막습니다",
+    ],
+    leg: [
+      "",
+      `빠르기 ${speedRel()}`,
+      `빠르기 ${speedRel()} · 사냥할 때 질주합니다`,
+      `빠르기 ${speedRel()} · 험한 땅을 평지처럼 지납니다`,
+      "아무도 나를 쫓지 않습니다 · 험한 땅이 걸음을 못 늦춥니다",
+    ],
+    eye: [
+      "",
+      `보는 거리 ${rel(EYE_VISION)}`,
+      `보는 거리 ${rel(EYE_VISION)} · 밤에도 봅니다`,
+      `보는 거리 ${rel(EYE_VISION)} · 수풀 속이 보입니다`,
+      "밤도 수풀도 숨은 것도 눈을 못 가립니다",
+    ],
+    hide: [
+      "",
+      `물려도 덜 다칩니다 · 버티는 힘 ${rel(HIDE_DEFENSE)} · 추위에 강해집니다`,
+      `버티는 힘 ${rel(HIDE_DEFENSE)} · 한파를 거의 안 탑니다`,
+      `버티는 힘 ${rel(HIDE_DEFENSE)} · 보스를 버텨서 넘을 수 있습니다`,
+      "환경이 통째로 바뀌어도 안 죽습니다",
+    ],
+    herd: [
+      "",
+      `새끼 확률 ${broodRel()} · 명령이 멀리 갑니다`,
+      `새끼 확률 ${broodRel()} · 잡은 것을 무리가 나눠 먹습니다`,
+      `새끼 확률 ${broodRel()} · 뭉치면 포식자가 안 건드립니다`,
+      "무리 안에 있는 한 즉사하지 않습니다",
+    ],
+  };
+  const cost: Record<Category, readonly string[]> = {
+    fang: [
+      "",
+      `풀에서 얻는 것 ${rel(FANG_GRAZE)} · 몸이 무거워집니다`,
+      `풀에서 얻는 것 ${rel(FANG_GRAZE)} · 몸이 더 무거워집니다`,
+      `풀에서 얻는 것 ${rel(FANG_GRAZE)}`,
+      `풀에서 얻는 것 ${rel(FANG_GRAZE)} · 사실상 고기만 먹습니다`,
+    ],
+    leg: [
+      "",
+      "몸이 가벼워지고, 달리면 그만큼 배가 고픕니다",
+      "더 가벼워지고 더 배고파집니다",
+      "질주하면 눈에 띄게 지칩니다",
+      "가장 가볍고 가장 배고픕니다 · 한 번 물리면 위험합니다",
+    ],
+    eye: [
+      "",
+      "옆이 조금 좁아집니다",
+      "옆이 더 좁아집니다",
+      "뒤가 거의 안 보입니다",
+      "뒤는 끝까지 캄캄합니다 · 최고 티어여도 안 넓어집니다",
+    ],
+    hide: [
+      "",
+      "몸이 커져 느려지고, 더위에 약해집니다",
+      "더 커지고 더위에 더 약해집니다",
+      "느리고 새끼가 줍니다",
+      "가장 무겁고 더위에 가장 약합니다",
+    ],
+    herd: [
+      "",
+      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 병이 돕니다`,
+      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 병이 더 돕니다`,
+      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병에 취약합니다`,
+      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병이 무리를 휩씁니다`,
+    ],
+  };
+  return { gain: gain[cat][i] as string, cost: cost[cat][i] as string };
 }
