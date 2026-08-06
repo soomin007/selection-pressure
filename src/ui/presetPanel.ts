@@ -2,11 +2,21 @@
 // 고른다. 프리셋이 많아 한 화면에 늘어놓으면 난잡하던 것을, 큰 방향부터 좁혀 깔끔하게(사용자 피드백).
 // 외형은 실제 게놈으로 만든 생물 텍스처(makeCreatureTexture)를 canvas 로 뽑아 쓴다.
 
-import { defaultGenome, clampGenome, TRAIT_KEYS, TRAIT_LABELS, type Genome } from "@/sim/genome";
-import { applyCard, type Card } from "@/game/cards";
+import { defaultGenome, clampGenome, type Genome } from "@/sim/genome";
+import { applyCard, cardPips, type Card } from "@/game/cards";
+// ⚠ 이 파일의 CATEGORIES 는 "프리셋 갈래 묶음"이라 이름이 겹친다 → 티어 범주는 별칭으로 가져온다.
+import {
+  CATEGORIES as TIER_CATEGORIES,
+  CATEGORY_LABELS,
+  KEY_DESC,
+  KEY_LABELS,
+  TIER_ROMAN,
+  pipsToNext,
+  tierOf,
+} from "@/sim/tiers";
 import { describeSpecies } from "@/game/runReport";
 import { makeCreatureTexture } from "@/render/worldView";
-import { ABILITY_KEYS, abilityLevel, abilityFillPct, traitColor, traitWord } from "@/ui/traitDisplay";
+import { categoryColor, SAVE_CHIP_COLOR } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { registerKeyLayer, keyChip } from "@/ui/keys";
 import { DEBUG } from "@/debug";
@@ -149,8 +159,14 @@ export function createPresetPanel(
   dietWrap.appendChild(dietEl);
   const descEl = document.createElement("div");
   descEl.style.cssText = "font-size:13px; color:var(--sub); line-height:1.55; margin-top:10px; word-break:keep-all;";
+  // 시작 도장 배분 · 티어 칩 줄. max-width 필수(칩이 카드 밖으로 삐져나간 전례 · known_issues).
   const traitsEl = document.createElement("div");
-  traitsEl.style.cssText = "display:grid; grid-template-columns:1fr 1fr; gap:3px 12px; margin-top:12px;";
+  traitsEl.style.cssText =
+    "display:flex; flex-wrap:wrap; justify-content:center; gap:6px; margin-top:12px; max-width:100%;";
+  // 시작 열쇠 설명 · KEY_DESC(효과와 대가가 한 줄에)를 그대로 쓴다. 열쇠 없는 갈래는 숨김.
+  const keyDescEl = document.createElement("div");
+  keyDescEl.style.cssText =
+    "font-size:11.5px; color:#F5C33B; line-height:1.5; margin-top:8px; word-break:keep-all; display:none;";
   const hintEl = document.createElement("div");
   hintEl.textContent = "날렵한 몸은 빠른 발, 큰 눈은 넓은 시야. 등의 톱니 능선은 힘, 날카로운 주둥이는 사냥꾼입니다.";
   hintEl.style.cssText = "font-size:11px; color:var(--faint); line-height:1.55; margin-top:12px; word-break:keep-all;";
@@ -173,7 +189,7 @@ export function createPresetPanel(
   });
 
   detailView.style.cssText = "display:none; flex-direction:column; align-items:center;";
-  detailView.append(backBtn, catLabel, artRow, page, nameEl, featureEl, dietWrap, descEl, traitsEl, leadEl, hintEl, selectBtn);
+  detailView.append(backBtn, catLabel, artRow, page, nameEl, featureEl, dietWrap, descEl, traitsEl, keyDescEl, leadEl, hintEl, selectBtn);
 
   panel.append(catView, detailView);
 
@@ -308,35 +324,36 @@ export function createPresetPanel(
     } else {
       leadEl.style.display = "none";
     }
+    // 시작 도장 배분 · 도장이 있는 범주만 티어 칩으로. 3개(1단 켜짐)는 범주 색,
+    // 2개(문턱 하나 앞)는 회색에 "1칸 남음" · 첫 드래프트부터 문턱이 눈앞에 있다는 것이 읽힌다.
     traitsEl.replaceChildren();
-    for (const key of TRAIT_KEYS) {
-      const v = g.traits[key];
-      const isAbility = ABILITY_KEYS.has(key);
-      const lvl = isAbility ? abilityLevel(key, v) : 0;
-      // 능력형은 "보통/강함"이면 강조, 연속형은 56 초과면 강조.
-      const strong = isAbility ? lvl >= 1 : v > 56;
-      const cell = document.createElement("div");
-      const top = document.createElement("div");
-      top.style.cssText = "display:flex; justify-content:space-between; gap:4px;";
-      const label = document.createElement("span");
-      label.textContent = TRAIT_LABELS[key];
-      label.style.cssText = `font-size:11px; color:${strong ? "var(--ink)" : "var(--sub)"};`;
-      const val = document.createElement("span");
-      // 모든 형질을 단계 단어로 통일(날값 대신) — 설계도·개체 카드와 같은 규칙.
-      val.textContent = traitWord(key, v);
-      val.style.cssText =
-        `font-family:var(--font-mono); font-size:11px; font-variant-numeric:tabular-nums; color:${strong ? "var(--ink)" : "var(--sub)"};`;
-      top.append(label, val);
-      cell.appendChild(top);
-      const track = document.createElement("div");
-      track.style.cssText = "margin-top:2px; height:4px; border-radius:3px; background:rgba(255,255,255,0.06); overflow:hidden;";
-      const fill = document.createElement("div");
-      // 능력형은 눈금(세분 능력=값, 나머지=0/50/100%), 값형질은 값 그대로. 색은 형질 6색 매핑.
-      const pct = isAbility ? abilityFillPct(key, v) : Math.round(Math.max(0, Math.min(100, v)));
-      fill.style.cssText = `height:100%; width:${pct}%; border-radius:3px; background:${traitColor(key)}; opacity:${strong ? 1 : 0.55};`;
-      track.appendChild(fill);
-      cell.appendChild(track);
-      traitsEl.appendChild(cell);
+    for (const cat of TIER_CATEGORIES) {
+      const n = cardPips(card, cat);
+      if (n <= 0) continue;
+      const t = tierOf(n);
+      const chip = document.createElement("span");
+      const color = t > 0 ? categoryColor(cat) : SAVE_CHIP_COLOR;
+      chip.textContent =
+        t > 0 ? `${CATEGORY_LABELS[cat]} ${TIER_ROMAN[t]}` : `${CATEGORY_LABELS[cat]} · ${pipsToNext(n)}칸 남음`;
+      chip.style.cssText =
+        "display:inline-flex; align-items:center; white-space:nowrap; font-family:var(--font-mono);" +
+        ` font-size:11px; border-radius:999px; padding:4px 10px; color:${color};` +
+        ` background:rgba(255,255,255,0.05); border:1px solid ${t > 0 ? color + "55" : "var(--line)"};`;
+      traitsEl.appendChild(chip);
+    }
+    // 시작 열쇠 · 이름 + 효과·대가 한 줄(KEY_DESC 그대로 · 단일 진실).
+    if (card.key !== undefined) {
+      const keyChipEl = document.createElement("span");
+      keyChipEl.textContent = `열쇠 · ${KEY_LABELS[card.key]}`;
+      keyChipEl.style.cssText =
+        "display:inline-flex; align-items:center; white-space:nowrap; font-family:var(--font-mono);" +
+        " font-size:11px; border-radius:999px; padding:4px 10px; color:#F5C33B;" +
+        " background:rgba(245,195,59,0.1); border:1px solid rgba(245,195,59,0.4);";
+      traitsEl.appendChild(keyChipEl);
+      keyDescEl.textContent = KEY_DESC[card.key];
+      keyDescEl.style.display = "block";
+    } else {
+      keyDescEl.style.display = "none";
     }
   }
 

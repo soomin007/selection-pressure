@@ -32,8 +32,17 @@ import { Effects } from "@/render/effects";
 import { Minimap } from "@/render/minimap";
 import { ThreatBanner } from "@/render/threatBanner";
 import { publishPixiTextRects } from "@/render/pixiTextRects";
-import { TRAIT_KEYS, TRAIT_LABELS, type Traits } from "@/sim/genome";
-import { ABILITY_KEYS, APEX_BOON } from "@/ui/traitDisplay";
+import {
+  CATEGORIES,
+  CATEGORY_LABELS,
+  TIER_ROMAN,
+  pipsToNext,
+  tierLine,
+  tierOf,
+  type Category,
+} from "@/sim/tiers";
+import { ORDER_SPEC_BY_KIND, type OrderKind } from "@/sim/herdOrder";
+import { CommandWheel, OrderLine } from "@/ui/commandWheel";
 import { isPredatorBoss, bossRaidable } from "@/sim/boss";
 import { ORDER } from "@/sim/params";
 import { leadCapsOf } from "@/render/leadVision";
@@ -151,7 +160,7 @@ async function boot(): Promise<void> {
   const refreshBuild = (): void => {
     buildPanel.setData({
       headline: describeSpecies(game.genome),
-      traits: game.genome.traits,
+      genome: game.genome, // v8 — 패널이 도장·열쇠·유지비를 게놈에서 직접 읽는다
       cards: game.pickedCardNames,
     });
   };
@@ -179,7 +188,7 @@ async function boot(): Promise<void> {
       // 고르기 **전** 게놈을 떠 둔다 — 아래에서 "무엇이 얼마나 세졌는지"를 실제 차이로 말하기 위해서다.
       // 카드에 적힌 수치가 아니라 게놈의 전후 차이를 쓰는 이유: 감쇠·정점 고정·클램프가 걸리면 카드
       // 숫자와 실제가 다르다(그 차이를 화면이 감추면 그게 거짓말이다).
-      const before = { ...game.genome.traits };
+      const beforePips = { ...game.pipsNow };
       game.pickCard(i);
       refreshBuild(); // 방금 고른 카드를 빌드 패널(설계도=최신 게놈)에 반영
       // 세대별 형질: 텍스처를 새로 만들지 않는다 — 이미 태어난 개체는 옛 모습을 유지하고, 이후 태어난
@@ -188,18 +197,18 @@ async function boot(): Promise<void> {
       // **정점(만렙) 도달** — 반드시 draft.hide() 뒤에. 드래프트 화면이 떠 있는 동안 띄우면 카드 뒤에
       // 가려 아무도 못 본다. 한 카드가 둘을 동시에 올리는 일은 드물지만, 생기면 차례로 보여준다
       // (하나만 띄우고 나머지를 삼키면 무엇이 열렸는지 영영 모른다).
-      const apexKeys = game.takeNewApex();
-      apexKeys.forEach((key, k) => {
-        const boon = APEX_BOON[key] ?? "";
-        const value = game.genome.traits[key];
-        if (k === 0) moment.apex(TRAIT_LABELS[key], value, boon);
-        else window.setTimeout(() => moment.apex(TRAIT_LABELS[key], value, boon), k * 2300);
+      const ups = game.takeNewTiers();
+      ups.forEach((up, k) => {
+        const line = tierLine(up.cat, up.tier);
+        const title = `${CATEGORY_LABELS[up.cat]} ${TIER_ROMAN[up.tier]}`;
+        if (k === 0) moment.apex(title, up.tier, line.gain);
+        else window.setTimeout(() => moment.apex(title, up.tier, line.gain), k * 2300);
       });
-      // **고른 직후 무엇이 얼마나 세졌는가.** 지금까지는 숫자가 조용히 바뀌고 끝이라 성장이 사건으로
-      // 안 읽혔다. 전후를 나란히("속도 68 → 79") 보여야 카드 한 장이 무리를 실제로 바꿨다는 게 남는다.
-      // 정점 연출이 나가는 판에는 생략한다 — 그쪽이 훨씬 큰 소식이고, 같은 순간에 둘을 겹치면 서로 덮는다.
-      if (apexKeys.length === 0) {
-        const line = growthLine(before, game.genome.traits);
+      // **고른 직후 무엇이 얼마나 세졌는가.** 티어가 안 오른 판에서도 도장은 쌓였으니, 다음 문턱까지
+      // 몇 개 남았는지를 그 자리에서 말한다("저축했다"가 손해로 읽히지 않게).
+      // 승급 연출이 나가는 판에는 생략한다 — 그쪽이 훨씬 큰 소식이고, 겹치면 서로 덮는다.
+      if (ups.length === 0) {
+        const line = savingLine(beforePips, game.pipsNow);
         if (line) highlights.flash(line, 0x8fd14f);
       }
     },
@@ -616,6 +625,34 @@ async function boot(): Promise<void> {
   const onCanvasUI = (x: number, y: number): boolean =>
     minimap.container.visible && minimap.containsScreenPoint(x, y);
 
+  // --- 조작 확장 (**[사용자 2026-08-06]**): 길게 누르기 = 명령 휠 · 더블탭 = 회피 · 명령 줄 = 철회 ---
+  //
+  // 오작동을 어떻게 가르나:
+  //  · **단일 탭은 즉시 실행하고, 더블탭이 오면 덮어쓴다.** 탭을 잡아 두고 더블탭을 기다리면 기본
+  //    조작에 지연이 생기는데, 이동은 취소해도 손해가 없으니 먼저 가고 나중에 고치는 쪽이 낫다.
+  //  · **길게 누르기는 손가락이 안 움직인 채 0.25초.** 움직이면 그건 훔쳐보기(팬)다.
+  const LONG_PRESS_MS = 250;
+  const DOUBLE_TAP_MS = 300;
+  const DOUBLE_TAP_PX = 44; // 손끝 굵기. 이보다 멀면 "다른 곳을 또 탭한 것"이다.
+  let pressTimer = 0;
+  let lastTap = { t: 0, x: 0, y: 0 };
+  const wheel = new CommandWheel(document.body, {
+    onPick: (kind, wx, wy) => {
+      if (!issueOrder(wx, wy, kind)) effects.spawnPing(wx, wy, "deny");
+    },
+  });
+  const orderLine = new OrderLine(document.body, () => {
+    game.clearHerdOrder();
+    denyMs = 0;
+  });
+
+  const cancelLongPress = (): void => {
+    if (pressTimer !== 0) {
+      window.clearTimeout(pressTimer);
+      pressTimer = 0;
+    }
+  };
+
   app.stage.on("pointerdown", (e) => {
     if (game.phase !== "watch" && game.phase !== "draft") return;
     if (e.target !== app.stage || onCanvasUI(e.global.x, e.global.y)) return;
@@ -623,7 +660,21 @@ async function boot(): Promise<void> {
     if (activePointers.size === 1) {
       dragStart = { sx: e.global.x, sy: e.global.y, camX, camY };
       dragging = false;
+      // 길게 누르기 → 명령 휠. 손가락이 그대로일 때만 열린다(움직였으면 pointermove 가 취소한다).
+      if (leadMode && game.phase === "watch" && !game.paused) {
+        const sx = e.global.x;
+        const sy = e.global.y;
+        const p = view.container.toLocal({ x: sx, y: sy });
+        cancelLongPress();
+        pressTimer = window.setTimeout(() => {
+          pressTimer = 0;
+          if (dragging || activePointers.size !== 1) return;
+          wheel.open(sx, sy, p.x, p.y, game.orderWheel());
+        }, LONG_PRESS_MS);
+      }
     } else if (activePointers.size === 2) {
+      cancelLongPress();
+      wheel.cancel();
       const pts = [...activePointers.values()];
       pinchDist = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y);
       pinchMid = { x: (pts[0]!.x + pts[1]!.x) / 2, y: (pts[0]!.y + pts[1]!.y) / 2 };
@@ -635,6 +686,11 @@ async function boot(): Promise<void> {
   app.stage.on("pointermove", (e) => {
     if (!activePointers.has(e.pointerId)) return;
     activePointers.set(e.pointerId, { x: e.global.x, y: e.global.y });
+    // 휠이 떠 있으면 손가락은 「고르는 손」이다 — 카메라를 안 민다(한 손으로 끝나는 조작의 핵심).
+    if (wheel.isOpen) {
+      wheel.moveTo(e.global.x, e.global.y);
+      return;
+    }
     if (activePointers.size >= 2) {
       const pts = [...activePointers.values()];
       const d = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y);
@@ -655,7 +711,10 @@ async function boot(): Promise<void> {
     if (dragStart) {
       const dx = e.global.x - dragStart.sx;
       const dy = e.global.y - dragStart.sy;
-      if (!dragging && Math.hypot(dx, dy) > 8) dragging = true; // 탭/드래그 구분 임계
+      if (!dragging && Math.hypot(dx, dy) > 8) {
+        dragging = true; // 탭/드래그 구분 임계
+        cancelLongPress(); // 움직였으면 그건 훔쳐보기지 길게 누르기가 아니다
+      }
       if (dragging) {
         // 드래그 = 훔쳐보기(마우스·손가락 공통). 손가락 아래 월드가 따라오게 카메라를 반대로 민다.
         manualCam = { x: dragStart.camX - dx / camZoom, y: dragStart.camY - dy / camZoom };
@@ -667,6 +726,18 @@ async function boot(): Promise<void> {
   const endPointer = (e: { pointerId: number; global: { x: number; y: number }; target: unknown }): void => {
     const wasDragging = dragging;
     const hadPointer = activePointers.delete(e.pointerId);
+    cancelLongPress();
+    // 휠에서 손을 뗐다 = 고르고 있던 칸을 실행한다. 이 제스처는 이동 명령이 아니다.
+    if (wheel.isOpen) {
+      wheel.close();
+      if (activePointers.size === 0) {
+        dragStart = null;
+        dragging = false;
+        pinchMid = null;
+        pinchedThisGesture = false;
+      }
+      return;
+    }
     if (activePointers.size < 2) pinchDist = 0;
     if (activePointers.size > 0) return;
     dragStart = null;
@@ -687,8 +758,48 @@ async function boot(): Promise<void> {
     // 명령은 관전 단계 + 비멈춤에서만. 드래프트 중 탭은 카드 화면 몫이다(기존 phase 게이트).
     if (game.phase !== "watch" || game.paused) return;
     const p = view.container.toLocal(e.global as { x: number; y: number });
+
+    // **더블탭 = 회피.** 단일 탭(이동)은 이미 나갔고, 두 번째 탭이 그것을 덮어쓴다.
+    const now = performance.now();
+    const isDouble =
+      now - lastTap.t < DOUBLE_TAP_MS &&
+      Math.hypot(e.global.x - lastTap.x, e.global.y - lastTap.y) < DOUBLE_TAP_PX;
+    lastTap = { t: now, x: e.global.x, y: e.global.y };
+    if (isDouble) {
+      // 다리 1단이 없으면 회피가 잠겨 있다 — 조용히 무시하지 않고 왜 안 되는지 그 자리에서 말한다
+      // (없다는 것으로 가르치는 건 가장 약한 가르침이다).
+      if (!issueOrder(p.x, p.y, "evade")) {
+        effects.spawnPing(p.x, p.y, "deny");
+        highlights.flash("다리 1단이 되면 「피해라」를 쓸 수 있습니다", 0xd0b050);
+      }
+      return;
+    }
+
+    // **지휘봉 이양** — 내 개체를 바로 짚었으면 그 애가 알파가 된다(**[사용자 2026-08-06]**).
+    // 이동 명령과 겹치지 않는 이유: 내 무리가 이미 있는 자리로 가라는 것은 어차피 아무 일도 아니다.
+    const own = nearestOwnEntity(p.x, p.y, 20);
+    if (own !== null && game.passBaton(own)) {
+      effects.spawnPing(p.x, p.y, "go");
+      return;
+    }
+
     issueOrder(p.x, p.y);
   };
+
+  /** 이 자리에서 반경 안에 있는 **내 종** 개체 중 가장 가까운 것의 id. 없으면 null. */
+  function nearestOwnEntity(wx: number, wy: number, r: number): number | null {
+    let best: number | null = null;
+    let bestD2 = r * r;
+    for (const en of game.world.entities) {
+      if (!en.alive || !en.species.isPlayer) continue;
+      const d2 = (en.x - wx) ** 2 + (en.y - wy) ** 2;
+      if (d2 <= bestD2) {
+        bestD2 = d2;
+        best = en.id;
+      }
+    }
+    return best;
+  }
   app.stage.on("pointerup", endPointer);
   app.stage.on("pointerupoutside", endPointer);
 
@@ -697,19 +808,27 @@ async function boot(): Promise<void> {
    * (빈 땅·내 무리·못 사냥하는 상대)는 그 지점으로 이동. 목표가 못 가는 지형이거나 길이 없으면
    * 명령을 바꾸지 않고 거부 핑만 띄운다(왜 안 가는지 그 자리에서 보이게).
    */
-  function issueOrder(wx: number, wy: number): void {
+  function issueOrder(wx: number, wy: number, kind: OrderKind = "move"): boolean {
     // 무리 지시(신탁) · 탭한 곳이 곧 "저기로 가라"다. 개체를 고르는 게 아니라 **종에게** 내리는 뜻이라
     // 무엇을 탭했는지는 상관없다(생물 위를 탭해도 그 자리로 간다).
-    if (!herdCanReach(wx, wy)) {
+    // ⚠ 「가라」만 통행 가능성을 본다 — 회피·원진처럼 제자리에서 하는 명령은 목표 지형과 무관하다.
+    if (kind === "move" && !herdCanReach(wx, wy)) {
       effects.spawnPing(wx, wy, "deny"); // 왜 안 가는지 그 자리에서 보이게(못 가는 지형·길 없음)
       // 0.25초짜리 핑만으로는 "탭이 먹기는 했는지"조차 안 읽힌다(실측: 탭 여섯 번 중 한 번이 조용히
       // 거부됐다). 새 줄을 만들지 않고 이미 있는 목표 줄에 잠깐 말로 남긴다.
       denyMs = ORDER_DENY_MS;
-      return;
+      return false;
     }
-    game.setHerdOrder(wx, wy);
+    // **지휘 공백**(알파가 막 쓰러졌다)이면 아무도 안 듣는다 — 그 사실을 말로 알린다.
+    if (game.leadVacuumSeconds > 0) {
+      effects.spawnPing(wx, wy, "deny");
+      highlights.flash("앞장서던 것이 쓰러졌습니다. 무리가 잠시 흩어집니다", 0xd07050);
+      return false;
+    }
+    if (!game.setHerdOrder(wx, wy, kind)) return false;
     effects.spawnPing(wx, wy, "go");
     denyMs = 0; // 새 지시가 먹혔다 · 거부 안내는 그 자리에서 걷는다
+    return true;
   }
 
   /**
@@ -823,6 +942,13 @@ async function boot(): Promise<void> {
     view.sync(game.world, game.interpAlpha, ticker.deltaMS);
     // 뜻 표식(깃발) · 지시가 없으면 null 로 지운다. 단계가 바뀌면 game 이 뜻을 거두므로 저절로 사라진다.
     view.setMoveTarget(game.herdOrder);
+    // **현재 명령 한 줄** — 철회하려면 먼저 무엇이 걸려 있는지 보여야 한다(**[사용자 2026-08-06]**).
+    // 드래프트·결과 화면에서는 감춘다(그때 탭은 카드 화면 몫이라 철회할 것도 없다).
+    {
+      const o = game.phase === "watch" && !game.paused ? game.herdOrder : null;
+      const spec = o ? ORDER_SPEC_BY_KIND.get(o.kind ?? "move") : undefined;
+      orderLine.set(spec ? spec.label : null);
+    }
     // 사건 연출: sim 이 이번 프레임에 emit 한 사건(탄생/죽음/잡아먹힘)을 효과로 옮기고 비운다.
     for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y, ev.mine, ev.tx, ev.ty);
     game.world.events.length = 0;
@@ -1101,18 +1227,19 @@ async function boot(): Promise<void> {
  * (드래프트 칩·설계도와 같은 규칙 · 낱말과 숫자를 섞으면 읽히지 않는다 · known_issues).
  * 한 줄 배너라 세 개까지만 — 그보다 많으면 화면을 덮고 아무것도 안 읽힌다.
  */
-function growthLine(before: Traits, after: Traits): string {
+function savingLine(before: Record<Category, number>, after: Record<Category, number>): string {
   const parts: string[] = [];
-  for (const key of TRAIT_KEYS) {
-    const b = before[key];
-    const a = after[key];
-    if (a === b) continue;
-    parts.push(
-      ABILITY_KEYS.has(key)
-        ? `${TRAIT_LABELS[key]} ${a > b ? "강화" : "약화"}`
-        : `${TRAIT_LABELS[key]} ${b} → ${a}`,
-    );
-    if (parts.length >= 3) break;
+  for (const cat of CATEGORIES) {
+    const d = after[cat] - before[cat];
+    if (d === 0) continue;
+    const left = pipsToNext(after[cat]);
+    const tier = tierOf(after[cat]);
+    const tail =
+      left > 0
+        ? ` · ${TIER_ROMAN[Math.min(4, tier + 1)]}까지 ${left}개`
+        : " · 더 오를 데가 없습니다";
+    parts.push(`${CATEGORY_LABELS[cat]} 도장 ${d > 0 ? "+" : "−"}${Math.abs(d)}${tail}`);
+    if (parts.length >= 2) break;
   }
   return parts.join(" · ");
 }

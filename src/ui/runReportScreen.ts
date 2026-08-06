@@ -15,14 +15,14 @@ export interface RunReportScreen {
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-// 형질별 선 색 — 형질 6색 매핑(고정)과 일치(속도 amber·시야 blue·공격 red·몸집 teal·대사 orange·번식 lime).
-// v7: 무리 성향이 능력 형질로 빠지고 몸집이 그 자리에 들어왔다(변이 축 = 개체 진화가 드러나는 축).
+// 형질별 선 색. v8: 변이 축(MUTABLE_TRAITS)에서 대사가 빠지고 버티는 힘(defense)이 들어왔다.
+// defense 는 가죽 범주에서 파생되므로 가죽의 범주 색(황토)을 쓴다(CATEGORY_COLORS.hide 와 같은 값).
 const TRAIT_COLOR: Record<MutableTrait, string> = {
   speed: "#F5C33B",
   vision: "#5AB0E2",
   attack: "#E85C43",
+  defense: "#D9A441",
   size: "#4FC3B0",
-  metabolism: "#F2903A",
   fertility: "#8FD14F",
 };
 
@@ -79,7 +79,7 @@ export function createRunReportScreen(onClose: () => void): RunReportScreen {
       panel.appendChild(sectionTitle("개체 수"));
       panel.appendChild(populationGraph(samples));
       panel.appendChild(sectionTitle("형질의 흐름"));
-      panel.appendChild(caption("개체마다 조금씩 다른 형질이 세대를 거치며 무리 전체로는 어디로 쏠렸는지. 가운데 점선은 시작값 50."));
+      panel.appendChild(caption("개체마다 조금씩 다른 형질이 세대를 거치며 무리 전체로는 어디로 쏠렸는지. 점선은 기준선 50."));
       panel.appendChild(traitGraph(samples));
       panel.appendChild(traitLegend());
     }

@@ -1,46 +1,55 @@
-// 드래프트 UI — 레벨업 시 형질 카드 3장 중 하나를 고르는 전체 화면. 핸드오프 스펙 v1.0 구현.
+// 드래프트 UI · 레벨업 시 카드 3장 중 하나를 고르는 전체 화면. 핸드오프 스펙 v1.0 구현.
 //
 // 배경: 월드는 멈춰 있고(game.update 가 draft phase 에서 world.step 을 건너뛴다) 캔버스는 계속 그려진다.
 // 그 위에 뿌연 유리 3겹(블러 캔버스 + 김 서림 + 하단 가독성 그라데이션)을 얹는다. 마지막 프레임을 비트맵으로
-// 캡처하지 않는다 — 캔버스에 CSS 필터만 건다(리사이즈·선명도 유지). 살아 움직이는 건 히어로 미리보기다.
+// 캡처하지 않는다: 캔버스에 CSS 필터만 건다(리사이즈·선명도 유지). 살아 움직이는 건 히어로 미리보기다.
 //
-// 히어로 자리가 곧 미리보기다: 지금 보고 있는 카드를 실제로 내 종 게놈에 적용한 사본으로 생물을 그려,
-// "이 형질을 얻으면 내 애들이 이렇게 생긴다"를 고르기 전에 보여준다.
+// v8: 카드는 도장(pip)만 준다. 그래서 이 화면의 일은 「이 카드가 문턱을 넘기는가」를 말하는 것이다.
+//   · 카드 칩: 넘김(범주 색 + 발광) / 못 넘김(회색 · 몇 칸 남음) / 강등(붉은색) / 열쇠 / 불씨
+//   · 각주: 문턱을 넘으면 무엇이 켜지고 무엇을 잃는지 = tiers.tierLine 문구 그대로(단일 진실)
+//   · 헤더: 다섯 범주 티어 한 줄 + 듀오 예고(「무리 III 이 되면 늑대의 법이 켜집니다」)
+//   · 내 종 팝업: 범주 5 도장 막대(문턱 눈금 3·8·14·21) + 유령 막대(이 카드를 고르면 여기까지)
 
 import type { Renderer } from "pixi.js";
 import {
   applyCard,
-  cardDelta,
   cardRarity,
-  effectiveDelta,
   CARD_POOL,
   PRESET_CARDS,
   type Card,
   type Rarity,
 } from "@/game/cards";
+import { cloneGenome, type Genome } from "@/sim/genome";
 import {
-  cloneGenome,
-  isApexTrait,
-  traitCeiling,
-  APEX_TRAITS,
-  TRAIT_CEILING,
-  TRAIT_LABELS,
-  type Genome,
-  type Traits,
-} from "@/sim/genome";
+  CATEGORIES,
+  CATEGORY_LABELS,
+  DUO_TIER,
+  KEY_DESC,
+  KEY_LABELS,
+  KEY_NAMES,
+  TIER_ROMAN,
+  activeDuos,
+  nearDuo,
+  tierLine,
+  tierOf,
+  type Category,
+  type Pips,
+} from "@/sim/tiers";
 import { makeCreatureTexture } from "@/render/worldView";
 import {
-  APEX_BOON,
-  cardEffectChips,
-  chipColor,
-  dominantTrait,
-  traitColor,
-  traitWord,
-  abilityLevel,
-  ABILITY_KEYS,
-  NEUTRAL_TRAITS,
-  type ChipTone,
-  type EffectChip,
+  cardAccent,
+  cardTierChips,
+  categoryColor,
+  crossingMoves,
+  demotingMoves,
+  iGa,
+  pipPct,
+  tierBadges,
+  tierTrackBackground,
+  GAIN_COLOR,
+  KEY_CHIP_COLOR,
+  SAVE_CHIP_COLOR,
+  type TierChip,
 } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { registerKeyLayer, keyChip } from "@/ui/keys";
@@ -56,16 +65,6 @@ import {
   withAlpha,
 } from "@/ui/rarity";
 
-/** 내 종 팝업의 스탯 6종 — 핸드오프 §9 순서(속도·시야·공격·번식·무리·대사). */
-const STAT_KEYS: readonly (keyof Traits)[] = [
-  "speed",
-  "vision",
-  "attack",
-  "fertility",
-  "herding",
-  "metabolism",
-];
-
 const CONFETTI_COLORS: readonly string[] = [
   "#F5C33B",
   "#8FD14F",
@@ -79,14 +78,13 @@ const CONFETTI_COLORS: readonly string[] = [
 const COMMIT_DELAY_MS = 850;
 
 /**
- * 보스에 맞설 수 있게 되는 형질 문턱. 공격력과 원거리는 **어떤 보스에게나 통하는 수단**이라
+ * 보스에 맞설 수 있게 되는 능치 문턱. 무는 힘과 원거리는 **어떤 보스에게나 통하는 수단**이라
  * (sim/boss.ts 의 raidMeleePower·raidRangedPower) 어느 보스가 나오든 이 두 문턱만 넘으면 맞선다.
  * ⚠ 숫자를 여기 적지 않고 sim 상수를 그대로 읽는다 · 옮겨 적는 순간 언젠가 화면과 실제가 갈린다.
- * ⚠ "얼마나 세게 깎느냐"(충족도)는 여기서 계산하지 않는다. 그 식은 sim 안에만 있고 밖에서 다시
- *   유도하면 그게 곧 새 거짓말이 된다 · 화면에는 넘었나/못 넘었나만 말한다.
+ * ⚠ number 로 넓혀 둔다 · 리터럴 타입 그대로면 두 상수가 우연히 다를 때 아래 비교가 타입 에러가 된다.
  */
-const MELEE_GATE = SIM.raidWarriorAttack;
-const RANGED_GATE = SIM.rangedThreshold;
+const MELEE_GATE: number = SIM.raidWarriorAttack;
+const RANGED_GATE: number = SIM.rangedThreshold;
 
 function canFaceBoss(attack: number, ranged: number): boolean {
   return attack >= MELEE_GATE || ranged >= RANGED_GATE;
@@ -99,44 +97,30 @@ function canFaceBoss(attack: number, ranged: number): boolean {
  */
 function gatePhrase(): string {
   return MELEE_GATE === RANGED_GATE
-    ? `공격력이나 원거리가 ${MELEE_GATE} 이상이면`
-    : `공격력이 ${MELEE_GATE} 이상이거나 원거리가 ${RANGED_GATE} 이상이면`;
+    ? `무는 힘이나 원거리가 ${MELEE_GATE} 이상이면`
+    : `무는 힘이 ${MELEE_GATE} 이상이거나 원거리가 ${RANGED_GATE} 이상이면`;
 }
 
-function raidHeadline(boss: string, t: Traits): string {
-  const a = t.attack;
-  const r = t.ranged;
-  if (a >= MELEE_GATE) return `다음 관문 「${boss}」 · 지금 공격력 ${a} · 맞설 수 있습니다`;
+function raidHeadline(boss: string, g: Genome): string {
+  const a = g.traits.attack;
+  const r = g.traits.ranged;
+  if (a >= MELEE_GATE) return `다음 관문 「${boss}」 · 지금 무는 힘 ${a} · 맞설 수 있습니다`;
   if (r >= RANGED_GATE) return `다음 관문 「${boss}」 · 지금 원거리 ${r} · 멀리서 맞설 수 있습니다`;
-  // ⚠ "이것만이 길"이라고 말하지 않는다 · 보스마다 제 약점(속도·시야·무리·번식)이 따로 있고
-  //   화면은 그게 무엇인지 모른다. 공격력·원거리는 **어떤 보스에도 통하는** 길이라 그것만 단언한다.
-  return `다음 관문 「${boss}」 · 지금 공격력 ${a} · ${gatePhrase()} 어떤 보스든 맞설 수 있습니다`;
+  // ⚠ "이것만이 길"이라고 말하지 않는다 · 보스마다 제 약점이 따로 있고 화면은 그게 무엇인지 모른다.
+  //   무는 힘·원거리는 **어떤 보스에도 통하는** 길이라 그것만 단언한다.
+  return `다음 관문 「${boss}」 · 지금 무는 힘 ${a} · ${gatePhrase()} 어떤 보스든 맞설 수 있습니다`;
 }
 
 /**
  * 카드 한 장이 "맞설 수 있는가"를 **켜는가**. 켜지 않는 카드에는 아무것도 안 붙인다.
- * 이미 맞설 수 있는 종에게 "더 세진다"고는 말하지 않는다 · 그 양을 화면이 뒷받침할 수 없다.
- * 얼마나 오르는지는 옆의 효과 칩(「공격력 +7」)이, 문턱과 지금 값은 헤더 줄이 이미 말한다.
- *
- * ⚠ **"못 맞섬" 칩은 달지 않는다 · 그건 거짓일 수 있다.** 여기서 아는 것은 공격력·원거리
- *   문턱뿐인데, 격퇴 보스 5종 중 4종은 카운터가 속도·시야·무리·번식이다. 공격력을 깎고 무리를
- *   올리는 카드(「밀물 같은 무리」 등)는 이 함수 눈에는 "못 맞섬"이지만 실제로는 외톨이 사냥꾼에
- *   맞설 능력을 켜 준다. 반대로 문턱을 넘기는 쪽은 만능 카운터라 **언제나 참**이므로 그것만 말한다.
- *   보스별 약점까지 정확히 말하려면 sim 에 판정기(보스 종류 + 게놈 → 맞섬 여부)를 두고 그것을
- *   불러야 한다 · 규칙을 UI 에서 옮겨 적으면 그 순간 두 곳으로 갈라진다.
- *
- * ⚠ 카드 아래 각주(.draft-note)로 달지 않는다. 실측: 360x780 에서 석 장 모두에 각주가 붙으면
- *   카드가 한 줄씩 자라 히어로 배지와 카드 이름이 겹쳤다(칩으로 넣으면 셋 다 붙어도 여유 20px 유지).
+ * 판정은 「이 카드를 실제로 적용한 사본」의 파생 능치로 한다 · applyCard 와 같은 길이라 어긋날 수 없다.
+ * ⚠ "못 맞섬" 칩은 달지 않는다 · 보스 5종 중 4종은 카운터가 다른 축이라 그 단정은 거짓일 수 있다.
  */
-function raidCardChip(card: Card, t: Traits): { label: string; tone: ChipTone; up: boolean } | null {
-  const a = t.attack;
-  const r = t.ranged;
-  const da = cardDelta(card, "attack", a);
-  const dr = cardDelta(card, "ranged", r);
-  if (da === 0 && dr === 0) return null;
-  if (!canFaceBoss(a, r) && canFaceBoss(a + da, r + dr)) {
-    return { label: "보스에 맞섬", tone: "gain", up: true };
-  }
+function raidCardChip(card: Card, genome: Genome): string | null {
+  if (canFaceBoss(genome.traits.attack, genome.traits.ranged)) return null;
+  const after = cloneGenome(genome);
+  applyCard(after, card);
+  if (canFaceBoss(after.traits.attack, after.traits.ranged)) return "보스에 맞섬";
   return null;
 }
 
@@ -202,12 +186,17 @@ export function createDraftPanel(
   mineBtn.append(mineThumb, mineLabel, keyChip("M"));
   mineBtn.title = "내 종 정보 열기/닫기 (M)";
   hd.append(levelText, title, mineBtn);
+  // 티어 줄: 다섯 범주의 지금 티어. 카드를 보기 전에 "내가 어디까지 왔는지"를 먼저 말한다.
+  const tierRow = el("div", "draft-tier-row");
+  hd.appendChild(tierRow);
+  // 듀오 예고: 한 칸 앞의 듀오가 있으면 「무리 III 이 되면 늑대의 법이 켜집니다」 한 줄.
+  const duoEl = el("div", "draft-duo");
+  hd.appendChild(duoEl);
   // 예고 줄: 진행 중 라운드의 시험(레벨업) 또는 곧 시작할 단계의 시험 예상(시대 보상).
   // .draft-hd 는 가운데 정렬 블록이라 그냥 아래 줄로 붙고, 헤더가 한 줄 늘면 fitHero 가 히어로를 줄인다.
   const forecastEl = el("div", "draft-forecast");
   hd.appendChild(forecastEl);
   // 맞섬 줄: 다음 관문이 보스면 "지금 이 종이 맞설 수 있는가"를 카드를 고르기 전에 먼저 말한다.
-  // 형질을 키울 이유가 지금까지 4초짜리 전광판과 대백과에만 있었다(CLAUDE.md 전달 규칙 미달).
   const raidEl = el("div", "draft-forecast");
   hd.appendChild(raidEl);
   // 안내 줄: 지금 도는 위협("다가오는 위협. …")이나 시대 보상 설명. 카드를 고르는 동안 화면이 통째로
@@ -216,7 +205,7 @@ export function createDraftPanel(
   hd.appendChild(noticeEl);
   shell.appendChild(hd);
 
-  // ── 히어로 미리보기 (맨 마지막 등장 — 스포일러 방지) ──
+  // ── 히어로 미리보기 (맨 마지막 등장 · 스포일러 방지) ──
   const hero = el("div", "draft-hero");
   const prevBtn = el("button", "draft-arrow prev");
   prevBtn.textContent = "‹";
@@ -224,7 +213,7 @@ export function createDraftPanel(
   const nextBtn = el("button", "draft-arrow next");
   nextBtn.textContent = "›";
   nextBtn.title = "다음 카드 (→)";
-  // 배율 래퍼와 등장 연출 래퍼를 나눈다 — 한 엘리먼트에 transform 배율과 transform 키프레임을 함께 두면
+  // 배율 래퍼와 등장 연출 래퍼를 나눈다 · 한 엘리먼트에 transform 배율과 transform 키프레임을 함께 두면
   // 키프레임이 배율을 통째로 덮어쓴다(§8 함정 2와 같은 종류).
   const heroScale = el("div", "draft-hero-scale");
   const heroGroup = el("div", "draft-hero-group");
@@ -250,7 +239,7 @@ export function createDraftPanel(
   // ── CTA + 푸터 (연출 없이 즉시 표시되는 건너뛰기·다시 뽑기, CTA 만 히어로와 함께 등장) ──
   const ft = el("div", "draft-ft");
   const cta = el("button", "draft-cta");
-  // CTA 글자는 라벨 span 에만 쓴다 — cta.textContent 로 갈아 끼우면 키 칩(Enter)까지 지워진다.
+  // CTA 글자는 라벨 span 에만 쓴다 · cta.textContent 로 갈아 끼우면 키 칩(Enter)까지 지워진다.
   const ctaLabel = el("span");
   cta.append(ctaLabel, keyChip("Enter"));
   const ftRow = el("div", "draft-ft-row");
@@ -263,13 +252,13 @@ export function createDraftPanel(
   rerollBtn.textContent = "↻ 다시 뽑기";
   rerollBtn.appendChild(keyChip("R"));
   ftRow.append(skipBtn, rerollBtn);
-  // 키 안내 줄 — 데스크톱에서만 보인다(모바일은 CSS 가 숨김).
+  // 키 안내 줄 · 데스크톱에서만 보인다(모바일은 CSS 가 숨김).
   const keysHint = el("div", "draft-keys-hint");
   keysHint.textContent = `← → 카드 살펴보기 · Enter 퍼뜨리기 · ${SKIP_LABEL} 건너뛰기 · R 다시 뽑기 · M 내 종`;
   ft.append(cta, ftRow, keysHint);
   shell.appendChild(ft);
 
-  // ── 토스트 (래퍼가 중앙정렬, 안쪽 알약만 애니메이션 — §8 함정: transform 충돌) ──
+  // ── 토스트 (래퍼가 중앙정렬, 안쪽 알약만 애니메이션 · §8 함정: transform 충돌) ──
   const toastWrap = el("div", "draft-toast");
   const toastPill = el("div");
   toastWrap.appendChild(toastPill);
@@ -286,11 +275,11 @@ export function createDraftPanel(
   let cards: Card[] = [];
   let ctx: DraftContext | null = null;
   let preview = 0;
-  let busy = false; // 확정 연출 중 — 중복 입력 차단
+  let busy = false; // 확정 연출 중 · 중복 입력 차단
   let popupOpen = false;
   // 데스크톱 레이아웃(카드 3열·좌우 여백)일 때만 클릭=선택 / 팝업 인라인. CSS 의 @media 기준과 맞춘다.
   const isDesktopLayout = (): boolean => window.matchMedia("(min-width: 860px)").matches;
-  // 확대 배율(--ui-zoom, 데스크톱 UI 확대)을 뺀 "논리 폭" — zoom 아래에선 px 규칙이 배율만큼 커져,
+  // 확대 배율(--ui-zoom, 데스크톱 UI 확대)을 뺀 "논리 폭" · zoom 아래에선 px 규칙이 배율만큼 커져,
   // 실제로 쓸 수 있는 가로 공간은 창 폭을 배율로 나눈 값이다.
   const logicalViewportW = (): number => {
     const z = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-zoom"));
@@ -309,11 +298,11 @@ export function createDraftPanel(
     const c = ctx;
     if (!card || !c) return "";
     const g = cloneGenome(c.genome);
-    applyCard(g, card); // 사본에만 적용 — 실제 종 게놈은 카드를 고를 때 game 이 바꾼다
+    applyCard(g, card); // 사본에만 적용 · 실제 종 게놈은 카드를 고를 때 game 이 바꾼다
     const tex = makeCreatureTexture(renderer, g, c.speciesColor);
     const canvas = renderer.extract.canvas(tex) as HTMLCanvasElement;
     const url = canvas.toDataURL();
-    tex.destroy(true); // 픽셀은 canvas 로 복사됐다 — 드래프트마다 3장씩 쌓이는 걸 막는다
+    tex.destroy(true); // 픽셀은 canvas 로 복사됐다 · 드래프트마다 3장씩 쌓이는 걸 막는다
     spriteUrls[i] = url;
     return url;
   };
@@ -321,8 +310,8 @@ export function createDraftPanel(
   /**
    * 배율·애니메이션을 끈 상태에서 히어로 그림이 **실제로** 차지하는 크기(장식 포함).
    *
-   * ⚠ `heroGroup.offsetHeight` 를 쓰면 안 된다. 오라(`.draft-aura`, 196x196)는 position:absolute 라
-   *   레이아웃 높이에 안 잡히는데 담긴 칸(`.draft-medallion-zone`)은 164px 뿐이라, 위아래로 16px 씩
+   * ⚠ heroGroup.offsetHeight 를 쓰면 안 된다. 오라(.draft-aura, 196x196)는 position:absolute 라
+   *   레이아웃 높이에 안 잡히는데 담긴 칸(.draft-medallion-zone)은 164px 뿐이라, 위아래로 16px 씩
    *   더 나간다. 새끼 메달리온·속도 대시도 마찬가지다. 그래서 자손 전부의 rect 를 합집합한다.
    *   앞으로 장식이 늘어도 자동으로 포함된다.
    * 재는 동안 배율과 애니메이션을 잠깐 끈다(오라 숨쉬기 scale 1.14, 둥둥 뜨기 translateY). 안 끄면
@@ -354,10 +343,10 @@ export function createDraftPanel(
 
   /**
    * 히어로를 남는 세로 공간에 맞춰 줄인다(§8 함정: 고정 크기 히어로는 낮은 창에서 헤더·카드·CTA 를 밀어낸다).
-   * transform 이라 레이아웃 높이는 그대로다 — 히어로 칸(1fr) 안에서 가운데 정렬된 채 시각적으로만 줄어든다.
+   * transform 이라 레이아웃 높이는 그대로다 · 히어로 칸(1fr) 안에서 가운데 정렬된 채 시각적으로만 줄어든다.
    * 여유가 있으면 조금 키운다(스펙의 데스크톱 확대). 화살표 자리(42px)는 가로 계산에서 빼 둔다.
    *
-   * ⚠ 2026-08-05 사고: 예전엔 `Math.max(0.4, s)` 로 **하한 0.4 를 무조건** 걸었다. 하한은 "칸에
+   * ⚠ 2026-08-05 사고: 예전엔 Math.max(0.4, s) 로 **하한 0.4 를 무조건** 걸었다. 하한은 "칸에
    *   들어가는지"와 무관하니, 헤더 문구가 길어 히어로 칸이 0 으로 접힌 화면(390x640 등)에서도 100px
    *   짜리 생물이 그려져 **헤더 글씨 위에 그대로 얹혔다**(사용자 지적). transform 은 레이아웃을 안
    *   밀어내니 아무도 못 막았고, 겹침 검사기는 글씨끼리만 재서 통과시켰다.
@@ -387,7 +376,7 @@ export function createDraftPanel(
     toastTimer = window.setTimeout(() => toastWrap.classList.remove("on"), 1700);
   };
 
-  /** 확정 — 토스트를 읽을 동안 월드는 멈춘 채로 두고, 그 뒤에 game 으로 넘긴다. */
+  /** 확정 · 토스트를 읽을 동안 월드는 멈춘 채로 두고, 그 뒤에 game 으로 넘긴다. */
   const commit = (msg: string, done: () => void): void => {
     if (busy) return;
     busy = true;
@@ -402,9 +391,9 @@ export function createDraftPanel(
     if (!cards.length) return;
     preview = ((i % cards.length) + cards.length) % cards.length;
     const card = cards[preview] as Card;
-    const accent = traitColor(dominantTrait(card));
+    const accent = cardAccent(card);
 
-    // 히어로 — DOM 은 그대로 두고 색·그림만 갈아 끼운다(등장 연출을 다시 재생하지 않도록).
+    // 히어로 · DOM 은 그대로 두고 색·그림만 갈아 끼운다(등장 연출을 다시 재생하지 않도록).
     sprite.style.backgroundImage = `url("${spriteFor(preview)}")`;
     aura.style.background = `radial-gradient(circle, ${withAlpha(accent, 0.31)}, transparent 66%)`;
     medallion.style.border = `2px solid ${withAlpha(accent, 0.55)}`;
@@ -436,7 +425,10 @@ export function createDraftPanel(
     if (popupOpen) renderPopup();
   };
 
-  /** 내 종 팝업 — 지금 보고 있는 카드의 변화를 스탯 막대 위에 겹쳐 보여준다(§9 미리보기 델타). */
+  /**
+   * 내 종 팝업 · 범주 5 의 도장 막대 위에 지금 보고 있는 카드의 변화를 유령 막대로 겹쳐 보여준다.
+   * 문턱 눈금(3·8·14·21)은 tierTrackBackground 가 그린다 · 눈금 간격이 "다음 계단이 더 멀다"를 말한다.
+   */
   const renderPopup = (): void => {
     const c = ctx;
     const card = cards[preview];
@@ -460,128 +452,55 @@ export function createDraftPanel(
     head.append(idBox, closeBtn);
     popup.appendChild(head);
 
-    const rows = el("div", "draft-stats");
-    for (const key of STAT_KEYS) {
-      const value = c.genome.traits[key];
-      const ceiling = traitCeiling(key); // 이 시대의 천장 — 시대가 오르면 막대의 눈금 자체가 넓어진다
-      // `cardDelta` 는 applyCard 가 쓰는 바로 그 함수다 — 성장 스케일·상한 근접 감쇠·정점 고정·희생이
-      // 전부 반영된 **실제로 붙을 값**이 나온다. 다른 식으로 계산하면 표시와 적용이 언젠가 갈라진다.
-      const delta = cardDelta(card, key, value);
-      const basePct = (value / ceiling) * 100;
-      const deltaPct = (Math.abs(delta) / ceiling) * 100;
-      const apex = isApexTrait(key, value);
+    // 이 카드를 골랐을 때의 사본 · applyCard 그 함수를 그대로 쓴다(표시와 적용이 어긋날 수 없다).
+    const after = cloneGenome(c.genome);
+    applyCard(after, card);
 
-      // 대사는 좋고 나쁨이 없다 — 늘어도 줄어도 중립색. 방향(막대가 늘어남/줄어듦)만 보여준다.
-      const neutral = NEUTRAL_TRAITS.has(key);
+    const rows = el("div", "draft-stats");
+    for (const cat of CATEGORIES) {
+      const before = c.genome.pips[cat];
+      const now = after.pips[cat];
+      const fromTier = tierOfPips(c.genome.pips, cat);
+      const toTier = tierOfPips(after.pips, cat);
 
       const row = el("div", "draft-stat");
-      if (apex) row.classList.add("apex"); // 막대가 금빛으로 — 여긴 도착점이다
       const label = el("span", "draft-stat-label");
-      label.textContent = TRAIT_LABELS[key];
+      label.textContent = CATEGORY_LABELS[cat];
       const track = el("div", "draft-stat-track");
-      // 눈금 한 칸 = 형질 10. 형질 1칸의 차이는 시드 노이즈에 묻히고 화면에서 읽히는 최소 단위가
-      // 약 10 이라는 실측(2026-08-05)에 맞춘 눈금이다 — "+11" 이 곧 "한 칸"으로 보인다.
-      // 시대 천장이 오르면 칸이 촘촘해져 "막대가 길어졌다"가 눈금으로 읽힌다.
-      track.style.backgroundSize = `${(10 / ceiling) * 100}% 100%`;
+      track.style.backgroundImage = tierTrackBackground();
       const fill = el("div", "draft-stat-fill");
-      fill.style.width = `${clamp(basePct, 0, 100)}%`;
-      fill.style.background = traitColor(key);
+      fill.style.width = `${pipPct(Math.min(before, now))}%`;
+      fill.style.background = categoryColor(cat);
       track.appendChild(fill);
 
-      // **정점선**(형질 100 자리) + **정점을 넘어선 구간**. 천장이 100 위로 열린 시대에만 그린다
-      // (첫 시대는 선이 막대 끝과 겹쳐 아무 정보도 없다 → 예전 화면 그대로 둔다).
-      const apexPct = (TRAIT_CEILING[key] / ceiling) * 100;
-      if (APEX_TRAITS.has(key) && ceiling > TRAIT_CEILING[key]) {
-        const mark = el("div", "draft-stat-apexline");
-        mark.style.left = `${clamp(apexPct, 0, 100)}%`;
-        track.appendChild(mark);
-        if (basePct > apexPct) {
-          const over = el("div", "draft-stat-over");
-          over.style.left = `${apexPct}%`;
-          over.style.width = `${clamp(basePct - apexPct, 0, 100 - apexPct)}%`;
-          track.appendChild(over);
-        }
-      }
-
-      if (delta > 0) {
+      if (now > before) {
+        // 유령 막대: 이 카드를 고르면 여기까지 찬다.
         const ghost = el("div", "draft-stat-gain");
-        ghost.style.left = `${clamp(basePct, 0, 100)}%`;
-        ghost.style.width = `${clamp(deltaPct, 0, 100 - basePct)}%`;
-        if (neutral) {
-          ghost.style.background = withAlpha(chipColor("neutral"), 0.3);
-          ghost.style.borderColor = withAlpha(chipColor("neutral"), 0.7);
-        }
+        ghost.style.left = `${pipPct(before)}%`;
+        ghost.style.width = `${Math.max(0, pipPct(now) - pipPct(before))}%`;
         track.appendChild(ghost);
-      } else if (delta < 0) {
+      } else if (now < before) {
         const ghost = el("div", "draft-stat-loss");
-        ghost.style.left = `${clamp(basePct - deltaPct, 0, 100)}%`;
-        ghost.style.width = `${clamp(deltaPct, 0, basePct)}%`;
-        if (neutral) ghost.style.background = withAlpha(chipColor("neutral"), 0.55);
+        ghost.style.left = `${pipPct(now)}%`;
+        ghost.style.width = `${Math.max(0, pipPct(before) - pipPct(now))}%`;
         track.appendChild(ghost);
       }
 
       const val = el("span", "draft-stat-val");
-      val.textContent = traitWord(key, value); // 날값 대신 단계 단어(델타 +N 은 아래에서 따로 보여준다)
-      if (apex) {
-        const tag = el("span", "draft-apex-tag");
-        tag.textContent = "정점";
-        val.appendChild(tag);
-      }
-      if (delta !== 0) {
+      val.textContent = TIER_ROMAN[fromTier] || "·";
+      if (now !== before) {
         const d = el("b");
-        if (ABILITY_KEYS.has(key)) {
-          // 능력형(무리 성향)은 값이 단계(없음/보통/강함)라 카드 칩과 똑같이 "강화/약화"로 말한다.
-          // 숫자 델타·취소선을 붙이면 "강함 +12→+8"처럼 낱말과 수치가 뒤섞여 읽힌다(사용자 지적).
-          d.textContent = delta > 0 ? "강화" : "약화";
+        if (toTier > fromTier) {
+          d.textContent = `▸ ${TIER_ROMAN[toTier]}`;
+          d.style.color = GAIN_COLOR;
+        } else if (toTier < fromTier) {
+          d.textContent = `▾ ${TIER_ROMAN[toTier] || "0"}`;
+          d.style.color = "#E85C43";
         } else {
-          // 값형질 — 감쇠가 깎았으면 원래 값을 취소선으로 함께(칩과 같은 규칙 — 두 화면이 같은 말을 해야 한다).
-          const plain = effectiveDelta(key, card.effects[key] ?? 0);
-          if (delta > 0 && plain > delta) {
-            const was = el("s", "draft-was");
-            was.textContent = `+${plain}`;
-            val.append(" ", was);
-          }
-          d.textContent = delta > 0 ? `+${delta}` : String(delta);
+          const delta = now - before;
+          d.textContent = delta > 0 ? `+${delta}` : `−${-delta}`;
+          d.style.color = delta > 0 ? SAVE_CHIP_COLOR : "#E85C43";
         }
-        d.style.color = neutral ? chipColor("neutral") : delta > 0 ? "#8FD14F" : "#E85C43";
-        val.append(" ", d);
-      }
-      row.append(label, track, val);
-      rows.appendChild(row);
-    }
-
-    // 능력형·식성 — 지닌 것(또는 이 카드가 건드리는 것)만 보여준다. 날개·수영 같은 중요한 스탯이 아예 안
-    // 뜨던 구멍을 메운다(사용자 지적). 값이 문턱 위에선 무의미해 막대 대신 단어/범주로, 변화는 강화·약화·방향.
-    const ABIL_DIET: readonly (keyof Traits)[] = ["diet", "camouflage", "swimming", "wings", "echo", "venom", "ranged"];
-    for (const key of ABIL_DIET) {
-      const value = c.genome.traits[key];
-      const eff = card.effects[key] ?? 0;
-      const affected = eff !== 0;
-      const has = key === "diet" ? true : abilityLevel(key, value) > 0;
-      if (!has && !affected) continue;
-      const row = el("div", "draft-stat");
-      const label = el("span", "draft-stat-label");
-      label.textContent = TRAIT_LABELS[key];
-      const track = el("div", "draft-stat-track"); // 빈 트랙 — 막대 행과 값 열을 정렬만 맞춘다
-      track.style.background = "transparent";
-      const val = el("span", "draft-stat-val");
-      const word = traitWord(key, value);
-      val.textContent = word;
-      // 식성은 흰색이라 잘 안 보였다(사용자) → 초식=초록·잡식=amber·육식=빨강으로 강조(굵게).
-      if (key === "diet") {
-        val.style.color = word === "육식" ? "#E85C43" : word === "초식" ? "#8FD14F" : "#F5C33B";
-        val.style.fontWeight = "700";
-      }
-      if (affected) {
-        const d = el("b");
-        if (key === "diet") {
-          // "더 육식"만으론 얼만지 모른다(사용자) → 실제 바뀌는 값(0~100 척도)을 함께 보여준다.
-          const dd = cardDelta(card, "diet", value);
-          d.textContent = `${eff > 0 ? "더 육식" : "더 초식"} ${dd > 0 ? "+" : ""}${dd}`;
-        } else {
-          d.textContent = eff > 0 ? "강화" : "약화";
-        }
-        d.style.color = NEUTRAL_TRAITS.has(key) ? chipColor("neutral") : eff > 0 ? "#8FD14F" : "#E85C43";
         val.append(" ", d);
       }
       row.append(label, track, val);
@@ -589,30 +508,55 @@ export function createDraftPanel(
     }
     popup.appendChild(rows);
 
-    // **정점이 무엇을 열었는가** — 100 을 찍은 형질마다 그 보상을 한 줄로 적는다. 정점은 수치가 더
-    // 커지는 게 아니라 **그 형질의 약점이 사라지는** 것이라, 말해 주지 않으면 화면에서 영영 안 읽힌다
-    // (도감에만 있으면 미달 — CLAUDE.md 전달 규칙).
-    const apexKeys = (Object.keys(c.genome.traits) as (keyof Traits)[]).filter(
-      (k) => isApexTrait(k, c.genome.traits[k]) && APEX_BOON[k] !== undefined,
-    );
-    if (apexKeys.length > 0) {
-      const box = el("div", "draft-apex-boons");
-      for (const key of apexKeys) {
-        const line = el("div");
-        const strong = el("b");
-        strong.textContent = `${TRAIT_LABELS[key]} 정점. `;
-        const rest = el("span");
-        rest.textContent = APEX_BOON[key] ?? "";
-        line.append(strong, rest);
-        box.appendChild(line);
-      }
-      popup.appendChild(box);
+    // 열쇠 · 듀오 · 유지비. 전부 게놈(도장·열쇠)에서 파생된 값만 읽는다.
+    const lines = el("div", "draft-build-lines");
+    const keyLine = el("div");
+    const owned = KEY_NAMES.filter((k) => c.genome.keys[k]).map((k) => KEY_LABELS[k]);
+    // "+ 열쇠" 표시는 카드가 아니라 **적용된 사본**에서 읽는다. 열쇠 상한에 막혀 실제로는 안 열리는
+    // 경우(정상 흐름에선 안 나오지만)에 "+"를 띄우면 그게 곧 거짓말이다.
+    const gainKey =
+      card.key !== undefined && after.keys[card.key] && !c.genome.keys[card.key]
+        ? KEY_LABELS[card.key]
+        : null;
+    keyLine.textContent = `열쇠: ${owned.join(" · ") || "없음"}`;
+    if (gainKey) {
+      const b = el("b");
+      b.textContent = `  + ${gainKey}`;
+      b.style.color = KEY_CHIP_COLOR;
+      keyLine.appendChild(b);
     }
+    lines.appendChild(keyLine);
+
+    const duosNow = activeDuos(c.genome.pips);
+    const duosAfter = activeDuos(after.pips);
+    const duoLine = el("div");
+    duoLine.textContent = `듀오: ${duosNow.map((d) => d.name).join(" · ") || "없음"}`;
+    const newDuo = duosAfter.find((d) => !duosNow.some((x) => x.id === d.id));
+    if (newDuo) {
+      const b = el("b");
+      b.textContent = `  + ${newDuo.name} 켜짐`;
+      b.style.color = GAIN_COLOR;
+      duoLine.appendChild(b);
+    }
+    lines.appendChild(duoLine);
+
+    const upkeepLine = el("div");
+    const u0 = c.genome.traits.upkeep;
+    const u1 = after.traits.upkeep;
+    upkeepLine.textContent = `유지비 ×${u0.toFixed(2)}`;
+    if (Math.abs(u1 - u0) > 1e-9) {
+      const b = el("b");
+      b.textContent = `  → ×${u1.toFixed(2)}`;
+      b.style.color = u1 > u0 ? "#E85C43" : GAIN_COLOR;
+      upkeepLine.appendChild(b);
+    }
+    lines.appendChild(upkeepLine);
+    popup.appendChild(lines);
 
     const legend = el("div", "draft-legend");
     const swatch = el("span", "draft-legend-swatch");
     const legendText = el("span");
-    legendText.textContent = `보고 있던 카드(${card.name})를 고르면 이렇게 변해요.`;
+    legendText.textContent = `보고 있던 카드(${card.name})를 고르면 여기까지 차요.`;
     legend.append(swatch, legendText);
     popup.appendChild(legend);
 
@@ -680,12 +624,12 @@ export function createDraftPanel(
   skipBtn.addEventListener("click", skipDraft);
   rerollBtn.addEventListener("click", reroll);
 
-  // 키보드 조작 — 우선순위 15 = .draft-root 의 z-index. 드래프트가 떠 있는 동안 이 레이어가 키를 받는다.
+  // 키보드 조작 · 우선순위 15 = .draft-root 의 z-index. 드래프트가 떠 있는 동안 이 레이어가 키를 받는다.
   registerKeyLayer(
     15,
     () => root.classList.contains("open"),
     (e) => {
-      if (busy) return true; // 확정 연출 중 — 버튼과 마찬가지로 키 입력도 잠근다
+      if (busy) return true; // 확정 연출 중 · 버튼과 마찬가지로 키 입력도 잠근다
       switch (e.code) {
         case "ArrowLeft":
           setPreview(preview - 1);
@@ -703,7 +647,7 @@ export function createDraftPanel(
           if (i < cards.length) setPreview(i);
           return true;
         }
-        // Enter 만 확정 — Space 는 관전 중 "멈춤" 습관이 있어, 드래프트가 막 뜬 순간 눌러서
+        // Enter 만 확정 · Space 는 관전 중 "멈춤" 습관이 있어, 드래프트가 막 뜬 순간 눌러서
         // 카드를 잘못 확정하는 사고를 부른다.
         case "Enter":
         case "NumpadEnter":
@@ -712,7 +656,7 @@ export function createDraftPanel(
         case "KeyW":
         case "KeyA":
         case "KeyD":
-          // 조종 모드에서 손이 WASD 에 올라가 있다 — 드래프트 중엔 아무 일도 안 일어나게 삼킨다
+          // 조종 모드에서 손이 WASD 에 올라가 있다 · 드래프트 중엔 아무 일도 안 일어나게 삼킨다
           // (아래 관전 레이어로 새면 카드를 고르는 동안 앞장선 개체가 한쪽으로 달린다).
           return DEBUG.leadControl;
         case "KeyX":
@@ -756,9 +700,30 @@ export function createDraftPanel(
     const v = nextCtx.verdict;
     title.textContent = v ? v.text : "새 형질이 무리에 퍼져요";
     title.style.color = v ? (v.passed ? "var(--lime)" : "var(--amber)") : "";
+
+    // 티어 줄: 다섯 범주의 지금 티어. 0단 범주는 회색(이름만)으로 흐리게.
+    tierRow.replaceChildren();
+    for (const badge of tierBadges(nextCtx.genome.pips)) {
+      const chip = el("span", "draft-tier-chip");
+      chip.textContent = badge.text;
+      chip.style.color = badge.color;
+      if (badge.tier > 0) chip.style.borderColor = withAlpha(badge.color, 0.45);
+      tierRow.appendChild(chip);
+    }
+    // 듀오 예고: 한쪽이 3단이고 다른 쪽이 2단이면 한 칸 앞의 목표를 말해 준다.
+    const near = nearDuo(nextCtx.genome.pips);
+    if (near) {
+      const catName = CATEGORY_LABELS[near.need];
+      duoEl.textContent =
+        `${catName} ${TIER_ROMAN[DUO_TIER]} 이 되면 「${near.duo.name}」${iGa(near.duo.name)} 켜집니다 · ${near.pips}칸 남음`;
+      duoEl.style.display = "";
+    } else {
+      duoEl.style.display = "none";
+    }
+
     forecastEl.textContent = nextCtx.forecast;
     forecastEl.style.display = nextCtx.forecast ? "" : "none";
-    const raidLine = nextCtx.raidBoss ? raidHeadline(nextCtx.raidBoss, nextCtx.genome.traits) : "";
+    const raidLine = nextCtx.raidBoss ? raidHeadline(nextCtx.raidBoss, nextCtx.genome) : "";
     raidEl.textContent = raidLine;
     raidEl.style.display = raidLine ? "" : "none";
     noticeEl.textContent = nextCtx.notice;
@@ -770,7 +735,7 @@ export function createDraftPanel(
     const delays = cards.map((card) => rarityDelayMs(cardRarity(card)));
     const endDelay = Math.max(...delays, 0) + bounce;
 
-    // 카드 — 희귀도 낮은 순으로 뜬다. 전설은 금빛 플래시 + 콘페티.
+    // 카드 · 희귀도 낮은 순으로 뜬다. 전설은 금빛 플래시 + 콘페티.
     cardList.replaceChildren();
     cards.forEach((card, i) => {
       const rarity = cardRarity(card);
@@ -784,39 +749,54 @@ export function createDraftPanel(
 
       const row = el("div", "draft-card-row");
       const dot = el("span", "draft-dot");
-      dot.style.background = traitColor(dominantTrait(card));
+      dot.style.background = cardAccent(card);
       const name = el("span", "draft-card-name");
       name.textContent = card.name;
       row.append(dot, name);
-      // 내 갈래 **전용** 카드임을 알린다 — 이 카드는 이 종으로 시작했기에만 볼 수 있다.
-      // 공통 카드와 섞여 있으면 "왜 이 카드가 매번 뜨지?"가 안 읽힌다(3장 중 1장은 늘 전용 카드다).
-      if (card.lineage !== undefined) {
-        const own = el("span", "draft-lineage-badge");
-        own.textContent = "내 갈래";
-        row.appendChild(own);
-      }
       row.appendChild(rarityBadge(rarity));
 
       const body = el("div", "draft-card-body");
       const desc = el("span", "draft-card-desc");
       desc.textContent = card.desc;
       const chips = el("span", "draft-chips");
-      const effChips = cardEffectChips(card, ctx?.genome.traits);
-      for (const c of effChips) chips.appendChild(effectChipEl(c));
+      for (const tierChip of cardTierChips(card, nextCtx.genome.pips)) {
+        chips.appendChild(tierChipEl(tierChip));
+      }
       // 다음 관문이 보스면, 이 카드가 "맞설 수 있는가"를 뒤집을 때만 칩 하나를 더 단다.
-      const raidChip = nextCtx.raidBoss ? raidCardChip(card, nextCtx.genome.traits) : null;
-      if (raidChip) chips.appendChild(plainChipEl(raidChip.label, raidChip.tone, raidChip.up));
+      const raidChip = nextCtx.raidBoss ? raidCardChip(card, nextCtx.genome) : null;
+      if (raidChip) chips.appendChild(plainChipEl(raidChip, GAIN_COLOR));
       body.append(desc, chips);
-      // 왜 수치가 이런지를 **그 자리에서** 한 줄로 답한다(대백과로 미루지 않는다 — CLAUDE.md 전달 규칙).
-      // 취소선이 떴으면 "왜 덜 오르는지", 정점 고정이 걸렸으면 "왜 안 내려가는지".
-      if (effChips.some((c) => c.base !== undefined)) {
-        const note = el("span", "draft-note");
-        note.textContent = "형질이 100 에 가까울수록 덜 올라요. 취소선은 원래 오를 값이에요.";
+
+      // 각주: 문턱을 넘으면 무엇이 켜지고(gain) 무엇을 잃는지(cost)를 tierLine 문구 **그대로** 두 줄로.
+      // 수치를 여기서 다시 쓰지 않는다 · tiers.tierLine 이 단일 진실이다.
+      const firstUp = crossingMoves(card, nextCtx.genome.pips)[0];
+      if (firstUp) {
+        const tl = tierLine(firstUp.cat, firstUp.to);
+        if (tl.gain) {
+          const note = el("span", "draft-note gain");
+          note.textContent = `${CATEGORY_LABELS[firstUp.cat]} ${TIER_ROMAN[firstUp.to]} · ${tl.gain}`;
+          body.appendChild(note);
+        }
+        if (tl.cost) {
+          const note = el("span", "draft-note cost");
+          note.textContent = `대가 · ${tl.cost}`;
+          body.appendChild(note);
+        }
+      }
+      // 강등이면 무엇을 잃는지도 그 자리에서. 잃는 것 = 내려간 티어가 주던 것(tierLine 의 gain).
+      const firstDown = demotingMoves(card, nextCtx.genome.pips)[0];
+      if (firstDown) {
+        const lost = tierLine(firstDown.cat, firstDown.from);
+        const note = el("span", "draft-note cost");
+        note.textContent =
+          `${CATEGORY_LABELS[firstDown.cat]} ${TIER_ROMAN[firstDown.from]} 효과를 잃습니다` +
+          (lost.gain ? ` · ${lost.gain}` : "");
         body.appendChild(note);
       }
-      if (effChips.some((c) => c.apexLocked === true)) {
-        const note = el("span", "draft-note apex");
-        note.textContent = "정점(100)에 오른 형질은 카드로도 다시 내려가지 않아요.";
+      // 열쇠 카드는 열쇠의 효과와 대가 한 줄(KEY_DESC 그대로 · 단일 진실).
+      if (card.key !== undefined) {
+        const note = el("span", "draft-note");
+        note.textContent = KEY_DESC[card.key];
         body.appendChild(note);
       }
 
@@ -828,9 +808,9 @@ export function createDraftPanel(
         if (isDesktopLayout()) pickCard(i);
         else setPreview(i);
       });
-      // 호버로 preview 를 바꾸지 않는다 — 마우스가 가운데 카드에 얹혀 있으면 키보드로 다른 카드를 골라도
+      // 호버로 preview 를 바꾸지 않는다 · 마우스가 가운데 카드에 얹혀 있으면 키보드로 다른 카드를 골라도
       // Enter(=pickCard(preview))가 가운데를 선택하던 버그(사용자 지적). 마우스는 클릭, 키보드는 화살표+Enter.
-      // 카드 모서리의 번호 키 표식(1·2·3) — 데스크톱에서만 보인다.
+      // 카드 모서리의 번호 키 표식(1·2·3) · 데스크톱에서만 보인다.
       if (i < 3) {
         const num = keyChip(String(i + 1));
         num.classList.add("draft-kbd-corner");
@@ -848,7 +828,7 @@ export function createDraftPanel(
     heroGroup.style.animation = late;
     cta.style.animation = late;
 
-    // 가장 귀한 카드를 처음 보여준다 — 히어로가 뜨는 순간 이번 판의 가장 큰 선택지가 보인다.
+    // 가장 귀한 카드를 처음 보여준다 · 히어로가 뜨는 순간 이번 판의 가장 큰 선택지가 보인다.
     let best = 0;
     cards.forEach((card, i) => {
       if (rarityIndex(cardRarity(card)) > rarityIndex(cardRarity(cards[best] as Card))) best = i;
@@ -860,7 +840,7 @@ export function createDraftPanel(
     document.body.classList.add("draft-open");
     // display:none 상태에선 크기를 못 재므로 보이게 한 다음 맞춘다.
     fitHero();
-    // 데스크톱: 내 종 정보(오른쪽 인라인 패널)를 기본으로 펼쳐 둔다 — 지금 스탯과 보고 있는 카드의
+    // 데스크톱: 내 종 정보(오른쪽 인라인 패널)를 기본으로 펼쳐 둔다 · 지금 도장과 보고 있는 카드의
     // 변화를 나란히 두고 고를 수 있다(popup-open 이 카드 영역을 왼쪽으로 밀어 자리를 비운다).
     // 단 확대 배율을 뺀 논리 폭이 좁으면(작은 창) 카드가 너무 쪼그라들어 자동으로는 안 열고
     // M/내 종 버튼으로만 연다. 모바일은 바텀 시트(가림)라 닫아 둔다.
@@ -883,7 +863,12 @@ export function createDraftPanel(
 
 // ────────────────────────────── 조각들 ──────────────────────────────
 
-/** 현재(카드 적용 전) 종 그림 — 헤더의 "내 종" 버튼 썸네일. */
+/** 어느 범주의 티어인가(Pips 에서 그 범주만). tiers.tierOf 를 감싸 호출부를 짧게 한다. */
+function tierOfPips(pips: Pips, cat: Category): number {
+  return tierOf(pips[cat]);
+}
+
+/** 현재(카드 적용 전) 종 그림 · 헤더의 "내 종" 버튼 썸네일. */
 function currentSpriteUrl(renderer: Renderer, ctx: DraftContext): string {
   const tex = makeCreatureTexture(renderer, ctx.genome, ctx.speciesColor);
   const canvas = renderer.extract.canvas(tex) as HTMLCanvasElement;
@@ -915,55 +900,36 @@ function rarityBadge(rarity: Rarity): HTMLElement {
   return badge;
 }
 
-/** 수치 없는 칩 하나(형질 효과가 아니라 "이 카드가 무엇을 뒤집는가"). 색·모양은 효과 칩과 같은 규칙. */
-function plainChipEl(label: string, tone: ChipTone, up: boolean): HTMLElement {
+/** 수치 없는 칩 하나(예: "보스에 맞섬"). 색·모양은 티어 칩과 같은 규칙. */
+function plainChipEl(label: string, color: string): HTMLElement {
   const node = el("span", "draft-chip");
-  const color = chipColor(tone);
   node.style.color = color;
   node.style.background = withAlpha(color, 0.13);
-  const arrow = el("i");
-  arrow.textContent = up ? "▲" : "▼";
   const text = el("span");
   text.textContent = label;
-  node.append(arrow, text);
+  node.appendChild(text);
   return node;
 }
 
-function effectChipEl(chip: EffectChip): HTMLElement {
+/** 티어 칩 하나 · 문턱을 넘기는 칩(cross)만 테두리 발광이 붙는다(CSS .draft-chip.cross). */
+function tierChipEl(chip: TierChip): HTMLElement {
   const node = el("span", "draft-chip");
-  // 색은 성격(얻음/잃음/중립)이 정하고, 화살표는 방향만 알린다. 대사·식성은 중립색 — 어느 쪽이 이득인지는
-  // 이번 판 환경이 정하지 카드가 정하지 않는다.
-  const color = chipColor(chip.tone);
-  node.style.color = color;
-  node.style.background = withAlpha(color, 0.13);
-  const arrow = el("i");
-  arrow.textContent = chip.up ? "▲" : "▼";
-  const label = el("span");
-  label.textContent = chip.label;
-  node.append(arrow, label);
-  // 상한 근접 감쇠 — 원래 오를 값(+14)을 취소선으로, 실제 값(+6)을 그 뒤에. 두 수를 나란히 보여야
-  // "카드가 약해진 게 아니라 내 형질이 이미 높아서"가 읽힌다(수치 하나만 보면 카드 탓으로 읽힌다).
-  // ⚠ 반드시 **이름 뒤·수치 앞**이다. 칩 전체 문자열 앞에 붙이면 "▲ +14 속도 +6" 이 된다.
-  if (chip.base !== undefined) {
-    const was = el("s", "draft-was");
-    was.textContent = chip.base;
-    node.appendChild(was);
-  }
-  const value = el("span");
-  value.textContent = chip.value;
-  node.appendChild(value);
+  if (chip.kind === "cross") node.classList.add("cross");
+  node.style.color = chip.color;
+  node.style.background = withAlpha(chip.color, chip.kind === "save" ? 0.1 : 0.13);
+  const text = el("span");
+  text.textContent = chip.text;
+  node.appendChild(text);
   return node;
 }
 
 /**
- * 형질별 히어로 연출 — 무리·번식이 늘면 새끼 메달리온이 주위를 떠다니고, 속도가 늘면 속도 대시가 흐른다.
- * 카드마다 손으로 짜지 않고 효과에서 뽑아내, 새 카드가 들어와도 알아서 붙는다.
+ * 도장별 히어로 연출 · 무리 도장이 있으면 새끼 메달리온이 주위를 떠다니고, 다리 도장이 있으면
+ * 속도 대시가 흐른다. 카드마다 손으로 짜지 않고 도장에서 뽑아내, 새 카드가 들어와도 알아서 붙는다.
  */
 function heroFlourish(card: Card, accent: string, spriteUrl: string): HTMLElement[] {
-  const e = card.effects;
-  const herding = e.herding ?? 0;
-  const fertility = e.fertility ?? 0;
-  const speed = e.speed ?? 0;
+  const herd = card.pips?.herd ?? 0;
+  const leg = card.pips?.leg ?? 0;
 
   const pup = (css: string, delay: number, flip: boolean): HTMLElement => {
     const node = el("div", "draft-pup");
@@ -977,20 +943,14 @@ function heroFlourish(card: Card, accent: string, spriteUrl: string): HTMLElemen
     return node;
   };
 
-  if (herding > 0) {
+  if (herd > 0) {
     return [
       pup("left:0; top:10px; width:46px; height:41px; border-radius:14px;", 0.5, false),
       pup("right:2px; top:2px; width:41px; height:37px; border-radius:13px;", 1, true),
       pup("right:8px; bottom:6px; width:36px; height:32px; border-radius:12px;", 1.4, true),
     ];
   }
-  if (fertility > 0) {
-    return [
-      pup("left:2px; top:16px; width:46px; height:41px; border-radius:14px;", 0.6, false),
-      pup("right:4px; top:8px; width:38px; height:34px; border-radius:12px;", 1.1, true),
-    ];
-  }
-  if (speed > 0) {
+  if (leg > 0) {
     return [30, 20, 13].map((w, i) => {
       const dash = el("div", "draft-dash");
       dash.style.cssText += `left:${[2, 10, 6][i] ?? 2}px; top:${56 + i * 20}px; width:${w}px;`;
@@ -1006,7 +966,7 @@ function heroFlourish(card: Card, accent: string, spriteUrl: string): HTMLElemen
 function spawnConfetti(host: HTMLElement, burstDelayMs: number): void {
   for (let i = 0; i < DRAFT_TIMING.confettiCount; i++) {
     const round = Math.random() < 0.3;
-    // 전방향 발사 — i 번째 각도에 지터를 얹어 고르게 퍼지되 규칙적으로 보이지 않게.
+    // 전방향 발사 · i 번째 각도에 지터를 얹어 고르게 퍼지되 규칙적으로 보이지 않게.
     const angle = (i / DRAFT_TIMING.confettiCount) * Math.PI * 2 + Math.random() * 0.7;
     const dist = 55 + Math.random() * 75;
     const dx = Math.round(Math.cos(angle) * dist);
@@ -1035,16 +995,12 @@ function spawnConfetti(host: HTMLElement, burstDelayMs: number): void {
 
 const ALL_CARDS: readonly Card[] = [...CARD_POOL, ...PRESET_CARDS];
 
-/** 고른 형질 칩의 점 색 — 프리셋은 종 시작색, 일반 카드는 대표 형질 색. */
+/** 고른 형질 칩의 점 색 · 프리셋은 종 시작색, 일반 카드는 대표 범주 색. */
 function colorForCardName(name: string): string {
   const card = ALL_CARDS.find((c) => c.name === name);
   if (!card) return "#8C7C68"; // "건너뜀" 등 카드가 아닌 항목
   if (card.color !== undefined) return `#${card.color.toString(16).padStart(6, "0")}`;
-  return traitColor(dominantTrait(card));
-}
-
-function clamp(v: number, lo: number, hi: number): number {
-  return v < lo ? lo : v > hi ? hi : v;
+  return cardAccent(card);
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(

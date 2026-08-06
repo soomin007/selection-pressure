@@ -218,6 +218,16 @@ export function ensurePanelStyles(): void {
   .draft-mine-thumb { width: 22px; height: 20px; border-radius: 8px; flex: none;
     background-color: #141B28; background-position: center; background-size: 125%; background-repeat: no-repeat; }
   .draft-mine-label { font-size: 11px; }
+  /* 헤더 티어 줄 · 다섯 범주의 지금 티어. 폰 390px 가용폭 374px 에 다섯 칩(실측 약 330px).
+     max-width 필수(칩 줄 함정: known_issues flex-wrap). */
+  .draft-tier-row { margin-top: 7px; display: flex; justify-content: center; align-items: center;
+    gap: 4px; flex-wrap: wrap; max-width: 100%; }
+  .draft-tier-chip { display: inline-flex; align-items: center; white-space: nowrap;
+    font-family: var(--font-mono); font-size: 10.5px; border-radius: 999px; padding: 3px 8px;
+    background: rgba(12,9,6,0.5); border: 1px solid rgba(245,235,220,0.14); }
+  /* 듀오 예고 · 「무리 III 이 되면 늑대의 법이 켜집니다」. 한 칸 앞의 목표를 헤더에서 당긴다. */
+  .draft-duo { margin-top: 5px; font-size: 11.5px; color: var(--purple); word-break: keep-all;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.6); }
   .draft-forecast { margin-top: 7px; font-family: var(--font-body); font-size: 12.5px;
     color: var(--amber); text-shadow: 0 2px 8px rgba(0,0,0,0.6); }
   /* 안내 줄은 예고보다 한 단계 낮은 목소리로(흐린 본문색). 시선은 시험 예고가 먼저 받는다.
@@ -288,10 +298,6 @@ export function ensurePanelStyles(): void {
   .draft-card-name { font-family: var(--font-title); font-size: 16px; flex: 1; min-width: 0; }
   .draft-badge { display: inline-flex; align-items: center; gap: 5px; flex: none;
     font-family: var(--font-mono); font-size: 9.5px; border-radius: 999px; padding: 3px 9px; }
-  /* 갈래 전용 카드 — 이 종으로 시작했기에만 보이는 카드(3장 중 1장). 공통 카드와 한눈에 갈린다. */
-  .draft-lineage-badge { flex: none; font-family: var(--font-mono); font-size: 9.5px;
-    border-radius: 999px; padding: 3px 8px; margin-right: 4px; white-space: nowrap;
-    color: #ffd98a; background: rgba(255,196,90,0.14); border: 1px solid rgba(255,196,90,0.45); }
   .draft-badge > i { width: 5px; height: 5px; border-radius: 1px; display: block; flex: none; }
   .draft-card-body { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start;
     gap: 7px 10px; margin-top: 7px; }
@@ -302,16 +308,19 @@ export function ensurePanelStyles(): void {
   /* max-width 로 카드 폭에 가둔다 — flex:none 만 두면 좁은 폰에서 칩들이 한 줄 max-content 폭을 가져
      wrap 이 안 되고 4번째 칩이 카드 밖으로 삐져나간다(정점의 포식자처럼 효과 4개 카드, 사용자 지적). */
   .draft-chips { display: flex; gap: 5px; flex: none; flex-wrap: wrap; max-width: 100%; }
+  /* 투명 테두리를 기본으로 깔아 둔다 · cross 칩만 테두리가 생기면 그 줄 높이가 1px 튄다. */
   .draft-chip { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
-    font-family: var(--font-mono); font-size: 10.5px; border-radius: 8px; padding: 4px 9px; }
+    font-family: var(--font-mono); font-size: 10.5px; border-radius: 8px; padding: 4px 9px;
+    border: 1px solid transparent; }
   .draft-chip > i { font-size: 7px; font-style: normal; }
-  /* 상한 근접 감쇠 — 감쇠 전 값을 취소선으로 나란히("+11" 다음에 +5). "카드가 약해진 게 아니라
-     내 형질이 이미 높아서"가 그 자리에서 읽히게 한다(대백과로 미루지 않는다).
-     ⚠ 이 파일의 CSS 는 템플릿 리터럴 안이다 — 주석에도 백틱을 쓰면 문자열이 그 자리에서 끝난다. */
-  .draft-was { text-decoration: line-through; opacity: 0.48; }
-  /* 카드 아래 각주 — 왜 덜 오르는지·정점이 무엇인지 그 자리에서 한 줄로. 칩 뒤 제 줄을 통째로 쓴다. */
+  /* 문턱을 넘기는 칩 · 범주 색 테두리 + 은은한 발광. 색은 인라인(color)으로 들어오므로
+     currentColor 로 받는다. ⚠ 이 파일의 CSS 는 템플릿 리터럴 안이다. 주석에 백틱 금지. */
+  .draft-chip.cross { border-color: currentColor; box-shadow: 0 0 9px -3px currentColor; }
+  /* 카드 아래 각주 · 문턱을 넘으면 무엇이 켜지고(gain) 무엇을 잃는지(cost)를
+     tiers.tierLine 문구 그대로 두 줄로. 칩 뒤 제 줄을 통째로 쓴다. */
   .draft-note { flex: 1 1 100%; font-size: 10px; line-height: 1.4; color: var(--sub); opacity: 0.9; }
-  .draft-note.apex { color: #F5C33B; opacity: 1; }
+  .draft-note.gain { color: var(--lime); opacity: 1; }
+  .draft-note.cost { color: #DB9A85; }
 
   /* §7 콘페티 — 전설 카드 안에서 전방향으로 터진다 */
   .draft-confetti { position: absolute; z-index: 2; pointer-events: none; }
@@ -379,38 +388,22 @@ export function ensurePanelStyles(): void {
   .draft-stats { display: flex; flex-direction: column; gap: 9px; margin-top: 18px; }
   .draft-stat { display: flex; align-items: center; gap: 9px; }
   .draft-stat-label { font-size: 11px; color: var(--sub); width: 58px; flex: none; }
-  /* 막대 한 칸 = 형질 10 · 눈금은 배경 무늬로 그린다(요소를 열 개 만들지 않는다).
-     왜 10 인가: 실측에서 형질 1칸의 차이는 시드 노이즈에 묻히고, 화면에서 읽히는 최소 단위가 약 10 이었다
-     (2026-08-05). 눈금이 있으면 "+11" 이 곧 "한 칸"으로 보여 카드 한 장의 크기가 손에 잡힌다.
-     칸 폭(background-size)은 시대 천장에 따라 달라지므로 draftPanel 이 계산해 넣는다. */
-  .draft-stat-track { flex: 1; height: 7px; background-color: rgba(255,255,255,0.12); border-radius: 4px;
-    position: relative; background-image: linear-gradient(90deg, rgba(255,255,255,0.16) 0 1px, transparent 1px);
-    background-repeat: repeat-x; }
+  /* 도장 막대 · 문턱 3·8·14·21 자리의 세로 눈금은 traitDisplay.tierTrackBackground 가
+     background-image 로 계산해 넣는다(TIER_STEPS 단일 진실). 눈금 간격이 넓어지는 것이
+     곧 "다음 계단이 더 멀다"다. 옛 정점선(.draft-stat-apexline)의 역할을 이 눈금이 잇는다. */
+  .draft-stat-track { flex: 1; height: 7px; background-color: rgba(255,255,255,0.10); border-radius: 4px;
+    position: relative; }
   .draft-stat-fill { height: 100%; border-radius: 4px; }
-  /* 정점선 — 형질 100 이 막대 어디인가. 시대가 오르면 천장이 넓어져 이 금색 선이 왼쪽으로 물러나고,
-     그 오른쪽으로 새로 생긴 여백이 곧 "이번 시대에 더 오를 수 있는 만큼"이다(천장 상승이 눈금으로 읽힌다). */
-  .draft-stat-apexline { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px;
-    background: #FFE27A; box-shadow: 0 0 5px rgba(245,195,59,0.9); border-radius: 1px; }
-  /* 정점을 넘어선 구간 — 그냥 큰 숫자가 아니라 화면에서 다르게 보여야 한다(금빛 + 발광). */
-  .draft-stat-over { position: absolute; top: 0; bottom: 0;
-    background: linear-gradient(90deg, #FFE27A, #FFF6C8); box-shadow: 0 0 8px rgba(255,226,122,0.8); }
   .draft-stat-gain { position: absolute; top: 0; bottom: 0; border-radius: 0 4px 4px 0;
     background: rgba(143,209,79,0.3); border: 1px dashed rgba(143,209,79,0.7); box-sizing: border-box; }
   .draft-stat-loss { position: absolute; top: -1px; bottom: -1px; border-radius: 2px; background: rgba(232,92,67,0.55); }
   .draft-stat-val { font-family: var(--font-mono); font-size: 10px; width: 76px; text-align: right; flex: none;
     font-variant-numeric: tabular-nums; }
   .draft-stat-val b { font-weight: 400; }
-  /* 정점(만렙) — 이 형질은 100 이고, 다시는 안 내려간다. 금빛으로 한눈에 도착점임을 알린다. */
-  .draft-stat.apex .draft-stat-fill { background: linear-gradient(90deg, #F5C33B, #FFE27A) !important;
-    box-shadow: 0 0 8px rgba(245,195,59,0.65); }
-  .draft-apex-tag { display: inline-block; font-family: var(--font-ui); font-size: 8.5px; font-weight: 800;
-    color: #241C10; background: linear-gradient(180deg,#FFE27A,#F5C33B); border-radius: 5px;
-    padding: 1px 4px; margin-left: 3px; vertical-align: 1px; }
-  /* 정점 형질이 뭘 열었는지 한 줄 — 도감을 안 읽어도 화면에서 알아채게 한다. */
-  .draft-apex-boons { margin-top: 9px; padding: 8px 10px; border-radius: 9px;
-    background: rgba(245,195,59,0.09); border: 1px solid rgba(245,195,59,0.26);
-    font-size: 10.5px; line-height: 1.5; color: #F5C33B; }
-  .draft-apex-boons b { font-weight: 700; }
+  /* 열쇠·듀오·유지비 줄 · 막대 아래에 짧게. */
+  .draft-build-lines { display: flex; flex-direction: column; gap: 5px; margin-top: 13px;
+    font-size: 11.5px; color: var(--sub); word-break: keep-all; }
+  .draft-build-lines b { font-weight: 400; color: var(--ink); }
 
   .draft-legend { display: flex; align-items: center; gap: 7px; margin-top: 14px;
     font-size: 11px; color: var(--sub); line-height: 1.4; }

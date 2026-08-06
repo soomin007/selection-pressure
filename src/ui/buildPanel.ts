@@ -1,16 +1,26 @@
-// 빌드 패널 — "내가 고른 형질(카드)". 종 한 줄 요약 + 현재 형질값 + 고른 카드 목록.
-// 시안 A(화면 정리, 2026-07-20): 상시 표시가 아니라 HUD 의 "내 형질" 칩이 토글하는 패널이 됐다.
-// 위치도 우상단이 아니라 칩 아래(좌상단, 종 안내 패널과 같은 자리 — 서로 배타적으로 열린다).
+// 빌드 패널 · "내 종이 지금 어디까지 왔나". HUD 의 "내 형질" 칩이 토글하는 패널(좌상단).
+// v8: 형질 14개 나열을 버리고 **범주 5개의 티어 + 가진 열쇠 + 켜진 듀오 + 유지비 배수**를 보여준다.
+// 목록이 짧아져 스크롤 없이 다 들어간다. 문턱·수치는 전부 sim/tiers 파생값만 읽는다(단일 진실).
 // 캔버스 위 HTML 오버레이(인라인 스타일).
 
-import { APEX_TRAITS, TRAIT_CEILING, TRAIT_KEYS, TRAIT_LABELS, traitCeiling, type Traits } from "@/sim/genome";
-import { ABILITY_KEYS, abilityFillPct, traitColor, traitWord } from "@/ui/traitDisplay";
+import type { Genome } from "@/sim/genome";
+import {
+  CATEGORIES,
+  CATEGORY_LABELS,
+  KEY_LABELS,
+  KEY_NAMES,
+  MAX_TIER,
+  TIER_ROMAN,
+  activeDuos,
+  pipsToNext,
+  tierOf,
+} from "@/sim/tiers";
+import { categoryColor, pipPct, tierTrackBackground } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
-import { huntingBuild, dietNote } from "@/game/runReport";
 
 export interface BuildData {
   headline: string; // "빠른 잡식성" 같은 종 한 줄 요약
-  traits: Traits; // 현재 게놈의 형질값(카드 누적 결과) — "내 종이 지금 얼마인지"
+  genome: Genome; // 현재 종 게놈 · 도장(티어)·열쇠·파생 유지비를 여기서 읽는다
   cards: string[]; // 이번 런에서 고른 카드 이름들
 }
 
@@ -23,9 +33,8 @@ export function createBuildPanel(): BuildPanel {
   ensurePanelStyles(); // :root 토큰 보장
   const isDesktop = document.body?.dataset.layout === "desktop";
   const root = document.createElement("div");
-  // 화면 상단 왼쪽, 목표 한 줄 아래로 펼쳐지는 자리.
-  // 형질·카드가 쌓이면 길어지므로 최대 높이를 고정 px 로 가두고 안에서 스크롤(vh 는 데스크톱
-  // UI 확대 zoom 아래에서 배율만큼 커져 화면을 넘친다 — panelStyles 주석 참고).
+  // 화면 상단 왼쪽, 목표 한 줄 아래로 펼쳐지는 자리. v8 에서 내용이 짧아져 보통은 스크롤이 없지만,
+  // 고른 카드가 많이 쌓이는 후반 대비로 최대 높이 안전망은 남긴다.
   root.style.cssText =
     (isDesktop
       ? "position:fixed; top:140px; left:16px;"
@@ -42,101 +51,84 @@ export function createBuildPanel(): BuildPanel {
   headline.style.cssText =
     "color:var(--lime); font-family:var(--font-title); font-size:12.5px; margin-bottom:7px; word-break:keep-all;";
 
-  // 사냥형(육식 빌드) 줄 — 순수 육식이면 무슨 사냥법인지, 잡식이면 "육식이면 켜진다"를 알린다. 사냥형이
-  // 아니면 숨긴다. (사용자 지적: 육식 성향 구분이 안 보임 + diet<70 이면 사냥 특기가 조용히 꺼지는 함정.)
-  const huntLine = document.createElement("div");
-  huntLine.style.cssText = "font-size:11px; margin-bottom:7px; word-break:keep-all; display:none;";
+  // 범주 5 티어 · 막대의 눈금(3·8·14·21)이 다음 문턱까지의 거리를 그대로 보여준다.
+  const tiersLabel = document.createElement("div");
+  tiersLabel.textContent = "범주 티어";
+  tiersLabel.style.cssText =
+    "color:var(--faint); font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; margin:2px 0 5px;";
+  const tiersBox = document.createElement("div");
+  tiersBox.style.cssText = "margin-bottom:8px;";
 
-  // 식성 효율 줄 — 식성을 바꾸면 뭐가 좋아지는지(특화=효율 최고 / 잡식=둘 다 하되 손해). "잡식이 당연히
-  // 최고"라는 오해를 푼다(사용자 지적). 늘 보인다(식성은 모든 종이 가진 형질).
-  const dietLine = document.createElement("div");
-  dietLine.style.cssText = "font-size:10.5px; color:var(--faint); margin-bottom:7px; word-break:keep-all;";
-
-  // 현재 형질값 readout — "내 종이 지금 얼마인지". 카드 누적 결과를 그대로 보여준다.
-  const traitsLabel = document.createElement("div");
-  traitsLabel.textContent = "현재 형질";
-  traitsLabel.style.cssText = "color:var(--faint); font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; margin:2px 0 5px;";
-  const traitsBox = document.createElement("div");
-  traitsBox.style.cssText = "margin-bottom:8px;";
+  // 열쇠 · 듀오 · 유지비.
+  const keysLine = document.createElement("div");
+  keysLine.style.cssText = "margin-bottom:4px; color:var(--sub); word-break:keep-all;";
+  const duosLine = document.createElement("div");
+  duosLine.style.cssText = "margin-bottom:4px; color:var(--sub); word-break:keep-all;";
+  const upkeepLine = document.createElement("div");
+  upkeepLine.style.cssText = "margin-bottom:8px; color:var(--sub);";
 
   const cardsLabel = document.createElement("div");
   cardsLabel.textContent = "고른 카드";
-  cardsLabel.style.cssText = "color:var(--faint); font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; margin:2px 0 5px;";
+  cardsLabel.style.cssText =
+    "color:var(--faint); font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; margin:2px 0 5px;";
 
   const list = document.createElement("div");
-  body.append(headline, huntLine, dietLine, traitsLabel, traitsBox, cardsLabel, list);
+  body.append(headline, tiersLabel, tiersBox, keysLine, duosLine, upkeepLine, cardsLabel, list);
 
   root.appendChild(body);
   document.body.appendChild(root);
 
   const setData = (data: BuildData): void => {
     headline.textContent = data.headline;
+    const g = data.genome;
 
-    // 사냥형 라벨 — 켜졌으면 초록으로 유형, 잡식이라 꺼졌으면 호박빛으로 "육식이면 켜짐" 안내.
-    const hunt = huntingBuild(data.traits);
-    if (!hunt) {
-      huntLine.style.display = "none";
-    } else {
-      huntLine.style.display = "block";
-      if (hunt.active) {
-        huntLine.textContent = `사냥형 · ${hunt.label}`;
-        huntLine.style.color = "var(--lime)";
-      } else {
-        huntLine.textContent = `${hunt.label} 소질 · 육식으로 기울면 특기가 켜집니다`;
-        huntLine.style.color = "var(--amber)";
-      }
-    }
-    // 식성 효율 — "잡식이 최고"라는 오해를 푼다(특화=효율 최고 / 잡식=둘 다 하되 손해).
-    dietLine.textContent = `식성: ${dietNote(data.traits.diet)}`;
-
-    // 현재 형질값: 7개를 값+미니 막대로. 식성만 범주(초식/잡식/육식) 텍스트.
-    traitsBox.replaceChildren();
-    for (const key of TRAIT_KEYS) {
-      const v = data.traits[key];
-      const isAbility = ABILITY_KEYS.has(key);
+    // 범주 5: 이름 + 티어(로마 숫자) + 도장 막대(문턱 눈금). 다음 문턱까지 남은 칸도 함께.
+    tiersBox.replaceChildren();
+    for (const cat of CATEGORIES) {
+      const pips = g.pips[cat];
+      const t = tierOf(pips);
       const row = document.createElement("div");
-      row.style.cssText = "margin-top:3px;";
+      row.style.cssText = "margin-top:4px;";
       const top = document.createElement("div");
       top.style.cssText = "display:flex; justify-content:space-between; gap:6px;";
       const name = document.createElement("span");
-      name.textContent = TRAIT_LABELS[key];
-      name.style.cssText = "color:var(--sub);";
+      name.textContent = CATEGORY_LABELS[cat];
+      name.style.cssText = `color:${t > 0 ? categoryColor(cat) : "var(--sub)"};`;
       const val = document.createElement("span");
-      // 모든 형질을 단계 단어로 통일 — 날값(속도 68) 대신 약함/보통/강함/막강/최강(능력형·식성·대사는 각 규칙).
-      val.textContent = traitWord(key, v);
-      val.style.cssText = "color:var(--ink); font-family:var(--font-mono); font-variant-numeric:tabular-nums;";
+      const remain = pipsToNext(pips);
+      val.textContent =
+        t >= MAX_TIER
+          ? TIER_ROMAN[MAX_TIER]
+          : `${TIER_ROMAN[t] || "·"}${remain > 0 && pips > 0 ? ` · ${remain}칸` : ""}`;
+      val.style.cssText =
+        "color:var(--ink); font-family:var(--font-mono); font-size:11px; font-variant-numeric:tabular-nums;";
       top.append(name, val);
       row.appendChild(top);
-      if (key !== "diet") {
-        const track = document.createElement("div");
-        const ceiling = traitCeiling(key);
-        // 눈금 한 칸 = 형질 10 (드래프트 막대와 같은 규칙 · 두 화면이 다른 자로 재면 안 된다).
-        // 값형질만 눈금을 준다 — 능력형은 값이 아니라 단계라 10 이라는 자가 뜻을 갖지 않는다.
-        const ticks = isAbility
-          ? ""
-          : ` background-image:linear-gradient(90deg, rgba(255,255,255,0.14) 0 1px, transparent 1px);` +
-            ` background-repeat:repeat-x; background-size:${(10 / ceiling) * 100}% 100%;`;
-        track.style.cssText =
-          "margin-top:2px; height:4px; border-radius:3px; background-color:rgba(255,255,255,0.06);" +
-          " overflow:hidden; position:relative;" + ticks;
-        const fill = document.createElement("div");
-        // 능력형은 눈금(세분 능력=값 그대로, 나머지=0/50/100%), 값형질은 상한 기준 비율. 색은 형질 6색 매핑.
-        const pct = isAbility ? abilityFillPct(key, v) : Math.round(Math.max(0, Math.min(100, (v / ceiling) * 100)));
-        fill.style.cssText = `height:100%; width:${pct}%; border-radius:3px; background:${traitColor(key)};`;
-        track.appendChild(fill);
-        // 정점선 — 형질 100 이 어디인가. 천장이 100 위로 열린 시대에만(첫 시대는 막대 끝과 같은 자리).
-        if (APEX_TRAITS.has(key) && ceiling > TRAIT_CEILING[key]) {
-          const mark = document.createElement("div");
-          const apexPct = (TRAIT_CEILING[key] / ceiling) * 100;
-          mark.style.cssText =
-            `position:absolute; top:0; bottom:0; left:${apexPct}%; width:2px; margin-left:-1px;` +
-            " background:#FFE27A; box-shadow:0 0 4px rgba(245,195,59,0.9);";
-          track.appendChild(mark);
-        }
-        row.appendChild(track);
-      }
-      traitsBox.appendChild(row);
+
+      const track = document.createElement("div");
+      track.style.cssText =
+        "margin-top:2px; height:4px; border-radius:3px; background-color:rgba(255,255,255,0.06);" +
+        ` overflow:hidden; position:relative; background-image:${tierTrackBackground()};`;
+      const fill = document.createElement("div");
+      fill.style.cssText =
+        `height:100%; width:${pipPct(pips)}%; border-radius:3px; background:${categoryColor(cat)};` +
+        `opacity:${t > 0 ? 1 : 0.55};`;
+      track.appendChild(fill);
+      row.appendChild(track);
+      tiersBox.appendChild(row);
     }
+
+    // 열쇠 · 있으면 이름을, 없으면 "없음"을. 열쇠의 세기는 짝지어진 범주 티어가 정한다(tiers.ts).
+    const owned = KEY_NAMES.filter((k) => g.keys[k]).map((k) => KEY_LABELS[k]);
+    keysLine.textContent = `열쇠: ${owned.join(" · ") || "없음"}`;
+
+    // 듀오 · 두 범주가 함께 3단 이상일 때 켜지는 합체 형질. 없어도 줄은 보여 "이런 게 있다"를 알린다.
+    const duos = activeDuos(g.pips);
+    duosLine.textContent = `듀오: ${duos.map((d) => d.name).join(" · ") || "없음"}`;
+    duosLine.title = duos.map((d) => `${d.name}: ${d.desc}`).join("\n");
+
+    // 유지비 배수 · 티어 합이 올린 청구서. 파생값(traits.upkeep)을 그대로 읽는다.
+    upkeepLine.textContent = `유지비 ×${g.traits.upkeep.toFixed(2)}`;
 
     list.replaceChildren();
     if (data.cards.length === 0) {

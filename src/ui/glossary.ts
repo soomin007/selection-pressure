@@ -1,5 +1,5 @@
 // 대백과 (2단계). 첫 화면은 분류별 항목 버튼, 누르면 그림과 설명, 실제 게임 수치가 나온다.
-// 형질 도감(기본 50 + 수치 표) · 생물 도감(내 종+야생) · 위협 도감(보스·대멸종) · 처음이라면(튜토리얼).
+// 형질 도감(범주·티어·열쇠·듀오) · 생물 도감(내 종+야생) · 위협 도감(보스·대멸종) · 처음이라면(튜토리얼).
 // 자족적 HTML 오버레이. 로비, 일시정지에서 연다. sim 과 무관(읽기 전용).
 // 문구 규칙: 쉬운 말, 한글 사이 em dash 금지(마침표·쉼표·줄바꿈으로 대신).
 
@@ -7,12 +7,32 @@ import { ensurePanelStyles } from "@/ui/panelStyles";
 import {
   CARD_POOL,
   cardRarity,
+  cardSummary,
   rarityOdds,
   cardPoolFor,
   RARITY_BOOST_FULL_LEVEL,
   type Card,
   type Rarity,
 } from "@/game/cards";
+import {
+  CATEGORIES,
+  CATEGORY_DESC,
+  CATEGORY_LABELS,
+  DUOS,
+  DUO_TIER,
+  KEY_DESC,
+  KEY_LABELS,
+  KEY_NAMES,
+  KEY_PARENT,
+  MAX_KEYS,
+  MAX_TIER,
+  TIER_ROMAN,
+  TIER_STEPS,
+  UPKEEP_PER_TIER,
+  pipsForTier,
+  tierLine,
+  type Category,
+} from "@/sim/tiers";
 import { loadMeta, metaLevel, UNLOCK_TIERS } from "@/game/meta";
 import {
   ACHIEVEMENTS,
@@ -23,7 +43,7 @@ import {
   type Achievement,
 } from "@/game/achievements";
 import { RARITY_STYLE, withAlpha } from "@/ui/rarity";
-import { cardEffectChips, chipColor, dominantTrait, traitColor } from "@/ui/traitDisplay";
+import { cardAccent } from "@/ui/traitDisplay";
 
 export interface Glossary {
   show: () => void;
@@ -133,200 +153,94 @@ const SVG = {
     '<svg viewBox="0 0 140 90"><path d="M54 22 h32 v14 a16 16 0 0 1 -32 0 z" fill="#ffd27a" stroke="#b8923a" stroke-width="2"/><rect x="64" y="52" width="12" height="12" fill="#ffd27a"/><rect x="54" y="64" width="32" height="8" rx="2" fill="#b8923a"/></svg>',
 };
 
+
+// ── 형질 도감(v8) 항목 · 문턱·효과·대가 문구는 전부 sim/tiers 의 상수·함수에서 그대로 가져와
+//    만든다(수치를 여기 다시 적으면 두 곳에 적힌 규칙이 조용히 어긋난다). ──
+
+const categorySvg: Record<Category, string> = {
+  fang: SVG.attack,
+  leg: SVG.speed,
+  eye: SVG.vision,
+  hide: SVG.metabolism,
+  herd: SVG.herding,
+};
+
+/** 범주 하나의 도감 항목 · 티어 사다리(무엇이 켜지나)와 대가(무엇이 커지나)를 tierLine 에서 만든다. */
+function categoryEntry(cat: Category): Entry {
+  const rows: Row[] = [];
+  for (let t = 1; t <= MAX_TIER; t += 1) {
+    rows.push({ k: `${TIER_ROMAN[t]} (도장 ${pipsForTier(t)})`, v: tierLine(cat, t).gain, bar: t / MAX_TIER });
+  }
+  return {
+    term: CATEGORY_LABELS[cat],
+    svg: categorySvg[cat],
+    desc: CATEGORY_DESC[cat],
+    rows,
+    note:
+      `대가도 함께 커집니다. ${TIER_ROMAN[1]}에서 「${tierLine(cat, 1).cost}」, ` +
+      `${TIER_ROMAN[MAX_TIER]}에서는 「${tierLine(cat, MAX_TIER).cost}」.`,
+  };
+}
+
+const READING_ENTRY: Entry = {
+  term: "도장과 티어 읽는 법",
+  svg: SVG.scale,
+  desc:
+    "카드는 다섯 범주에 도장을 찍습니다. 도장이 문턱에 닿으면 티어가 하나 오르고, 그 순간에만 종이 실제로 강해집니다. " +
+    "문턱 사이의 도장은 다음 계단을 위한 저축이라, 화면의 칩이 「몇 칸 남았는지」를 늘 알려줍니다.",
+  rows: TIER_STEPS.map((s, i) => ({
+    k: `${TIER_ROMAN[i + 1]} 티어`,
+    v: `도장 ${s}개부터`,
+    bar: s / (TIER_STEPS[TIER_STEPS.length - 1] as number),
+  })),
+  note:
+    "위로 갈수록 계단이 멀어집니다. " +
+    `그리고 티어 합 1마다 유지비 배수가 ${UPKEEP_PER_TIER} 씩 올라, 많이 가진 종은 많이 먹어야 합니다.`,
+};
+
+const KEYS_ENTRY: Entry = {
+  term: "열쇠 (능력)",
+  svg: SVG.wings,
+  desc:
+    "수영·비행·초음파 같은 능력은 열쇠입니다. 있거나 없거나 둘 중 하나이고, 전설 카드 한 장으로 열립니다. " +
+    "세기는 괄호에 적힌 범주의 티어가 그대로 정합니다. 그 범주를 키우면 열쇠도 함께 강해집니다.",
+  rows: KEY_NAMES.map((k) => ({ k: `${KEY_LABELS[k]} (${CATEGORY_LABELS[KEY_PARENT[k]]})`, v: KEY_DESC[k] })),
+  note: `한 종이 가질 수 있는 열쇠는 ${MAX_KEYS}개까지입니다. 상한에 닿으면 열쇠 카드가 더는 나오지 않습니다.`,
+};
+
+const DUOS_ENTRY: Entry = {
+  term: "듀오 (합체 형질)",
+  svg: SVG.herding,
+  desc:
+    `두 범주가 함께 ${TIER_ROMAN[DUO_TIER]} 이상이 되면 저절로 켜지는 합체 형질입니다. 카드가 따로 없습니다. ` +
+    "두 기둥을 깊게 판 종만 닿는 자리이고, 켜질 수 있는 듀오는 드래프트 화면이 미리 예고합니다.",
+  rows: DUOS.map((d) => ({ k: `${d.name} · ${CATEGORY_LABELS[d.a]}+${CATEGORY_LABELS[d.b]}`, v: d.desc })),
+};
+
+const SIZE_ENTRY: Entry = {
+  term: "몸집",
+  svg: SVG.scale,
+  desc:
+    "몸집은 고르는 축이 아니라 나머지 선택의 결과입니다. 가죽과 이빨을 키우면 커지고, 다리와 무리를 키우면 작아집니다. " +
+    "크면 좀처럼 잡아먹히지 않지만 느리고 많이 먹으며, 작으면 그 반대입니다. 화면에서 생물 크기로 바로 보입니다.",
+};
+
 const SECTIONS: readonly Section[] = [
   {
     title: "형질 도감",
-    intro: "형질은 한 종을 이루는 저울입니다. 상한은 100입니다.\n값 형질(속도·시야·공격력·번식력·몸집·대사)은 50에서 시작해 카드로 키우며, 0~100 숫자로 봅니다.\n능력 형질(무리 성향·은신·수영·날개·초음파·독침·원거리)은 처음엔 없고, 카드로 열어야 생깁니다. 없음·보통·강함 세 단계로 봅니다.\n높이 오를수록 더 올리기 어려워집니다. 대신 100에 닿으면 그 형질의 약점이 사라집니다(정점).",
-    entries: [
-      {
-        term: "수치 읽는 법",
-        svg: SVG.scale,
-        desc: "속도·시야 같은 형질은 0에서 100 사이이고, 모든 종은 50(가운데)에서 시작합니다. 카드로 갈고 닦으면 100까지 오릅니다.",
-        note: '예를 들어 "속도 +9" 카드는 속도를 9 올린다는 뜻입니다. 수영·날개·독처럼 능력을 켜는 형질은 숫자가 아니라 없음·보통·강함으로 나뉩니다. 대사·식성은 좋고 나쁨이 없어(높낮이·초식/육식) 환경이 유불리를 정합니다.',
-      },
-      {
-        term: "속도",
-        svg: SVG.speed,
-        desc: "빨리 움직여 먹이를 먼저 차지하고, 추격자에게서 도망칩니다.",
-        rows: [
-          { k: "0 (가장 느림)", v: "1초에 약 20", bar: 0.28 },
-          { k: "50 (기본)", v: "약 46", bar: 0.65, base: true },
-          { k: "100 (가장 빠름)", v: "약 71 (3.5배)", bar: 1 },
-        ],
-        note: "막대는 가장 빠른 종(1.0) 대비 속도입니다. 거리는 화면 기준이며, 화면 너비는 540입니다.",
-      },
-      {
-        term: "시야",
-        svg: SVG.vision,
-        desc: "먹이와 위험을 얼마나 멀리서 알아채는지 정합니다. 보는 방향 앞쪽 부채꼴로 봅니다(등 뒤는 사각). 관전 중 내 종에 파란 부채꼴로 보이고, 밤이나 수풀에 들어가면 시야가 줄어 부채꼴이 작아집니다.",
-        rows: [
-          { k: "0", v: "반경 0 (못 봄)", bar: 0 },
-          { k: "50 (기본)", v: "반경 100", bar: 0.5, base: true },
-          { k: "100", v: "반경 200", bar: 1 },
-        ],
-        note: "화면 너비가 540이니, 시야 100이면 가로의 약 1/3을 봅니다. 시야 0이면 아무것도 못 보고, 밤·수풀 안에선 더 줄어듭니다.",
-      },
-      {
-        term: "초음파",
-        svg: SVG.echo,
-        desc: "눈 대신 소리로 사방을 감지합니다. 시야는 앞만 보고 밤·수풀에서 줄지만, 초음파는 사방(등 뒤도) 빛·각도·어둠과 무관하게 근거리에서 알아챕니다. 시야와 트레이드오프. 초음파를 키우면 시야가 줄어듭니다.",
-        rows: [
-          { k: "0", v: "초음파 없음", bar: 0 },
-          { k: "50", v: "전방위 반경 65", bar: 0.5 },
-          { k: "100", v: "전방위 반경 130", bar: 1 },
-        ],
-        note: "시야 0이어도 초음파만으로 살 수 있습니다(박쥐·두더지형). 대신 초음파는 시야보다 가까이만 봅니다.",
-      },
-      {
-        term: "대사",
-        svg: SVG.metabolism,
-        desc: "에너지를 쓰는 속도입니다. 높으면 자주 먹어야 하지만 추위에 강하고, 더위와 독에는 약합니다.",
-        rows: [
-          { k: "0 (느린 대사)", v: "1틱에 0.065 소모, 추위에 약함", bar: 0.33 },
-          { k: "50 (기본)", v: "0.13 소모", bar: 0.67, base: true },
-          { k: "100 (뜨거운 피)", v: "0.195 소모, 추위에 강함", bar: 1 },
-        ],
-      },
-      {
-        term: "번식력",
-        svg: SVG.fertility,
-        desc: "새끼를 얼마나 자주 치는지 정합니다. 잃은 수를 빨리 메웁니다.",
-        rows: [
-          { k: "0", v: "1틱에 0.3% 확률", bar: 0.23 },
-          { k: "50 (기본)", v: "1틱에 0.8%", bar: 0.62, base: true },
-          { k: "100", v: "1틱에 1.3% (약 4배)", bar: 1 },
-        ],
-        note: "에너지가 78 이상일 때, 1틱마다(1초에 30틱) 위 확률로 새끼를 칩니다.",
-      },
-      {
-        term: "공격력",
-        svg: SVG.attack,
-        desc: "사냥 성공률을 높이고, 나보다 약한 포식자는 무서워하지 않아 덜 쫓깁니다.",
-        rows: [
-          { k: "상대와 같음", v: "사냥 성공 50%", bar: 0.5, base: true },
-          { k: "상대보다 20 높음", v: "약 76%", bar: 0.76 },
-          { k: "상대보다 20 낮음", v: "약 24%", bar: 0.24 },
-        ],
-        note: "막대는 사냥 성공 확률입니다.",
-      },
-      {
-        term: "정점 (100)",
-        svg: SVG.scale,
-        desc: "값 형질이 100에 닿으면 그 형질의 약점이 사라집니다. 수치가 더 오르는 게 아니라, 규칙에서 벗어납니다.\n한 번 정점에 오른 형질은 다시 내려가지 않습니다. 카드의 대가로도, 세대가 바뀌어도 그대로입니다. 시대를 넘으면 형질을 올릴 수 있는 한계가 100 위로 열립니다. 정점은 끝이 아니라 지나가는 문입니다.",
-        rows: [
-          { k: "속도 100", v: "험한 땅도 걸음을 늦추지 못하고, 아무도 따라잡지 못합니다", bar: 1 },
-          { k: "시야 100", v: "어둠도 수풀도 눈을 가리지 못하고, 뒤도 숨은 것도 보입니다", bar: 1 },
-          { k: "공격력 100", v: "어떤 가죽도 이빨을 막지 못합니다", bar: 1 },
-          { k: "번식력 100", v: "새끼를 쳐도 어미가 덜 지칩니다", bar: 1 },
-          { k: "몸집 100", v: "이미 웬만한 이빨이 안 박힙니다", bar: 1 },
-        ],
-        note: "50을 넘으면 카드로 올리기가 점점 어려워집니다(같은 카드라도 덜 오릅니다). 100은 여러 장을 갈아 넣어야 닿는 값비싼 목표이고, 그만큼 닿으면 보답이 있습니다. 100을 넘어선 뒤로는 그 시대의 한계까지 다시 수월하게 자랍니다.\n딱 하나 예외가 있습니다. 「초음파」처럼 그 감각을 버리겠다고 못 박은 카드는 정점도 지웁니다. 눈이 아무리 좋아도 박쥐가 되기로 했으면 눈은 멉니다.",
-      },
-      {
-        term: "몸집",
-        svg: SVG.scale,
-        desc: "몸의 크기입니다. 크면 좀처럼 잡아먹히지 않지만, 걸음이 무겁고 많이 먹으며 새끼를 적게 칩니다. 작으면 정확히 반대입니다. 화면에서 생물 크기로 바로 보입니다.",
-        rows: [
-          { k: "0 (아주 작음)", v: "빠르고 적게 먹고 많이 낳음. 쉽게 잡아먹힘", bar: 0 },
-          { k: "50 (기본)", v: "보통", bar: 0.5, base: true },
-          { k: "100 (아주 큼)", v: "좀처럼 안 잡아먹힘. 느리고 대식가", bar: 1 },
-        ],
-        note: "공격력이 '잘 죽이는 힘'이라면 몸집은 '안 죽는 힘'입니다. 충분히 크면 이빨이 아예 안 박힙니다. 「커다란 몸」·「작고 날쌘 몸」 카드로 바꿉니다.",
-      },
-      {
-        term: "무리 성향 (능력)",
-        svg: SVG.herding,
-        desc: "빽빽이 뭉쳐 다닙니다. 무리 한가운데 있으면 포식자가 아예 덤비지 않습니다(무리 방어). 대신 뭉쳐 다니느라 먹이를 늦게 찾습니다. 모이면 서로 보온도 합니다.",
-        rows: [
-          { k: "없음 (기본)", v: "혼자 다닙니다. 아무 영향 없음", bar: 0 },
-          { k: "보통", v: "뭉치고 보온합니다", bar: 0.4 },
-          { k: "강함 + 곁에 2마리", v: "포식자가 안 건드립니다", bar: 1 },
-        ],
-        note: "뭉쳐 있어야 방패가 섭니다. 홀로 먹이를 찾아 나선 개체는 잡아먹힙니다. 포식자는 늘 가장자리와 낙오자를 노립니다. 「무리 본능」 카드 한 장으로 열립니다.",
-      },
-      {
-        term: "초음파 (능력)",
-        svg: SVG.echo,
-        desc: "눈이 멀고 귀가 열립니다. 앞을 보는 대신 사방을 듣습니다. 어둠도 수풀도 등 뒤도 막지 못합니다.",
-        rows: [
-          { k: "없음 (기본)", v: "눈으로 앞을 봅니다", bar: 0 },
-          { k: "초음파를 얻으면", v: "시야가 0이 됩니다(눈이 먼다)", bar: 0 },
-          { k: "강함", v: "사방을 멀리까지 듣습니다", bar: 1 },
-        ],
-        note: "「초음파」 카드는 시야를 통째로 가져갑니다. 초음파가 시야보다 순수하게 낫기 때문입니다(전방위 + 어둠·수풀 무시). 둘 다 가지면 시야가 무의미해지므로, 하나를 고르게 했습니다. 대가는 분명합니다. 눈으로 미리 알아채야 하는 위협(그림자 매복자·큰수리) 앞에서 무력해집니다.",
-      },
-      {
-        term: "은신 (능력)",
-        svg: SVG.vision,
-        desc: "몸빛이 둘레를 닮아 포식자가 늦게 발견합니다. 시야의 반대편 축입니다.",
-        rows: [
-          { k: "없음 (기본)", v: "눈에 잘 띕니다", bar: 0 },
-          { k: "강함", v: "코앞에 와서야 들킵니다", bar: 1 },
-        ],
-        note: "두 가지를 못 이깁니다. 소리로 찾는 짐승(초음파)은 속지 않고, 몸이 크면 숨을 데가 없습니다. 즉 몸집과 은신은 한 축의 양끝입니다. 커져서 버티거나, 작게 숨거나 둘 중 하나입니다. 「보호색」 카드로 열립니다.",
-      },
-      {
-        term: "식성",
-        svg: SVG.diet,
-        desc: "무엇을 먹는지입니다. 시작 프리셋에 담겨 정해지고, 반대 성향 카드를 얻으면 잡식이 됩니다.",
-        rows: [
-          { k: "0.35 미만", v: "초식 (식물만)" },
-          { k: "0.35 ~ 0.7", v: "잡식 (둘 다, 가까운 쪽 먼저)" },
-          { k: "0.7 초과", v: "육식 (주로 사냥)" },
-        ],
-      },
-      {
-        term: "수영",
-        svg: SVG.swimming,
-        desc: "바다에 적응하는 정도입니다. 3단계로 봅니다. 충분히 높으면 바다의 먹이를 먹을 수 있습니다. 바다 먹이는 육상 종이 못 먹어 경쟁이 없습니다.",
-        rows: [
-          { k: "없음 (65 미만)", v: "육지만, 바다 먹이 못 먹음", base: true },
-          { k: "보통 (65~89)", v: "수륙양용, 뭍·바다 다 다님" },
-          { k: "강함 (90 이상)", v: "물 전용, 뭍에 못 오름(바다에서만 삶)" },
-        ],
-        note: "지느러미·물갈퀴 발 카드로 키웁니다. 설계도엔 없음/보통/강함 3단계로 보입니다.",
-      },
-      {
-        term: "날개",
-        svg: SVG.wings,
-        desc: "날아서 산과 바다를 넘고 산 위의 고산 먹이를 먹습니다. 지상 종은 산을 못 넘어 못 먹는 무경쟁 틈새입니다. 높이 날아 시야도 넓지만, 계속 날갯짓하느라 배가 빨리 고픕니다. 그리고 늘 공중에 떠 있어서 땅에서 사냥하는 보스는 손도 못 댑니다.",
-        rows: [
-          { k: "65 미만 (기본 0)", v: "못 낢 (산·바다에 막힘)", base: true },
-          { k: "65 이상", v: "산·물을 날아 넘고 고산 먹이 (무경쟁 틈새)" },
-          { k: "65 이상", v: "땅 보스가 못 잡음. 대신 하늘 보스가 노린다" },
-        ],
-        note: "하늘 개척자 프리셋이나 날개·튼튼한 날개 카드로 켭니다. 수영(바다)의 하늘 대칭입니다. 땅 보스를 피하는 대신 하늘의 사냥꾼·말벌 떼가 찾아옵니다. 공짜가 아닙니다.",
-      },
-      {
-        term: "독침",
-        svg: SVG.venom,
-        desc: "몸에 독을 지녀 잡아먹으려는 포식자를 중독시킵니다. 독이 강할수록 당신을 삼킨 포식자는 크게 아프고, 잡아먹어도 영양이 없어 포식자가 당신을 꺼립니다(포식 방어).",
-        rows: [
-          { k: "0 (기본)", v: "독 없음", base: true },
-          { k: "높을수록", v: "잡아먹은 포식자가 크게 중독 → 덜 잡아먹힘" },
-        ],
-        note: "독 살갗·독샘·독 가시 카드나 독 살갗 프리셋으로 키웁니다. 독 걸린 포식자는 보라로 보입니다.",
-      },
-      {
-        term: "원거리",
-        svg: SVG.ranged,
-        desc: "먹잇감에 다가가지 않고 멀리서 가시를 쏩니다(붙지 않고 사거리에서 멈춰 발사). 도망·반격 전에 안전하게 잡습니다.",
-        rows: [
-          { k: "0 (기본)", v: "근접만 (사거리 12)", base: true },
-          { k: "100", v: "사거리 34 (약 3배), 멀찍이서 발사" },
-        ],
-        note: "가시 쏘기·독 가시 카드나 원거리 사냥꾼 프리셋으로 키웁니다. 겨눈 먹잇감으로 노란 발사선이 보입니다.",
-      },
-    ],
+    intro:
+      "이 게임의 성장은 다섯 범주(이빨·다리·눈·가죽·무리)에 도장을 모으는 일입니다.\n" +
+      `문턱(도장 ${TIER_STEPS.join(" · ")})에 닿을 때마다 티어가 I 에서 ${TIER_ROMAN[MAX_TIER]} 까지 오르고, 효과는 문턱을 넘는 순간에만 켜집니다.\n` +
+      "범주마다 키울수록 얻는 것과 잃는 것이 함께 커집니다. 어느 범주도 항상 정답이 아닙니다.",
+    entries: [READING_ENTRY, ...CATEGORIES.map(categoryEntry), KEYS_ENTRY, DUOS_ENTRY, SIZE_ENTRY],
   },
   {
     title: "카드 도감",
     intro:
-      // (마크다운 별표를 쓰면 안 된다 — 이 문구는 textContent 로 그려져 별표가 그대로 보인다.)
-      "카드는 두 갈래입니다. 공통 카드는 어느 종이든 뽑고, 갈래 전용 카드는 그 종으로 시작해야만 나옵니다.\n" +
-      "드래프트 3장 중 1장은 늘 내 갈래의 전용 카드입니다(「내 갈래」 배지). 다른 갈래의 전용 카드는 이번 판에 아예 보이지 않으니, 시작 종을 고르는 것이 곧 이번 판에 갈 수 있는 길을 고르는 일입니다.\n" +
-      "다만 무리 본능·보호색·지느러미·날개·초음파·독 살갗·가시 쏘기 같은 능력을 여는 카드는 공통입니다. 걷던 종이 날개를 얻는 진화는 어느 갈래에서든 일어날 수 있습니다.\n" +
-      "아래 확률은 공통 카드 기준입니다. 카드마다 희귀도가 있어, 희귀할수록 후보로 잘 안 뜨고 드래프트에서도 더 늦게 등장합니다. 무리가 세대를 거듭할수록 높은 등급이 더 자주 찾아옵니다.",
+      // (마크다운 별표를 쓰면 안 된다 · 이 문구는 textContent 로 그려져 별표가 그대로 보인다.)
+      "카드는 범주에 도장을 찍거나(대부분) 열쇠 하나를 엽니다(전설). 그 밖의 일은 하지 않습니다.\n" +
+      "카드 풀 전부가 어느 종에게나 나옵니다. 다만 내가 이미 판 방향의 카드가 조금 더 자주 뜹니다. 보장이 아니라 확률이라, 가끔 내 길이 하나도 안 뜨는 드래프트도 있습니다.\n" +
+      "카드마다 희귀도가 있어, 희귀할수록 후보로 잘 안 뜨고 드래프트에서도 더 늦게 등장합니다. 무리가 세대를 거듭할수록 높은 등급이 더 자주 찾아옵니다.",
     entries: [
       {
         term: "희귀도와 확률",
@@ -338,27 +252,27 @@ const SECTIONS: readonly Section[] = [
       {
         term: "흔함",
         rarity: "common",
-        desc: "대가 없이 한 가지가 조금 오릅니다. 안전하게 기틀을 다질 때 고릅니다.",
+        desc: "한 범주에 도장을 안전하게 찍습니다. 기틀을 다질 때 고릅니다.",
       },
       {
         term: "드묾",
         rarity: "uncommon",
-        desc: "두 가지가 함께 오르거나, 작은 대가를 치르고 하나를 더 올립니다.",
+        desc: "두 범주에 나눠 찍거나, 주 범주와 부 범주에 함께 찍습니다.",
       },
       {
         term: "귀함",
         rarity: "rare",
-        desc: "하나가 크게 오르는 대신 뚜렷한 대가가 따릅니다. 방향을 정하는 카드입니다.",
+        desc: "한 범주에 크게 찍습니다. 문턱을 한 장에 넘기기 좋은, 방향을 정하는 카드입니다.",
       },
       {
         term: "아주 귀함",
         rarity: "epic",
-        desc: "무리를 한쪽으로 크게 기울입니다. 다가오는 위협과 맞으면 판을 가릅니다.",
+        desc: "가장 크게 찍거나, 다른 범주의 도장을 내놓는 맞바꿈입니다. 판을 한쪽으로 크게 기울입니다.",
       },
       {
         term: "전설",
         rarity: "legendary",
-        desc: "종의 정체성 자체가 바뀝니다. 뜨면 카드가 금빛으로 터집니다.",
+        desc: "열쇠(능력)를 엽니다. 종의 정체성 자체가 바뀝니다. 뜨면 카드가 금빛으로 터집니다.",
         note: "날개·초음파·독·원거리 전설은 플레이어 레벨이 올라야 열립니다. 잠긴 카드는 후보에 아예 안 나옵니다.",
       },
     ],
@@ -423,9 +337,9 @@ const SECTIONS: readonly Section[] = [
       {
         term: "내 종",
         svg: creature("#6cc24a"),
-        desc: "당신이 기르는 종입니다. 시작 프리셋(균형 잡식·다산 초식 무리·날쌘 육식 사냥꾼·느긋한 정찰자·바다 개척자·하늘 개척자·독 살갗·원거리 사냥꾼)으로 출발 방향을 정하고, 카드로 계속 특화시키세요.",
+        desc: "당신이 기르는 종입니다. 시작 갈래로 출발 도장의 배분과 시작 열쇠를 정하고, 카드로 계속 특화시키세요.",
         rows: [
-          { k: "시작", v: "프리셋 8종 중 하나" },
+          { k: "시작", v: "시작 갈래 중 하나" },
           { k: "시작 수", v: "36마리" },
           { k: "특징", v: "프리셋으로 출발, 카드로 무엇이든 될 수 있음" },
         ],
@@ -592,8 +506,8 @@ const SECTIONS: readonly Section[] = [
       {
         term: "카드 고르기",
         svg: SVG.card,
-        desc: "카드는 형질을 올리거나 내립니다. 한 판 동안 누적되고, 새 판에서 리셋됩니다. 트레이드오프 카드는 한쪽을 크게 올리는 대신 다른 쪽을 내립니다.",
-        note: "형질 도감에서 각 형질이 실제로 어떤 효과인지 미리 볼 수 있습니다.",
+        desc: "카드는 범주에 도장을 찍습니다. 도장이 문턱에 닿아 티어가 오르는 순간에만 종이 강해집니다. 카드에 붙은 칩이 이번 장으로 문턱을 넘는지, 몇 칸 남는지를 미리 알려줍니다. 한 판 동안 누적되고, 새 판에서 리셋됩니다.",
+        note: "형질 도감에서 각 범주의 티어가 실제로 무엇을 켜는지 미리 볼 수 있습니다.",
       },
       {
         term: "위협에 대비하기",
@@ -632,19 +546,17 @@ function pct(v: number): string {
   return `${p.toFixed(2)}%`;
 }
 
+/** 카드 한 줄 요약 칩 · cardSummary(단일 진실)를 그대로 보여준다. 예: 「가죽 +3 · 다리 −1」 */
 function chipRow(card: Card): HTMLElement {
   const wrap = document.createElement("div");
-  wrap.style.cssText = "display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;";
-  for (const c of cardEffectChips(card)) {
-    const chip = document.createElement("span");
-    // 대사·식성은 중립색 — 방향은 알리되 이득/손해로 물들이지 않는다.
-    const color = chipColor(c.tone);
-    chip.textContent = `${c.up ? "▲" : "▼"} ${c.text}`;
-    chip.style.cssText =
-      `display:inline-flex; align-items:center; font-family:var(--font-mono); font-size:10.5px;` +
-      `border-radius:8px; padding:3px 8px; color:${color}; background:${withAlpha(color, 0.13)};`;
-    wrap.appendChild(chip);
-  }
+  wrap.style.cssText = "display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; max-width:100%;";
+  const chip = document.createElement("span");
+  const color = cardAccent(card);
+  chip.textContent = cardSummary(card);
+  chip.style.cssText =
+    `display:inline-flex; align-items:center; font-family:var(--font-mono); font-size:10.5px;` +
+    `border-radius:8px; padding:3px 8px; color:${color}; background:${withAlpha(color, 0.13)};`;
+  wrap.appendChild(chip);
   return wrap;
 }
 
@@ -734,7 +646,7 @@ function oddsRows(pool: readonly Card[], runLevel: number): HTMLElement {
     name.style.cssText = `color:${style.color}; font-size:13.5px;`;
     left.append(dot, name);
     const v = document.createElement("span");
-    v.textContent = `3장 중 ${pct(o.inDraft)}`;
+    v.textContent = `3장 중 ${pct(o.inDraw)}`;
     v.style.cssText = "color:var(--ink); font-family:var(--font-mono); font-size:13px; text-align:right;";
     head.append(left, v);
     row.appendChild(head);
@@ -743,7 +655,7 @@ function oddsRows(pool: readonly Card[], runLevel: number): HTMLElement {
     track.style.cssText =
       "margin-top:7px; height:7px; border-radius:4px; background:rgba(255,255,255,0.06); overflow:hidden;";
     const fill = document.createElement("div");
-    fill.style.cssText = `height:100%; width:${(o.inDraft * 100).toFixed(1)}%; border-radius:4px; background:${style.color};`;
+    fill.style.cssText = `height:100%; width:${(o.inDraw * 100).toFixed(1)}%; border-radius:4px; background:${style.color};`;
     track.appendChild(fill);
     row.appendChild(track);
 
@@ -836,7 +748,7 @@ function buildRarityList(rarity: Rarity): HTMLElement {
   summary.textContent =
     o.count === 0
       ? `이 등급은 아직 한 장도 안 열렸습니다 (전체 ${cards.length}장).`
-      : `열린 ${o.count}장 · 후보 3장에 뜰 확률 ${pct(o.inDraft)} (세대 1) → ${pct(top.inDraft)} (세대 ${RARITY_BOOST_FULL_LEVEL} 이상)`;
+      : `열린 ${o.count}장 · 후보 3장에 뜰 확률 ${pct(o.inDraw)} (세대 1) → ${pct(top.inDraw)} (세대 ${RARITY_BOOST_FULL_LEVEL} 이상)`;
   summary.style.cssText =
     `margin:16px 0 8px; padding:10px 12px; border-radius:var(--r-card); font-family:var(--font-mono); font-size:12.5px;` +
     `color:${style.color}; background:${withAlpha(style.color, 0.1)}; border:1px solid ${withAlpha(style.color, 0.3)};`;
@@ -854,7 +766,7 @@ function buildRarityList(rarity: Rarity): HTMLElement {
     const head = document.createElement("div");
     head.style.cssText = "display:flex; align-items:center; gap:8px;";
     const dot = document.createElement("span");
-    dot.style.cssText = `width:9px; height:9px; border-radius:2px; flex:none; background:${traitColor(dominantTrait(card))};`;
+    dot.style.cssText = `width:9px; height:9px; border-radius:2px; flex:none; background:${cardAccent(card)};`;
     const name = document.createElement("span");
     name.textContent = card.name;
     name.style.cssText = "font-family:var(--font-title); font-size:15px; color:var(--ink); flex:1;";
