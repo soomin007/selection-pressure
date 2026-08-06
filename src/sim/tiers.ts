@@ -570,9 +570,9 @@ export function nearestTierGoal(pips: Pips): { cat: Category; tier: number; need
  * ⚠ **모든 줄은 자립형이다.** 「×0.5」처럼 앞줄에 기대는 축약을 쓰지 않는다 — 이 문구는 카드 각주 ·
  *   도감 · 승급 연출에 **단독으로** 뜨므로, 무엇의 ×0.5 인지가 그 줄 안에 있어야 한다.
  */
-export function tierLine(cat: Category, tier: number): { gain: string; cost: string } {
+export function tierLine(cat: Category, tier: number): { gain: string; cost: string; size: number } {
   const i = Math.max(0, Math.min(MAX_TIER, tier));
-  if (i === 0) return { gain: "", cost: "" };
+  if (i === 0) return { gain: "", cost: "", size: 0 };
   /** 0단 대비 배수 — 표를 직접 읽어 계산한다. */
   const rel = (table: readonly number[], base = table[0] as number): string =>
     `×${((table[i] as number) / base).toFixed(2).replace(/0$/, "")}`;
@@ -623,42 +623,80 @@ export function tierLine(cat: Category, tier: number): { gain: string; cost: str
       "무리 안에 있는 한 즉사하지 않습니다",
     ],
   };
+  /** 전속력으로 달릴 때 유지비에 얹히는 몫(%). 다리의 고유 대가. */
+  const sprintPct = (): string => `${Math.round((LEG_SPRINT_COST[i] as number) * 100)}%`;
+  /** 시야각(도) — 표의 cos 을 사람이 읽는 각으로 되돌린다. */
+  const fovDeg = (n: number): string => `${Math.round((Math.acos(EYE_FOV_COS[n] as number) * 360) / Math.PI)}°`;
+  /** 더위 피해 배수 — 두꺼운 몸은 열을 못 버린다(`heatDrain ×= 대사/100`). */
+  const heatRel = (): string =>
+    `×${((HIDE_METAB[i] as number) / (HIDE_METAB[0] as number)).toFixed(2).replace(/0$/, "")}`;
+
+  // ⚠ **잃는 것 칸에는 「방향이 분명한 손해」만 적는다.**
+  //   처음엔 여기에 「몸이 무거워집니다」처럼 몸집 변화를 적었는데, 두 가지가 틀렸다:
+  //   ① **무거워지는 게 좋은지 나쁜지가 안 읽힌다.** 큰 몸은 잘 안 물리는 이득이면서 느리고 많이
+  //      먹는 손해다 — 방향이 섞인 것을 「잃는 것」 칸에 넣으면 그 자체로 거짓말이다.
+  //   ② **몸집은 다섯 범주가 함께 정하는 파생값이다.** 이빨을 파면서 다리도 판 종은 실제로 안 커진다.
+  //      한 범주의 줄에서 몸집을 단정하면 그 종에게는 틀린 말이 된다.
+  //   몸집은 `SIZE_PER_TIER` 로 따로 내보내 **중립 표시**(「몸집 +5」)와 그림(카드 미리보기에서
+  //   생물이 실제로 커진다)이 맡는다. 무엇을 뜻하는지는 `SIZE_MEANING` 한 곳에서만 말한다.
   const cost: Record<Category, readonly string[]> = {
     fang: [
       "",
-      `풀에서 얻는 것 ${rel(FANG_GRAZE)} · 몸이 무거워집니다`,
-      `풀에서 얻는 것 ${rel(FANG_GRAZE)} · 몸이 더 무거워집니다`,
       `풀에서 얻는 것 ${rel(FANG_GRAZE)}`,
+      `풀에서 얻는 것 ${rel(FANG_GRAZE)}`,
+      `풀에서 얻는 것 ${rel(FANG_GRAZE)} · 풀만으로는 못 버팁니다`,
       `풀에서 얻는 것 ${rel(FANG_GRAZE)} · 사실상 고기만 먹습니다`,
     ],
     leg: [
       "",
-      "몸이 가벼워지고, 달리면 그만큼 배가 고픕니다",
-      "더 가벼워지고 더 배고파집니다",
-      "질주하면 눈에 띄게 지칩니다",
-      "가장 가볍고 가장 배고픕니다 · 한 번 물리면 위험합니다",
+      `전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`,
+      `전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`,
+      `전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`,
+      `전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`,
     ],
     eye: [
       "",
-      "옆이 조금 좁아집니다",
-      "옆이 더 좁아집니다",
-      "뒤가 거의 안 보입니다",
-      "뒤는 끝까지 캄캄합니다 · 최고 티어여도 안 넓어집니다",
+      `한눈에 보는 각이 ${fovDeg(0)} 에서 ${fovDeg(1)} 로 좁아집니다`,
+      `한눈에 보는 각이 ${fovDeg(2)} 로 좁아집니다`,
+      `한눈에 보는 각이 ${fovDeg(3)} · 뒤가 거의 안 보입니다`,
+      `한눈에 보는 각이 ${fovDeg(4)} · 최고 단계여도 안 넓어집니다`,
     ],
     hide: [
       "",
-      "몸이 커져 느려지고, 더위에 약해집니다",
-      "더 커지고 더위에 더 약해집니다",
-      "느리고 새끼가 줍니다",
-      "가장 무겁고 더위에 가장 약합니다",
+      `더위에 받는 피해 ${heatRel()}`,
+      `더위에 받는 피해 ${heatRel()}`,
+      `더위에 받는 피해 ${heatRel()}`,
+      `더위에 받는 피해 ${heatRel()} · 뙤약볕에서 가장 먼저 지칩니다`,
     ],
     herd: [
       "",
-      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 병이 돕니다`,
-      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 병이 더 돕니다`,
-      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병에 취약합니다`,
-      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병이 무리를 휩씁니다`,
+      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)}`,
+      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)}`,
+      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)}`,
+      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)} · 한 번 돌면 무리가 휩쓸립니다`,
     ],
   };
-  return { gain: gain[cat][i] as string, cost: cost[cat][i] as string };
+  return { gain: gain[cat][i] as string, cost: cost[cat][i] as string, size: SIZE_PER_TIER[cat] * i };
 }
+
+/**
+ * **몸집은 범주마다 이만큼씩 움직인다** (`derivedSize` 의 계수와 같은 표 · 두 곳에 적지 않으려고 여기서 뽑는다).
+ * 화면은 이 값을 **중립으로** 표시한다(「몸집 +5」) — 좋고 나쁨을 단정하지 않는다.
+ */
+export const SIZE_PER_TIER: Record<Category, number> = {
+  hide: 8,
+  fang: 5,
+  eye: 0,
+  leg: -4,
+  herd: -2,
+};
+
+/**
+ * **몸집이 무엇을 뜻하는가 — 이 한 줄이 유일한 설명이다.**
+ *
+ * 몸집은 좋고 나쁨이 갈리지 않는 축이라, 티어 줄의 「얻는 것 / 잃는 것」 어느 쪽에도 넣을 수 없다.
+ * 대신 몸집 값을 보여 주는 자리(내 종 패널 · 카드 미리보기)가 이 문장을 함께 띄운다.
+ * 그리고 무엇보다 **그림이 먼저 말한다** — 카드를 고르면 미리보기의 생물이 실제로 커지거나 작아진다.
+ */
+export const SIZE_MEANING =
+  "큰 몸은 좀처럼 안 물리지만 느리고 많이 먹고 새끼를 적게 칩니다. 작은 몸은 정확히 반대입니다.";

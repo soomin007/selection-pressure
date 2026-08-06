@@ -316,6 +316,13 @@ function devour(e: Entity, prey: Entity, world: World): void {
   if (e.species.isPlayer) {
     world.roundCounts.hunts += 1; // 시험 계수: 내 종의 사냥 성공(잡은 쪽만, 잡아먹힌 쪽 아님)
     world.playerHuntKills += 1; // 경험치 원천 ② — 사냥은 하이 리스크 하이 리턴이다(**[사용자 2026-08-06]**)
+    // 시험 「표시된 것 사냥」 — 금빛 표식이 찍힌 그 개체를 잡았는가. 표식은 목록에서 빠진다.
+    const mi = world.trialMarks.indexOf(prey.id);
+    if (mi >= 0) {
+      world.trialMarks.splice(mi, 1);
+      world.roundCounts.marked += 1;
+      world.emit("kill", prey.x, prey.y, true); // 표식을 잡은 순간은 한 번 더 크게 알린다
+    }
   }
   if (preyVenom > 0) e.poison += SIM.venomOnHit * (preyVenom / TRAIT_MAX);
   const et = e.genome.traits;

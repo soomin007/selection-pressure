@@ -10,6 +10,7 @@ import {
   KEY_LABELS,
   KEY_NAMES,
   MAX_TIER,
+  SIZE_MEANING,
   TIER_ROMAN,
   activeDuos,
   pipsToNext,
@@ -128,7 +129,13 @@ export function createBuildPanel(): BuildPanel {
     duosLine.title = duos.map((d) => `${d.name}: ${d.desc}`).join("\n");
 
     // 유지비 배수 · 티어 합이 올린 청구서. 파생값(traits.upkeep)을 그대로 읽는다.
-    upkeepLine.textContent = `유지비 ×${g.traits.upkeep.toFixed(2)}`;
+    // **몸집은 여기서만 말한다.** 좋고 나쁨이 갈리지 않는 축이라 티어 줄의 「얻는 것 / 잃는 것」
+    // 어느 쪽에도 못 넣는다(넣으면 그 자체로 거짓말이다 · tiers.ts SIZE_MEANING 주석 참조).
+    // 중립으로 값만 적고, 그 값이 무엇을 뜻하는지는 툴팁 한 줄이 맡는다.
+    const size = Math.round(g.traits.size);
+    const sizeWord = size >= 68 ? "큼" : size <= 38 ? "작음" : "보통";
+    upkeepLine.textContent = `유지비 ×${g.traits.upkeep.toFixed(2)} · 몸집 ${size} (${sizeWord})`;
+    upkeepLine.title = SIZE_MEANING;
 
     list.replaceChildren();
     if (data.cards.length === 0) {

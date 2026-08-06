@@ -383,7 +383,14 @@ async function boot(): Promise<void> {
     return nt ? `다음 시험: ${nt.label}` : "";
   }
   // 라운드 시험 판정 플래시: 합격은 라임, 불합격은 호박에 이유(진행/목표)와 대가(불씨)를 한 줄로.
-  const TRIAL_WORD: Record<TrialKind, string> = { hunt: "사냥", feed: "먹이", birth: "새끼", pop: "무리" };
+  const TRIAL_WORD: Record<TrialKind, string> = {
+    hunt: "사냥",
+    feed: "먹이",
+    birth: "새끼",
+    pop: "무리",
+    hold: "자리 지키기",
+    mark: "표시된 것 사냥",
+  };
   // priority=true: 같은 프레임에 다음 단계(보스) 등장 플래시가 이어져도 판정이 덮이지 않고 끝까지 보인다.
   /** 판정 한 줄 · 화면 플래시와 카드창 제목이 **같은 문구**를 쓴다(둘이 갈리면 화면이 거짓말한다). */
   function verdictLine(v: TrialVerdict): string {

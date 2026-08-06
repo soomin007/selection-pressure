@@ -69,6 +69,8 @@ export class WorldView {
   // 맞서는 개체(전사) 표식 · 스프라이트 **위** 레이어. 아래에 깔면 몸에 가려 "누가 싸우는가"가 사라진다.
   private readonly fighterG = new Graphics();
   private readonly moveTargetG = new Graphics(); // 이동 명령 목표 깃발(탭 명령 조종) — 도착까지 서 있다
+  private readonly trialZoneG = new Graphics(); // 시험이 세계에 찍은 자리(「표시된 자리에 N마리」)
+  private readonly trialMarkG = new Graphics(); // 표식이 찍힌 야생(「표시된 것 N마리 사냥」)
   private readonly bossG = new Graphics();
   private readonly overlayG = new Graphics();
   // 격퇴 바 옆 남은 체력 숫자. 밤·대멸종 틴트(overlayG) **위**에 둔다 · 이 숫자는 어떤 조명에서도
@@ -116,7 +118,9 @@ export class WorldView {
     this.container.addChild(this.fighterG);
     // 이동 목표 깃발은 스프라이트 **위** — 무리가 목표 지점을 밟고 지나가도 깃발이 파묻히지 않아야
     // "어디로 가는 중인가"를 잃지 않는다(작은 표식이라 몸을 가려도 한 마리 일부다).
+    this.container.addChild(this.trialZoneG);
     this.container.addChild(this.moveTargetG);
+    this.container.addChild(this.trialMarkG);
     this.container.addChild(this.bossG);
     this.container.addChild(this.overlayG);
     this.container.addChild(this.raidTextC); // 밤 틴트 위 · 남은 체력 숫자만은 늘 또렷하게
@@ -205,6 +209,10 @@ export class WorldView {
     // 이전 런의 이동 명령 깃발이 새 월드에 남는 걸 막는 안전망(명령 상태 자체는 main 이 지운다).
     this.moveTarget = null;
     this.moveTargetG.clear();
+    // 시험 표식도 같은 이유로 지운다 — 새 월드의 첫 프레임에 지난 라운드의 자리·표식이 남으면
+    // 플레이어가 그리로 무리를 몰다 시간을 버린다.
+    this.trialZoneG.clear();
+    this.trialMarkG.clear();
     // 격퇴 바 상태도 런 단위로 리셋 · 안 그러면 지난 런의 잔상·번쩍임이 새 보스의 첫 프레임에 뜬다.
     this.fighterG.clear();
     this.raidBossRef = null;
@@ -703,6 +711,8 @@ export class WorldView {
 
     // 이동 명령 목표 깃발 — 명령이 사는 동안(도착 전) 계속 서 있다.
     this.drawMoveTarget();
+    this.drawTrialZone(world);
+    this.drawTrialMarks(world);
 
     // 보스 시각은 로직과 1:1 (known_issues). 실제로 쫓아와 무는 개체만 점 + 물기 반경 + 주목 펄스로
     // 그린다(도망 대상): 단일 추격자(chaser) 또는 사나운 무리(members 여러 마리가 사방에서 몰려온다).
@@ -895,6 +905,60 @@ export class WorldView {
       .poly([p.x, top, p.x + 8, top + 3.2, p.x, top + 6.4])
       .fill({ color: FLAG_COLOR, alpha: 0.92 })
       .stroke({ color: LEAD_OUTLINE, width: 1, alpha: 0.4 });
+  }
+
+  /**
+   * **시험이 세계에 찍은 자리** — 「표시된 자리에 N마리」 시험의 그 원.
+   *
+   * **[사용자 2026-08-06]** 「시험을 "무엇을 해라"에서 "무엇을 지켜라"로. 세계 위에 목표를 찍는다.」
+   * 예전 시험은 화면 어디에도 없어서 "뭘 하려는 건지 모르겠다"가 나왔다(2026-08-02 폰 실기).
+   * 이 원이 그 답이다 — **보이면 몰면 되고, 명령이 곧 답이 된다.**
+   *
+   * 색은 명령 깃발과 같은 계열(라임)로 둔다: 둘 다 "여기로 가라"는 뜻이라 색이 다르면 둘째 언어가 된다.
+   * 다만 깃발은 내가 찍은 것, 이 원은 세계가 찍은 것이라 **점선**으로 갈라 놓는다.
+   */
+  private drawTrialZone(world: World): void {
+    this.trialZoneG.clear();
+    const z = world.trialZone;
+    if (!z) return;
+    const pulse = 0.5 + 0.5 * Math.sin(((this.frame % 96) / 96) * Math.PI * 2);
+    // 바닥을 옅게 채워 "안"과 "밖"이 갈린다 — 테두리만 있으면 어디까지가 안인지 손끝에서 안 읽힌다.
+    this.trialZoneG.circle(z.x, z.y, z.r).fill({ color: FLAG_COLOR, alpha: 0.06 + 0.03 * pulse });
+    // 점선 테두리 · 세그먼트를 직접 그린다(Pixi v8 에 점선 스트로크가 없다).
+    const seg = 22;
+    const n = Math.max(12, Math.round((2 * Math.PI * z.r) / seg));
+    for (let i = 0; i < n; i += 2) {
+      const a0 = (i / n) * Math.PI * 2;
+      const a1 = ((i + 1) / n) * Math.PI * 2;
+      this.trialZoneG
+        .moveTo(z.x + Math.cos(a0) * z.r, z.y + Math.sin(a0) * z.r)
+        .lineTo(z.x + Math.cos(a1) * z.r, z.y + Math.sin(a1) * z.r)
+        .stroke({ color: FLAG_COLOR, width: 2.4, alpha: 0.55 + 0.25 * pulse });
+    }
+  }
+
+  /**
+   * **표식이 찍힌 야생** — 「표시된 것 N마리 사냥」 시험의 그 개체들.
+   * **[사용자 2026-08-06]** 이 직접 낸 아이디어다("특정 표시가 있는 개체 사냥하기").
+   *
+   * 금빛 두 겹 고리로 그린다 — 먹잇감 호박빛과 같은 계열이라 "저건 노릴 것"이 색만으로 읽히고,
+   * 고리가 두 겹이라 평범한 먹잇감 표식과 구별된다.
+   */
+  private drawTrialMarks(world: World): void {
+    this.trialMarkG.clear();
+    if (world.trialMarks.length === 0) return;
+    const pulse = 0.5 + 0.5 * Math.sin(((this.frame % 48) / 48) * Math.PI * 2);
+    for (const e of world.entities) {
+      if (!e.alive || !world.trialMarks.includes(e.id)) continue;
+      const d = this.dispPos.get(e.id);
+      const x = d ? d.x : e.x;
+      const y = d ? d.y : e.y;
+      if (!this.inView(x, y, 80)) continue;
+      const r = 13 + 3 * pulse;
+      this.trialMarkG.circle(x, y, r + 2).stroke({ color: LEAD_OUTLINE, width: 3, alpha: 0.35 });
+      this.trialMarkG.circle(x, y, r).stroke({ color: TRIAL_MARK_COLOR, width: 2.2, alpha: 0.9 });
+      this.trialMarkG.circle(x, y, r - 4).stroke({ color: TRIAL_MARK_COLOR, width: 1.2, alpha: 0.5 });
+    }
   }
 
   /**
@@ -1456,6 +1520,8 @@ const PREY_OUT_OF_AIM_DIM = 0.35;
 // 이동 명령 깃발 색 — 명령 접수 파문(effects drawGoPing 0xbcf24e)과 같은 라임. 두 파일이 같은 값을
 // 들고 있으니 바꿀 땐 함께 바꾼다(색이 갈리면 "파문 → 깃발" 연결이 끊긴다).
 const FLAG_COLOR = 0xbcf24e;
+/** 시험 표식의 금빛 · 먹잇감 호박빛과 같은 계열이라 "저건 노릴 것"이 색만으로 읽힌다. */
+const TRIAL_MARK_COLOR = 0xffd24a;
 const FLAG_LIGHT = 0xe4ffb0; // 깃대·중심점(밝은 라임 — 어두운 지형 위 가독)
 
 // ── 격퇴 체력 바 ────────────────────────────────────────────────────────────────────────

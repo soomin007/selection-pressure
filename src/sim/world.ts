@@ -36,6 +36,7 @@ export interface RoundCounts {
   hunts: number; // 내 종이 잡아먹은 수(알파든 무리든, 잡아먹힌 쪽은 아님)
   feeds: number; // 내 종의 채집 섭취 확정 수(산 보물 제외)
   births: number; // 내 종 새끼 탄생 수(일반 번식 + 산 보물 대박. 드래프트 스킵 brood 는 제외)
+  marked: number; // 표식이 찍힌 야생을 잡은 수(시험 「표시된 것 사냥」)
 }
 
 /** 형질(0~100) 클램프 + 반올림. */
@@ -247,7 +248,7 @@ export class World {
   playerHuntKills = 0;
   /** 이번 단계(라운드)의 내 종 사건 계수 · 시험 판정용. game 이 beginStage 마다 resetRoundCounts 로
    * 비운다. 정수 증가만 한다(rng 미사용 → 결정론·밸런스 무관). */
-  readonly roundCounts: RoundCounts = { hunts: 0, feeds: 0, births: 0 };
+  readonly roundCounts: RoundCounts = { hunts: 0, feeds: 0, births: 0, marked: 0 };
 
   /**
    * 무리에게 내린 뜻(신탁). null 이면 무리는 완전히 자율로 산다 = 관전.
@@ -272,6 +273,25 @@ export class World {
   leadVacuum = 0;
   /** 알파가 죽었을 때 걸 지휘 공백의 길이(틱). game 이 무리 티어에서 계산해 넣어 준다. */
   vacuumOnLeadDeath = 0;
+
+  /**
+   * **이번 라운드 시험이 세계 위에 찍은 자리.** 없으면 null.
+   *
+   * **[사용자 2026-08-06]** 「시험을 "무엇을 해라"에서 "무엇을 지켜라"로. 세계 위에 목표를 찍는다.」
+   * 예전 시험(「사냥 5회」)은 **화면 어디에도 없었다** — 그래서 2026-08-02 폰 실기에서 "뭘 하려는
+   * 건지 모르겠다"가 나왔다. 목표가 땅 위에 있으면 그 자리로 무리를 몰면 되고, **명령이 곧 답이 된다.**
+   *
+   * sim 은 이 값을 판정에 쓰지 않는다(게임 규칙은 game 이 판정한다) — 렌더가 그리고, game 이 읽는다.
+   */
+  trialZone: { x: number; y: number; r: number } | null = null;
+
+  /**
+   * **표식이 찍힌 야생 개체 id.** **[사용자 2026-08-06]** 직접 낸 아이디어("특정 표시가 있는 개체
+   * 사냥하기"). 잡으면 `roundCounts.marked` 가 오르고 이 목록에서 빠진다.
+   *
+   * 여유롭게 찍는다 — 표식이 찍힌 것이 다른 이유로 죽어도 시험이 불가능해지지 않게(목표보다 많이 찍는다).
+   */
+  trialMarks: number[] = [];
 
   /**
    * 이번 틱에 **실제로 뜻을 향해 움직인** 내 종 개체 수. 순종의 질을 화면에 보여 주는 유일한 숫자다
@@ -768,6 +788,7 @@ export class World {
     this.roundCounts.hunts = 0;
     this.roundCounts.feeds = 0;
     this.roundCounts.births = 0;
+    this.roundCounts.marked = 0;
   }
 
   /** 죽음 1건 집계. 정산은 "왜 내 종이 죽었나"가 핵심이라 내 종만 센다. (rng 미사용 → 결정론 유지) */

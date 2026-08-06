@@ -10,10 +10,17 @@ permissions:
   pages: write
   id-token: write
 
-# 동시 배포 1개만 (가장 최신 push 우선)
+# 동시 배포 1개만.
+#
+# ⚠ **cancel-in-progress 를 절대 true 로 두지 말 것** (2026-08-06 사고).
+#   true 였을 때 push 한 번 + 재시도 세 번이 서로를 취소했고, **취소된 배포가 Pages 큐에 잠금을
+#   남겨** 그 뒤 모든 배포가 `deployment_queued` 에서 10분 타임아웃으로 죽었다(네 번 연속 실패 ·
+#   사용자에게 실패 메일 네 통). GitHub 공식 Pages 가이드도 이 자리는 false 를 쓰라고 못박고 있다:
+#   배포는 원자적이지 않아서 중간에 끊으면 서버 쪽 상태가 어중간하게 남는다.
+#   false 면 새 push 는 앞 배포가 끝날 때까지 **기다린다**(조금 늦을 뿐, 안 죽는다).
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -38,7 +45,35 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deploy1.outputs.page_url || steps.deploy2.outputs.page_url }}
     steps:
-      - id: deployment
+      # 1차 시도. **여기서 실패해도 잡을 죽이지 않는다**(continue-on-error) — Pages 큐는 서버 쪽
+      # 사정으로 몇 분씩 밀리는 일이 잦고, 그때마다 실패 메일이 가는 것은 잘못된 신호다.
+      # 진짜 실패(2차까지 실패)일 때만 잡이 빨갛게 된다.
+      - name: 배포 (1차)
+        id: deploy1
+        continue-on-error: true
         uses: actions/deploy-pages@v4
+        with:
+          timeout: 900000 # 15분. 기본 10분은 큐가 밀릴 때 모자랐다(실측)
+
+      # 큐가 잠깐 막힌 것뿐이면 한 번 쉬었다 다시 하면 통과한다.
+      - name: 큐가 풀리길 기다린다
+        if: steps.deploy1.outcome == 'failure'
+        run: sleep 90
+
+      - name: 배포 (2차)
+        id: deploy2
+        if: steps.deploy1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+        with:
+          timeout: 900000
+
+      # 2차까지 실패하면 그건 진짜 문제다 — 그때는 빨갛게 알린다. 조용히 넘어가면 사용자는
+      # 옛 번들을 보면서 새 코드를 본다고 착각한다. 그게 실패 메일보다 훨씬 나쁘다.
+      - name: 두 번 다 실패했으면 잡을 실패로 표시
+        if: steps.deploy1.outcome == 'failure' && steps.deploy2.outcome != 'success'
+        run: |
+          echo "::error::Pages 배포가 두 번 다 실패했습니다. 큐가 막혔을 수 있습니다 (docs/design/known_issues.md 참고)."
+          exit 1

@@ -1,7 +1,7 @@
 // 대멸종 종류 예고 검증 — 미리 정해 둔 큐(extinctionQueue)에서 예고와 실제가 같은 값을 봐야 한다.
 // Game 은 순수 TS(Pixi 무관)라 headless 로 런을 끝까지 돌려 관찰할 수 있다.
 import { describe, it, expect } from "vitest";
-import { Game, type RunHistory, type Trial, type TrialVerdict } from "@/game/game";
+import { Game, type RunHistory, type Trial, type TrialKind, type TrialVerdict } from "@/game/game";
 import {
   GAME,
   ONBOARDING_MAX_STEP,
@@ -38,6 +38,7 @@ import {
   tierOf,
 } from "@/sim/tiers";
 import { SIM } from "@/sim/params";
+import { biteOutcome } from "@/sim/behavior";
 import { debugSetMetaLevel } from "@/game/meta";
 
 // 대멸종 이름 4종(game.ts extinctionName 과 일치) — 예고 title 이 보스 예고와 섞이지 않게 거른다.
@@ -496,10 +497,119 @@ describe("라운드 시험과 혈통의 불씨", () => {
   function startWithCountTrial(prefix: string): Game {
     for (let s = 0; s < 40; s++) {
       const g = startRunEra1(`${prefix}-${s}`);
-      if (g.trial && g.trial.kind !== "pop") return g;
+      // v8: 「자리 지키기」·「표시된 것 사냥」이 생겨 계수형이 셋뿐이 아니게 됐다. 아래 세 계수기로
+      // 판정이 갈리는 시험만 고른다 — 「무리」는 개체 수가, 「자리」는 위치가, 「표식」은 표식 킬이 정한다.
+      if (g.trial && (g.trial.kind === "hunt" || g.trial.kind === "feed" || g.trial.kind === "birth")) return g;
     }
     throw new Error("계수형 시험(hunt·feed·birth)이 걸리는 시드를 찾지 못했습니다");
   }
+
+  /** 이 종류의 시험이 걸리는 시드를 찾는다. 못 찾으면 던진다(그 자체가 결함 신호다). */
+  function startWithTrialKind(prefix: string, kind: TrialKind): Game {
+    for (let s = 0; s < 60; s++) {
+      const g = startRunEra1(`${prefix}-${s}`);
+      if (g.trial?.kind === kind) return g;
+    }
+    throw new Error(`시험 「${kind}」가 걸리는 시드를 찾지 못했습니다`);
+  }
+
+  // ── 세계 위에 목표를 찍는 시험 (**[사용자 2026-08-06]** 「무엇을 해라」에서 「무엇을 지켜라」로) ──
+  //
+  // 이 절이 지키는 것: **목표가 실제로 땅 위에 있고, 갈 수 있고, 잡을 수 있다.**
+  // 예전 시험(「사냥 5회」)은 화면 어디에도 없어서 "뭘 하려는 건지 모르겠다"가 나왔다(2026-08-02 폰 실기).
+
+  it("「자리 지키기」는 세계에 원을 찍는다 · 갈 수 있는 곳에, 무리에서 떨어뜨려", () => {
+    const g = startWithTrialKind("trial-hold", "hold");
+    const z = g.world.trialZone;
+    expect(z, "hold 시험인데 세계에 자리가 안 찍혔다").not.toBeNull();
+    if (!z) return;
+    // **갈 수 있어야 한다** — 못 가는 자리에 목표를 찍는 것은 못 하는 시험을 내는 것이다.
+    const t = g.genome.traits;
+    const canSwim = t.swimming >= SIM.swimThreshold;
+    const canLand = t.swimming < SIM.aquaticOnlyThreshold;
+    const canFly = t.wings >= SIM.flyThreshold;
+    expect(g.world.terrain.isPassable(z.x, z.y, canSwim, canLand, canFly)).toBe(true);
+    // **발밑이면 안 된다** — 아무것도 안 해도 합격이면 그건 시험이 아니다.
+    const c = g.world.playerCentroid();
+    expect(Math.hypot(z.x - c.x, z.y - c.y)).toBeGreaterThan(z.r);
+    // 월드 밖으로 나가지 않는다.
+    expect(z.x).toBeGreaterThanOrEqual(0);
+    expect(z.y).toBeGreaterThanOrEqual(0);
+    expect(z.x).toBeLessThanOrEqual(g.world.width);
+    expect(z.y).toBeLessThanOrEqual(g.world.height);
+  });
+
+  it("「자리 지키기」의 진행도는 원 안의 내 종 수다(표시=판정)", () => {
+    const g = startWithTrialKind("trial-hold-prog", "hold");
+    const z = g.world.trialZone;
+    if (!z) throw new Error("자리가 없다");
+    const inside = g.world.entities.filter(
+      (e) => e.alive && e.species.isPlayer && (e.x - z.x) ** 2 + (e.y - z.y) ** 2 <= z.r * z.r,
+    ).length;
+    expect(g.trialProgress).toBe(inside);
+    // 무리를 통째로 자리 안에 옮기면 진행도가 그만큼 오른다 — 목표는 「가면 된다」여야 한다.
+    for (const e of g.world.entities) {
+      if (e.species.isPlayer && e.alive) {
+        e.x = z.x;
+        e.y = z.y;
+      }
+    }
+    expect(g.trialProgress).toBe(g.world.playerPopulation);
+  });
+
+  it("「표시된 것 사냥」은 목표보다 넉넉히 표식을 찍는다(다른 이유로 죽어도 가능해야 한다)", () => {
+    const g = startWithTrialKind("trial-mark", "mark");
+    const t = g.trial;
+    if (!t) throw new Error("시험이 없다");
+    expect(g.world.trialMarks.length).toBeGreaterThan(t.target);
+    // 표식은 **내 이빨이 박히는 야생**에만 찍힌다 — 못 잡는 것에 찍으면 못 하는 시험이 된다.
+    const me = g.genome.traits;
+    for (const id of g.world.trialMarks) {
+      const e = g.world.entities.find((x) => x.id === id);
+      expect(e, "표식이 없는 개체를 가리킨다").toBeTruthy();
+      if (!e) continue;
+      expect(e.species.isPlayer).toBe(false);
+      expect(e.species.friendly).toBe(false);
+      expect(biteOutcome(me.attack, e.genome.traits.defense, me.size, e.genome.traits.size).ignored).toBe(false);
+    }
+  });
+
+  it("표식이 찍힌 것을 잡으면 진행도가 오르고 그 표식은 빠진다", () => {
+    const g = startWithTrialKind("trial-mark-kill", "mark");
+    const before = g.trialProgress;
+    const markCount = g.world.trialMarks.length;
+    // sim 이 실제로 세는 자리를 그대로 흉내낸다(devour 안의 표식 처리).
+    const victim = g.world.trialMarks[0] as number;
+    const hunter = g.world.entities.find((e) => e.species.isPlayer && e.alive);
+    const prey = g.world.entities.find((e) => e.id === victim);
+    if (!hunter || !prey) throw new Error("사냥꾼이나 표식 개체가 없다");
+    // 물기가 반드시 박히게 붙여 놓고, 내 종이 잡을 때까지 돌린다.
+    prey.x = hunter.x;
+    prey.y = hunter.y;
+    prey.energy = 1;
+    let guard = 0;
+    while (g.world.trialMarks.includes(victim) && guard++ < 400) g.world.step();
+    // 잡혔으면 진행도가 오르고 표식이 빠진다. 못 잡았으면(다른 이유로 죽었으면) 표식만 남아 있을 수 있다.
+    if (!g.world.trialMarks.includes(victim) && g.world.roundCounts.marked > 0) {
+      expect(g.trialProgress).toBe(before + g.world.roundCounts.marked);
+      expect(g.world.trialMarks.length).toBeLessThan(markCount);
+    }
+  });
+
+  it("이빨 0단(순수 초식)에게는 사냥이 걸리는 시험이 아예 안 뜬다", () => {
+    // **[사용자 2026-08-06]** 「초식 거인 경로는 반드시 만든다」가 이 한 줄에 걸려 있다.
+    // 사냥 효율이 정확히 0 인데 사냥 시험을 내면 그건 판정이 아니라 사형 선고다(불씨는 다섯뿐).
+    for (let s = 0; s < 24; s++) {
+      const g = startRunEra1(`trial-herbivore-${s}`);
+      // 이빨 도장을 0 으로 되돌려 순수 초식으로 만든다(파생 능치도 함께 다시 낸다).
+      g.genome.pips.fang = 0;
+      refreshDerived(g.genome);
+      expect(g.genome.traits.hunt).toBe(0);
+      const t = (g as unknown as GamePriv).pickTrial();
+      expect(t.kind, `초식 종에게 ${t.kind} 시험이 떴다`).not.toBe("hunt");
+      expect(t.kind, `초식 종에게 ${t.kind} 시험이 떴다`).not.toBe("mark");
+    }
+  });
 
   it("같은 시드면 같은 시험이 나온다(시드 파생 해시 · 기존 rng 스트림 미소비)", () => {
     const a = startRunEra1("trial-same").trial;
@@ -582,7 +692,7 @@ describe("라운드 시험과 혈통의 불씨", () => {
     expect(g.phase).toBe("watch");
     expect(verdicts).toHaveLength(1);
     expect(verdicts[0]?.passed).toBe(true);
-    expect(g.world.roundCounts).toEqual({ hunts: 0, feeds: 0, births: 0 }); // beginStage 가 리셋
+    expect(g.world.roundCounts).toEqual({ hunts: 0, feeds: 0, births: 0, marked: 0 }); // beginStage 가 리셋
   });
 
   it("불합격: 불씨 -1 인데 런은 계속된다(부분 패배)", () => {

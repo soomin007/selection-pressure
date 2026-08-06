@@ -52,6 +52,8 @@ import {
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import type { LeadCommand } from "@/sim/lead";
+import type { Entity } from "@/sim/entity";
+import { biteOutcome } from "@/sim/behavior";
 import {
   ORDER_SPECS,
   ORDER_SPEC_BY_KIND,
@@ -69,6 +71,20 @@ import {
  * 1.9 = 내 방향 카드가 최대 1.9배 자주 뜬다 — 눈에 안 띄되 열 번쯤 뽑으면 한두 장 더 오는 정도.
  */
 const ASSIST_MAX_WEIGHT = 1.9;
+
+// ── 세계 위에 찍는 시험의 손끝 값 (**[사용자 2026-08-06]** 「무엇을 지켜라」) ──
+//
+// ⚠ 거리는 **16초 안에 갈 수 있어야** 한다. 무리 최고 속도는 1.7~2.7px/틱이고 30틱/초이므로
+//   16초에 800~1300px 을 간다. 다만 무리는 먹이를 지나치지 못해 실제로는 그 절반쯤 간다
+//   (behavior 의 「가는 길의 먹이」 예외). 그래서 상한을 여유 있게 잡는다.
+/** 자리 시험을 무리에서 최소 이만큼 떨어뜨린다 — 발밑에 찍으면 아무것도 안 해도 합격이라 시험이 아니다. */
+const TRIAL_HOLD_MIN_DIST = 220;
+/** 최대 이만큼. 더 멀면 16초 안에 못 간다. */
+const TRIAL_HOLD_MAX_DIST = 420;
+/** 자리의 반지름(px). 무리는 무게중심에서 평균 240px 로 흩어져 사니, 좁으면 다 모으는 게 불가능하다. */
+const TRIAL_HOLD_RADIUS = 130;
+/** 표식을 목표보다 이만큼 더 찍는다 — 표식이 찍힌 것이 다른 이유로 죽어도 시험이 불가능해지지 않게. */
+const TRIAL_MARK_SPARE = 3;
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, bossEligible, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { pickMapType, mapKind, FIRST_ERA_MAP, type MapKind, type MapType } from "@/sim/mapType";
 import { TILE } from "@/sim/terrain";
@@ -80,7 +96,7 @@ export type RunResult = "win" | "lose";
 export type ExtinctionType = "cold" | "famine" | "heat" | "plague";
 
 /** 라운드 시험의 종류. */
-export type TrialKind = "hunt" | "feed" | "birth" | "pop";
+export type TrialKind = "hunt" | "feed" | "birth" | "pop" | "hold" | "mark";
 
 /** 이번 채집 단계의 시험 · UI 는 label 로 문구를 조립한다(숫자 포함, 표시=실물). */
 export interface Trial {
@@ -227,6 +243,19 @@ export class Game {
     if (t.kind === "hunt") return this.world.roundCounts.hunts;
     if (t.kind === "feed") return this.world.roundCounts.feeds;
     if (t.kind === "birth") return this.world.roundCounts.births;
+    if (t.kind === "mark") return this.world.roundCounts.marked;
+    if (t.kind === "hold") {
+      // **지금 이 순간 자리 안에 있는 내 종 수.** 살아 있는 진행도라, 무리를 몰면 막대가 차는 게 보인다
+      // (판정은 라운드 끝에 하지만 화면은 내내 말한다 — 그래야 "가면 된다"가 손에 잡힌다).
+      const z = this.world.trialZone;
+      if (!z) return 0;
+      let n = 0;
+      for (const e of this.world.entities) {
+        if (!e.alive || !e.species.isPlayer) continue;
+        if ((e.x - z.x) ** 2 + (e.y - z.y) ** 2 <= z.r * z.r) n += 1;
+      }
+      return n;
+    }
     // pop: 시험이 걸린 뒤 스킵 보상으로 낳은 새끼는 뺀다. goalBar 표시와 판정이 같은 식을 쓴다(표시=실물).
     return Math.max(0, this.world.playerPopulation - (this.skipBroodTotal - this.trialSkipBroodBase));
   }
@@ -1222,8 +1251,85 @@ export class Game {
     const pop = this.world.playerPopulation;
     const popTarget = Math.min(pop, Math.max(GAME.trialPopFloor, pop - GAME.trialPopSlack));
     candidates.push({ kind: "pop", target: popTarget, label: `무리 ${popTarget}마리` });
+
+    // ── 세계 위에 목표를 찍는 시험 둘 (**[사용자 2026-08-06]** 「무엇을 해라」에서 「무엇을 지켜라」로) ──
+    //
+    // 왜 이게 필요한가: 위 넷은 **화면 어디에도 없다.** 「사냥 5회」라고 예고해 놓고 그 다섯이 어디
+    // 있는지는 안 알려 준다 — 2026-08-02 폰 실기의 "뭘 하려는 건지 모르겠다"가 정확히 이 자리였다.
+    // 아래 둘은 땅 위에 목표가 보이므로 **무리를 그리로 몰면 되고, 명령이 곧 답이 된다.**
+    //
+    // ⚠ 자리·표식은 **여기서 정하지 않는다**(pickTrial 은 순수 조회라 예고에도 불린다).
+    //   실제로 세계에 찍는 것은 `armTrial` 이 라운드를 시작할 때 한 번만 한다.
+    const holdTarget = Math.max(3, Math.min(12, Math.round(pop * 0.5)));
+    if (pop >= 4) candidates.push({ kind: "hold", target: holdTarget, label: `표시된 자리에 ${holdTarget}마리` });
+    // 표식 사냥은 이빨 0단이면 못 한다(사냥 자체가 불가) · 위 「사냥」과 같은 게이트.
+    if (t.hunt > 0) {
+      candidates.push({ kind: "mark", target: GAME.trialMarkN, label: `표시된 것 ${GAME.trialMarkN}마리 사냥` });
+    }
+
     const idx = new Rng(`${this.currentSeed}-trial-s${this.stageIndex}`).int(0, candidates.length - 1);
     return candidates[idx] as Trial;
+  }
+
+  /**
+   * **시험을 세계에 실제로 찍는다** — 라운드가 시작될 때 한 번만. 자리(원)와 표식(개체)이 여기서 정해진다.
+   *
+   * 결정론: 전용 `Rng` 인스턴스라 메인 스트림을 한 번도 안 건드린다(같은 시드 + 같은 단계 = 같은 자리).
+   * 시험이 없거나 자리를 안 쓰는 종류면 세계에 아무것도 안 남는다.
+   */
+  private armTrial(trial: Trial | null): void {
+    this.world.trialZone = null;
+    this.world.trialMarks = [];
+    if (!trial) return;
+    const rng = new Rng(`${this.currentSeed}-trialmark-s${this.stageIndex}`);
+
+    if (trial.kind === "hold") {
+      // **무리에서 조금 떨어진 곳**에 찍는다. 발밑에 찍으면 아무것도 안 해도 합격이라 시험이 아니고,
+      // 너무 멀면 16초 안에 못 간다(무리 속도 ≈ 1.7px/틱 × 30틱 × 16초 = 800px 이 상한이다).
+      const c = this.world.playerCentroid();
+      const caps = {
+        swim: this.genome.traits.swimming >= SIM.swimThreshold,
+        land: this.genome.traits.swimming < SIM.aquaticOnlyThreshold,
+        fly: this.genome.traits.wings >= SIM.flyThreshold,
+      };
+      for (let tryN = 0; tryN < 40; tryN += 1) {
+        const ang = rng.range(0, Math.PI * 2);
+        const dist = rng.range(TRIAL_HOLD_MIN_DIST, TRIAL_HOLD_MAX_DIST);
+        const x = Math.max(20, Math.min(this.world.width - 20, c.x + Math.cos(ang) * dist));
+        const y = Math.max(20, Math.min(this.world.height - 20, c.y + Math.sin(ang) * dist));
+        // **갈 수 있는 곳이어야 한다.** 못 가는 자리에 목표를 찍는 건 못 하는 시험을 내는 것이다.
+        if (!this.world.terrain.isPassable(x, y, caps.swim, caps.land, caps.fly)) continue;
+        if (!this.world.terrain.lineOfSight(c.x, c.y, x, y, caps.swim, caps.land, caps.fly)) continue;
+        this.world.trialZone = { x, y, r: TRIAL_HOLD_RADIUS };
+        return;
+      }
+      // 마흔 번 다 실패하면(섬에 갇힌 종 등) 무리 자리에 찍는다 — 시험이 쉬워질지언정 불가능하진 않게.
+      this.world.trialZone = { x: c.x, y: c.y, r: TRIAL_HOLD_RADIUS };
+      return;
+    }
+
+    if (trial.kind === "mark") {
+      // 잡을 수 있는 야생만 고른다(내 이빨이 박히는 상대). **목표보다 넉넉히 찍는다** — 표식이 찍힌
+      // 것이 다른 포식자에게 먼저 잡히거나 굶어 죽어도 시험이 불가능해지면 안 된다.
+      const me = this.genome.traits;
+      const pool = this.world.entities.filter(
+        (e) =>
+          e.alive &&
+          !e.species.isPlayer &&
+          !e.species.friendly &&
+          !biteOutcome(me.attack, e.genome.traits.defense, me.size, e.genome.traits.size).ignored,
+      );
+      const want = trial.target + TRIAL_MARK_SPARE;
+      // 개체 id 오름차순으로 정렬한 뒤 뽑는다 — 배열 순서(스폰 순)에 결과가 안 걸리게(결정론).
+      pool.sort((a, b) => a.id - b.id);
+      const picked: number[] = [];
+      while (picked.length < want && pool.length > 0) {
+        const i = rng.int(0, pool.length - 1);
+        picked.push((pool[i] as Entity).id);
+        pool.splice(i, 1);
+      }
+      this.world.trialMarks = picked;
+    }
   }
 
   /**
@@ -1285,6 +1391,8 @@ export class Game {
         this.currentTrial = this.pickTrial();
         this.trialSkipBroodBase = this.skipBroodTotal; // 이 시험의 pop 기준점(이후 스킵 새끼는 제외)
       }
+      // 시험을 세계에 실제로 찍는다(자리·표식). 종류가 그걸 안 쓰면 세계는 그대로다.
+      this.armTrial(this.currentTrial);
     }
   }
 

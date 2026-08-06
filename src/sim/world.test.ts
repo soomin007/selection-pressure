@@ -1438,13 +1438,14 @@ describe("무리 방어 (herding 이 초식의 생존 레버 — 뭉친 무리�
 
 describe("라운드 계수기 (roundCounts · 시험 판정의 눈금)", () => {
   // sim 은 세기만 하고 판정은 game 이 한다. 여기서는 "내 종의 사건만, 빠짐없이, 다시 0 으로"를 본다.
-  it("resetRoundCounts 는 세 계수를 전부 0 으로 되돌린다", () => {
+  it("resetRoundCounts 는 계수를 전부 0 으로 되돌린다", () => {
     const w = new World("rc-reset", W, H, baseGenome());
     w.roundCounts.hunts = 3;
     w.roundCounts.feeds = 11;
     w.roundCounts.births = 2;
+    w.roundCounts.marked = 1;
     w.resetRoundCounts();
-    expect(w.roundCounts).toEqual({ hunts: 0, feeds: 0, births: 0 });
+    expect(w.roundCounts).toEqual({ hunts: 0, feeds: 0, births: 0, marked: 0 });
   });
 
   it("같은 시드면 계수도 똑같다(정수 증가라 rng 를 안 건드린다)", () => {

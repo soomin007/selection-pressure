@@ -30,6 +30,7 @@ import {
   TIER_ROMAN,
   activeDuos,
   nearDuo,
+  SIZE_MEANING,
   tierLine,
   tierOf,
   type Category,
@@ -792,6 +793,21 @@ export function createDraftPanel(
           `${CATEGORY_LABELS[firstDown.cat]} ${TIER_ROMAN[firstDown.from]} 효과를 잃습니다` +
           (lost.gain ? ` · ${lost.gain}` : "");
         body.appendChild(note);
+      }
+      // **몸집 변화는 중립으로, 전후 값으로만.** 좋고 나쁨이 갈리지 않는 축이라 「얻는 것 / 잃는 것」
+      // 어느 쪽에도 못 넣는다(넣으면 그 자체가 거짓말이다 · tiers.ts SIZE_MEANING 주석).
+      // 무엇을 뜻하는지는 툴팁 한 줄이 맡고, **무엇보다 히어로 미리보기의 생물이 실제로 커지거나 작아진다.**
+      {
+        const after = cloneGenome(nextCtx.genome);
+        applyCard(after, card);
+        const from = Math.round(nextCtx.genome.traits.size);
+        const to = Math.round(after.traits.size);
+        if (to !== from) {
+          const note = el("span", "draft-note");
+          note.textContent = `몸집 ${from} ▸ ${to}`;
+          note.title = SIZE_MEANING;
+          body.appendChild(note);
+        }
       }
       // 열쇠 카드는 열쇠의 효과와 대가 한 줄(KEY_DESC 그대로 · 단일 진실).
       if (card.key !== undefined) {
