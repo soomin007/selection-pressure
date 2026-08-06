@@ -97,15 +97,18 @@ describe("칩이 사실을 말한다 — 예고한 티어 이동이 실제 결�
   });
 
   it("칩 종류가 실제 상황과 맞는다 — 넘김·저축·강등·열쇠·불씨", () => {
-    // 넘김: 문턱 바로 앞(도장 1)에서 이빨 +2 를 고르면 그 자리에서 1단이 켜진다.
-    const cross = cardTierChips(card("wc_fang1"), pipsOf({ fang: TIER_STEPS[0] - 2 }));
+    // 넘김: 문턱 바로 앞에서 이빨 카드를 고르면 그 자리에서 1단이 켜진다.
+    // ⚠ 시작 도장을 **카드가 주는 만큼 빼서** 잡는다 — 상수로 적으면 카드 풀을 손볼 때 조용히 낡는다.
+    const wellCard = card("wc_fang1");
+    const wellPips = cardPips(wellCard, "fang");
+    const cross = cardTierChips(wellCard, pipsOf({ fang: TIER_STEPS[0] - wellPips }));
     expect(cross[0]?.kind).toBe("cross");
     expect(cross[0]?.color).toBe(categoryColor("fang"));
     expect(cross[0]?.text).toContain(CATEGORY_LABELS.fang);
     expect(cross[0]?.text).toContain("켜짐"); // 0단에서 켜질 땐 「이빨 I 켜짐」
 
     // 저축: 문턱을 못 넘기면 회색으로 **몇 칸 남았는지**를 말한다(그게 곧 정보다).
-    const save = cardTierChips(card("wc_fang1"), pipsOf({ fang: TIER_STEPS[0] }));
+    const save = cardTierChips(wellCard, pipsOf({ fang: TIER_STEPS[0] }));
     expect(save[0]?.kind).toBe("save");
     expect(save[0]?.color).toBe(SAVE_CHIP_COLOR);
     expect(save[0]?.text).toContain("칸 남음");

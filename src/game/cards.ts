@@ -46,8 +46,15 @@ export const RARITY_WEIGHT: Record<Rarity, number> = {
   legendary: 10,
 };
 
-/** 레벨 보정이 최대에 이르는 런 레벨. 한 판은 보통 레벨 12~22 에서 끝나므로 그 앞쪽에서 체감되게 잡는다. */
-export const RARITY_BOOST_FULL_LEVEL = 10;
+/**
+ * 레벨 보정이 최대에 이르는 런 레벨.
+ *
+ * **[사용자 2026-08-06]** "시대가 높아질수록 높은 희귀도의 카드 확률이 높아지게."
+ * 한 판은 보통 레벨 12~22 에서 끝나므로 18 로 잡으면 **런 내내 계속 오른다** — 초반엔 흔함이
+ * 대부분이고 후반에 가서야 큰 카드를 만난다. 10 이면 한 판의 절반에서 보정이 멈춰, 뒤 절반이
+ * 앞과 똑같아진다(성장의 질감이 안 갈린다).
+ */
+export const RARITY_BOOST_FULL_LEVEL = 18;
 
 /**
  * 최대 보정에서 각 등급의 가중치가 기준값의 몇 배가 되는가. 흔함은 1배(그대로)이고 높은 등급만 커진다
@@ -76,7 +83,7 @@ export function rarityWeightsAtLevel(level: number): Record<Rarity, number> {
  *
  * ⚠ **갈래 전용 카드 풀은 폐기했다.** 티어 구조에서 "3장 중 1장은 반드시 내 갈래"를 보장하면
  * "내 범주만 계속 쌓인다"로 굳어 고르는 일이 사라진다. 갈래는 이제 **시작 도장의 배분과 시작 열쇠**만
- * 다르게 하고, 카드는 75장 전부가 누구에게나 나온다. 대신 **[사용자 2026-08-06]** 내가 판 방향의
+ * 다르게 하고, 카드는 90장 전부가 누구에게나 나온다. 대신 **[사용자 2026-08-06]** 내가 판 방향의
  * 카드가 조금 더 자주 뜬다(보장이 아니라 확률 가중 · `drawCards` 의 `bias`).
  */
 export type Lineage = "omni" | "herd" | "scout" | "hunter" | "giant" | "ranged" | "sea" | "sky" | "venom";
@@ -298,60 +305,69 @@ export const PRESET_CARDS: readonly Card[] = [
   },
 ];
 
-// ─────────────────────────────── 카드 풀 75장 ───────────────────────────────
+// ─────────────────────────────── 카드 풀 90장 ───────────────────────────────
 //
-// | 패턴 | 장수 | 주는 도장 |
+// ★ **등급이 곧 크기다** (2026-08-06 사용자 제안).
+//   원문: "초반에는 레벨업을 금방금방 할 거니까 카드가 칸 수를 한 칸씩만 채워주는 흔함 단계 카드가
+//   대부분으로 뜨게 하고, 시대가 높아질수록 높은 희귀도의 카드 확률이 높아지게 하고, 늘려주는 칸 수도
+//   조금 더 파격적이게 하는 게 어때? 초기에 운이 좋게 높은 희귀도 카드를 얻으면 말그대로 운이 좋은 거니
+//   초반부터 칸 수를 많이 채워가는 거고, 후반에도 운이 안 좋으면 칸수 하나짜리 흔한 카드만 만나는 거고."
+//
+//   예전에는 등급과 도장 수가 느슨하게만 붙어 있었다 — 전설인데 도장 1개(열쇠)가 있고 흔함인데 2개가
+//   있었다. 그러면 **배지가 카드의 크기를 안 말한다.** 이제 등급 하나만 보면 크기를 안다:
+//
+// | 등급 | 장수 | 주는 도장 |
 // |---|---|---|
-// | 패턴 | 장수 | 주는 도장 | 등급 |
-// |---|---|---|---|
-// | 한 우물 | 30 (5범주 × 6) | 한 범주 +2 | 흔함 20 · 드묾 10 |
-// | 큰 도약 | 10 (5범주 × 2) | 한 범주 +3 | 귀함 10 |
-// | 두 갈래 | 10 (10쌍 × 1) | 두 범주 각 +1 | 흔함 6 · 드묾 4 |
-// | 치우침 | 10 | 주 +2 · 부 +1 | 드묾 10 |
-// | 맞바꿈 |  8 | 한 범주 +3 · 다른 범주 −1 | 아주 귀함 8 |
-// | 열쇠   |  7 | 능력 하나 + 모 범주 +1 | 전설 7 |
+// | 흔함     | 30 (5범주 × 6) | 한 범주 **+1** |
+// | 드묾     | 25 (한 우물 15 + 두 갈래 10) | 한 범주 **+2** / 두 범주 각 +1 |
+// | 귀함     | 20 (도약 10 + 치우침 10) | 한 범주 **+3** / 주 +2 · 부 +1 |
+// | 아주 귀함 |  8 (도약 5 + 맞바꿈 3) | 한 범주 **+4** / **+5 에 다른 범주 −1** |
+// | 전설     |  7 (능력 7종) | 능력 하나 + 모 범주 **+2** |
+//
+//   이 구조가 초반과 후반의 **질감을 가른다**: 초반은 레벨업이 잦지만 한 장이 한 칸이라 티어가 천천히
+//   오르고, 후반은 카드가 뜸하지만 한 장이 크게 뛴다(`rarityWeightsAtLevel` 이 레벨에 따라 윗 등급을
+//   키운다). 그리고 **운의 진폭이 커진다** — 초반에 전설이 뜨면 그건 말 그대로 운이 좋은 것이고,
+//   후반에 흔함만 만나면 그것도 로그라이크다(사용자 확정: 무작위성이 이 장르의 핵심 재미).
 //
 // ⚠ **등급별 「종류 수」가 서열을 뒤집을 수 있다.** 한 등급이 뜰 확률은 `종류 수 × 가중치` 라,
-//   윗 등급의 카드 종류가 많으면 아랫 등급보다 자주 뜬다 — 그 순간 배지가 거짓말이 된다.
-//   ⚠ 레벨이 오르면 윗 등급에 배수가 붙으므로(RARITY_BOOST_MAX) **레벨 7·30 에서도** 서열을 봐야 한다.
-//   지금 구성(총 75장): 흔함 26 · 드묾 24 · 귀함 10 · 아주 귀함 8 · 전설 7.
-//   레벨 30 기준 26×100 > 24×97.5 > 10×91.2 > 8×72 > 7×55 로 서열이 지켜진다.
+//   윗 등급의 종류가 많으면 아랫 등급보다 자주 뜬다 — 그 순간 배지가 거짓말이 된다.
+//   레벨이 오르면 윗 등급에 배수가 붙으므로(RARITY_BOOST_MAX) **레벨 1 과 최대 레벨 양쪽에서** 봐야 한다.
+//   지금 구성(90장): 레벨 1 은 3000 > 1625 > 760 > 160 > 70, 최대 레벨은 3000 > 2437 > 1824 > 576 > 385.
 //   **장수를 바꾸면 이 산수를 다시 하라**(cards.test 가 레벨 1·3·5·7·30 에서 잡는다).
 //
 // 문구 규칙: **desc 에 효과를 적지 않는다.** 「이빨 +2」는 칩이 말하고, 「무는 힘 ×1.7 이 켜집니다」는
 // 티어 줄(`tiers.tierLine`)이 말한다. 여기 또 적으면 언젠가 한쪽만 바뀌어 화면이 거짓말을 한다.
-
-const ONE_WELL: readonly [Category, string, string, Rarity][] = [
-  ["fang", "wc_fang1", "날카로운 앞니|물면 살점이 뜯깁니다", "common"],
-  ["fang", "wc_fang2", "굽은 송곳니|한 번 박히면 잘 안 빠집니다", "common"],
-  ["fang", "wc_fang3", "벌어지는 턱|입이 더 크게 벌어집니다", "common"],
-  ["fang", "wc_fang4", "물어뜯는 버릇|물고 흔드는 법을 익힙니다", "common"],
-  ["fang", "wc_fang5", "갈아 붙인 어금니|씹는 자리가 단단해집니다", "uncommon"],
-  ["fang", "wc_fang6", "핏내를 아는 코|다친 것을 멀리서 알아챕니다", "uncommon"],
-  ["leg", "wc_leg1", "긴 정강이|한 걸음이 멀어집니다", "common"],
-  ["leg", "wc_leg2", "단단한 발굽|땅을 차는 소리가 달라집니다", "common"],
-  ["leg", "wc_leg3", "마른 몸통|군더더기가 빠집니다", "common"],
-  ["leg", "wc_leg4", "튼튼한 뒷다리|밀어내는 힘이 붙습니다", "common"],
-  ["leg", "wc_leg5", "가벼운 뼈|뼛속이 비어 갑니다", "uncommon"],
-  ["leg", "wc_leg6", "지치지 않는 걸음|오래 달려도 숨이 덜 찹니다", "uncommon"],
-  ["eye", "wc_eye1", "커다란 눈망울|더 많은 빛이 들어옵니다", "common"],
-  ["eye", "wc_eye2", "밤에 뜨는 눈|어두운 것이 덜 어두워집니다", "common"],
-  ["eye", "wc_eye3", "높이 달린 눈|풀 너머가 보입니다", "common"],
-  ["eye", "wc_eye4", "맑은 수정체|멀리 있는 것이 또렷해집니다", "common"],
-  ["eye", "wc_eye5", "두 겹 눈꺼풀|모래바람에도 눈을 뜹니다", "uncommon"],
-  ["eye", "wc_eye6", "먼 데를 보는 버릇|고개를 들고 오래 봅니다", "uncommon"],
-  ["hide", "wc_hide1", "굳은 살가죽|부딪힌 자리가 굳어 두꺼워집니다", "common"],
-  ["hide", "wc_hide2", "두꺼운 지방층|추운 밤이 견딜 만해집니다", "common"],
-  ["hide", "wc_hide3", "겹친 비늘|이빨이 미끄러집니다", "common"],
-  ["hide", "wc_hide4", "뭉친 근육|맞아도 덜 밀립니다", "common"],
-  ["hide", "wc_hide5", "촘촘한 털|살갗에 바람이 안 닿습니다", "uncommon"],
-  ["hide", "wc_hide6", "단단한 등뼈|무거운 것을 지고도 섭니다", "uncommon"],
-  ["herd", "wc_herd1", "서로 부르는 소리|멀리 떨어진 동료가 대답합니다", "common"],
-  ["herd", "wc_herd2", "잦은 출산|새끼 보는 날이 잦아집니다", "common"],
-  ["herd", "wc_herd3", "함께 자는 밤|붙어 자면 덜 춥습니다", "common"],
-  ["herd", "wc_herd4", "새끼를 돌보는 버릇|어린 것이 덜 죽습니다", "common"],
-  ["herd", "wc_herd5", "넓어진 목청|목소리가 골짜기를 넘습니다", "uncommon"],
-  ["herd", "wc_herd6", "큰 배|한 배에 여럿을 품습니다", "uncommon"],
+const ONE_WELL: readonly [Category, string, string][] = [
+  ["fang", "wc_fang1", "날카로운 앞니|물면 살점이 뜯깁니다"],
+  ["fang", "wc_fang2", "굽은 송곳니|한 번 박히면 잘 안 빠집니다"],
+  ["fang", "wc_fang3", "벌어지는 턱|입이 더 크게 벌어집니다"],
+  ["fang", "wc_fang4", "물어뜯는 버릇|물고 흔드는 법을 익힙니다"],
+  ["fang", "wc_fang5", "갈아 붙인 어금니|씹는 자리가 단단해집니다"],
+  ["fang", "wc_fang6", "핏내를 아는 코|다친 것을 멀리서 알아챕니다"],
+  ["leg", "wc_leg1", "긴 정강이|한 걸음이 멀어집니다"],
+  ["leg", "wc_leg2", "단단한 발굽|땅을 차는 소리가 달라집니다"],
+  ["leg", "wc_leg3", "마른 몸통|군더더기가 빠집니다"],
+  ["leg", "wc_leg4", "튼튼한 뒷다리|밀어내는 힘이 붙습니다"],
+  ["leg", "wc_leg5", "가벼운 뼈|뼛속이 비어 갑니다"],
+  ["leg", "wc_leg6", "지치지 않는 걸음|오래 달려도 숨이 덜 찹니다"],
+  ["eye", "wc_eye1", "커다란 눈망울|더 많은 빛이 들어옵니다"],
+  ["eye", "wc_eye2", "밤에 뜨는 눈|어두운 것이 덜 어두워집니다"],
+  ["eye", "wc_eye3", "높이 달린 눈|풀 너머가 보입니다"],
+  ["eye", "wc_eye4", "맑은 수정체|멀리 있는 것이 또렷해집니다"],
+  ["eye", "wc_eye5", "두 겹 눈꺼풀|모래바람에도 눈을 뜹니다"],
+  ["eye", "wc_eye6", "먼 데를 보는 버릇|고개를 들고 오래 봅니다"],
+  ["hide", "wc_hide1", "굳은 살가죽|부딪힌 자리가 굳어 두꺼워집니다"],
+  ["hide", "wc_hide2", "두꺼운 지방층|추운 밤이 견딜 만해집니다"],
+  ["hide", "wc_hide3", "겹친 비늘|이빨이 미끄러집니다"],
+  ["hide", "wc_hide4", "뭉친 근육|맞아도 덜 밀립니다"],
+  ["hide", "wc_hide5", "촘촘한 털|살갗에 바람이 안 닿습니다"],
+  ["hide", "wc_hide6", "단단한 등뼈|무거운 것을 지고도 섭니다"],
+  ["herd", "wc_herd1", "서로 부르는 소리|멀리 떨어진 동료가 대답합니다"],
+  ["herd", "wc_herd2", "잦은 출산|새끼 보는 날이 잦아집니다"],
+  ["herd", "wc_herd3", "함께 자는 밤|붙어 자면 덜 춥습니다"],
+  ["herd", "wc_herd4", "새끼를 돌보는 버릇|어린 것이 덜 죽습니다"],
+  ["herd", "wc_herd5", "넓어진 목청|목소리가 골짜기를 넘습니다"],
+  ["herd", "wc_herd6", "큰 배|한 배에 여럿을 품습니다"],
 ];
 
 // ⚠ **열 장 전부 「귀함」이다. 등급을 섞지 말 것.**
@@ -359,32 +375,61 @@ const ONE_WELL: readonly [Category, string, string, Rarity][] = [
 //   **아주 귀함이 귀함보다 자주 뜬다**(등급 확률 = 종류 수 × 가중치 · 5×38=190 vs 10×20=200).
 //   그 순간 배지가 거짓말을 한다 — 이 저장소에서 희귀도는 반드시 뽑기 확률과 묶여 있어야 한다.
 //   「아주 귀함」은 맞바꿈 다섯 장이 맡는다(대가가 있는 대신 보상이 크다).
-const BIG_LEAP: readonly [Category, string, string, Rarity][] = [
-  ["fang", "lp_fang1", "톱니 어금니|뼈까지 갈아 넘깁니다", "rare"],
-  ["fang", "lp_fang2", "뼈를 부수는 턱|한 번에 끝냅니다", "rare"],
-  ["leg", "lp_leg1", "폭발하는 뒷다리|첫 세 걸음이 다릅니다", "rare"],
-  ["leg", "lp_leg2", "바람을 가르는 몸|달리는 소리가 사라집니다", "rare"],
-  ["eye", "lp_eye1", "매의 눈|점 하나가 짐승으로 보입니다", "rare"],
-  ["eye", "lp_eye2", "밤을 꿰뚫는 눈|한밤이 저녁처럼 보입니다", "rare"],
-  ["hide", "lp_hide1", "네 칸짜리 위|풀만 먹고도 산이 됩니다", "rare"],
-  ["hide", "lp_hide2", "바위 같은 등|위에서 떨어지는 것을 그냥 받습니다", "rare"],
-  ["herd", "lp_herd1", "한배에 여럿|한 번에 여러 마리가 태어납니다", "rare"],
-  ["herd", "lp_herd2", "사방으로 퍼지는 목소리|골짜기 건너까지 명령이 갑니다", "rare"],
+/**
+ * **드묾 (+2)** — 한 범주에 두 칸. 5범주 × 3.
+ * 「한 우물」의 큰 형이다: 같은 자리를 파는데 한 번에 두 칸 간다.
+ */
+const WELL2: readonly [Category, string, string][] = [
+  ["fang", "w2_fang1", "갈아 붙인 어금니|씹는 자리가 단단해집니다"],
+  ["fang", "w2_fang2", "핏내를 아는 코|다친 것을 멀리서 알아챕니다"],
+  ["fang", "w2_fang3", "휘어 박히는 송곳니|한 번에 깊이 들어갑니다"],
+  ["leg", "w2_leg1", "가벼운 뼈|뼛속이 비어 갑니다"],
+  ["leg", "w2_leg2", "지치지 않는 걸음|오래 달려도 숨이 덜 찹니다"],
+  ["leg", "w2_leg3", "탄력 있는 힘줄|디딜 때마다 되튑니다"],
+  ["eye", "w2_eye1", "두 겹 눈꺼풀|모래바람에도 눈을 뜹니다"],
+  ["eye", "w2_eye2", "먼 데를 보는 버릇|고개를 들고 오래 봅니다"],
+  ["eye", "w2_eye3", "빛을 모으는 막|어스름이 대낮 같아집니다"],
+  ["hide", "w2_hide1", "촘촘한 털|살갗에 바람이 안 닿습니다"],
+  ["hide", "w2_hide2", "단단한 등뼈|무거운 것을 지고도 섭니다"],
+  ["hide", "w2_hide3", "겹겹이 굳은 살|이빨이 겉만 스칩니다"],
+  ["herd", "w2_herd1", "넓어진 목청|목소리가 골짜기를 넘습니다"],
+  ["herd", "w2_herd2", "큰 배|한 배에 여럿을 품습니다"],
+  ["herd", "w2_herd3", "서로 지키는 버릇|어린 것을 가운데 둡니다"],
 ];
 
-const TWO_WAY: readonly [Category, Category, string, string, Rarity][] = [
-  ["fang", "leg", "tw_fl", "몰이꾼의 다리|쫓아가서 뭅니다", "common"],
-  ["fang", "eye", "tw_fe", "매복꾼의 자세|먼저 보고 기다렸다가 뭅니다", "common"],
-  ["fang", "hide", "tw_fh", "맞물리는 몸|밀면서 뭅니다", "common"],
-  ["fang", "herd", "tw_fd", "함께 무는 법|하나가 물면 둘이 붙습니다", "uncommon"],
-  ["leg", "eye", "tw_le", "앞서 보는 걸음|보면서 달립니다", "common"],
-  ["leg", "hide", "tw_lh", "지구력|오래 걷고 잘 안 지칩니다", "common"],
-  ["leg", "herd", "tw_ld", "같이 달리는 무리|한 무리가 한 방향으로 뜁니다", "uncommon"],
-  ["eye", "hide", "tw_eh", "참는 눈|가만히 오래 지켜봅니다", "common"],
-  ["eye", "herd", "tw_ed", "파수 서기|누군가는 늘 깨어 있습니다", "uncommon"],
-  ["hide", "herd", "tw_hd", "서로 기대기|붙어 서면 벽이 됩니다", "uncommon"],
+/** **드묾 (+1/+1)** — 두 범주에 한 칸씩. 열 쌍 전부. 두 길을 나란히 파는 사람의 카드다. */
+const TWO_WAY: readonly [Category, Category, string, string][] = [
+  ["fang", "leg", "tw_fl", "몰이꾼의 다리|쫓아가서 뭅니다"],
+  ["fang", "eye", "tw_fe", "매복꾼의 자세|먼저 보고 기다렸다가 뭅니다"],
+  ["fang", "hide", "tw_fh", "맞물리는 몸|밀면서 뭅니다"],
+  ["fang", "herd", "tw_fd", "함께 무는 법|하나가 물면 둘이 붙습니다"],
+  ["leg", "eye", "tw_le", "앞서 보는 걸음|보면서 달립니다"],
+  ["leg", "hide", "tw_lh", "지구력|오래 걷고 잘 안 지칩니다"],
+  ["leg", "herd", "tw_ld", "같이 달리는 무리|한 무리가 한 방향으로 뜁니다"],
+  ["eye", "hide", "tw_eh", "참는 눈|가만히 오래 지켜봅니다"],
+  ["eye", "herd", "tw_ed", "파수 서기|누군가는 늘 깨어 있습니다"],
+  ["hide", "herd", "tw_hd", "서로 기대기|붙어 서면 벽이 됩니다"],
 ];
 
+/** **귀함 (+3)** — 한 범주에 세 칸. 5범주 × 2. 문턱 하나를 통째로 넘기는 일이 잦다. */
+const BIG_LEAP: readonly [Category, string, string][] = [
+  ["fang", "lp_fang1", "톱니 어금니|뼈까지 갈아 넘깁니다"],
+  ["fang", "lp_fang2", "뼈를 부수는 턱|한 번에 끝냅니다"],
+  ["leg", "lp_leg1", "폭발하는 뒷다리|첫 세 걸음이 다릅니다"],
+  ["leg", "lp_leg2", "바람을 가르는 몸|달리는 소리가 사라집니다"],
+  ["eye", "lp_eye1", "매의 눈|점 하나가 짐승으로 보입니다"],
+  ["eye", "lp_eye2", "밤을 꿰뚫는 눈|한밤이 저녁처럼 보입니다"],
+  ["hide", "lp_hide1", "네 칸짜리 위|풀만 먹고도 산이 됩니다"],
+  ["hide", "lp_hide2", "바위 같은 등|위에서 떨어지는 것을 그냥 받습니다"],
+  ["herd", "lp_herd1", "한배에 여럿|한 번에 여러 마리가 태어납니다"],
+  ["herd", "lp_herd2", "사방으로 퍼지는 목소리|골짜기 건너까지 명령이 갑니다"],
+];
+
+/**
+ * **귀함 (+2/+1)** — 치우침. 주 범주에 둘, 부 범주에 하나. 총 세 칸이라 위의 「큰 도약」과 같은 크기다.
+ * 두 기둥을 나란히 키우는 사람의 카드 — 이게 없으면 두 범주를 함께 파는 길이 「두 갈래」(+1/+1)뿐이라
+ * 너무 얇아진다(듀오가 사실상 안 열린다).
+ */
 const LEAN: readonly [Category, Category, string, string][] = [
   ["fang", "leg", "ln_fl", "쫓아가 무는 법|따라잡는 것까지가 사냥입니다"],
   ["fang", "herd", "ln_fd", "나눠 먹는 사냥|잡은 것을 함께 뜯습니다"],
@@ -398,20 +443,31 @@ const LEAN: readonly [Category, Category, string, string][] = [
   ["herd", "eye", "ln_de", "서로 알리는 무리|본 것을 곧바로 전합니다"],
 ];
 
-// ⚠ **여덟 장이다. 다섯으로 줄이지 말 것.** 다섯이면 「아주 귀함」의 종류 수가 전설(열쇠 7종)보다
-//   적어져, 레벨 보정이 붙는 후반에 **전설이 아주 귀함보다 자주 뜬다**(레벨 7에서 실측으로 뒤집혔다).
-//   등급 확률은 `종류 수 × 가중치` 이므로 종류 수가 서열을 뒤집을 수 있다.
+/**
+ * **아주 귀함 (+4)** — 한 범주에 네 칸. 5범주 × 1.
+ * **[사용자 2026-08-06]** "늘려주는 칸 수도 조금 더 파격적이게." 문턱 하나는 거의 확실히 넘고,
+ * 운이 좋으면 두 단계를 한 번에 지나간다. 초반에 이게 뜨면 그 판은 그것만으로 달라진다.
+ */
+const SURGE: readonly [Category, string, string][] = [
+  ["fang", "sg_fang", "짐승을 삼키는 턱|한 입에 통째로 뭅니다"],
+  ["leg", "sg_leg", "땅을 밀어내는 다리|한 번 뛰면 언덕을 넘습니다"],
+  ["eye", "sg_eye", "지평선을 보는 눈|산 너머가 보입니다"],
+  ["hide", "sg_hide", "산 같은 몸|무엇도 이 살을 못 뚫습니다"],
+  ["herd", "sg_herd", "끝없이 불어나는 무리|한 철에 세대가 바뀝니다"],
+];
+
+/**
+ * **아주 귀함 (+5 / 다른 범주 −1)** — 맞바꿈. 셋뿐이라 귀하다.
+ * **[사용자 2026-08-06]** 강등을 허용하되 조건이 있었다: "다른 칸 수를 줄이는 거라면 그만큼 보상이
+ * 더욱 획기적이어야 할 거야." 그래서 +5 다 — 같은 등급의 순수 도약(+4)보다 한 칸 더 준다.
+ */
 const TRADE: readonly [Category, Category, string, string][] = [
   ["hide", "leg", "td_hl", "등에 진 껍질|무거운 것을 지고 다니기로 합니다"],
   ["fang", "hide", "td_fh", "전부 이빨로|살을 덜어 이빨에 몰아줍니다"],
-  ["leg", "herd", "td_ld", "홀로 달리기|무리를 두고 앞서 나갑니다"],
-  ["eye", "hide", "td_eh", "눈만 남기고|보는 데 모든 것을 겁니다"],
   ["herd", "fang", "td_df", "수로 밀어붙이기|이빨 대신 머릿수로 갚습니다"],
-  ["fang", "leg", "td_fl", "자리를 지키는 턱|쫓기를 포기하고 무는 데 겁니다"],
-  ["eye", "herd", "td_ed", "혼자 보는 눈|무리를 흩고 스스로 살핍니다"],
-  ["herd", "hide", "td_dh", "얇고 많이|한 마리를 두껍게 하느니 여럿을 낳습니다"],
 ];
 
+/** **전설** — 능력 하나 + 모 범주 +2. 능력은 그 자체로 새 규칙이라 도장이 작아도 크다. */
 const KEY_CARDS: readonly [KeyName, string, string][] = [
   ["fin", "ky_fin", "물갈퀴|물이 더는 벽이 아닙니다"],
   ["wing", "ky_wing", "넓은 날개|산도 바다도 밑으로 지나갑니다"],
@@ -429,35 +485,21 @@ const split = (s: string): [string, string] => {
 
 function buildPool(): Card[] {
   const out: Card[] = [];
-  for (const [cat, id, text, rarity] of ONE_WELL) {
+  const push = (id: string, text: string, pips: Partial<Record<Category, number>>, rarity: Rarity, key?: KeyName): void => {
     const [name, desc] = split(text);
-    out.push({ id, name, desc, pips: { [cat]: 2 }, rarity });
-  }
-  for (const [cat, id, text, rarity] of BIG_LEAP) {
-    const [name, desc] = split(text);
-    out.push({ id, name, desc, pips: { [cat]: 3 }, rarity });
-  }
-  for (const [a, b, id, text, rarity] of TWO_WAY) {
-    const [name, desc] = split(text);
-    out.push({ id, name, desc, pips: { [a]: 1, [b]: 1 }, rarity });
-  }
-  for (const [main, sub, id, text] of LEAN) {
-    const [name, desc] = split(text);
-    out.push({ id, name, desc, pips: { [main]: 2, [sub]: 1 }, rarity: "uncommon" });
-  }
-  for (const [gain, loss, id, text] of TRADE) {
-    const [name, desc] = split(text);
-    // **[사용자 2026-08-06]** 맞바꿈이 티어를 **강등**시켜도 된다. 조건: "다른 칸 수를 줄이는 거라면
-    // 그만큼 보상이 더욱 획기적이어야 할 거야." → 주는 쪽이 +3(큰 도약과 같은 값)인데 등급은 한 단계
-    // 위이고 대가가 있다. 강등은 카드에 붉은 칩(`다리 II ▾ I`)으로 그 자리에서 보인다.
-    out.push({ id, name, desc, pips: { [gain]: 3, [loss]: -1 }, rarity: "epic" });
-  }
-  for (const [key, id, text] of KEY_CARDS) {
-    const [name, desc] = split(text);
-    out.push({ id, name, desc, pips: { [KEY_PARENT[key]]: 1 }, key, rarity: "legendary" });
-  }
+    out.push(key === undefined ? { id, name, desc, pips, rarity } : { id, name, desc, pips, rarity, key });
+  };
+  for (const [cat, id, text] of ONE_WELL) push(id, text, { [cat]: 1 }, "common");
+  for (const [cat, id, text] of WELL2) push(id, text, { [cat]: 2 }, "uncommon");
+  for (const [a, b, id, text] of TWO_WAY) push(id, text, { [a]: 1, [b]: 1 }, "uncommon");
+  for (const [cat, id, text] of BIG_LEAP) push(id, text, { [cat]: 3 }, "rare");
+  for (const [main, sub, id, text] of LEAN) push(id, text, { [main]: 2, [sub]: 1 }, "rare");
+  for (const [cat, id, text] of SURGE) push(id, text, { [cat]: 4 }, "epic");
+  for (const [gain, loss, id, text] of TRADE) push(id, text, { [gain]: 5, [loss]: -1 }, "epic");
+  for (const [key, id, text] of KEY_CARDS) push(id, text, { [KEY_PARENT[key]]: 2 }, "legendary", key);
   return out;
 }
+
 
 export const CARD_POOL: readonly Card[] = buildPool();
 
@@ -494,7 +536,7 @@ export function boostCard(card: Card, boost: number): Card {
   return { ...card, id: `${card.id}_x${mul}`, name: `${card.name} (강화 ×${mul})`, pips };
 }
 
-/** 갈래 전용 풀은 폐기됐다 — 75장 전부가 누구에게나 나온다. (대백과 호환용으로 남긴다.) */
+/** 갈래 전용 풀은 폐기됐다 — 90장 전부가 누구에게나 나온다. (대백과 호환용으로 남긴다.) */
 export function cardPoolFor(): Card[] {
   return CARD_POOL.slice();
 }

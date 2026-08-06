@@ -175,7 +175,7 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
   // ⚠ 「풀이 후보 수보다 작으면 있는 만큼만 뽑는 걸 반영한다」는 테스트를 지웠다. `rarityOdds` 의
   //   `inDraw` 는 **독립 3회 추첨 근사**(1-(1-p)³)라 풀 크기를 안 본다 — 2장짜리 풀에서는 둘 다 반드시
   //   뽑히는데 표시는 25% 로 나온다. 이건 v8 에서 생긴 결함이 아니라 처음부터 그런 근사였고, 대백과가
-  //   보여 주는 것은 늘 75장 풀이라 실제로는 안 드러난다. 실제 풀에서의 정확성은 바로 위
+  //   보여 주는 것은 늘 90장 풀이라 실제로는 안 드러난다. 실제 풀에서의 정확성은 바로 위
   //   몬테카를로 교차검증(오차 3%p 이내)이 못 박는다.
 
   it("등급 서열은 등장 확률로도 안 뒤집힌다 — 안 그러면 배지가 거짓말이다", () => {
@@ -425,8 +425,14 @@ describe("카드 적용 — 도장을 찍고, 문턱을 넘으면 켜진다", ()
   });
 
   it("한 줄 요약(cardSummary)이 실제 도장·열쇠와 맞는다", () => {
-    expect(cardSummary(card("wc_fang1"))).toBe("이빨 +2");
-    expect(cardSummary(card("td_hl"))).toBe("가죽 +3 · 다리 −1");
+    // ⚠ 도장 수를 여기 적지 않는다 — 카드 풀을 손보면 그 자리가 조용히 낡는다(등급=크기로 재편할 때
+    //   실제로 깨졌다). **카드에서 읽어** 요약이 그것과 맞는지만 본다.
+    const well = card("wc_fang1");
+    expect(cardSummary(well)).toBe(`이빨 +${cardPips(well, "fang")}`);
+    const trade = card("td_hl");
+    expect(cardSummary(trade)).toBe(
+      `가죽 +${cardPips(trade, "hide")} · 다리 −${Math.abs(cardPips(trade, "leg"))}`,
+    );
     expect(cardSummary(card("ky_fin"))).toContain("열쇠 「지느러미」");
     expect(cardSummary(EMBER_CARD)).toContain("불씨 +1");
   });
@@ -624,10 +630,10 @@ describe("반복 완화(소프트 디듑)", () => {
   });
 });
 
-describe("갈래 전용 풀은 폐기됐다 — 75장 전부가 누구에게나 나온다", () => {
+describe("갈래 전용 풀은 폐기됐다 — 90장 전부가 누구에게나 나온다", () => {
   it("cardPoolFor 는 늘 풀 전체를 준다", () => {
     expect(cardPoolFor().length).toBe(CARD_POOL.length);
-    expect(CARD_POOL.length).toBe(75);
+    expect(CARD_POOL.length).toBe(90);
   });
 
   it("최고 티어 상한은 넷이다(사다리 끝이 곧 성장의 끝)", () => {
