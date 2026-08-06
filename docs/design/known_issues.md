@@ -1276,3 +1276,19 @@
 - 재발 방지책: 분포를 평탄하게 만들 때는 **누적 곡선을 앞뒤로 다 그려 보라.** `xpBase` 를 올리면
   뒤가 아니라 **앞**이 비싸진다(선형 수열의 상수항이므로). 70/16 은 총량이 옛 값과 거의 같고
   (레벨 13 누적 1896 vs 1932) 분포만 고르다.
+
+## GitHub Pages 배포가 `deployment_queued` 에서 10분 타임아웃으로 죽는다 (2026-08-06 재발)
+
+- 증상: `build` 잡은 **성공**인데 `deploy` 잡만 실패한다. 로그가 `Current status: deployment_queued`
+  를 5초 간격으로 되풀이하다 `Timeout reached, aborting!` 로 끝난다. 사이트는 **이전 번들을 계속
+  서빙**한다(`curl` 로 `assets/index-*.js` 해시를 보면 안 바뀌어 있다).
+- 원인: 우리 쪽 빌드가 아니라 **GitHub Pages 배포 큐**가 막힌 것이다. `gh run rerun --failed` 로
+  세 번 재시도해도 같은 지점에서 죽었다.
+- 확인 방법(빌드 문제와 가르는 법 · 이걸 먼저 하라):
+  · `gh run view <id> --json jobs -q '.jobs[] | "\(.name): \(.conclusion)"'` → `build: success` 면 우리 잘못이 아니다.
+  · `curl -s <사이트> | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'` 로 실제 서빙 중인 번들 해시를 본다.
+- 재발 방지책:
+  · **세 번 넘게 재시도하지 마라.** 재시도마다 사용자에게 실패 메일이 간다(push 를 몰아 하는 이유와 같다).
+    세 번 실패하면 GitHub 쪽 문제로 판단하고 **사용자에게 알린 뒤 멈춘다.**
+  · 코드는 이미 `origin/main` 에 올라가 있으므로, **큐가 풀린 뒤 아무 커밋이나 하나 push 하면**
+    그때 함께 배포된다. 급하면 Actions 탭에서 workflow 를 수동 실행(`workflow_dispatch`)한다.
