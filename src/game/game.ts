@@ -7,8 +7,29 @@
 
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
-import { defaultGenome, cloneGenome, isApexTrait, MUTABLE_TRAITS, setTraitCeilings, TRAIT_KEYS, type Genome, type MutableTrait, type Traits } from "@/sim/genome";
-import { drawCards, applyCard, boostCard, cardPrereqMet, cardRedundant, PRESET_CARDS, PRESET_LINEAGE, type Card, type Lineage } from "@/game/cards";
+import { defaultGenome, cloneGenome, MUTABLE_TRAITS, type Genome, type MutableTrait } from "@/sim/genome";
+import {
+  CATEGORIES,
+  CATEGORY_LABELS,
+  TIER_ROMAN,
+  nearestTierGoal,
+  tiersOf,
+  type Category,
+} from "@/sim/tiers";
+import {
+  drawCards,
+  applyCard,
+  boostCard,
+  cardPips,
+  cardPrereqMet,
+  cardRedundant,
+  EMBER_CARD,
+  PRESET_CARDS,
+  PRESET_LINEAGE,
+  type Card,
+  type DraftBias,
+  type Lineage,
+} from "@/game/cards";
 import { cardAvailable, debugResetAchievements, evaluateRun, type Achievement, type RunSummary } from "@/game/achievements";
 import {
   GAME,
@@ -16,8 +37,6 @@ import {
   eraDifficulty,
   eraScarcity,
   eraPredatorPressure,
-  eraTraitCeiling,
-  eraTraitCeilings,
   eraRewardBoostAt,
   bossPassNeeded,
   extinctionPassNeeded,
@@ -32,8 +51,24 @@ import {
 } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
-import { grazeEfficiency } from "@/sim/behavior";
 import type { LeadCommand } from "@/sim/lead";
+import {
+  ORDER_SPECS,
+  ORDER_SPEC_BY_KIND,
+  orderUnlocked,
+  vacuumTicks,
+  voiceRadius,
+  type HerdOrder,
+  type OrderKind,
+  type OrderSpec,
+} from "@/sim/herdOrder";
+
+/**
+ * **은근한 보정의 상한.** 보정이 세면 게임이 저절로 굴러가고, 그러면 플레이어가 이룬 것이 가짜가 된다
+ * (**[사용자 2026-08-06]** "플레이어가 눈치채지 못하게"). 최대 배수를 상수로 못 박고 프로브로 검증한다.
+ * 1.9 = 내 방향 카드가 최대 1.9배 자주 뜬다 — 눈에 안 띄되 열 번쯤 뽑으면 한두 장 더 오는 정도.
+ */
+const ASSIST_MAX_WEIGHT = 1.9;
 import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, bossEligible, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { pickMapType, mapKind, FIRST_ERA_MAP, type MapKind, type MapType } from "@/sim/mapType";
 import { TILE } from "@/sim/terrain";
@@ -60,6 +95,8 @@ export interface TrialVerdict {
   trial: Trial;
   progress: number; // 판정 시점 달성치
   embersLeft: number; // 판정 반영 후 남은 불씨
+  /** 목표를 크게 넘겨 합격했는가 — 불씨가 하나 돌아온 순간. 화면이 그 사실을 따로 알린다. */
+  overachieved: boolean;
 }
 
 const EXTINCTION_TYPES: readonly ExtinctionType[] = ["cold", "famine", "heat", "plague"];
@@ -237,6 +274,17 @@ export class Game {
   /** 메타 언락 기준(플레이어 레벨) — 런 시작 시 저장본의 누적 경험치에서 레벨을 읽어 프리셋·카드 풀을 거른다.
    * 런을 거듭해 경험치가 쌓일수록 레벨이 올라 더 많이 열린다. 런 도중엔 안 바뀐다(디버그 제외). */
   private metaLvl = 1;
+  /** 이 사람이 한 번이라도 정복했는가 — 은근한 보정의 재료(한 번도 못 이긴 사람만 아주 조금 돕는다). */
+  private everConquered = false;
+  /** 이 사람이 끝낸 런 수 — 런을 거듭할수록 보정을 줄인다(실력이 붙으면 손을 뗀다). */
+  private runsCompletedNow = 0;
+  /** 연달아 「내 방향 카드가 하나도 안 뜬」 드래프트 수. 은근한 보정이 이 값을 읽는다. */
+  private dryDrafts = 0;
+  /**
+   * **은근한 보정을 켤 것인가.** 프로브·밸런스 측정에서는 반드시 끈다 — 보정을 켠 채로 재면
+   * **측정한 난이도가 실제 난이도가 아니다.** (`?noassist` 로도 끌 수 있다.)
+   */
+  assistEnabled = true;
   /** 이번 런에서 "다시 뽑기"(리롤)가 열려 있는가 — 메타 레벨이 리롤 티어 이상이면 true(런 시작 시 고정). */
   private metaRerollUnlocked = false;
   /** 현재 드래프트에서 남은 리롤 횟수(드래프트가 열릴 때 리셋). 프리셋 선택엔 리롤 없음. */
@@ -255,6 +303,7 @@ export class Game {
   xp = 0; // 현재 레벨에서 쌓은 경험치(먹은 먹이 수)
   xpToNext: number = GAME.xpBase; // 다음 레벨까지 필요한 경험치(GAME.xpBase 는 리터럴이라 number 명시)
   private lastFoodEaten = 0; // world.playerFoodEaten 직전 값(매 update 의 delta 를 xp 로 누적)
+  private lastHuntKills = 0; // world.playerHuntKills 직전 값(사냥 경험치의 delta 원천)
 
   // 런 보고서(연대기 + 형질 추이) — 이 혈통의 일생을 game 층에서만 기록한다(world/sim rng 미소비 →
   // 결정론·밸런스 무관). 시대를 넘어가도 이어서 누적하고, 새 런(setupRun)에서만 비운다.
@@ -282,20 +331,27 @@ export class Game {
   private ambientAcc = 0;
 
   /**
-   * 방금 고른 카드로 **막 정점(100)에 닿은** 형질들. `takeNewApex()` 로 꺼내 가면 비워진다.
+   * 방금 고른 카드로 **막 오른 티어들**. `takeNewTiers()` 로 꺼내 가면 비워진다.
    *
-   * 훅(onApex)이 아니라 "꺼내 가는 큐"인 이유: 훅은 `pickCard` 안에서 **동기로** 불려 드래프트 화면이
+   * 훅(onTier)이 아니라 "꺼내 가는 큐"인 이유: 훅은 `pickCard` 안에서 **동기로** 불려 드래프트 화면이
    * 아직 떠 있는 순간에 연출이 터진다(카드 뒤에 가려 안 보인다). main 은 `draft.hide()` 뒤에 꺼내
    * 연출을 띄운다 — 순서를 부르는 쪽이 쥐게 한다.
    */
-  private newApex: (keyof Traits)[] = [];
+  private newTiers: { cat: Category; tier: number }[] = [];
 
-  /** 막 정점에 닿은 형질을 꺼내 간다(꺼내면 비워진다). 화면이 도달 연출을 띄우는 데 쓴다. */
-  takeNewApex(): (keyof Traits)[] {
-    const out = this.newApex;
-    this.newApex = [];
+  /** 막 오른 티어를 꺼내 간다(꺼내면 비워진다). 화면이 승급 연출을 띄우는 데 쓴다. */
+  takeNewTiers(): { cat: Category; tier: number }[] {
+    const out = this.newTiers;
+    this.newTiers = [];
     return out;
   }
+
+  /**
+   * 불씨 회복 카드를 이 런에서 이미 한 번 썼는가.
+   * **[사용자 2026-08-06]** 첫 한 번은 확정으로 뜨고, 그 뒤로는 확률이다 — 첫 한 번이 "이 규칙이
+   * 존재한다"를 가르치고(대백과가 아니라 화면 안에서), 그 뒤로는 긴장이 남는다.
+   */
+  private emberCardUsed = false;
 
   // main 이 설정하는 훅
   onDraft: ((cards: Card[], preview: string) => void) | null = null;
@@ -353,7 +409,6 @@ export class Game {
     this.result = null;
     this.currentSeed = randomSeed();
     this.era = 0;
-    this.applyEraCeilings(); // 로비는 첫 시대의 세계 — 지난 런에서 오른 천장을 반드시 되돌린다
     this.genome = defaultGenome();
     this.world = this.makeWorld();
     this.phase = "lobby";
@@ -365,15 +420,22 @@ export class Game {
     const card = this.draftCards[index];
     // 정점(100)에 **막 닿는 순간**을 잡으려면 적용 전 값을 떠 둬야 한다. 정점은 수치가 커지는 게 아니라
     // 그 형질의 약점이 사라지는 보상이라, 도달 순간에 알려 주지 않으면 화면에서 영영 안 읽힌다.
-    const before: Partial<Record<keyof Traits, number>> = {};
-    for (const key of TRAIT_KEYS) before[key] = this.genome.traits[key];
+    // **티어가 오르는 순간**을 잡으려면 적용 전 티어를 떠 둬야 한다. 티어 승급은 수치가 커지는 게 아니라
+    // 규칙이 통째로 켜지는 사건이라, 그 자리에서 알려 주지 않으면 화면에서 영영 안 읽힌다.
+    const beforeTiers = tiersOf(this.genome.pips);
     if (card) {
-      applyCard(this.genome, card);
+      if (card.ember) {
+        // 불씨 회복 카드 — 도장은 0. 「이번엔 자라지 않습니다」가 카드에 그대로 적혀 있다.
+        this.embers = Math.min(GAME.emberMax, this.embers + card.ember);
+        this.emberCardUsed = true;
+      } else {
+        applyCard(this.genome, card);
+      }
       this.pickedCardNames.push(card.name);
       this.pickedCardIds.push(card.id);
-      for (const key of TRAIT_KEYS) {
-        const was = before[key] ?? 0;
-        if (!isApexTrait(key, was) && isApexTrait(key, this.genome.traits[key])) this.newApex.push(key);
+      const afterTiers = tiersOf(this.genome.pips);
+      for (const cat of CATEGORIES) {
+        if (afterTiers[cat] > beforeTiers[cat]) this.newTiers.push({ cat, tier: afterTiers[cat] });
       }
     }
     if (this.eraReward) {
@@ -411,20 +473,12 @@ export class Game {
       // 델타로 적용한다. 플레이어가 무리 전체의 방향을 쥐고(카드), 개체차(부모에서 받은 변이)는 보존한 채
       // 다 같이 그 방향으로 이동한다. 이후 새끼는 부모를 닮아 조금씩 갈리며 환경에 맞는 쪽이 살아남는다.
       if (card) {
+        // **티어는 종 단위 성취다.** 카드는 무리 전체에 같은 도장을 찍고, 그러면 모두가 같은 티어가 된다
+        // (도장은 정수라 개체마다 갈릴 여지가 없다 — 예전에 정점이 개체마다 갈려 "화면은 정점이라 외치는데
+        // 무리는 못 누리는" 사고가 있었는데, 그 자리가 구조적으로 사라졌다). 개체차는 티어 안의 파생 능치
+        // 흔들림으로만 남는다(`mutateGenome`).
         for (const e of this.world.entities) {
           if (e.species.isPlayer && e.alive) applyCard(e.genome, card);
-        }
-        // **정점은 종 단위 성취다** — 기준선이 100 에 닿는 순간 살아있는 무리 전체가 정점이어야 한다.
-        // 카드만 각자에게 적용하면 안 된다: 개체는 **자기 값** 기준으로 상한 근접 감쇠를 받으므로(변이로
-        // 기준선보다 낮은 개체는 같은 카드로 덜 오른다) 기준선은 100 인데 무리는 95~99 에 흩어진 채
-        // 남는다. 그러면 화면은 "정점!"이라 외치는데 정작 무리는 정점 효과(험지 면제 등)를 못 누린다.
-        // 변이는 정점을 **만들지 않으므로**(genome.mutateGenome) 이 스냅이 정점의 유일한 입구다.
-        // ⚠ 기준선 값을 그대로 물려준다(예전엔 상수 100 을 박았다). 천장이 시대마다 오르면서 기준선이
-        // 한 번에 100 을 지나칠 수 있는데(예: 95 → 108), 그때 100 을 박으면 무리가 기준선보다 낮아진다.
-        for (const key of this.newApex) {
-          for (const e of this.world.entities) {
-            if (e.species.isPlayer && e.alive) e.genome.traits[key] = this.genome.traits[key];
-          }
         }
         this.logEvent("card", `레벨 ${this.level} · ${card.name}`);
       }
@@ -480,22 +534,106 @@ export class Game {
   }
 
   /**
-   * 무리에게 뜻을 내린다(신탁). 월드 좌표 한 점. null 이면 지시를 거둔다 = 완전 자율(관전).
+   * 무리에게 뜻을 내린다(신탁). 월드 좌표 한 점 + 무엇을 하라는 것인가.
    * 관전 중·멈춤 아님일 때만 닿는다 · 드래프트·결과 화면의 탭이 무리를 움직이지 않게.
+   *
+   * **[사용자 2026-08-06]** 조작 다양화. 「가라」(이동)에는 **쿨타임을 안 건다** — 기본 조작이 막히면
+   * 조종 감각 자체가 죽는다. 특수 명령에만 걸고, 회피는 기력도 함께 쓴다.
+   * 잠긴 칸은 여기서 막는다(화면에서도 회색으로 보이지만, 규칙은 한 곳에서만 판정한다).
    */
-  setHerdOrder(x: number, y: number): void {
-    if (this.phase !== "watch" || this.paused) return;
-    this.world.herdOrder = { x, y };
+  setHerdOrder(x: number, y: number, kind: OrderKind = "move"): boolean {
+    if (this.phase !== "watch" || this.paused) return false;
+    if (this.world.leadVacuum > 0) return false; // 지휘 공백 — 지금은 아무도 안 듣는다
+    const spec = ORDER_SPEC_BY_KIND.get(kind);
+    if (!spec) return false;
+    if (!orderUnlocked(spec, this.genome.pips)) return false;
+    if ((this.orderCd.get(kind) ?? 0) > 0) return false;
+    if (spec.cooldown > 0) this.orderCd.set(kind, spec.cooldown);
+    if (spec.energy > 0) {
+      // 회피처럼 몸을 쥐어짜는 명령은 무리의 기력을 쓴다(목소리가 닿는 개체만).
+      for (const e of this.world.entities) {
+        if (e.species.isPlayer && e.alive) e.energy = Math.max(1, e.energy - spec.energy);
+      }
+    }
+    const ticks = spec.kind === "move" ? 0 : Math.round(SIM.stepsPerSecond * 4);
+    this.world.herdOrder = { x, y, kind, ticks };
+    return true;
   }
 
-  /** 내려 둔 뜻을 거둔다(무리는 그 자리에서 자율로 산다). */
+  /** 내려 둔 뜻을 거둔다(무리는 그 자리에서 자율로 산다). 화면의 「현재 명령 한 줄」을 탭하면 여기로 온다. */
   clearHerdOrder(): void {
     this.world.herdOrder = null;
   }
 
   /** 지금 내려져 있는 뜻(화면에 표식을 그리는 데 쓴다). */
-  get herdOrder(): { x: number; y: number } | null {
+  get herdOrder(): HerdOrder | null {
     return this.world.herdOrder;
+  }
+
+  /**
+   * **명령 휠의 여덟 칸** — 지금 무엇이 열려 있고 무엇이 잠겨 있는가.
+   * 못 여는 칸은 회색으로 보인다 → 다음 판의 동기가 되고, **성장이 숫자가 아니라 손에서 읽힌다.**
+   */
+  orderWheel(): { spec: OrderSpec; unlocked: boolean; cdLeft: number }[] {
+    return ORDER_SPECS.map((spec) => ({
+      spec,
+      unlocked: orderUnlocked(spec, this.genome.pips),
+      cdLeft: this.orderCd.get(spec.kind) ?? 0,
+    }));
+  }
+
+  /** 지휘 공백이 남아 있는 초(화면이 「무리가 흩어집니다」를 띄우는 데 쓴다). 0 이면 정상. */
+  get leadVacuumSeconds(): number {
+    return this.world.leadVacuum / SIM.stepsPerSecond;
+  }
+
+  /**
+   * **지휘봉을 넘긴다** — **[사용자 2026-08-06]** 알파는 특별한 개체가 아니라 옮길 수 있는 자리다
+   * (늑대 무리의 우두머리가 혈통이 아니라 지위인 것과 같다). 아무 개체나 탭하면 그 애가 알파가 된다.
+   * 진화 게임에서 특정 개체만 유전적으로 특별한 것은 말이 안 되므로, 알파에게 능력을 주지 않는다.
+   */
+  passBaton(entityId: number): boolean {
+    if (this.phase !== "watch" || this.paused) return false;
+    const e = this.world.entities.find((x) => x.id === entityId && x.alive && x.species.isPlayer);
+    if (!e) return false;
+    this.world.lead.leaderId = e.id;
+    this.world.lead.x = e.x;
+    this.world.lead.y = e.y;
+    this.world.lead.changedTick = this.world.tick;
+    this.world.leadVacuum = 0; // 사람이 직접 넘긴 것은 공백이 아니다
+    return true;
+  }
+
+  /** 명령별 남은 쿨타임(틱). 매 update 에서 줄인다. */
+  private readonly orderCd = new Map<OrderKind, number>();
+
+  /**
+   * 명령 쿨타임과 특수 명령의 지속 시간을 줄인다. **배속을 그대로 곱한다** — 2배속에서 쿨타임이
+   * 두 배로 길게 느껴지면 배속이 조작을 벌하는 것이 되고, 그건 플레이어가 배속을 안 쓰게 만든다.
+   */
+  private tickOrders(deltaMS: number): void {
+    const ticks = (deltaMS / 1000) * SIM.stepsPerSecond * this.speed;
+    for (const [k, v] of this.orderCd) {
+      const left = v - ticks;
+      if (left <= 0) this.orderCd.delete(k);
+      else this.orderCd.set(k, left);
+    }
+    const o = this.world.herdOrder;
+    if (o && o.ticks !== undefined && o.ticks > 0) {
+      const left = o.ticks - ticks;
+      // 특수 명령은 몇 초짜리다("피해라"가 영원히 유지되면 그건 명령이 아니라 상태다).
+      if (left <= 0) this.world.herdOrder = null;
+      else this.world.herdOrder = { ...o, ticks: left };
+    }
+  }
+
+  /**
+   * 무리 티어에서 나오는 지휘 값 둘을 sim 에 넣어 준다 — **sim 은 티어를 모른다**(받은 숫자만 쓴다).
+   * 세계를 새로 만들거나 도장이 바뀌는 모든 입구에서 부른다.
+   */
+  private syncCommandReach(): void {
+    this.world.voiceR = voiceRadius(this.genome.pips, this.genome.keys);
+    this.world.vacuumOnLeadDeath = vacuumTicks(this.genome.pips);
   }
 
   update(deltaMS: number): void {
@@ -516,8 +654,13 @@ export class Game {
     }
 
     if (this.phase !== "watch") return;
-    // 알파를 세우지 않는다 · 무리 지시로 전환하면서 "앞장선 한 마리"라는 개념 자체가 없어졌다.
-    // armLead 를 안 부르므로 lead.leaderId 는 -1 로 남고, sim 의 알파 분기는 한 번도 안 걸린다.
+    // **알파(지휘봉)를 세운다.** 2026-08-04 에 무리 지시로 전환하면서 이 개념을 뺐는데,
+    // **[사용자 2026-08-06]** 이 다시 세웠다: 알파는 특별한 개체가 아니라 **옮길 수 있는 자리**이고,
+    // 명령은 그 자리에서 나가 목소리가 닿는 데까지만 간다. 카메라도 이 개체를 따라간다.
+    // (멱등이라 매 프레임 불러도 안전하다 · rng 미사용.)
+    this.world.armLead();
+    // 명령 쿨타임·지속 시간을 여기 한 자리에서만 줄인다(정수 카운터 · rng 미사용 → 스트림 불변).
+    this.tickOrders(deltaMS);
     this.acc += deltaMS;
     let guard = 0;
     while (this.acc >= stepMs && guard < 5) {
@@ -554,11 +697,20 @@ export class Game {
     this.updateXp();
   }
 
-  /** 먹이 섭취 delta 를 경험치로 누적하고, 임계 도달 시 레벨업(형질 드래프트)한다. */
+  /**
+   * 먹이 섭취 · **사냥** delta 를 경험치로 누적하고, 임계 도달 시 레벨업(도장 드래프트)한다.
+   *
+   * **[사용자 2026-08-06]** 사냥에도 경험치를 준다. 예전엔 경험치가 「풀을 뜯었을 때」 한 곳에서만 올라서,
+   * 이빨을 파면 풀 효율이 ×0.18 까지 떨어지는 육식 빌드가 **카드를 덜 받는 자살 버튼**이었다.
+   * 사냥 한 번이 먹이 여섯 개 값이다 — 위험을 무릅쓴 만큼 크게. 쿨타임은 벌칙이 아니라 「배부름」이 낸다
+   * (배가 부르면 안 사냥하므로 저절로 간격이 생기고, 그 사실이 기력 막대에 그대로 보인다).
+   */
   private updateXp(): void {
     const eaten = this.world.playerFoodEaten;
-    let gain = eaten - this.lastFoodEaten;
+    const hunted = this.world.playerHuntKills;
+    let gain = eaten - this.lastFoodEaten + (hunted - this.lastHuntKills) * GAME.huntXp;
     this.lastFoodEaten = eaten;
+    this.lastHuntKills = hunted;
     // 조종 모드에서만: 단계당 경험치 상한. 무리를 먹이에 붙이는 실력이 곧 카드 장 수가 되면
     // "카드가 결과를 좌우한다"는 명제가 뒤에서 무너진다(관전형의 '누가 해도 비슷한 곡선' 붕괴).
     if (this.leadEnabled) {
@@ -597,17 +749,7 @@ export class Game {
     this.phase = "draft";
     // 메타 언락: 열린 카드만 드래프트 풀에(잠긴 특화 카드는 런을 거듭해 해금).
     // 언락된 카드 중, 이 종에 이미 무의미한 카드(예: 이미 나는데 날개 카드)는 뺀다 · "손해 카드" 방지(폰 피드백).
-    this.draftCards = drawCards(
-      this.draftRng,
-      3,
-      (c) =>
-        cardAvailable(c.id, this.metaLvl) &&
-        cardPrereqMet(c, this.genome.traits) &&
-        !cardRedundant(c, this.genome.traits),
-      this.level, // 레벨이 오를수록 높은 등급이 더 자주 뜬다(rarityWeightsAtLevel)
-      this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
-      this.lineage ?? undefined, // 3장 중 1장은 내 갈래 전용 카드
-    );
+    this.draftCards = this.drawDraft();
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
     this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (무리 전체에 퍼지고, 새끼는 부모를 닮아 조금씩 달라집니다)`;
     this.onDraft?.(this.draftCards, this.preview);
@@ -623,17 +765,7 @@ export class Game {
     if (this.phase !== "draft" || this.firstChoice || this.rerollsLeft <= 0) return;
     this.rerollsLeft -= 1;
     this.rerollsUsed += 1;
-    const drawn = drawCards(
-      this.draftRng,
-      3,
-      (c) =>
-        cardAvailable(c.id, this.metaLvl) &&
-        cardPrereqMet(c, this.genome.traits) &&
-        !cardRedundant(c, this.genome.traits),
-      this.level, // 다시 뽑아도 같은 레벨 보정을 받는다
-      this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
-      this.lineage ?? undefined, // 다시 뽑아도 내 갈래 카드 한 장은 보장
-    );
+    const drawn = this.drawDraft();
     this.draftCards = this.eraReward ? drawn.map((c) => boostCard(c, GAME.eraRewardBoost)) : drawn;
     this.onDraft?.(this.draftCards, this.preview);
   }
@@ -641,6 +773,78 @@ export class Game {
   /** UI 표시용 — 지금 드래프트에서 "다시 뽑기"를 누를 수 있는가(열려 있고 횟수 남음, 프리셋 아님). */
   get canReroll(): boolean {
     return this.phase === "draft" && !this.firstChoice && this.rerollsLeft > 0;
+  }
+
+  /**
+   * 드래프트 3장을 뽑는다 — 레벨업·리롤·시대 보상이 **전부 이 하나를 부른다**(뽑기 규칙이 세 곳에
+   * 흩어져 있으면 언젠가 한 곳만 바뀐다).
+   *
+   * 여기서 세 가지가 함께 걸린다:
+   *  ① **불씨가 정확히 하나 남았으면 회복 카드가 낀다** — **[사용자 2026-08-06]** 첫 한 번은 확정,
+   *     그 뒤로는 확률. 회복 카드는 도장이 0 이라 「이번엔 자라지 않습니다」가 카드에 그대로 적힌다.
+   *  ② **내가 판 방향이 조금 더 자주 뜬다**(보장이 아니라 가중치) + 연속으로 안 뜨면 확률이 오른다.
+   *  ③ **은근한 보정** — 아래 `draftBias()` 주석 참조.
+   */
+  private drawDraft(): Card[] {
+    const cards = drawCards(
+      this.draftRng,
+      3,
+      (c) =>
+        cardAvailable(c.id, this.metaLvl) &&
+        cardPrereqMet(c, this.genome) &&
+        !cardRedundant(c, this.genome),
+      this.level, // 레벨이 오를수록 높은 등급이 더 자주 뜬다(rarityWeightsAtLevel)
+      this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
+      this.draftBias(),
+      this.genome.pips, // 3장 중 최소 한 장은 어느 문턱이든 넘긴다(죽은 픽 방지)
+    );
+    // 「내 방향이 하나도 안 뜬 드래프트」를 센다 — 연달아 그러면 다음 확률이 오른다(안전장치).
+    // ⚠ 이건 **가중치**이지 보장이 아니다. 가끔 내 길이 하나도 안 나오는 드래프트가 생기고, 그때
+    //   갈아탈지 버틸지가 진짜 질문이 된다(**[사용자 2026-08-06]** "로그라이크는 그 무작위성이 핵심 재미").
+    const bias = this.draftBias();
+    if (bias) {
+      const hit = cards.some((c) => bias.cats.some((cat) => cardPips(c, cat) > 0));
+      this.dryDrafts = hit ? 0 : this.dryDrafts + 1;
+    }
+    // 불씨 회복 카드 — **정확히 하나 남았을 때만**(미리 쟁여 두기 방지).
+    if (this.embers === 1 && !this.eraReward && !this.firstChoice && cards.length >= 3) {
+      // 첫 한 번은 확정. 그 뒤로는 확률(같은 시드 + 같은 플레이 = 같은 결과 · 결정론 보존).
+      const show = !this.emberCardUsed || this.draftRng.chance(0.45);
+      if (show) cards[2] = EMBER_CARD;
+    }
+    return cards;
+  }
+
+  /**
+   * **은근한 보정** — **[사용자 2026-08-06]** "플레이어가 게임을 한 번도 클리어하지 못하고 접을 것 같은
+   * 위험이 있는 경우에는 조심스럽게 도움을 주자. 대신 절대로 대놓고 티를 내면 안 되고, 플레이어가
+   * 눈치채지 못하게 은근슬쩍 확률을 보정한다든가 하는 식으로."
+   *
+   * ⚠ **경계 두 개를 반드시 지킨다**(CLAUDE.md 「은근한 보정」):
+   *  1. 보정은 **「무엇이 나오는가」에만** 건다. **「그것이 무엇을 하는가」에는 절대 안 건다.**
+   *     등장 확률은 화면에 표시하지 않으므로 손대도 거짓말이 아니고, 효과·수치는 표시하므로 불가침이다.
+   *  2. **작고 느리게.** 눈치채는 순간 자기가 이룬 것이 가짜가 되어, 안 도운 것보다 나쁘다.
+   *
+   * 결정론: `assistEnabled` 를 끄면(프로브) 보정이 통째로 사라진다. 켠 채 밸런스를 재면 **측정한
+   * 난이도가 실제 난이도가 아니다.** 보정 자체도 rng 가 아니라 **런 이력의 함수**라, 같은 시드 +
+   * 같은 플레이면 같은 보정이 나온다.
+   */
+  private draftBias(): DraftBias | undefined {
+    if (!this.assistEnabled) return undefined;
+    // 내가 판 방향 = 도장이 가장 많은 한둘. 도장이 하나도 없으면 방향이 없다(첫 판).
+    const ranked = CATEGORIES.filter((c) => this.genome.pips[c] > 0).sort(
+      (a, b) => this.genome.pips[b] - this.genome.pips[a],
+    );
+    if (ranked.length === 0) return undefined;
+    const cats = ranked.slice(0, 2);
+    // 기본 가중 1.35 = "조금 더 자주". 여기에 두 보정이 얹힌다(상한 `assistMaxWeight`).
+    let w = 1.35;
+    // ① 연달아 내 방향이 안 떴으면 확률이 오른다(회복 카드의 「첫 한 번 확정」과 같은 문법).
+    w += Math.min(0.5, this.dryDrafts * 0.25);
+    // ② 한 번도 정복하지 못한 플레이어를 아주 조금씩 돕는다. 런을 거듭할수록 보정을 **줄인다**
+    //    (실력이 붙으면 손을 뗀다 — 계속 도우면 그 사람이 이룬 것이 영영 자기 것이 안 된다).
+    if (!this.everConquered) w += Math.max(0, 0.3 - this.runsCompletedNow * 0.05);
+    return { cats, weight: Math.min(ASSIST_MAX_WEIGHT, w) };
   }
 
   /** 지금까지 고른 카드의 id→횟수 — drawCards 소프트 디듑에 넘겨 이미 고른 카드를 뜸하게 뽑는다. */
@@ -737,8 +941,8 @@ export class Game {
    * **다음 시대에 무엇이 달라지는가** — 결과 화면에서 "다음 시대로"를 누른 순간 띄우는 짧은 연출의 내용.
    *
    * 시대가 올라도 화면이 똑같으면 "세계가 험해졌다"가 어디에서도 안 읽힌다(사용자: 정밀 분석을 해야
-   * 아는 게 아니라 직관적으로 체감되게). 여기 세 줄은 전부 **실제로 적용되는 값과 같은 함수**를 읽는다
-   * (`eraTraitCeiling` · `eraPredatorPressure` · `bossPassNeeded`) — 화면과 실제가 갈릴 수 없다.
+   * 아는 게 아니라 직관적으로 체감되게). 여기 줄들은 전부 **실제로 적용되는 값과 같은 함수**를 읽는다
+   * (`eraPredatorPressure` · `bossPassNeeded` · `eraDifficulty`) — 화면과 실제가 갈릴 수 없다.
    *
    * 이어갈 수 없는 상태(패배·정복)면 null.
    */
@@ -754,8 +958,13 @@ export class Game {
     // ② 무엇을 지켜야 하나 — 관문 판정 그 값.
     const need = bossPassNeeded(next);
     if (need > 1) lines.push(`관문마다 ${need}마리가 살아남아야 합니다.`);
-    // ③ 무엇이 열리나 — 성장의 천장. 험해지는 소식 뒤에 오는 이 줄이 이 연출의 보상이다.
-    lines.push(`걸음·눈·이빨·새끼를 ${eraTraitCeiling(next)}까지 키울 수 있습니다.`);
+    // ③ 무엇이 열리나 — 험해지는 소식 뒤에 오는 이 줄이 이 연출의 보상이다.
+    // v8: 「천장이 올라간다」는 사라졌다(성장의 끝은 4단이고 그건 시대가 올라도 안 움직인다).
+    // 대신 **지금 내가 어디쯤인가**를 말한다 — 다음 문턱이 눈앞에 있다는 것이 이어갈 이유가 된다.
+    const near = nearestTierGoal(this.genome.pips);
+    if (near) {
+      lines.push(`${CATEGORY_LABELS[near.cat]} ${TIER_ROMAN[near.tier]}까지 도장 ${near.need}개 남았습니다.`);
+    }
     return { title: `시대 ${next + 1}`, lines };
   }
 
@@ -800,7 +1009,6 @@ export class Game {
     this.reloadMeta(); // 이전 런들의 해금(누적 경험치 → 레벨)을 이번 런부터 반영
     this.champions = loadChampions(); // 지난 챔피언들을 이 런 세계에 등장(비동기 생물)
     this.era = 0; // 새 런은 첫 시대부터
-    this.applyEraCeilings(); // 형질 천장을 첫 시대(전부 100)로 되돌린다 — 지난 런의 천장이 새 런에 새면 안 된다
     this.playerColor = undefined;
     this.genome = defaultGenome();
     this.pickedCardNames = [];
@@ -867,12 +1075,17 @@ export class Game {
    * 시대가 바뀌는 모든 입구(새 런·다음 시대·로비 복귀)에서 부른다.
    */
   private applyEraCeilings(): void {
-    setTraitCeilings(eraTraitCeilings(this.era));
+    // v8: 형질 천장 개념이 사라졌다(성장의 끝은 4단 = 규칙 면제다). 호출부 정리를 위해 빈 함수로 남긴다.
   }
 
-  /** 이번 시대에 형질을 어디까지 올릴 수 있는가(화면 표시용 · 드래프트 안내와 목표 줄이 읽는다). */
-  get traitCeilingNow(): number {
-    return eraTraitCeiling(this.era);
+  /** 지금 종의 도장 상태(화면이 티어 칩·막대를 그릴 때 읽는다). */
+  get pipsNow(): Readonly<Record<Category, number>> {
+    return this.genome.pips;
+  }
+
+  /** 이 런의 갈래(시작 프리셋이 정한다) — 화면이 「내 갈래」를 표시하는 데 쓴다. */
+  get lineageNow(): Lineage | null {
+    return this.lineage;
   }
 
   /**
@@ -996,9 +1209,12 @@ export class Game {
   private pickTrial(): Trial {
     const t = this.genome.traits;
     const candidates: Trial[] = [];
-    if (t.diet > SIM.dietHuntMin)
+    // ⚠ **이빨 0단(초식)에게는 「사냥」 시험이 구조적으로 불가능하다.** 사냥 효율이 정확히 0 이라
+    //   한 마리도 못 잡는데 불씨는 다섯뿐이다 — 못 하는 시험을 내는 것은 판정이 아니라 사형 선고다.
+    //   **[사용자 2026-08-06]** 「초식 거인 경로는 반드시 만든다」가 이 한 줄에 걸려 있다.
+    if (t.hunt > 0)
       candidates.push({ kind: "hunt", target: GAME.trialHuntN, label: `사냥 ${GAME.trialHuntN}회` });
-    if (grazeEfficiency(t.diet) > SIM.grazeMinEff)
+    if (t.graze > SIM.grazeMinEff)
       candidates.push({ kind: "feed", target: GAME.trialFeedN, label: `먹이 ${GAME.trialFeedN}회` });
     candidates.push({ kind: "birth", target: GAME.trialBirthN, label: `새끼 ${GAME.trialBirthN}마리` });
     // 「무리」는 붕괴를 잡는 시험이라 목표가 **지금 무리보다 클 수 없다.** 하한(8)만 걸면 2마리로 들어온
@@ -1016,6 +1232,8 @@ export class Game {
    */
   private beginStage(): void {
     this.stageXp = 0; // 조종 모드 경험치 상한은 단계마다 새로 찬다(leadEnabled=false 면 안 읽힌다)
+    this.syncCommandReach(); // 무리 티어가 오르면 목소리가 더 멀리 간다 · 단계마다 다시 읽는다
+    this.orderCd.clear(); // 명령 쿨타임은 라운드 경계에서 씻는다(라운드 시작에 손이 묶여 있으면 답답하다)
     this.world.resetRoundCounts(); // 새 단계 = 시험 계수 리셋 (뜻은 clearStageState 가 이미 거뒀다)
     this.currentTrial = null;
     this.lastVerdictValue = null; // 새 라운드가 시작되면 지난 판정은 지운다
@@ -1098,7 +1316,21 @@ export class Game {
       const prog = this.trialProgress;
       const trialPassed = prog >= trial.target;
       if (!trialPassed) this.embers -= 1;
-      const verdict: TrialVerdict = { passed: trialPassed, trial, progress: prog, embersLeft: this.embers };
+      // **초과 달성 보상** — **[사용자 2026-08-06]** 목표를 크게 넘겨 합격하면 불씨가 하나 돌아온다.
+      // 지금 회복은 보스 격퇴·시대 진입 둘뿐인데 둘 다 큰 사건이라 **위기의 순간과 어긋난다.**
+      // 초과 달성은 매 시험마다 있어, 잘하는 판이 애초에 불씨 하나까지 몰리지 않게 한다.
+      // ⚠ 「무리」 시험은 제외한다 — 그건 "지켜라"라 목표가 지금 무리보다 작게 잡히고(붕괴 방지),
+      //   그래서 아무것도 안 해도 1.8배를 넘기기 쉽다(공짜 불씨가 된다).
+      const overachieved =
+        trialPassed && trial.kind !== "pop" && prog >= Math.ceil(trial.target * GAME.trialOverachieveMul);
+      if (overachieved) this.embers = Math.min(GAME.emberMax, this.embers + 1);
+      const verdict: TrialVerdict = {
+        passed: trialPassed,
+        trial,
+        progress: prog,
+        embersLeft: this.embers,
+        overachieved,
+      };
       this.lastVerdictValue = verdict; // 곧 열릴 카드창이 제목 자리에 싣는다(플래시는 그 창에 가린다)
       this.onTrialVerdict?.(verdict);
       if (this.embers <= 0) {
@@ -1142,6 +1374,8 @@ export class Game {
     const meta = loadMeta();
     this.metaLvl = metaLevel(meta.metaXp);
     this.metaRerollUnlocked = isRerollUnlockedAtLevel(this.metaLvl);
+    this.everConquered = meta.conquered;
+    this.runsCompletedNow = meta.runsCompleted;
     this.runsDone = meta.runsCompleted;
   }
 
@@ -1246,7 +1480,6 @@ export class Game {
   continueToNextEra(): void {
     if (this.result !== "win") return; // 승리 직후에만 유효
     this.era += 1;
-    this.applyEraCeilings(); // 새 시대의 천장을 먼저 연다 — 곧 뜰 시대 보상 카드가 이 천장 안에서 커진다
     this.embers = Math.min(GAME.emberMax, this.embers + 1); // 시대를 넘긴 보상: 불씨 하나 회복
     this.currentTrial = null;
     this.logEvent("era", `시대 ${this.era + 1} 진입`);
@@ -1298,8 +1531,8 @@ export class Game {
       3,
       (c) =>
         cardAvailable(c.id, this.metaLvl) &&
-        cardPrereqMet(c, this.genome.traits) &&
-        !cardRedundant(c, this.genome.traits),
+        cardPrereqMet(c, this.genome) &&
+        !cardRedundant(c, this.genome),
       this.level, // 시대 보상도 지금까지 키운 레벨의 보정을 받는다
       this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
     );
@@ -1312,12 +1545,16 @@ export class Game {
     // (이미 온전한 세계면) 빈 줄이라 아무것도 안 붙는다.
     const step = this.onboarding;
     const opened = step > onboardingStep(this.runsDone, this.era - 1) ? onboardingOpenedLine(step) : "";
-    // 천장이 오른 것은 **이 화면에서 알아채게 한다.** 대백과에만 적으면 그건 안 끝난 작업이다
-    // (CLAUDE.md 전달 규칙). 여기서 알리면 곧바로 이어지는 드래프트에서 막대가 실제로 더 오르는 걸 본다.
-    const ceilingLine = `이 시대부터 걸음·눈·이빨·새끼를 ${this.traitCeilingNow}까지 키울 수 있습니다.`;
+    // **지금 어디쯤인지를 이 화면에서 알아채게 한다.** 대백과에만 적으면 그건 안 끝난 작업이다
+    // (CLAUDE.md 전달 규칙). 다음 문턱이 몇 개 남았는지 알려 주면, 곧바로 이어지는 드래프트에서
+    // 막대가 실제로 그만큼 차는 것을 눈으로 본다.
+    const near = nearestTierGoal(this.genome.pips);
+    const goalLine = near
+      ? `${CATEGORY_LABELS[near.cat]} ${TIER_ROMAN[near.tier]}까지 도장 ${near.need}개 남았습니다.`
+      : "";
     this.preview =
-      "새로운 시대에 들어섭니다. 지난 시대를 넘어선 보상으로, 크게 강해진 형질 하나를 고르세요. 지금 무리에 바로 물려집니다. " +
-      ceilingLine +
+      "새로운 시대에 들어섭니다. 지난 시대를 넘어선 보상으로, 도장을 여러 개 주는 카드 하나를 고르세요. 지금 무리에 바로 물려집니다. " +
+      goalLine +
       (opened === "" ? "" : ` ${opened}`);
     this.onDraft?.(this.draftCards, this.preview);
   }

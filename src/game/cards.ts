@@ -1,43 +1,43 @@
-// 카드 = 종 게놈에 누적 적용되는 형질 변화. 런 내 영구, 런 종료 시 리셋(로그라이크).
-// 매 라운드 풀에서 무작위 3장 후보(운 요소). 트레이드오프 카드로 "특화 vs 헷지" 결정을 만든다.
-// 문구는 쉬운 말로 (UI 규칙).
+// 카드 = 종에 찍히는 **도장(pip)**. 런 내 영구, 런 종료 시 리셋(로그라이크).
+// 매 드래프트에 풀에서 3장 후보(운 요소)를 뽑고 하나를 고른다.
 //
-// effects = 누적 가감. set = 절대값 지정(시작 식성 선택용). 값은 형질과 같은 0~100 자연수 스케일.
-// 둘 다 적용 후 0~100 으로 클램프.
+// **v8 에서 카드의 정체가 바뀌었다** (2026-08-06 회의 · **[사용자]** 확정).
+//   예전: 카드가 형질 숫자를 직접 올렸다(속도 +15). 그런데 그 +15 가 실제로 무슨 일을 하는지는
+//         지금 값이 얼마냐에 따라 달랐고(상한 근접 감쇠), 효과도 시드 노이즈에 묻혔다.
+//   지금: 카드는 **범주에 도장을 찍을 뿐**이고, 세계는 **문턱을 넘었는가**만 본다.
+//
+// 이 구조의 값어치는 **거짓말이 원리적으로 불가능해진 것**이다. 카드에 「이빨 +2」라 적히면 정확히
+// 도장 두 개가 찍히고, 그 두 개가 문턱을 넘기면 티어 효과가 통째로 켜지며, 못 넘기면 아무 일도
+// 안 일어난다 — 그리고 **넘기는지 못 넘기는지가 카드에 그대로 적혀 있다**(`draftPanel` 의 티어 칩).
+//
+// ⚠ 성장 스케일(CARD_GROWTH_SCALE) · 상한 근접 감쇠(growthFalloff) · 정점 고정 · 갈래 전용 40장은
+//   **전부 폐기했다.** 셋은 서로 물려 있어 한 묶음으로만 버릴 수 있었다.
 
 import type { Rng } from "@/sim/rng";
-import type { Genome, Traits } from "@/sim/genome";
-import { clampTraitValue, GENOME_VERSION, isApexTrait, traitCeiling, TRAIT_KEYS, TRAIT_MAX } from "@/sim/genome";
-import { SIM } from "@/sim/params";
-
-// 값형질(속도·시야·공격·번식·무리)의 카드 증가폭을 이만큼으로 줄인다 — 한 판 동안 여러 장을 쌓아야 상한
-// (100)에 닿게 해 성장을 천천히 느끼게 한다(카드 +15 → 실제 +9 적용, 50→100 에 ~6픽). 상한을 200→100 으로
-// 내려도 이 스케일을 유지해 실제 증가폭이 안 바뀌므로 밸런스는 불변(바뀌는 건 최대 도달값뿐). 대사·식성·
-// 능력형은 안 줄인다(성격이 다름). set(프리셋 정체성 값)도 안 줄인다(증분만).
-// 0.6 → 0.75: 상한 근접 감쇠(growthFalloff)가 들어오면서 후반 성장이 느려졌는데 난이도는 그대로라
-// 프리셋이 전반적으로 약해졌다(균형 잡식 도달 5.0 → 4.2). 초반(50 근처) 증가폭을 키워 총량을 되살린다.
-// 곡선이 바뀐 것이다: **초반엔 쑥쑥, 상한 근처에선 더디게.** 총 성장은 비슷하되 "100 을 금방 찍는" 일은 없다.
-const CARD_GROWTH_SCALE = 0.75;
-// 성장 스케일을 받는 값형질(연속·많을수록 강함). 상한이 전부 100 이라 TRAIT_CEILING 으로는 못 가려 명시한다.
-// v7: herding 이 능력 형질로 강등돼 빠졌다(능력형은 스케일을 안 받는다 — 문턱을 넘겨야 켜지므로 값을
-// 깎으면 관문 카드가 관문 구실을 못 한다).
-// ⚠ **size(몸집)도 여기 넣으면 안 된다.** 넣었더니 「커다란 몸」(+24)이 실제로는 +14 만 들어가 몸집
-// 50 → 64, 스프라이트가 겨우 11% 커졌다 — **눈으로 구분이 안 됐다**(사용자: "몸집 차이가 나는 애들이
-// 없어서 잘 모르겠는데?"). 몸집은 50 을 중심으로 **양방향**인 축이라, 다른 값형질처럼 "천천히 자라는"
-// 스케일을 씌우면 한 장으로는 아무것도 안 보인다. 카드 값이 그대로 들어가야 한 장에 체감된다.
-const GROWTH_TRAITS = new Set<keyof Traits>(["speed", "vision", "attack", "fertility"]);
+import type { Genome } from "@/sim/genome";
+import { refreshDerived } from "@/sim/genome";
+import {
+  CATEGORIES,
+  CATEGORY_LABELS,
+  KEY_LABELS,
+  KEY_PARENT,
+  MAX_KEYS,
+  MAX_TIER,
+  keyCount,
+  pipsToNext,
+  tierOf,
+  type Category,
+  type KeyName,
+  type Pips,
+} from "@/sim/tiers";
 
 /**
- * 카드 희귀도 5단계 (핸드오프 §2). 색·등장 뜸·연출은 UI(`@/ui/rarity`)가 정하고, 여기서는 "얼마나 드물게
- * 뽑히는가"만 정한다 — 배지에 "전설"이라 써 놓고 흔하게 뽑히면 표시가 거짓말이 되므로, 희귀도는 반드시
- * 뽑기 확률과 묶여 있어야 한다.
+ * 카드 희귀도 5단계. 색·연출은 UI(`@/ui/rarity`)가 정하고, 여기서는 "얼마나 드물게 뽑히는가"만 정한다 —
+ * 배지에 "전설"이라 써 놓고 흔하게 뽑히면 표시가 거짓말이 되므로, 희귀도는 반드시 뽑기 확률과 묶여 있어야 한다.
  */
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 
-/**
- * 뽑기 가중치의 **기준값(레벨 1)**. 카드 한 장이 후보로 뽑힐 상대 확률이다.
- * 레벨이 오르면 `rarityWeightsAtLevel` 이 높은 등급 쪽을 키운다(아래 참고).
- */
+/** 뽑기 가중치의 **기준값(레벨 1)**. 카드 한 장이 후보로 뽑힐 상대 확률이다. */
 export const RARITY_WEIGHT: Record<Rarity, number> = {
   common: 100,
   uncommon: 65,
@@ -46,16 +46,12 @@ export const RARITY_WEIGHT: Record<Rarity, number> = {
   legendary: 10,
 };
 
-/**
- * 레벨 보정이 최대에 이르는 런 레벨(세대). 한 판은 보통 레벨 5~7에서 끝나므로 그 안에서 체감되게 잡는다.
- * 이 레벨 이상은 전부 최대 보정.
- */
-export const RARITY_BOOST_FULL_LEVEL = 7;
+/** 레벨 보정이 최대에 이르는 런 레벨. 한 판은 보통 레벨 12~22 에서 끝나므로 그 앞쪽에서 체감되게 잡는다. */
+export const RARITY_BOOST_FULL_LEVEL = 10;
 
 /**
- * 최대 보정에서 각 등급의 가중치가 기준값의 몇 배가 되는가. 흔함은 1배(그대로)이고, 높은 등급만 커진다
+ * 최대 보정에서 각 등급의 가중치가 기준값의 몇 배가 되는가. 흔함은 1배(그대로)이고 높은 등급만 커진다
  * → 흔함의 **몫**이 자연히 줄어든다. "무리가 자라면 더 큰 변화가 찾아온다"를 확률로 표현한 것.
- * 레벨 1 에서는 전부 1배(보정 없음)이고, RARITY_BOOST_FULL_LEVEL 까지 선형으로 커진다.
  */
 export const RARITY_BOOST_MAX: Record<Rarity, number> = {
   common: 1,
@@ -65,11 +61,6 @@ export const RARITY_BOOST_MAX: Record<Rarity, number> = {
   legendary: 5.5,
 };
 
-/**
- * 런 레벨(세대)에 따른 뽑기 가중치. 레벨 1 = `RARITY_WEIGHT` 그대로,
- * `RARITY_BOOST_FULL_LEVEL` 이상 = `RARITY_WEIGHT × RARITY_BOOST_MAX`. 사이는 선형 보간.
- * 결정론: 레벨은 시드와 무관하게 정해지는 값이라 같은 시드 + 같은 진행이면 같은 후보가 나온다.
- */
 export function rarityWeightsAtLevel(level: number): Record<Rarity, number> {
   const span = Math.max(1, RARITY_BOOST_FULL_LEVEL - 1);
   const t = Math.max(0, Math.min(1, (level - 1) / span));
@@ -81,1006 +72,435 @@ export function rarityWeightsAtLevel(level: number): Record<Rarity, number> {
 }
 
 /**
- * 갈래(계통) — 시작 프리셋이 정하는 "직업". 슬레이 더 스파이어/하스스톤처럼 카드가 두 풀로 나뉜다.
- *   · **공통 풀**  — lineage 가 없는 카드. 어느 종이든 뽑는다(속도·시야·번식 같은 기본기 + 능력 관문).
- *   · **전용 풀**  — lineage 가 붙은 카드. **그 갈래로 시작한 종에게만** 나온다(그 종의 정체성 심화).
+ * 갈래(계통) — 시작 프리셋이 정하는 "어떤 종으로 시작하는가".
  *
- * 능력 관문 카드(지느러미·날개·초음파·독 살갗·가시 쏘기)는 일부러 **공통**으로 뒀다 — 걷던 종이 날개를
- * 얻는 진화가 이 게임의 핵심 재미인데, 그걸 갈래로 잠그면 "하늘 개척자로 시작해야만 난다"가 된다.
- * 전용 풀은 "그 갈래만 갈 수 있는 더 깊은 곳"이지 "그 갈래만 할 수 있는 일"이 아니다.
+ * ⚠ **갈래 전용 카드 풀은 폐기했다.** 티어 구조에서 "3장 중 1장은 반드시 내 갈래"를 보장하면
+ * "내 범주만 계속 쌓인다"로 굳어 고르는 일이 사라진다. 갈래는 이제 **시작 도장의 배분과 시작 열쇠**만
+ * 다르게 하고, 카드는 72장 전부가 누구에게나 나온다. 대신 **[사용자 2026-08-06]** 내가 판 방향의
+ * 카드가 조금 더 자주 뜬다(보장이 아니라 확률 가중 · `drawCards` 의 `bias`).
  */
-export type Lineage = "omni" | "herd" | "scout" | "hunter" | "ranged" | "sea" | "sky" | "venom";
+export type Lineage = "omni" | "herd" | "scout" | "hunter" | "giant" | "ranged" | "sea" | "sky" | "venom";
 
-/** 시작 프리셋 id → 갈래. 프리셋을 고르는 순간 이 런의 갈래가 정해진다. */
 export const PRESET_LINEAGE: Record<string, Lineage> = {
   preset_omni: "omni",
   preset_herd: "herd",
   preset_scout: "scout",
   preset_hunter: "hunter",
+  preset_giant: "giant",
   preset_ranged: "ranged",
   preset_sea: "sea",
   preset_sky: "sky",
   preset_venom: "venom",
 };
 
-/** 갈래 이름(화면 표시) — 드래프트에서 "내 갈래 카드"임을 배지로 보여준다. */
 export const LINEAGE_NAME: Record<Lineage, string> = {
   omni: "균형 잡식",
   herd: "다산 초식 무리",
   scout: "느긋한 정찰자",
   hunter: "날쌘 육식 사냥꾼",
+  giant: "느린 거인",
   ranged: "원거리 사냥꾼",
   sea: "바다 개척자",
   sky: "하늘 개척자",
   venom: "독 살갗",
 };
 
+/** 카드 한 장. **도장과 열쇠 말고는 아무것도 안 준다** — 그래서 표시와 실제가 갈릴 수 없다. */
 export interface Card {
   id: string;
   name: string;
+  /** 플레이버 한 줄. **효과를 여기 적지 않는다** — 효과는 티어 칩이 말한다(두 곳에 적으면 어긋난다). */
   desc: string;
-  effects: Partial<Record<keyof Traits, number>>;
-  set?: Partial<Record<keyof Traits, number>>;
-  /**
-   * 이 카드가 속한 갈래. 있으면 **그 갈래로 시작한 종에게만** 후보로 나온다(전용 카드).
-   * 없으면 공통 카드 — 누구나 뽑는다.
-   */
-  lineage?: Lineage;
-  /** 시작 프리셋의 내 종 시작 색(프리셋 전용) — 종마다 뚜렷이 달라 외형만으로 구분된다. */
+  /** 이 카드가 찍는 도장. 음수는 「맞바꿈」 카드의 대가다(티어가 내려갈 수 있다). */
+  pips?: Partial<Record<Category, number>>;
+  /** 이 카드가 여는 열쇠(능력). 세기는 모 범주의 티어가 정한다. */
+  key?: KeyName;
+  rarity: Rarity;
+  /** 시작 프리셋의 내 종 시작 색(프리셋 전용). */
   color?: number;
   /**
-   * 전제 조건 — 이 형질이 min 이상인 종에게만 후보로 나온다. **강화 카드 전용**.
-   * 예: 「튼튼한 날개」는 이미 나는 종(날개 ≥ flyThreshold)에게만. 없으면 아무 종에게나 나온다.
-   * 이게 없으면 못 나는 종이 "튼튼한 날개"를 골라 아무 일도 안 일어나는 손해 카드가 된다.
+   * **불씨 회복 카드** — 도장은 0 이고 꺼진 불씨를 이만큼 되살린다.
+   * **[사용자 2026-08-06]** 불씨가 정확히 하나 남았을 때만 뜨고, **첫 한 번은 확정 · 그 뒤로는 확률**이다.
    */
-  requiresTrait?: { key: keyof Traits; min: number };
-  /**
-   * **의도적으로 버리는 형질** — 값이 **0 이 된다**(얼마였든 상관없이). 관문 카드의 정체성이다.
-   * 「초음파」가 눈을 버리듯 — 이건 부수적 대가(effects 의 작은 음수)와 성격이 다르다:
-   *
-   * - **정점 고정(만렙)을 뚫는다.** 눈이 아무리 좋아도(시야 100) 박쥐가 되기로 했으면 눈은 먼다.
-   * - **성장 스케일·감쇠를 안 거친다.** effects 로 `vision: -100` 을 주면 ×0.75 가 걸려 -75 만 빠지는데,
-   *   그러면 시야 90 짜리 정찰자는 "눈이 먼다"는 설명과 달리 시야 15 로 **반쯤 보인다** — 카드가 거짓말을
-   *   한다. 희생은 얼마를 빼느냐가 아니라 **그 감각을 버리느냐**의 문제라 절대값(0)으로 다뤄야 한다.
-   */
-  sacrifice?: (keyof Traits)[];
+  ember?: number;
 }
 
-/** 이 카드의 전제 조건을 이 종이 갖췄는가(전제가 없으면 항상 true). */
-export function cardPrereqMet(card: Card, traits: Traits): boolean {
-  if (!card.requiresTrait) return true;
-  return traits[card.requiresTrait.key] >= card.requiresTrait.min;
+/** 이 카드가 실제로 찍는 도장 수(없는 범주는 0). */
+export function cardPips(card: Card, cat: Category): number {
+  return card.pips?.[cat] ?? 0;
 }
 
-// 초음파로 사는 종(echo 가 이 값보다 큼)은 눈이 죽은 값이다 — sim 의 감지 반경은 max(시야, 초음파)이고
-// (behavior.chooseGoal), 초음파 관문이 echo 70 을 주므로 초음파가 늘 이긴다. 그래서 시야를 아무리 올려도
-// 아무 일도 안 일어난다. 이 문턱은 traitDisplay 의 초음파 "강함"(55)과 같은 값이다 — 순환 import 를
-// 피하려고 여기 상수로 둔다(둘이 어긋나면 "강함이라 표시된 종에게 시야 카드가 여전히 뜨는" 불일치가 난다).
-const ECHO_BLINDS_VISION = 55;
+/** 이 카드가 건드리는 범주들(도장 수가 0 이 아닌 것). 표시 순서는 도장이 큰 것부터. */
+export function cardCategories(card: Card): Category[] {
+  return CATEGORIES.filter((c) => cardPips(card, c) !== 0).sort(
+    (a, b) => Math.abs(cardPips(card, b)) - Math.abs(cardPips(card, a)),
+  );
+}
 
 /**
- * **좋고 나쁨이 없는(또는 양방향인) 축** — 내려가는 것도 "이 카드가 내 종에게 주는 것"이다.
- * 대사(추위↔더위)·식성(초식↔육식)은 이번 판 환경이 어느 쪽을 이득으로 만들지 정하고, 몸집은 50 이 중립인
- * 양방향 축이라(크게 버티기 ↔ 작게 숨기) 줄어드는 것도 하나의 선택이다.
- * (표시 쪽 `ui/traitDisplay.NEUTRAL_TRAITS` 와 같은 뜻 + 몸집. game 은 ui 를 import 하지 않아 여기 둔다.)
+ * 이 카드를 고르면 이 범주가 **어느 티어에서 어느 티어로** 가는가.
+ * 카드 칩 · 내 종 패널 · 대백과가 전부 이 하나를 부른다(UI 에서 문턱을 다시 유도하면 조용히 어긋난다).
  */
-const BIDIRECTIONAL_TRAITS = new Set<keyof Traits>(["metabolism", "diet", "size"]);
+export interface TierMove {
+  cat: Category;
+  from: number;
+  to: number;
+  /** 이 카드를 고른 뒤 다음 문턱까지 남는 도장. 최고 티어면 0. */
+  remain: number;
+  /** 도장 변화량(음수 가능). */
+  delta: number;
+}
+
+export function tierMove(card: Card, pips: Pips, cat: Category): TierMove {
+  const d = cardPips(card, cat);
+  const before = pips[cat];
+  const after = Math.max(0, before + d);
+  return { cat, from: tierOf(before), to: tierOf(after), remain: pipsToNext(after), delta: d };
+}
+
+export function cardTierMoves(card: Card, pips: Pips): TierMove[] {
+  return cardCategories(card).map((c) => tierMove(card, pips, c));
+}
+
+/** 이 카드가 **어떤 범주의 문턱이든 넘기는가.** 드래프트의 「죽은 카드」 규칙이 이걸 본다. */
+export function cardCrossesThreshold(card: Card, pips: Pips): boolean {
+  if (card.key !== undefined) return true; // 열쇠는 그 자체로 새 능력이다
+  if (card.ember) return true;
+  return cardTierMoves(card, pips).some((m) => m.to > m.from);
+}
 
 /**
- * 이 카드가 이 종의 게놈을 **실제로** 어떻게 바꾸는가 — 형질별 변화량(0 인 형질은 빠진다).
- *
- * 재는 방법이 곧 규칙이다: **진짜 적용 함수(`applyCard`)를 게놈 사본에 돌려 전후를 뺀다.** 성장 스케일·
- * 상한 근접 감쇠·정점 고정·희생·상한 클램프·수영 뚜껑을 여기 옮겨 적지 않는다 — 규칙을 두 곳에 적으면
- * 반드시 갈라진다(known_issues: 「철벽 대형」이 세 효과가 전부 막혔는데도 후보로 떴다).
+ * 이 카드가 후보로 나올 수 있는가.
+ * · 열쇠 카드는 **이미 가진 열쇠**이거나 **상한(3개)에 닿았으면** 안 나온다.
+ * · 도장이 **전부 최고 티어인 범주로만** 가는 카드는 안 나온다(죽은 카드 규칙 (가)).
  */
-export function cardGenomeDeltas(card: Card, t: Traits): Partial<Record<keyof Traits, number>> {
-  const after: Genome = { genomeVersion: GENOME_VERSION, traits: { ...t } };
-  applyCard(after, card);
-  const out: Partial<Record<keyof Traits, number>> = {};
-  for (const key of TRAIT_KEYS) {
-    const d = after.traits[key] - t[key];
-    if (d !== 0) out[key] = d;
+export function cardPrereqMet(card: Card, genome: Genome): boolean {
+  if (card.key !== undefined) {
+    if (genome.keys[card.key]) return false;
+    if (keyCount(genome.keys) >= MAX_KEYS) return false;
+    return true;
   }
-  return out;
-}
-
-/**
- * 이 변화가 **이 종에게 실제로 뭔가를 주는가.** 게놈 숫자가 움직여도 세계가 그 변화를 못 느끼거나,
- * 잃기만 하는 변화라면 "주는 것"이 아니다. 항목마다 그렇게 만드는 sim 규칙을 함께 적는다
- * (여기 있는 것만이 "숫자는 변하는데 아무 일도 안 일어나는" 자리다 — 늘어나면 여기에 적는다).
- */
-function deltaGivesSomething(card: Card, key: keyof Traits, t: Traits, delta: number): boolean {
-  // ① sim 이 못 느끼는 변화.
-  //   · 초음파로 사는 종의 시야: 감지 반경이 max(시야, 초음파)라(behavior.chooseGoal) 눈을 올려도 그대로다.
-  //     초음파를 조금만 켠 종(echo ≤ 55)은 아직 눈도 쓰므로 해당 없다.
-  if (key === "vision" && t.echo > ECHO_BLINDS_VISION) return false;
-  //   · 수영: 문턱(swimThreshold) 위에서는 전부 임계 비교뿐이라 값이 아무 일도 안 한다. 게다가 applyCard 가
-  //     89 에서 뚜껑을 씌워 물 전용 문턱(90)에는 영영 못 닿는다.
-  if (key === "swimming" && t.swimming >= SIM.swimThreshold) return false;
-  //   · 날개: **관문 카드**(「날개」)가 열려는 문이 이미 열려 있다 — "날개가 돋는다"가 거짓말이 된다.
-  //     문턱 위의 날개값 자체는 비행 대사를 덜어 주므로(behavior.flyDrainMultiplier) 죽은 값이 아니다.
-  //     그 몫은 **강화 카드**(requiresTrait 가 붙은 「튼튼한 날개」)의 것이라 여기서 안 걸린다.
-  if (key === "wings" && !card.requiresTrait && t.wings >= SIM.flyThreshold) return false;
-  // ② 잃기만 하는 변화는 "주는 것"이 아니다 — 이득은 전부 막히고 대가만 남은 카드도 죽은 카드다
-  //    (눈이 먼 종의 「천리안」: 시야는 아무 일도 안 하고 걸음만 -6). 양방향 축은 내려가는 것도 한 방향.
-  return delta > 0 || BIDIRECTIONAL_TRAITS.has(key);
-}
-
-/**
- * 이 카드가 지금 이 종에게 무의미한가(드래프트 후보에서 뺄지).
- *
- * **판정 기준은 하나다: 이 카드를 골랐을 때 게놈이 실제로 바뀌는가.** `cardGenomeDeltas` 가 진짜 적용
- * 함수를 돌려 재므로, 표시(칩)와 판정이 같은 규칙을 본다 — 갈라질 수 없다.
- *
- * - **하나라도 실제로 바뀌면 정상 후보다**(부분 무효는 남긴다). 「듬직한 몸」이 시야가 이미 최대라도
- *   몸집을 올린다면 고를 만한 카드다. 칩이 "시야 이미 최대"라고 그 자리에서 알려 준다.
- * - **전부 막힌 것만 뺀다.** 예전엔 주효과(가장 큰 양수 효과) 하나만 봐서, 「철벽 대형」처럼 주효과가
- *   판정 대상 밖(herding)이면 나머지 두 효과가 막혔는지 아예 안 봤다 → 세 효과가 전부 무효인 카드가
- *   후보 한 칸을 차지했다(2026-08-05 폰 실기).
- * - 이득이 전부 막히고 **대가만 남은** 카드도 뺀다(`deltaGivesSomething` ②).
- *
- * (전제 미달 강화 카드는 `cardPrereqMet` 이 따로 걸러 낸다.)
- */
-export function cardRedundant(card: Card, t: Traits): boolean {
-  const deltas = cardGenomeDeltas(card, t);
-  for (const key of Object.keys(deltas) as (keyof Traits)[]) {
-    if (deltaGivesSomething(card, key, t, deltas[key] ?? 0)) return false;
-  }
+  if (card.ember) return false; // 불씨 카드는 game 이 따로 끼워 넣는다(일반 뽑기에 안 섞인다)
+  const cats = cardCategories(card);
+  if (cats.length === 0) return true;
+  // 주는 쪽(양수)이 전부 이미 최고 티어면 이 카드는 아무 일도 못 한다.
+  const gains = cats.filter((c) => cardPips(card, c) > 0);
+  if (gains.length > 0 && gains.every((c) => tierOf(genome.pips[c]) >= MAX_TIER)) return false;
   return true;
 }
 
-// 런 첫 드래프트 — 시작 프리셋(빌드 방향)을 정한다. 식성(set diet) + 특화 형질 두엇.
-// 식성만 고르던 것을 "어떤 종으로 시작할지"로 넓혀 첫 판의 방향을 또렷하게 한다(드래프트로 계속 발전).
-// 시작 프리셋 — 정체성 형질을 크게 벌려 "이 종이 뭘 잘하는지"가 수치·외형에서 뚜렷이 드러난다.
-// (전엔 대부분 형질이 기본 50이라 프리셋 차이가 밋밋했다 → 강점은 크게·약점은 낮게 벌린다.)
-// 단 preset_omni(index 0)는 통과기준 테스트가 쓰는 기준선이라 무난한 균형으로 보존한다.
+/**
+ * 이 카드가 **이 종에게 아무 일도 안 하는가**(죽은 카드).
+ * 도장은 오르는데 문턱을 하나도 안 넘고, 그러면서 잃는 것만 있는 경우가 여기 걸린다.
+ * ⚠ 문턱을 안 넘는 것 자체는 죽은 게 아니다(다음 장을 위한 저축이다) — 그래서 여기서는
+ *   **주는 도장이 하나도 없는 경우**만 잡고, "이번에 문턱을 넘기는 장이 3장 중 하나는 있어야 한다"는
+ *   보장은 `drawCards` 가 맡는다. 둘을 섞으면 저축 카드가 통째로 사라져 사다리가 안 올라간다.
+ */
+export function cardRedundant(card: Card, genome: Genome): boolean {
+  if (card.key !== undefined) return genome.keys[card.key] || keyCount(genome.keys) >= MAX_KEYS;
+  const gains = CATEGORIES.filter((c) => cardPips(card, c) > 0);
+  if (gains.length === 0) return false;
+  return gains.every((c) => tierOf(genome.pips[c]) >= MAX_TIER);
+}
+
+// ─────────────────────────────── 시작 갈래(프리셋) ───────────────────────────────
+//
+// **프리셋 = 시작 도장 일곱(주 범주 4 + 부 범주 3) + 시작 열쇠 하나(있는 갈래만) = 1단 둘.**
+//
+// ⚠ 처음엔 「1단 하나」로 잡았다가 **실측으로 무너졌다**: 옛 프리셋은 여섯 축을 60~66 으로 한꺼번에
+//   올려 줬는데 1단 하나면 축 하나만 오른다 → 탐색 반경과 걸음이 함께 줄어 단위 시간에 훑는 면적이
+//   무너지고, 사망 원인의 60% 이상이 굶주림이 됐다(도달 시대 3.8 → 2.0 · 정복 0/30).
+//   두 범주를 켜야 「멀리 보고 + 무엇을 한다」가 함께 성립한다. 갈래는 **어느 둘인가**로 갈린다.
+//
+// ⚠ 시작 도장 수는 **사다리와 한 쌍이다**(tiers.ts TIER_STEPS 주석의 실측표). 5 로 두면 한 우물
+//   17장 판이 최고 티어에 못 닿았다(실측 19.4 vs 문턱 20) · 6 이라야 닿는다. 만지면 프로브를 다시 돌려라.
+//
+// **[사용자 2026-08-06]** 시작 갈래는 다섯만 기본으로 열고 나머지는 순차 해금한다(`game/meta.ts`).
+
 export const PRESET_CARDS: readonly Card[] = [
   {
     id: "preset_omni",
     name: "균형 잡식",
-    desc: "풀도 뜯고 사냥도 한다. 뛰어난 재주는 없지만 발도 눈도 새끼도 모자라지 않아, 어느 환경에서든 무난하게 자리 잡는다.",
-    // 예전엔 식성만 정하고 나머지를 전부 기본값(50)으로 뒀다 — 그래서 **기본 프리셋이 가장 약했다**
-    // (프로브: 대륙 도달 1.3/6. 사냥꾼은 5.9). "무난함"은 아무것도 안 올린다는 뜻이 아니라 두루
-    // 모자람이 없다는 뜻이다. 특기가 없는 대신 약점도 없게 고루 올린다.
-    set: { diet: 50, speed: 66, vision: 66, attack: 64, fertility: 62, herding: 58 },
-    effects: {},
+    desc: "풀도 뜯고 사냥도 한다. 뛰어난 재주는 없지만 어느 환경에서든 자리를 잡는다.",
+    pips: { fang: 4, eye: 3 },
+    rarity: "common",
     color: 0x6cc24a, // 초록
   },
   {
     id: "preset_herd",
     name: "다산 초식 무리",
-    desc: "풀을 뜯는다. 무리로 뭉쳐 다니며 빠르게 새끼를 쳐, 하나가 스러져도 수로 메운다. 대신 힘은 약하다.",
-    // 여덟 프리셋 중 꼴찌였고(도달 1.0/6) **수치로는 안 고쳐졌다** — 걸음·번식·대사·공격력·무리 성향을
-    // 차례로 올려 봐도 전부 1.0~1.3 에서 안 움직였다. 원인은 수치가 아니라 메커니즘의 부재였다: 사냥
-    // 수입도(식성 16 < 문턱 35) 독도 도망칠 속도도 없는, 아무 방어 수단이 없는 유일한 프리셋이었다.
-    // 이제 **무리 방어**(SIM.herdShield*)가 그 자리를 메운다 — 뭉쳐 있으면 포식자가 아예 안 건드린다.
-    // ⚠ herding 92 는 방패 임계(herdShieldThreshold 85)를 **넘기려고** 잡은 값이다. 이 아래로 내리면
-    // 방패가 통째로 꺼져 프리셋이 다시 꼴찌로 돌아간다(둘은 한 쌍이다 — 한쪽만 바꾸지 말 것).
-    set: { diet: 16, fertility: 88, herding: 92, speed: 62, vision: 62, attack: 44, metabolism: 32 },
-    effects: {},
-    color: 0xb4e04a, // 라임(밝은 연두)
+    desc: "풀만 뜯는다. 뭉쳐 다니며 빠르게 새끼를 쳐, 하나가 스러져도 수로 메운다.",
+    pips: { herd: 4, hide: 3 },
+    rarity: "common",
+    color: 0xb4e04a, // 라임
   },
   {
     id: "preset_hunter",
     name: "날쌘 육식 사냥꾼",
-    desc: "사냥으로 산다. 빠르고 사나워 먹잇감을 좀처럼 놓치지 않는다. 대신 새끼는 더디게 친다.",
-    // 네 세계 모두에서 1~2위였다(도달 4.6~5.9). 사냥은 먹잇감이 야생 100마리라 사실상 무한한데,
-    // 채집은 먹이가 유한하고 경쟁자가 넷이다 — 그 구조 위에서 속도 80·공격 74 는 과했다. 온건히 깎는다.
-    set: { diet: 68, speed: 68, attack: 64, fertility: 36 },
-    effects: {},
+    desc: "사냥으로 산다. 빠르고 사나워 먹잇감을 좀처럼 놓치지 않는다.",
+    pips: { fang: 4, leg: 3 },
+    rarity: "common",
     color: 0xff7a3a, // 주황
   },
   {
     id: "preset_scout",
     name: "느긋한 정찰자",
-    desc: "풀과 사냥을 겸한다. 멀리 내다보고 기운을 아껴 척박한 땅에서도 오래 버틴다. 대신 힘이 약하고 새끼는 드물다.",
-    // 시야 82(최고)인데도 도달 1.1 — 걸음 42 라 멀리 본 먹이에 닿기 전에 남이 먼저 먹었다.
-    set: { diet: 40, vision: 84, metabolism: 30, speed: 62, attack: 56, fertility: 48 },
-    effects: {},
+    desc: "멀리 내다보고 기운을 아낀다. 남이 못 본 것을 먼저 본다.",
+    pips: { eye: 4, hide: 3 },
+    rarity: "common",
     color: 0x3fc9c0, // 청록
+  },
+  {
+    id: "preset_giant",
+    name: "느린 거인",
+    desc: "풀만 먹고도 산처럼 자란다. 느리지만 좀처럼 쓰러지지 않는다.",
+    // **[사용자 2026-08-06]** 「초식 거인 경로는 반드시 만든다」의 출발점.
+    // 이빨에 도장이 하나도 없다 = 풀 효율이 온전한 1.0 이고, 사냥은 영영 못 한다.
+    pips: { hide: 4, herd: 3 },
+    rarity: "common",
+    color: 0xc9a227, // 황토
   },
   {
     id: "preset_sea",
     name: "바다 개척자",
     desc: "능숙하게 헤엄쳐 바다의 먹이를 취하고 뭍도 오간다. 바다에는 다투는 경쟁자가 드물다.",
-    // 수영 88 = 수륙양용(뭍 O). 90(aquaticOnlyThreshold) 이상이면 물 전용이 돼 땅에 소환되면 못 움직이고
-    // 죽는다(버그). 설명대로 "뭍도 오가는" 종이라 90 미만으로 둔다.
-    set: { diet: 40, swimming: 88, speed: 62 },
-    effects: {},
-    color: 0x5aa0f0, // 하늘 파랑
+    pips: { leg: 4, eye: 3 },
+    key: "fin",
+    rarity: "common",
+    color: 0x5aa0f0,
   },
   {
     id: "preset_sky",
     name: "하늘 개척자",
-    desc: "산과 바다 위를 날아 넘어 산 위의 먹이에 닿는다. 바다의 먹이는 헤엄치는 종만 먹는다. 높이 날아 멀리 보지만, 쉼 없는 날갯짓에 배가 빨리 곯는다.",
-    set: { diet: 40, wings: 80, vision: 70, metabolism: 66 },
-    effects: {},
-    color: 0xf0c840, // 황금빛(하늘·맹금) — 기존 프리셋 색과 구분
-  },
-  {
-    id: "preset_venom",
-    name: "독 살갗",
-    desc: "살갗에 독을 품어, 삼킨 포식자를 중독시킨다. 무리로 뭉쳐 다니는, 좀처럼 잡아먹히지 않는 초식 종.",
-    // 독으로 안 잡아먹히기는 하는데, 스스로 먹고 사는 힘(발·눈)이 없어 굶었다(도달 1.8).
-    set: { diet: 26, venom: 84, herding: 68, fertility: 70, speed: 60, vision: 60, metabolism: 40 },
-    effects: {},
-    color: 0x9c27b0, // 독 보라 — 기존 프리셋 색과 구분
+    desc: "산과 바다 위를 날아 넘어 산 위의 먹이에 닿는다. 대신 쉼 없는 날갯짓에 배가 빨리 곯는다.",
+    pips: { leg: 4, hide: 3 },
+    key: "wing",
+    rarity: "common",
+    color: 0xf0c840,
   },
   {
     id: "preset_ranged",
     name: "원거리 사냥꾼",
-    desc: "다가서지 않고 멀리서 가시를 쏜다. 넓은 시야로, 상대가 반격하거나 달아나기 전에 먼저 맞힌다.",
-    // 사거리 82 인데 걸음 46 이라 먹잇감을 사거리 안에 넣기도 전에 굶었다(도달 1.5).
-    set: { diet: 60, ranged: 82, vision: 74, speed: 62, attack: 62 },
-    effects: {},
-    color: 0x4aa0a0, // 청록빛 — 기존 프리셋 색과 구분
-  },
-];
-
-export const CARD_POOL: readonly Card[] = [
-  // 단일 형질
-  { id: "swift", name: "날쌘 다리", desc: "더 빠르게 내닫는다.", effects: { speed: 15 } },
-  { id: "keen", name: "넓은 시야", desc: "먹이를 더 멀리서 알아본다.", effects: { vision: 15 } },
-  {
-    id: "thrifty",
-    name: "느린 대사",
-    desc: "기운을 적게 쓴다. 따뜻한 땅과 폭염, 대가뭄에서 오래 버틴다.",
-    effects: { metabolism: -14 },
+    desc: "다가서지 않고 멀리서 가시를 쏜다. 상대가 반격하거나 달아나기 전에 먼저 맞힌다.",
+    pips: { fang: 4, eye: 3 },
+    key: "barb",
+    rarity: "common",
+    color: 0x4aa0a0,
   },
   {
-    id: "hotblood",
-    name: "뜨거운 피",
-    desc: "추위를 잘 견딘다. 대신 기운을 더 쓴다. 추운 땅과 한파에서 강하다.",
-    effects: { metabolism: 14 },
-  },
-  { id: "fertile", name: "다산", desc: "더 자주 새끼를 친다.", effects: { fertility: 16 } },
-  // 무리 — **관문 카드**다. 한 장으로 무리 방어 문턱(SIM.herdShieldThreshold)을 넘긴다.
-  // 「날개」와 같은 원칙: 관문 카드는 그 능력을 **실제로 열어야 한다**. 예전엔 +18 이라 여러 장을 모아야
-  // 겨우 켜졌는데 설명은 "무리로 뭉친다"였다 — 거짓말이었다(날개가 +42 로 아무 일도 안 하던 것과 같은 함정).
-  {
-    id: "herd",
-    name: "무리 본능",
-    desc: "빽빽이 뭉쳐 다닌다. 무리 한가운데 있으면 포식자가 아예 덤비지 못한다(가장자리와 낙오자만 노린다). 대신 뭉쳐 다니느라 먹이를 늦게 찾는다.",
-    effects: { herding: SIM.herdShieldThreshold + 3 },
-  },
-  {
-    id: "pack_hunt",
-    name: "무리 사냥",
-    desc: "이미 뭉쳐 다니는 무리가 함께 사냥한다. 결속과 걸음이 함께 는다.",
-    effects: { herding: 12, speed: 8 },
-    requiresTrait: { key: "herding", min: 1 }, // 무리 짓는 종에게만 — 안 뭉치는 종엔 +12 가 아무 일도 안 한다
-  },
-  {
-    id: "warm_pack",
-    name: "옹기종기",
-    desc: "무리의 온기가 짙어지고 추위에 강해진다.",
-    effects: { herding: 14, metabolism: 6 },
-    requiresTrait: { key: "herding", min: 1 },
-  },
-
-  // 조합 (작은 상승 두 개)
-  {
-    id: "eagle_eye",
-    name: "매의 눈",
-    desc: "멀리 보며 조금 빨라진다.",
-    effects: { vision: 20, speed: 5 },
-  },
-
-  // 몸집 — v7. 대가를 카드에 적을 필요가 없다: 큰 몸은 **시뮬이 알아서** 느려지고 많이 먹고 새끼를
-  // 적게 친다(sizeSpeedFactor·sizeDrainFactor·sizeFertilityFactor). 형질 하나가 트레이드오프를 통째로 안는다.
-  {
-    id: "bulk",
-    name: "커다란 몸",
-    desc: "몸이 커진다. 큰 짐승은 좀처럼 잡아먹히지 않는다. 대신 걸음이 무겁고, 큰 몸을 건사하느라 많이 먹으며, 새끼를 적게 친다.",
-    effects: { size: 24 },
-  },
-  {
-    id: "small_swift",
-    name: "작고 날쌘 몸",
-    desc: "몸이 작아진다. 재빠르고 적게 먹으며 새끼를 자주 치지만, 그만큼 쉽게 잡아먹힌다.",
-    effects: { size: -22, speed: 8 },
-  },
-  // 몸집 조합 — v7 축을 받쳐 주는 카드가 없었다(bulk·small_swift·giant·titan 넷뿐). 몸집을 다른
-  // 형질과 엮어 "큰데 추위에 강한 곰" "작고 많이 낳는 설치류" "키 커서 멀리 보는 기린" 같은 결을 만든다.
-  {
-    id: "stout",
-    name: "곰의 체구",
-    desc: "몸이 크고 추위에 강해진다. 큰 덩치는 좀처럼 잡아먹히지 않고, 두꺼운 몸이 추위를 견딘다. 대신 큰 몸을 건사하느라 많이 먹는다.",
-    effects: { size: 16, metabolism: 10 },
-  },
-  {
-    id: "runt",
-    name: "작고 많은 것들",
-    desc: "몸이 작아지고 새끼가 는다. 적게 먹으며 부지런히 새끼를 치지만, 작은 몸은 쉽게 잡아먹힌다.",
-    effects: { size: -16, fertility: 12 },
-  },
-  {
-    id: "looming",
-    name: "우뚝한 몸집",
-    desc: "키가 커져 멀리 내다본다. 높은 데서 먹이와 위협을 먼저 알아채고, 큰 덩치로 덜 잡아먹힌다.",
-    effects: { size: 14, vision: 8 },
-  },
-
-  // 트레이드오프 (큰 상승 + 작은 대가)
-  {
-    id: "sprint",
-    name: "질주 본능",
-    desc: "훨씬 빠르게 내닫지만 기운을 더 쓴다.",
-    effects: { speed: 22, metabolism: 7 },
-  },
-  {
-    id: "hunter_eye",
-    name: "사냥꾼의 눈",
-    desc: "시야가 크게 트이지만 새끼는 덜 친다.",
-    effects: { vision: 24, fertility: -6 },
-  },
-  {
-    id: "brood",
-    name: "둥지 본능",
-    desc: "새끼를 많이 치지만 걸음이 느려진다.",
-    effects: { fertility: 22, speed: -7 },
-  },
-  {
-    id: "loner",
-    name: "외톨이",
-    desc: "무리를 떠나 홀로 내닫는다. 무리 성향을 크게 잃는 대신 발이 몹시 빨라진다.",
-    effects: { speed: 20, herding: -18 },
-  },
-  {
-    // ⚠ v6 까지 이 카드는 **몸집이 안 커졌다**(대사·걸음만 바뀜) — 이름이 거짓말이었다(사용자 지적:
-    // "'느긋한 거인'은 크기 형질도 없는데 왜 거인이야?"). v7 에 몸집 축이 생겼으니 실제로 커진다.
-    // 「커다란 몸」과의 차이: 이쪽은 **크면서도 기운을 아끼는** 몸이다(코끼리·거북). 큰 몸은 원래
-    // 많이 먹는데(sizeDrainFactor) 저대사가 그걸 상쇄해, 느리지만 오래 버티는 종이 된다.
-    id: "giant",
-    name: "느긋한 거인",
-    desc: "몸이 커지는데도 기운은 거의 쓰지 않는다. 크고 느긋해 좀처럼 잡아먹히지 않지만, 걸음이 굼뜨다.",
-    effects: { size: 20, metabolism: -16, speed: -8 },
-  },
-  {
-    id: "furnace",
-    name: "왕성한 대사",
-    desc: "추위에 몹시 강하고 새끼도 늘지만 기운을 많이 쓴다.",
-    effects: { metabolism: 20, fertility: 5 },
-  },
-
-  // 공격성·식성 (다종 생태계)
-  {
-    id: "fangs",
-    name: "송곳니",
-    desc: "공격력이 는다. 사냥에 능하고, 더 센 포식자에게 덜 쫓긴다.",
-    effects: { attack: 18 },
-  },
-  {
-    id: "savage",
-    name: "사나운 이빨",
-    desc: "공격력이 크게 늘고 조금 빨라지지만, 사냥에 몰두해 새끼는 덜 친다.",
-    effects: { attack: 24, speed: 5, fertility: -6 },
-  },
-  {
-    id: "predator",
-    name: "포식 본능",
-    desc: "육식으로 기운다. 다른 종을 사냥해 먹는다.",
-    effects: { diet: 22, attack: 6 },
-  },
-  {
-    id: "grazer",
-    name: "초식 본능",
-    desc: "초식으로 기운다. 풀을 뜯으며 다툼을 피한다.",
-    effects: { diet: -22, fertility: 5 },
-  },
-
-  // 특화 진화 — 큰 변화 + 뚜렷한 대가. 빌드 정체성을 만든다(드래프트가 매번 다르게).
-  {
-    id: "cheetah",
-    name: "치타의 다리",
-    desc: "쏜살같이 내닫지만 새끼는 덜 친다.",
-    effects: { speed: 28, fertility: -10 },
-  },
-  {
-    id: "great_fangs",
-    name: "거대 송곳니",
-    desc: "공격력이 크게 늘지만 걸음이 굼떠진다.",
-    effects: { attack: 26, speed: -8 },
-  },
-  {
-    id: "ambush",
-    name: "매복 사냥꾼",
-    desc: "멀찍이서 노리다 덮친다. 시야와 공격력이 함께 는다.",
-    effects: { vision: 14, attack: 14 },
-  },
-  {
-    id: "locust",
-    name: "메뚜기 떼",
-    desc: "떼로 불어난다. 대신 한 마리는 약하다.",
-    effects: { fertility: 28, attack: -6 },
-  },
-  {
-    id: "thick_fur",
-    name: "두꺼운 털가죽",
-    desc: "추위에 몹시 강하고 함께 모인다.",
-    effects: { metabolism: 16, herding: 12 },
-  },
-  {
-    id: "all_rounder",
-    name: "균형 진화",
-    desc: "걸음과 시야, 번식이 고루 조금씩 는다.",
-    effects: { speed: 8, vision: 8, fertility: 8 },
-  },
-  {
-    id: "ascetic",
-    name: "고행자",
-    desc: "기운을 거의 쓰지 않고 멀리 본다. 대신 걸음이 느리다.",
-    effects: { metabolism: -20, vision: 10, speed: -6 },
-  },
-  {
-    id: "phalanx",
-    name: "철벽 대형",
-    desc: "함께 뭉쳐 맞선다. 무리 성향과 공격력이 크게 늘지만, 싸움에 힘써 새끼는 덜 친다.",
-    effects: { herding: 22, attack: 12, fertility: -6 },
-  },
-  {
-    id: "lone_warrior",
-    name: "독불장군",
-    desc: "홀로 사납게 싸운다. 공격력이 크게 늘지만 무리에서 떨어져 나온다.",
-    effects: { attack: 22, speed: 6, herding: -16 },
-  },
-
-  // 추가 조합·정체성. 빈 형질 조합을 메워 드래프트 변주를 넓힌다(기존 형질만).
-  {
-    id: "scout_pack",
-    name: "파수 무리",
-    desc: "함께 다니며 멀리까지 살핀다. 시야와 무리 성향이 는다.",
-    effects: { vision: 14, herding: 12 },
-  },
-  {
-    id: "owl_eye",
-    name: "올빼미 눈",
-    desc: "멀리 보면서도 기운을 아낀다. 시야가 늘고 대사가 준다.",
-    effects: { vision: 16, metabolism: -8 },
-  },
-  {
-    id: "nest_herd",
-    name: "둥지 무리",
-    desc: "무리 속에서 안전하게 새끼를 친다. 번식과 무리 성향이 늘지만, 둥지를 지키느라 걸음이 느려진다.",
-    effects: { fertility: 16, herding: 10, speed: -6 },
-  },
-  {
-    id: "farsight",
-    name: "천리안",
-    desc: "아주 멀리까지 내다본다. 대신 걸음이 조금 느려진다.",
-    effects: { vision: 26, speed: -6 },
-  },
-  {
-    id: "evasive",
-    name: "민첩한 회피",
-    desc: "재빠르게 움직이며 위험을 멀리서 알아챈다. 걸음과 시야가 함께 는다.",
-    effects: { speed: 12, vision: 12 },
-  },
-  {
-    id: "beast_metab",
-    name: "맹수의 대사",
-    desc: "사냥을 위해 힘이 세지만 기운을 많이 쓴다.",
-    effects: { attack: 16, metabolism: 8 },
-  },
-  {
-    id: "glass_cannon",
-    name: "유리 대포",
-    desc: "공격력은 무섭지만 몸이 약해 새끼는 덜 친다.",
-    effects: { attack: 28, fertility: -10 },
-  },
-  {
-    id: "swift_breeder",
-    name: "잰걸음 번식",
-    desc: "재빠르게 불어난다. 걸음과 번식이 함께 조금 는다.",
-    effects: { speed: 8, fertility: 10 },
-  },
-  {
-    id: "stoic",
-    name: "굳건한 체질",
-    desc: "기운을 아끼며 함께 버틴다. 느린 대사와 무리의 온기.",
-    effects: { metabolism: -12, herding: 10 },
-  },
-  {
-    id: "apex_scout",
-    name: "정점의 사냥꾼",
-    desc: "넓은 시야로 먹이를 찾아 사납게 사냥한다. 대신 걸음이 굼떠진다.",
-    effects: { vision: 16, attack: 16, speed: -7 },
-  },
-
-  // 은신 — v7. 시야의 대칭축: 포식자가 나를 늦게 발견한다. **초음파는 못 속인다**(눈을 속이는 것이지
-  // 소리를 지우는 게 아니다). 그리고 큰 몸은 잘 못 숨는다 — 몸집과 은신은 한 축의 양끝이다.
-  {
-    id: "camo",
-    name: "보호색",
-    desc: "몸빛이 둘레를 닮아 간다. 포식자가 코앞에 와서야 알아챈다. 다만 소리로 찾는 짐승(초음파)은 속지 않고, 몸이 크면 숨을 수 없다.",
-    effects: { camouflage: 46 },
-  },
-  {
-    id: "shadow_hide",
-    name: "그림자 무늬",
-    desc: "숨는 재주가 깊어진다. 몸을 낮추고 그늘에 녹아든다.",
-    effects: { camouflage: 28, size: -8 },
-    requiresTrait: { key: "camouflage", min: 1 }, // 이미 숨을 줄 아는 종에게만
-  },
-  // 은신 강화 두 갈래 — 숨는 종의 방향을 가른다. 「살금살금」은 숨어서 다가가는 발, 「숨은 이빨」은
-  // 매복해 덮치는 이빨. 둘 다 이미 숨을 줄 아는 종(camo 관문을 뽑은 종)에게만 나온다(requiresTrait).
-  // 은신 종은 시야도 그대로라 시야 카드가 안 죽는다 — 초음파와 달리 자기 계열이 넉넉하다.
-  {
-    id: "camo_creep",
-    name: "살금살금",
-    desc: "둘레에 녹아든 채 소리 없이 다가간다. 상대가 알아채기 전에 코앞에 선다. 이미 숨을 줄 아는 종만 얻는다.",
-    effects: { camouflage: 24, speed: 8 },
-    requiresTrait: { key: "camouflage", min: 1 },
-  },
-  {
-    id: "camo_fang",
-    name: "숨은 이빨",
-    desc: "숨어 기다리다 덮친다. 보이지 않는 곳에서 급소를 문다. 이미 숨을 줄 아는 종만 얻는다.",
-    effects: { camouflage: 20, attack: 16 },
-    requiresTrait: { key: "camouflage", min: 1 },
-  },
-
-  // 바다 적응 — 수영을 키우면 바다 먹이를 먹는다(육상 종은 못 먹는 무경쟁 틈새).
-  {
-    id: "fins",
-    name: "지느러미",
-    desc: "헤엄쳐 바다의 먹이를 취한다. 바다에는 다투는 경쟁자가 없다.",
-    effects: { swimming: 22 },
-  },
-  {
-    id: "webbed",
-    name: "물갈퀴 발",
-    desc: "물에서 잘 움직인다. 수영과 걸음이 함께 조금 는다.",
-    effects: { swimming: 16, speed: 6 },
-  },
-
-  // 날개 비행 — 산·물을 날아 넘고 산 위 고산 먹이를 먹는다(지상 종은 못 넘는 무경쟁 틈새).
-  // 「날개」는 **한 장으로 비행 문턱(SIM.flyThreshold)을 넘긴다** — 관문 카드는 그 능력을 실제로 열어야 한다.
-  // (예전엔 +42 라 혼자서는 아무 일도 안 일어났는데 설명은 "날아 넘는다"였다 — 거짓말이었다.)
-  // 「튼튼한 날개」는 이미 나는 종에게만 나오는 강화다(requiresTrait). 날개를 100 까지 채워 비행 대사를 덜어낸다.
-  {
-    id: "wings",
-    name: "날개",
-    desc: "날개가 돋는다. 산과 바다 위를 날아 넘고 산 위의 먹이를 먹는다. 바다의 먹이는 헤엄치는 종의 몫이다. 대신 쉼 없는 날갯짓에 배가 빨리 곯는다.",
-    effects: { wings: SIM.flyThreshold + 3 },
-  },
-  {
-    id: "strong_wings",
-    name: "튼튼한 날개",
-    desc: "날개가 크고 튼튼해진다. 같은 거리를 날아도 덜 지치고, 걸음도 조금 는다. 이미 나는 종만 얻을 수 있다.",
-    effects: { wings: 32, speed: 6 },
-    requiresTrait: { key: "wings", min: SIM.flyThreshold },
-  },
-
-  // 초음파 감각 — **눈을 통째로 버리고** 귀를 얻는다.
-  // ⚠ 예전엔 vision -24 만 깎아서, 초음파를 켜도 눈이 그대로 남았다. 그런데 초음파는 전방위 + 어둠·수풀
-  // 무시라 시야보다 **순수하게 우월**하다 — 둘 다 가지면 시야 형질이 무의미해진다(사용자 지적:
-  // "초음파가 있으면 시야가 아예 필요 없는 거 아닌가?"). 그래서 관문 카드가 눈을 **0 으로** 만든다.
-  // 이제 진짜 트레이드오프다: 박쥐는 눈이 퇴화했다. 대신 어둠·수풀·등 뒤가 전부 무의미해진다.
-  // 대가는 분명하다 — 시야를 카운터로 쓰는 위협(그림자 매복자·큰수리)에 맨몸이 된다.
-  //
-  // ⚠ `effects: { vision: -100 }` 이 아니라 **`sacrifice: ["vision"]`** 인 이유(2026-07-15):
-  // effects 의 음수는 성장 스케일(×0.75)을 거쳐 실제론 -75 만 빠졌다 → 시야 90 짜리 정찰자가 이 카드를
-  // 뽑아도 **시야 15 로 반쯤 보였다**("눈이 멀고"가 거짓말). 게다가 정점 고정이 들어오면서, 시야 100 을
-  // 찍은 종에겐 -75 가 **아예 막혀** 초음파가 눈을 못 지우게 된다. 희생은 "얼마를 빼느냐"가 아니라
-  // "그 감각을 버리느냐"라서 절대값(0)으로 다뤄야 옳다 — 그게 sacrifice 다.
-  {
-    id: "echo",
-    name: "초음파",
-    desc: "눈이 멀고 귀가 열린다. 앞을 보는 대신 사방을 듣는다. 어둠도 수풀도 등 뒤도 막지 못하지만, 눈으로 미리 알아채야 하는 위협 앞에서는 무력하다.",
-    effects: { echo: 70 },
-    sacrifice: ["vision"], // 눈을 버린다 — 시야가 100(정점)이어도 0 이 된다
-  },
-  {
-    id: "bat_ear",
-    name: "박쥐의 귀",
-    desc: "귀가 극에 달한다. 사방을 아주 멀리까지 훤히 듣는다. 이미 초음파로 사는 종만 얻을 수 있다.",
-    effects: { echo: 30 },
-    requiresTrait: { key: "echo", min: 1 }, // 이미 귀로 사는 종의 강화(관문이 아니다)
-  },
-  // 초음파 강화 두 갈래 — 눈이 먼 종이 뽑을 자기 계열 카드다. 초음파를 켜면 시야가 0 이 돼 시야 조합
-  // 카드가 통째로 죽는데(known_issues "초음파 시야 낚시"), 그 자리를 이 카드들이 메운다. 「메아리 걸음」은
-  // 소리로 길을 읽는 발, 「음파 사냥」은 반향으로 급소를 그리는 이빨. 둘 다 시야를 안 건드린다(귀로 산다).
-  {
-    id: "echo_step",
-    name: "메아리 걸음",
-    desc: "소리로 앞을 읽어 거침없이 내닫는다. 어둠 속에서도 부딪히지 않는다. 이미 초음파로 사는 종만 얻는다.",
-    effects: { echo: 22, speed: 10 },
-    requiresTrait: { key: "echo", min: 1 },
-  },
-  {
-    id: "echo_maw",
-    name: "음파 사냥",
-    desc: "반향으로 먹잇감의 급소를 그려내 문다. 눈으로 사냥하지 않는 종의 방식이다. 이미 초음파로 사는 종만 얻는다.",
-    effects: { echo: 20, attack: 16 },
-    requiresTrait: { key: "echo", min: 1 },
-  },
-
-  // 전투 형질 (P5) — 독침(방어 독: 잡아먹으면 포식자 중독)·원거리(사거리). 기본 0 이라 큰 값(카드로 켜야 바뀐다).
-  {
-    id: "venom_fang",
+    id: "preset_venom",
     name: "독 살갗",
-    desc: "살갗에 독이 돌아, 삼킨 포식자를 중독시킨다. 함부로 잡아먹기 꺼려지는 먹이가 된다.",
-    effects: { venom: 42 },
+    desc: "이빨에 독을 품어, 문 상대가 서서히 스러진다. 무리로 뭉쳐 다닌다.",
+    pips: { fang: 4, herd: 3 },
+    key: "venom",
+    rarity: "common",
+    color: 0x9c27b0,
   },
-  {
-    id: "venom_gland",
-    name: "독샘",
-    desc: "독이 훨씬 짙어진다. 삼킨 포식자는 치명적으로 중독되지만, 독을 벼리느라 몸이 약해 새끼는 덜 친다.",
-    effects: { venom: 48, fertility: -6 },
-  },
-  {
-    id: "long_horn",
-    name: "가시 쏘기",
-    desc: "날카로운 가시를 멀리 쏜다. 다가서지 않고 먼발치에서 맞혀, 먹잇감이 달아나거나 반격하기 전에 쓰러뜨린다.",
-    effects: { ranged: 42 },
-  },
-  {
-    id: "spit",
-    name: "독 가시",
-    desc: "가시를 멀리 쏘고, 살갗의 독으로 삼키려는 포식자도 막는다. 사거리와 방어 독이 함께 는다.",
-    effects: { ranged: 26, venom: 22 },
-  },
-
-  // 도전 과제로만 열리는 특별 형질. 레벨로는 절대 안 열린다(achievements.ts 가 문지기).
-  // v7: 예전엔 몸집 축이 없어서 **외형만 키우는 별도 배율**(CARD_BODY_SCALE 1.42)로 흉내 냈다.
-  // 이제 진짜 몸집 형질이 있으니 그것으로 통합한다 — 외형·시뮬이 한 값에서 나온다(중복 제거).
-  // 대가도 몸집이 알아서 준다(느림·대식·저번식) → 카드에 적던 speed/fertility 페널티를 덜어냈다.
-  // herding +10 도 뺐다: v7 에서 무리 성향은 능력 형질이라 10 으로는 아무 일도 안 일어난다(문턱 85).
-  {
-    id: "titan",
-    name: "거인",
-    desc: "몸이 통째로 커진다. 어지간한 이빨은 박히지도 않는다. 다만 걸음이 굼뜨고, 큰 몸을 건사하느라 많이 먹으며 새끼는 드물게 친다.",
-    effects: { size: 42, attack: 24, speed: -8, metabolism: 4 },
-  },
-
-  // ────────────────────────── 갈래 전용 카드 (lineage) ──────────────────────────
-  // 시작 프리셋이 정한 갈래로만 나온다. 드래프트 3장 중 1장은 늘 여기서 뽑히므로(drawCards),
-  // "내 종만의 길"이 매 판 또렷하게 이어진다. 공통 카드보다 값이 커도 되는 이유는 갈래를 고른
-  // 대가(다른 갈래의 전용 카드를 영영 못 본다)를 이미 치렀기 때문이다.
-
-  // ── 균형 잡식: 치우치지 않아 무엇에든 견딘다. 기본기가 고르게 오른다(가장 약한 프리셋이라 넉넉히).
-  { id: "omni_gut", name: "무엇이든 먹는다", desc: "가리지 않고 먹어 새끼를 더 치고, 먹이도 더 잘 찾는다.", effects: { fertility: 16, vision: 12 }, lineage: "omni" },
-  { id: "omni_hardy", name: "끈질긴 혈통", desc: "어떤 땅에서도 버틴다. 새끼가 늘고 몸도 단단해지지만, 몸이 무거워 걸음이 느려진다.", effects: { fertility: 20, attack: 12, metabolism: 6, speed: -8 }, lineage: "omni" },
-  { id: "omni_anywhere", name: "어디서나 산다", desc: "기본기가 두루 오른다. 뛰어난 것은 없지만 모자란 것도 없다. 다만 싸움에는 약해진다.", effects: { speed: 14, vision: 14, herding: 12, fertility: 10, attack: -10 }, lineage: "omni" },
-  { id: "omni_apex", name: "만능의 정점", desc: "무엇 하나 빠지지 않는 종이 된다. 힘도 눈도 발도 오르지만, 큰 몸을 건사하느라 새끼는 드물게 친다.", effects: { speed: 16, vision: 18, attack: 16, herding: 12, fertility: -12, metabolism: 8 }, lineage: "omni" },
-  { id: "omni_sturdy", name: "듬직한 몸", desc: "몸이 커져 웬만해선 잡아먹히지 않고, 높은 데서 멀리 살핀다. 대신 큰 몸을 건사하느라 많이 먹는다.", effects: { size: 16, vision: 8 }, lineage: "omni" },
-
-  // ── 다산 초식 무리: 수로 밀어붙인다. 번식·무리가 정체성.
-  { id: "herd_boom", name: "폭발적 번식", desc: "새끼를 쉴 새 없이 친다. 그만큼 기운을 많이 쓴다.", effects: { fertility: 26, metabolism: 8, attack: -6 }, lineage: "herd" },
-  { id: "herd_wall", name: "촘촘한 대열", desc: "빈틈없이 붙어 다녀 외톨이가 생기지 않는다. 대신 굼뜨다.", effects: { herding: 22, vision: 8, speed: -5 }, lineage: "herd" },
-  { id: "herd_nursery", name: "젖먹이 무리", desc: "무리가 새끼를 함께 돌본다. 수가 불어나며 결속도 단단해진다.", effects: { fertility: 18, herding: 18, speed: -6 }, lineage: "herd" },
-  { id: "herd_swarm", name: "밀물 같은 무리", desc: "솎여도 메우고 또 메운다. 수가 곧 방패다.", effects: { fertility: 24, herding: 16, vision: 8, attack: -8 }, lineage: "herd" },
-  { id: "herd_runt", name: "작고 많은 떼", desc: "몸이 작아지고 새끼가 는다. 적게 먹으며 부지런히 수를 불리지만, 작은 몸은 쉽게 잡아먹힌다. 수로 메운다.", effects: { size: -16, fertility: 14 }, lineage: "herd" },
-
-  // ── 느긋한 정찰자: 멀리 보고 아껴 쓴다. 시야·저대사가 정체성.
-  { id: "scout_far", name: "멀리 보는 눈", desc: "누구보다 멀리 본다. 위협도 먹이도 먼저 알아채지만, 멀리 살피느라 무리에서 떨어져 다닌다.", effects: { vision: 26, metabolism: -6, herding: -10 }, lineage: "scout" },
-  { id: "scout_thrift", name: "아끼는 몸", desc: "기운을 거의 쓰지 않아 굶주림에 오래 버틴다.", effects: { metabolism: -18, fertility: 8 }, lineage: "scout" },
-  { id: "scout_watch", name: "지평선의 감시자", desc: "무리 전체가 사방을 살핀다. 아무도 몰래 다가오지 못하지만, 살피느라 걸음이 더뎌진다.", effects: { vision: 22, herding: 14, speed: -8 }, lineage: "scout" },
-  { id: "scout_sage", name: "오래 사는 현자", desc: "느리게 살아 오래 버틴다. 눈은 더없이 밝아진다.", effects: { vision: 26, metabolism: -14, fertility: 10, speed: -6 }, lineage: "scout" },
-  { id: "scout_low", name: "낮게 엎드리기", desc: "몸을 낮추고 작게 만들어 눈에 덜 띈다. 멀리 살피면서 스스로는 좀처럼 들키지 않는다.", effects: { size: -14, vision: 12 }, lineage: "scout" },
-
-  // ── 날쌘 육식 사냥꾼: 잡아야 산다. 속도·공격이 정체성.
-  { id: "hunter_throat", name: "목을 무는 법", desc: "급소를 문다. 한 번의 사냥이 훨씬 잘 먹힌다.", effects: { attack: 22, speed: 8, fertility: -6 }, lineage: "hunter" },
-  { id: "hunter_relent", name: "지치지 않는 추격", desc: "끝까지 쫓는다. 대신 늘 배가 고프다.", effects: { speed: 18, metabolism: 10 }, lineage: "hunter" },
-  { id: "hunter_lone", name: "단독 사냥꾼", desc: "혼자 사냥한다. 무리를 버린 대신 발과 이빨을 얻는다.", effects: { attack: 18, speed: 14, herding: -16 }, lineage: "hunter" },
-  { id: "hunter_apex", name: "정점의 포식자", desc: "이 땅에서 가장 무서운 것이 된다. 쫓기던 것들이 이제 쫓긴다.", effects: { attack: 26, speed: 16, vision: 12, fertility: -10 }, lineage: "hunter" },
-  { id: "hunter_bulk", name: "거대한 사냥꾼", desc: "몸이 커져 더 큰 먹잇감도 제압하고, 스스로는 좀처럼 당하지 않는다. 대신 걸음이 무겁고 많이 먹는다.", effects: { size: 18, attack: 8 }, lineage: "hunter" },
-
-  // ── 원거리 사냥꾼: 다가서지 않고 친다. 사거리·시야가 정체성.
-  { id: "ranged_reach", name: "더 멀리 쏘기", desc: "더 먼 곳까지 닿는다. 다가설 필요가 없다.", effects: { ranged: 18, vision: 10 }, lineage: "ranged" },
-  { id: "ranged_aim", name: "조준하는 눈", desc: "겨눈 것을 놓치지 않는다. 멀리 보고 정확히 친다.", effects: { vision: 20, ranged: 12, speed: -4 }, lineage: "ranged" },
-  { id: "ranged_volley", name: "연달아 쏘기", desc: "쉼 없이 쏘아댄다. 가까이 붙기 전에 쓰러뜨린다.", effects: { ranged: 22, attack: 10, herding: -6 }, lineage: "ranged" },
-  { id: "ranged_sniper", name: "보이지 않는 사수", desc: "상대가 알아채기도 전에 끝낸다. 사거리와 눈이 함께 극에 달한다.", effects: { ranged: 24, vision: 22, attack: 8, fertility: -8 }, lineage: "ranged" },
-  { id: "ranged_bastion", name: "버티는 사수", desc: "몸이 커져 자리를 지키며 멀리서 쏜다. 다가오는 것을 버티고, 스스로는 좀처럼 밀리지 않는다. 대신 걸음이 무겁다.", effects: { size: 16, ranged: 6 }, lineage: "ranged" },
-
-  // ── 바다 개척자: 물이 삶터다. 헤엄과 바다 사냥이 정체성(수영값은 문턱 위에선 안 오르므로 다른 형질로).
-  { id: "sea_current", name: "해류를 타다", desc: "물살을 읽어 힘 안 들이고 나아간다.", effects: { speed: 18, metabolism: -8 }, lineage: "sea" },
-  { id: "sea_hunt", name: "먼바다 사냥", desc: "탁 트인 바다에서 사냥한다. 눈과 이빨이 함께 자란다.", effects: { attack: 16, vision: 14, herding: -6 }, lineage: "sea" },
-  { id: "sea_school", name: "물고기 떼처럼", desc: "한 덩어리로 헤엄쳐 포식자를 혼란시킨다. 뭉쳐 도망칠 뿐 맞서 싸우지는 않는다.", effects: { herding: 22, speed: 12, fertility: 10, attack: -12 }, lineage: "sea" },
-  { id: "sea_leviathan", name: "바다의 주인", desc: "이 바다에 맞설 것이 없다. 몸도 힘도 바다에 맞게 커진다.", effects: { attack: 22, speed: 16, vision: 14, metabolism: -6, fertility: -8 }, lineage: "sea" },
-  { id: "sea_behemoth", name: "바다의 거수", desc: "물이 큰 몸을 떠받쳐, 뭍에서라면 굼떴을 덩치가 바다에서는 거뜬하다. 커진 만큼 잘 안 잡아먹히고, 기운도 아껴 쓴다.", effects: { size: 20, metabolism: -6 }, lineage: "sea" },
-
-  // ── 하늘 개척자: 하늘이 삶터다. 날개·시야가 정체성.
-  { id: "sky_updraft", name: "상승 기류", desc: "바람을 타 힘 안 들이고 오래 난다.", effects: { wings: 12, metabolism: -10 }, lineage: "sky" },
-  { id: "sky_stoop", name: "매의 강하", desc: "하늘에서 내리꽂아 덮친다.", effects: { speed: 16, attack: 14, fertility: -6 }, lineage: "sky" },
-  { id: "sky_soar", name: "높이 나는 눈", desc: "더 높이 날아 온 땅을 굽어본다.", effects: { wings: 10, vision: 22 }, lineage: "sky" },
-  { id: "sky_lord", name: "하늘의 지배자", desc: "하늘에 맞설 것이 없다. 날개도 눈도 극에 달한다.", effects: { wings: 16, vision: 20, speed: 12, metabolism: -8 }, lineage: "sky" },
-  { id: "sky_hollow", name: "가벼운 뼈", desc: "몸이 작고 가벼워져 더 오래, 더 힘 안 들이고 난다. 대신 작은 몸은 쉽게 당한다.", effects: { size: -16, wings: 6 }, lineage: "sky" },
-
-  // ── 독 살갗: 삼킨 자가 죽는다. 독이 정체성.
-  { id: "venom_thick", name: "짙은 독", desc: "독이 더 독해진다. 무는 자가 먼저 쓰러진다.", effects: { venom: 20 }, lineage: "venom" },
-  { id: "venom_armor", name: "독가시 갑옷", desc: "온몸이 독가시다. 건드리는 것마다 중독된다.", effects: { venom: 14, attack: 12, speed: -6 }, lineage: "venom" },
-  { id: "venom_bright", name: "경고하는 빛깔", desc: "화려한 빛깔이 \"먹으면 죽는다\"고 알린다. 아무도 다가오지 않는다.", effects: { venom: 16, herding: 12, fertility: 10 }, lineage: "venom" },
-  { id: "venom_untouchable", name: "누구도 삼키지 못한다", desc: "이 종을 먹고 살아남은 것은 없다. 독이 극에 달한다.", effects: { venom: 26, attack: 14, herding: 10, speed: -8 }, lineage: "venom" },
-  { id: "venom_bloated", name: "비대한 독샘", desc: "몸이 커지며 독샘도 함께 부푼다. 큰 덩치는 잘 안 잡아먹히고, 삼킨 자에게 더 짙은 독을 남긴다. 대신 걸음이 무겁다.", effects: { size: 14, venom: 8 }, lineage: "venom" },
 ];
 
-// (v7: CARD_BODY_SCALE 제거 — "외형만 키우는 별도 배율"은 몸집(size) 형질이 생기기 전의 임시방편이었다.
-//  이제 몸집 하나에서 외형과 시뮬이 함께 나온다. 두 축을 따로 두면 언젠가 어긋난다.)
+// ─────────────────────────────── 카드 풀 72장 ───────────────────────────────
+//
+// | 패턴 | 장수 | 주는 도장 |
+// |---|---|---|
+// | 한 우물 | 30 (5범주 × 6) | 한 범주 +2 |
+// | 큰 도약 | 10 (5범주 × 2) | 한 범주 +3 |
+// | 두 갈래 | 10 (10쌍 × 1) | 두 범주 각 +1 |
+// | 치우침 | 10 | 주 +2 · 부 +1 |
+// | 맞바꿈 |  5 | 한 범주 +3 · 다른 범주 −1 |
+// | 열쇠   |  7 | 능력 하나 + 모 범주 +1 |
+//
+// 문구 규칙: **desc 에 효과를 적지 않는다.** 「이빨 +2」는 칩이 말하고, 「무는 힘 ×1.7 이 켜집니다」는
+// 티어 줄(`tiers.tierLine`)이 말한다. 여기 또 적으면 언젠가 한쪽만 바뀌어 화면이 거짓말을 한다.
 
-/**
- * 카드 id → 희귀도. 카드 리터럴에 흩어 두지 않고 한곳에 모아, 풀 전체의 분포를 한눈에 보며 튜닝한다.
- * 여기 없는 카드는 흔함으로 떨어진다 — 새 카드를 넣으면 여기에도 반드시 추가할 것(cards.test.ts 가 강제).
- *
- * ## 등급 기준 — "수치 총량"이 아니라 "종을 얼마나 바꾸는가"
- * 숫자가 큰 카드가 곧 높은 등급은 아니다. 능력형(날개·초음파·독·원거리)은 0에서 시작하는 스위치라
- * 값이 42~48 로 크지만, 그건 "켜는 데 필요한 값"이지 강함의 척도가 아니다. 실제로 `치타의 다리`(총량 23)가
- * 전설이고 `고행자`(총량 30)가 귀함이다. 기준은 다음 네 가지를 순서대로 본다:
- *
- *  1. **대가가 있는가.** 없으면 흔함 쪽. 귀함은 전부 뚜렷한 대가를 치른다.
- *  2. **판단을 요구하는가.** 무조건 좋으면 흔함, 무엇을 포기할지 골라야 하면 귀함 이상.
- *  3. **빌드를 기울이는가.** 이 카드 한 장으로 종의 방향(사냥꾼/번식형/무리형)이 정해지면 아주 귀함.
- *  4. **못 하던 걸 하게 되는가.** 새 지형·새 감각·새 전투 수단이 열리면 전설. 그래서 전설은 정확히
- *     **다섯 능력 계열의 관문 카드**다(지느러미=바다, 날개=하늘, 초음파=청각, 독 살갗=반격, 가시 쏘기=원거리).
- *     같은 계열의 두 번째 카드(물갈퀴·튼튼한 날개·박쥐의 귀·독샘·독 가시)는 "강화"라 전설이 아니다.
- *     예외는 「거인」 — 몸 자체가 달라지는 도전 과제 전용 카드다.
- *
- * 이 규칙은 `cards.test.ts` 가 강제한다(전설 = 관문 5장 + titan).
- *
- * ## 알려진 예외 둘
- * - **능력형 카드는 대가가 카드에 안 적혀 있다.** 1번 기준(대가 유무)을 카드 수치로만 보면 `strong_wings`
- *   (날개 +30, 걸음 +6)는 공짜로 보인다. 실제 대가는 sim 이 받는다 — 비행은 대사가 더 들고, 물전용(수영 90+)은
- *   뭍에 못 오른다. 그래서 등급 판정에서 능력형은 1번을 건너뛰고 4번(못 하던 걸 하는가)으로 곧장 간다.
- * - `webbed`(드묾)도 수영 50→66 으로 문턱(65)을 혼자 넘는다. 즉 관문이 둘이다. 카드 설계의 흠이지만
- *   `fins`(+22) 가 대표 관문이고 `webbed` 는 보조(+16, 걸음도 조금)라 등급을 나눴다.
- */
-export const CARD_RARITY: Record<string, Rarity> = {
-  // ── 흔함 (19장) — 대가가 없다. 무조건 좋으니 고민할 게 없다.
-  swift: "common",
-  keen: "common",
-  thrifty: "common", // 대사 -14 = 기운 아낌(이득)
-  hotblood: "common", // 대사 +14 = 추위 강함(이득)
-  fertile: "common",
-  pack_hunt: "common", // 무리 강화(무리 짓는 종에게만)
-  warm_pack: "common", // 무리 강화(무리 짓는 종에게만)
-  bulk: "common", // 몸집 +24 — 대가(느림·대식·저번식)는 시뮬이 준다
-  fangs: "common",
-  all_rounder: "common",
-  scout_pack: "common",
-  owl_eye: "common",
-  evasive: "common",
-  beast_metab: "common",
-  swift_breeder: "common",
-  stoic: "common",
-  stout: "common", // 몸집 +16 / 대사 +10 — 대가는 시뮬이 준다(큰 몸=대식). 대사는 절충(추위 강·더위 약)
-  runt: "common", // 몸집 -16 / 번식 +12 — 작아지는 건 특성(적게 먹고 자주 낳되 쉽게 잡아먹힘)
-  looming: "common", // 몸집 +14 / 시야 +8 — 둘 다 이득 방향(대가는 큰 몸의 대식으로 시뮬이 준다)
+const ONE_WELL: readonly [Category, string, string, Rarity][] = [
+  ["fang", "wc_fang1", "날카로운 앞니|물면 살점이 뜯깁니다", "common"],
+  ["fang", "wc_fang2", "굽은 송곳니|한 번 박히면 잘 안 빠집니다", "common"],
+  ["fang", "wc_fang3", "벌어지는 턱|입이 더 크게 벌어집니다", "common"],
+  ["fang", "wc_fang4", "물어뜯는 버릇|물고 흔드는 법을 익힙니다", "common"],
+  ["fang", "wc_fang5", "갈아 붙인 어금니|씹는 자리가 단단해집니다", "uncommon"],
+  ["fang", "wc_fang6", "핏내를 아는 코|다친 것을 멀리서 알아챕니다", "uncommon"],
+  ["leg", "wc_leg1", "긴 정강이|한 걸음이 멀어집니다", "common"],
+  ["leg", "wc_leg2", "단단한 발굽|땅을 차는 소리가 달라집니다", "common"],
+  ["leg", "wc_leg3", "마른 몸통|군더더기가 빠집니다", "common"],
+  ["leg", "wc_leg4", "튼튼한 뒷다리|밀어내는 힘이 붙습니다", "common"],
+  ["leg", "wc_leg5", "가벼운 뼈|뼛속이 비어 갑니다", "uncommon"],
+  ["leg", "wc_leg6", "지치지 않는 걸음|오래 달려도 숨이 덜 찹니다", "uncommon"],
+  ["eye", "wc_eye1", "커다란 눈망울|더 많은 빛이 들어옵니다", "common"],
+  ["eye", "wc_eye2", "밤에 뜨는 눈|어두운 것이 덜 어두워집니다", "common"],
+  ["eye", "wc_eye3", "높이 달린 눈|풀 너머가 보입니다", "common"],
+  ["eye", "wc_eye4", "맑은 수정체|멀리 있는 것이 또렷해집니다", "common"],
+  ["eye", "wc_eye5", "두 겹 눈꺼풀|모래바람에도 눈을 뜹니다", "uncommon"],
+  ["eye", "wc_eye6", "먼 데를 보는 버릇|고개를 들고 오래 봅니다", "uncommon"],
+  ["hide", "wc_hide1", "굳은 살가죽|부딪힌 자리가 굳어 두꺼워집니다", "common"],
+  ["hide", "wc_hide2", "두꺼운 지방층|추운 밤이 견딜 만해집니다", "common"],
+  ["hide", "wc_hide3", "겹친 비늘|이빨이 미끄러집니다", "common"],
+  ["hide", "wc_hide4", "뭉친 근육|맞아도 덜 밀립니다", "common"],
+  ["hide", "wc_hide5", "촘촘한 털|살갗에 바람이 안 닿습니다", "uncommon"],
+  ["hide", "wc_hide6", "단단한 등뼈|무거운 것을 지고도 섭니다", "uncommon"],
+  ["herd", "wc_herd1", "서로 부르는 소리|멀리 떨어진 동료가 대답합니다", "common"],
+  ["herd", "wc_herd2", "잦은 출산|새끼 보는 날이 잦아집니다", "common"],
+  ["herd", "wc_herd3", "함께 자는 밤|붙어 자면 덜 춥습니다", "common"],
+  ["herd", "wc_herd4", "새끼를 돌보는 버릇|어린 것이 덜 죽습니다", "common"],
+  ["herd", "wc_herd5", "넓어진 목청|목소리가 골짜기를 넘습니다", "uncommon"],
+  ["herd", "wc_herd6", "큰 배|한 배에 여럿을 품습니다", "uncommon"],
+];
 
-  // ── 드묾 (13장) — 작은 대가를 치르거나, 방향을 살짝 틀거나, 능력을 보조한다.
-  eagle_eye: "uncommon", // 시야 +20 / 걸음 +5
-  small_swift: "uncommon", // 몸집 -22 / 걸음 +8 — 빠르고 많이 낳지만 쉽게 잡아먹힌다
-  sprint: "uncommon", // 대사 +7
-  giant: "uncommon", // 걸음 -6
-  furnace: "uncommon", // 대사 +20(더위에 취약)
-  predator: "uncommon", // 식성 전환
-  grazer: "uncommon", // 식성 전환
-  ambush: "uncommon", // 중간 조합
-  thick_fur: "uncommon",
-  nest_herd: "uncommon", // 걸음 -6
-  webbed: "uncommon", // 수영 보조
-  echo_step: "uncommon", // 초음파 강화 + 걸음(귀로 사는 종 전용 — requiresTrait echo)
-  camo_creep: "uncommon", // 은신 강화 + 걸음(숨는 종 전용 — requiresTrait camouflage)
+const BIG_LEAP: readonly [Category, string, string, Rarity][] = [
+  ["fang", "lp_fang1", "톱니 어금니|뼈까지 갈아 넘깁니다", "rare"],
+  ["fang", "lp_fang2", "뼈를 부수는 턱|한 번에 끝냅니다", "epic"],
+  ["leg", "lp_leg1", "폭발하는 뒷다리|첫 세 걸음이 다릅니다", "rare"],
+  ["leg", "lp_leg2", "바람을 가르는 몸|달리는 소리가 사라집니다", "epic"],
+  ["eye", "lp_eye1", "매의 눈|점 하나가 짐승으로 보입니다", "rare"],
+  ["eye", "lp_eye2", "밤을 꿰뚫는 눈|한밤이 저녁처럼 보입니다", "epic"],
+  ["hide", "lp_hide1", "네 칸짜리 위|풀만 먹고도 산이 됩니다", "rare"],
+  ["hide", "lp_hide2", "바위 같은 등|위에서 떨어지는 것을 그냥 받습니다", "epic"],
+  ["herd", "lp_herd1", "한배에 여럿|한 번에 여러 마리가 태어납니다", "rare"],
+  ["herd", "lp_herd2", "사방으로 퍼지는 목소리|골짜기 건너까지 명령이 갑니다", "epic"],
+];
 
-  // ── 귀함 (11장) — 크게 얻고 뚜렷이 잃는다. 무엇을 포기할지 고르게 만든다.
-  //    (초음파·은신 강화 둘은 카드엔 대가가 안 적혀 있다 — 능력형이라 대가는 sim 이 준다: 눈 먼 종은
-  //     시야 카운터에 무력하고, 숨는 종은 큰 몸이면 못 숨는다. 그래서 등급 규칙에서 능력형 예외.)
-  hunter_eye: "rare", // 시야 +24 / 번식 -6
-  brood: "rare", // 번식 +22 / 걸음 -7
-  loner: "rare", // 걸음 +20 / 무리 -18
-  savage: "rare", // 공격 +24 / 번식 -6
-  ascetic: "rare", // 대사 -20 / 걸음 -6
-  farsight: "rare", // 시야 +26 / 걸음 -6
-  apex_scout: "rare", // 시야·공격 +16 / 걸음 -7
-  locust: "rare", // 번식 +28 / 공격 -6
-  great_fangs: "rare", // 공격 +26 / 걸음 -8
-  echo_maw: "rare", // 초음파 강화 + 공격(귀로 사냥 — 대가는 sim: 눈이 멀어 시야 카운터에 무력)
-  camo_fang: "rare", // 은신 강화 + 공격(매복 포식 — 대가는 sim: 큰 몸은 못 숨는다)
+const TWO_WAY: readonly [Category, Category, string, string, Rarity][] = [
+  ["fang", "leg", "tw_fl", "몰이꾼의 다리|쫓아가서 뭅니다", "common"],
+  ["fang", "eye", "tw_fe", "매복꾼의 자세|먼저 보고 기다렸다가 뭅니다", "common"],
+  ["fang", "hide", "tw_fh", "맞물리는 몸|밀면서 뭅니다", "common"],
+  ["fang", "herd", "tw_fd", "함께 무는 법|하나가 물면 둘이 붙습니다", "uncommon"],
+  ["leg", "eye", "tw_le", "앞서 보는 걸음|보면서 달립니다", "common"],
+  ["leg", "hide", "tw_lh", "지구력|오래 걷고 잘 안 지칩니다", "common"],
+  ["leg", "herd", "tw_ld", "같이 달리는 무리|한 무리가 한 방향으로 뜁니다", "uncommon"],
+  ["eye", "hide", "tw_eh", "참는 눈|가만히 오래 지켜봅니다", "common"],
+  ["eye", "herd", "tw_ed", "파수 서기|누군가는 늘 깨어 있습니다", "uncommon"],
+  ["hide", "herd", "tw_hd", "서로 기대기|붙어 서면 벽이 됩니다", "uncommon"],
+];
 
-  // ── 아주 귀함 (8장) — 이 한 장으로 종의 방향이 정해진다. 능력형은 그 능력을 극단까지 민다.
-  cheetah: "epic", // 극단 속도
-  glass_cannon: "epic", // 극단 공격
-  lone_warrior: "epic", // 홀로 싸우는 종으로 굳는다
-  phalanx: "epic", // 뭉쳐 맞서는 종으로 굳는다
-  strong_wings: "epic", // 비행을 완성한다
-  bat_ear: "epic", // 눈을 버리고 귀에 온전히 기댄다
-  venom_gland: "epic", // 독을 치명적으로
-  spit: "epic", // 원거리 + 방어독 동시
-  shadow_hide: "epic", // 은신을 완성한다(숨을 줄 아는 종에게만)
+const LEAN: readonly [Category, Category, string, string][] = [
+  ["fang", "leg", "ln_fl", "쫓아가 무는 법|따라잡는 것까지가 사냥입니다"],
+  ["fang", "herd", "ln_fd", "나눠 먹는 사냥|잡은 것을 함께 뜯습니다"],
+  ["leg", "eye", "ln_le", "달리며 보기|속도를 안 줄이고 살핍니다"],
+  ["leg", "hide", "ln_lh", "버티는 걸음|넘어져도 다시 뜁니다"],
+  ["eye", "fang", "ln_ef", "먼저 보고 무는 법|보이면 이미 늦은 쪽은 상대입니다"],
+  ["eye", "herd", "ln_ed", "망보는 자리|높은 데 하나가 섭니다"],
+  ["hide", "fang", "ln_hf", "밀어붙이는 몸|몸으로 밀고 이빨로 끝냅니다"],
+  ["hide", "herd", "ln_hd", "울타리가 되는 몸|바깥에 서서 막습니다"],
+  ["herd", "leg", "ln_dl", "함께 옮겨 다니기|먹을 것을 따라 무리째 움직입니다"],
+  ["herd", "eye", "ln_de", "서로 알리는 무리|본 것을 곧바로 전합니다"],
+];
 
-  // ── 전설 (7장) — 못 하던 걸 하게 된다. 능력 계열의 **관문** 카드. 한 장으로 그 능력을 실제로 연다
-  // (문턱을 못 넘기는 관문 카드는 설명이 거짓말이 된다 — 날개가 +42 라 아무 일도 안 하던 함정).
-  fins: "legendary", // 바다: 아무도 안 먹는 먹이터가 열린다
-  wings: "legendary", // 하늘: 산·바다를 넘고 고산 먹이에 닿는다
-  echo: "legendary", // 초음파: 눈 대신 귀. 어둠·수풀이 무의미해진다
-  venom_fang: "legendary", // 방어독: 피식자에서 "삼키면 안 되는 것"으로
-  long_horn: "legendary", // 원거리: 근접 사냥에서 벗어난다
-  herd: "legendary", // v7 무리: 뭉치면 포식자가 아예 안 덤빈다(무리 방어 문턱을 한 장으로 넘긴다)
-  camo: "legendary", // v7 은신: 포식자의 눈에서 사라진다(초음파에는 안 통한다)
+const TRADE: readonly [Category, Category, string, string][] = [
+  ["hide", "leg", "td_hl", "등에 진 껍질|무거운 것을 지고 다니기로 합니다"],
+  ["fang", "hide", "td_fh", "전부 이빨로|살을 덜어 이빨에 몰아줍니다"],
+  ["leg", "herd", "td_ld", "홀로 달리기|무리를 두고 앞서 나갑니다"],
+  ["eye", "hide", "td_eh", "눈만 남기고|보는 데 모든 것을 겁니다"],
+  ["herd", "fang", "td_df", "수로 밀어붙이기|이빨 대신 머릿수로 갚습니다"],
+];
 
-  // ── 도전 과제 전용 (등급은 전설) — 몸 자체가 달라진다.
-  titan: "legendary",
+const KEY_CARDS: readonly [KeyName, string, string][] = [
+  ["fin", "ky_fin", "물갈퀴|물이 더는 벽이 아닙니다"],
+  ["wing", "ky_wing", "넓은 날개|산도 바다도 밑으로 지나갑니다"],
+  ["echo", "ky_echo", "박쥐의 귀|어둠 속에서 소리로 봅니다"],
+  ["camo", "ky_camo", "흐린 무늬|풀빛에 몸이 녹아듭니다"],
+  ["venom", "ky_venom", "독을 품은 이빨|한 번 물면 놓아도 됩니다"],
+  ["barb", "ky_barb", "뻗는 뿔|닿지 않는 데서 칩니다"],
+  ["call", "ky_call", "멀리 가는 울음|무리 전체가 한 번에 듣습니다"],
+];
 
-  // ── 갈래 전용 (40장) — 그 갈래로 시작한 종에게만 나온다. 갈래마다 **드묾 3 · 귀함 1 · 아주 귀함 1**:
-  // "기본기 → 정체성 심화 → 그 길의 정점" 순으로 한 판의 성장 곡선이 된다. 이 분포여야 갈래 풀
-  // (공통 + 전용)도 피라미드를 지킨다(cards.test 가 갈래별로 검사한다). 전설은 없다 — 전설은
-  // "못 하던 걸 하게 되는" 공통 관문의 자리라, 갈래 전용이 그 자리를 뺏으면 안 된다.
-  // v7 새 축: 갈래마다 **몸집(size)** 전용 카드를 하나씩 더했다(드묾) — 갈래 정체성에 맞춰 크게/작게.
-  // 은신은 관문(camouflage 문턱)이 있어 갈래 전용으로 넣으면 관문의 유일성을 흔든다 → 몸집만 넣는다.
-  omni_gut: "uncommon",
-  omni_hardy: "uncommon",
-  omni_sturdy: "uncommon", // 몸집 +16 / 시야 +8 — 균형 갈래의 안정형(크고 멀리 본다)
-  omni_anywhere: "rare",
-  omni_apex: "epic",
-  herd_boom: "rare",
-  herd_wall: "uncommon",
-  herd_nursery: "uncommon",
-  herd_runt: "uncommon", // 몸집 -16 / 번식 +14 — 작고 많이(다산 극대화)
-  herd_swarm: "epic",
-  scout_far: "rare",
-  scout_thrift: "uncommon",
-  scout_watch: "uncommon",
-  scout_low: "uncommon", // 몸집 -14 / 시야 +12 — 작아 안 띄고 멀리 본다
-  scout_sage: "epic",
-  hunter_throat: "uncommon",
-  hunter_relent: "uncommon",
-  hunter_bulk: "uncommon", // 몸집 +18 / 공격 +8 — 큰 몸 포식자(속도 정체성의 대안)
-  hunter_lone: "rare",
-  hunter_apex: "epic",
-  ranged_reach: "uncommon",
-  ranged_aim: "uncommon",
-  ranged_bastion: "uncommon", // 몸집 +16 / 원거리 +6 — 버티며 쏘는 진지형
-  ranged_volley: "rare",
-  ranged_sniper: "epic",
-  sea_current: "uncommon",
-  sea_hunt: "uncommon",
-  sea_behemoth: "uncommon", // 몸집 +20 / 대사 -6 — 바다가 큰 몸을 떠받친다
-  sea_school: "rare",
-  sea_leviathan: "epic",
-  sky_updraft: "uncommon",
-  sky_stoop: "uncommon",
-  sky_hollow: "uncommon", // 몸집 -16 / 날개 +6 — 가벼워야 잘 난다
-  sky_soar: "rare",
-  sky_lord: "epic",
-  venom_thick: "uncommon",
-  venom_armor: "uncommon",
-  venom_bloated: "uncommon", // 몸집 +14 / 독 +8 — 큰 몸에 짙은 독
-  venom_bright: "rare",
-  venom_untouchable: "epic",
+const split = (s: string): [string, string] => {
+  const i = s.indexOf("|");
+  return [s.slice(0, i), s.slice(i + 1)];
 };
 
-/** 카드의 희귀도(미등록 카드는 흔함). 표시(배지·색·연출)와 뽑기 가중치가 같은 값을 쓴다. */
-export function cardRarity(card: Card): Rarity {
-  return CARD_RARITY[card.id] ?? "common";
-}
-
-/**
- * 상한 근접 감쇠 — **형질이 높을수록 카드로 올리기 어렵다**(수확 체감).
- *
- * 왜: 형질이 금방 100 을 찍어 성장이 끝나 버렸다(사용자: "또 다시 형질이 100을 너무 금방 찍는데?").
- * 카드 몇 장이면 상한이라 뒤쪽 드래프트가 시시해진다.
- *
- * **50 이하에선 감쇠가 정확히 1(없음)** 이다 — 모든 종이 50 에서 시작하므로 초반 성장·기존 밸런스가
- * 그대로 보존된다. 50 위에서만 **남은 여유**에 비례해 증가폭이 준다(첫 시대 · 천장 100 기준):
- *   현재 50 → ×1.00 · 65 → ×0.76 · 80 → ×0.48 · 90 → ×0.25 · 97 → ×0.09
- * 천장에 점근하되 닿기는 어렵다 — "극단은 값비싸다"가 성장 곡선이 된다.
- * 값을 **내리는**(음수) 효과에는 안 걸린다(내리는 건 원래대로).
- *
- * ⚠ **여유는 "지금 시대의 천장"까지다**(`traitCeiling`). 그래서 시대가 열려 천장이 오르면 같은 형질값에서
- * 감쇠가 확 풀린다 — 이것이 "시대를 넘으면 다시 쑥쑥 자란다"의 실체다. 시대 5(천장 194)에서 속도 100 이면
- * 여유가 (194-100)/(194-50)=0.65 → ×0.72 로, 첫 시대의 속도 65 와 비슷한 속도로 다시 자란다.
- *
- * 0.5 → 0.85: 예전 곡선은 95 → 100 이 카드 한두 장이라 정점이 공짜로 지나쳐졌다(카드 예산 17장 대
- * 정점 넷에 필요한 14.7~19장이 겹쳤다 = 큰 수치만 보고 골라도 런 끝에 반드시 정점 넷). 지수를 올려
- * 한 시대의 천장에 닿는 것 자체를 그 시대의 목표로 만든다. ⚠ 이 값만 올리면 **성장만 느려지고
- * 난이도는 그대로**라 프리셋이 전반적으로 약해진다(전례: 도달 5.0 → 4.2) — 그래서 천장 상승·시대 보상
- * 강화와 반드시 한 묶음으로 움직인다.
- */
-const FALLOFF_FROM = 50; // 이 값 이하에선 감쇠 없음
-const FALLOFF_POWER = 0.85;
-
-/** 감쇠가 걸리는 값 형질(많을수록 강함). 능력형(문턱을 넘겨야 켜짐)·대사·식성(중립/스펙트럼)은 제외. */
-const FALLOFF_TRAITS = new Set<keyof Traits>(["speed", "vision", "attack", "fertility", "size"]);
-
-export function growthFalloff(key: keyof Traits, current: number): number {
-  if (!FALLOFF_TRAITS.has(key)) return 1;
-  const ceiling = traitCeiling(key);
-  if (current <= FALLOFF_FROM) return 1;
-  const room = Math.max(0, (ceiling - current) / (ceiling - FALLOFF_FROM));
-  // **정점(100) 문턱은 천장이 올라도 싸지지 않는다.** 천장만 보면 시대가 열릴 때마다 100 근처가 확
-  // 헐거워져 "정점 도달을 늦춘다"(사용자 지시)가 무너진다 — 실제로 그렇게 만들어 재 봤더니 정점이
-  // 오히려 **더 빨리** 찍혔다(시야 정점 도달 시대 2.7 → 2.5). 그래서 100 아래에서는 "천장 100 기준의
-  // 여유"와 "이 시대 천장 기준의 여유"를 **기하평균**으로 섞는다: 문턱은 늘 비싸되, 시대가 오르면
-  // 그래도 조금 수월해진다(둘 다 살린다). 100 을 넘어선 뒤로는 오직 이 시대의 천장만 본다 —
-  // 정점을 뚫는 순간 성장이 다시 트이는 것, 그것이 정점의 보상 중 하나다.
-  const gate =
-    current < TRAIT_MAX
-      ? Math.sqrt(room * Math.max(0, (TRAIT_MAX - current) / (TRAIT_MAX - FALLOFF_FROM)))
-      : room;
-  return Math.pow(gate, FALLOFF_POWER);
-}
-
-/** 카드가 게놈에 실제로 더하는 값(표시용) — 카드에 적힌 값과 실제 적용값이 다르다(전엔 원값 +15 를
- * 보여줬으나 실제론 +9 만 붙었다 — 폰 피드백).
- * `current`(그 형질의 현재 값)를 주면 **상한 근접 감쇠까지 반영**한 진짜 값이 나온다. 드래프트는 내 종
- * 게놈을 아니 반드시 넘긴다 — 안 넘기면 "+12" 라 써 놓고 +5 만 오르는 거짓말이 된다. 카드 도감처럼
- * 종이 특정되지 않는 화면은 생략하고 기준값(감쇠 없음)으로 보여준다.
- *
- * ⚠ 카드가 있는 화면(드래프트)은 이걸 직접 부르지 말고 **`cardDelta`** 를 쓴다 — 정점 고정·희생까지
- * 봐야 표시가 실제와 어긋나지 않는다. 이 함수는 그 안쪽 계단(스케일·감쇠)만 담당한다. */
-export function effectiveDelta(key: keyof Traits, raw: number, current?: number): number {
-  let d = GROWTH_TRAITS.has(key) ? raw * CARD_GROWTH_SCALE : raw;
-  if (d > 0 && current !== undefined) d *= growthFalloff(key, current);
-  const rounded = Math.round(d);
-  // **올리는 카드는 적어도 1은 올린다.** 감쇠 지수를 0.85 로 올린 순간 이게 없으면 천장 바로 아래에
-  // **벽**이 생긴다: 99 에서 여유가 2%뿐이라 어떤 카드도 반올림하면 0 이 되고, 정점이 영영 도달
-  // 불가능해진다(실측: 「날쌘 걸음」을 30장 쌓아도 99 에서 멈췄다). 비싼 것과 불가능한 것은 다르다 —
-  // 정점은 여러 장을 갈아 넣어야 닿는 **값비싼 목표**이지 닫힌 문이 아니다.
-  // 표시(칩·막대)도 같은 함수를 읽으므로 "+1"이라 뜨고 실제로 +1 이 붙는다(거짓말 없음).
-  return d > 0 && rounded === 0 ? 1 : rounded;
-}
-
-/**
- * **이 카드가 이 형질에 실제로 일으키는 변화 — 표시와 적용의 단일 진실.**
- * `applyCard`(실제 적용)와 드래프트 칩·스탯바(화면 표시)가 **같은 이 함수**를 부른다. 둘이 갈라지면
- * 카드에 "+12" 라 써 놓고 +5 가 붙는 거짓말이 생긴다(CLAUDE.md 전달 규칙).
- *
- * 다섯 계단을 순서대로 밟는다:
- *   1. **희생**(sacrifice) — 그 형질을 통째로 버리는 카드면 현재값만큼 통으로 뺀다(→ 0). 정점도 뚫는다.
- *   2. **정점 고정** — 100 을 찍은 형질은 카드의 **부수적 대가**로는 안 내려간다(변화 0).
- *   3. **성장 스케일**(×0.75, 값형질만) — 한 장에 쑥 오르지 않게.
- *   4. **상한 근접 감쇠** — 높을수록 덜 오른다(내리는 효과엔 안 걸린다).
- *   5. **0~상한 클램프** — 게놈은 잘린다. 번식력 5 인 종에게 "-12"라 써 놓고 실제론 -5 만 빠지면
- *      그것도 똑같은 거짓말이다. 무리 성향 0 인 종의 "무리 -18"은 **아무 일도 안 일어난다**(0).
- *
- * `current` 를 모르면(카드 도감처럼 종이 특정 안 되는 화면) 정점·감쇠·클램프는 건너뛰고 기준값만 보여준다.
- */
-export function cardDelta(card: Card, key: keyof Traits, current?: number): number {
-  // 1. 희생 — "얼마를 빼느냐"가 아니라 "그 감각을 버리느냐". 현재값이 얼마든 0 이 된다.
-  if (card.sacrifice?.includes(key)) return current === undefined ? -traitCeiling(key) : -current;
-  const raw = card.effects[key] ?? 0;
-  // 2. 정점 고정 — 한 번 100 을 찍었으면 카드의 곁가지 대가로는 안 내려간다(만렙).
-  if (raw < 0 && current !== undefined && isApexTrait(key, current)) return 0;
-  // 3·4. 성장 스케일 + 상한 근접 감쇠.
-  const d = effectiveDelta(key, raw, current);
-  if (current === undefined) return d;
-  // 5. 게놈이 실제로 잘리는 만큼만 움직인다 — 여기까지 봐야 표시가 적용과 **정확히** 같아진다.
-  return clampTraitValue(key, current + d) - current;
-}
-
-/** 카드 효과를 boost 배로 키운 사본(시대 보상용). 표시값(effectiveDelta)과 실제 적용(applyCard)이 같은
- * 카드 객체를 쓰므로 수치가 어긋나지 않는다. 대가(음수 효과)도 함께 커져 카드 정체성을 유지한다.
- * set(프리셋 정체성 절대값)은 보상 풀(CARD_POOL)에 없어 그대로 둔다. */
-export function boostCard(card: Card, boost: number): Card {
-  const effects: Partial<Record<keyof Traits, number>> = {};
-  for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
-    effects[key] = Math.round((card.effects[key] ?? 0) * boost);
+function buildPool(): Card[] {
+  const out: Card[] = [];
+  for (const [cat, id, text, rarity] of ONE_WELL) {
+    const [name, desc] = split(text);
+    out.push({ id, name, desc, pips: { [cat]: 2 }, rarity });
   }
-  return { ...card, effects };
+  for (const [cat, id, text, rarity] of BIG_LEAP) {
+    const [name, desc] = split(text);
+    out.push({ id, name, desc, pips: { [cat]: 3 }, rarity });
+  }
+  for (const [a, b, id, text, rarity] of TWO_WAY) {
+    const [name, desc] = split(text);
+    out.push({ id, name, desc, pips: { [a]: 1, [b]: 1 }, rarity });
+  }
+  for (const [main, sub, id, text] of LEAN) {
+    const [name, desc] = split(text);
+    out.push({ id, name, desc, pips: { [main]: 2, [sub]: 1 }, rarity: "uncommon" });
+  }
+  for (const [gain, loss, id, text] of TRADE) {
+    const [name, desc] = split(text);
+    // **[사용자 2026-08-06]** 맞바꿈이 티어를 **강등**시켜도 된다. 조건: "다른 칸 수를 줄이는 거라면
+    // 그만큼 보상이 더욱 획기적이어야 할 거야." → 주는 쪽이 +3(큰 도약과 같은 값)인데 등급은 한 단계
+    // 위이고 대가가 있다. 강등은 카드에 붉은 칩(`다리 II ▾ I`)으로 그 자리에서 보인다.
+    out.push({ id, name, desc, pips: { [gain]: 3, [loss]: -1 }, rarity: "epic" });
+  }
+  for (const [key, id, text] of KEY_CARDS) {
+    const [name, desc] = split(text);
+    out.push({ id, name, desc, pips: { [KEY_PARENT[key]]: 1 }, key, rarity: "legendary" });
+  }
+  return out;
 }
 
-// 이미 고른 카드의 등장 가중치를 한 번 고를 때마다 이 배수로 줄인다(소프트 디듑). 매번 "보던 것만" 뜨는
-// 반복을 깨서 새 카드를 섞는다 — 스택은 여전히 가능하되(0 이 안 됨) 눈에 띄게 뜸해진다. count 번 고른 카드는
-// PICK_DECAY^count 배. 결정론: pickedCounts 는 그동안의 선택에서 결정론적으로 나온다(시드 무관).
+export const CARD_POOL: readonly Card[] = buildPool();
+
+/**
+ * 불씨 회복 카드 — **[사용자 2026-08-06]** 불씨가 **정확히 하나** 남았을 때만 뜬다(미리 쟁여 두기 방지).
+ * **첫 한 번은 확정, 그 뒤로는 확률.** 첫 한 번이 "이 규칙이 존재한다"를 가르치고(화면 안에서 알아채게),
+ * 그 뒤로는 긴장이 남는다. 도장은 0 이라 **고르는 순간 이번 성장은 없다** — 그 사실을 카드에 그대로 적는다.
+ */
+export const EMBER_CARD: Card = {
+  id: "ember_relight",
+  name: "꺼지지 않은 자리",
+  desc: "불씨 하나가 되살아납니다. 대신 이번엔 자라지 않습니다.",
+  ember: 1,
+  rarity: "epic",
+};
+
+export function cardRarity(card: Card): Rarity {
+  return card.rarity;
+}
+
+/**
+ * 시대 보상 카드 — **효과 배수가 아니라 도장을 곱한다.**
+ * 표시값과 적용값이 갈릴 수 없는 구조가 그대로 보존된다(사본을 만들어 그 사본의 도장을 곱하므로,
+ * 화면이 읽는 카드와 적용되는 카드가 **같은 객체**다).
+ */
+export function boostCard(card: Card, boost: number): Card {
+  const mul = Math.max(1, Math.round(boost));
+  if (card.pips === undefined) return { ...card, id: `${card.id}_x${mul}` };
+  const pips: Partial<Record<Category, number>> = {};
+  for (const c of CATEGORIES) {
+    const v = cardPips(card, c);
+    if (v !== 0) pips[c] = v > 0 ? v * mul : v; // 대가(음수)는 안 키운다 — 보상 카드가 벌이 되면 안 된다
+  }
+  return { ...card, id: `${card.id}_x${mul}`, name: `${card.name} (강화 ×${mul})`, pips };
+}
+
+/** 갈래 전용 풀은 폐기됐다 — 72장 전부가 누구에게나 나온다. (대백과 호환용으로 남긴다.) */
+export function cardPoolFor(): Card[] {
+  return CARD_POOL.slice();
+}
+
+/**
+ * 같은 카드를 거듭 고를수록 가중치가 이만큼씩 준다(소프트 디듑).
+ * 완전 제외가 아니라 감쇠인 이유: 한 우물 빌드가 같은 카드를 두 번 고르는 것 자체는 정당한 선택이라
+ * 막으면 안 되고, 다만 세 번째부터는 다른 길도 보여야 한다.
+ */
 const PICK_DECAY = 0.5;
 
 /**
- * 풀에서 중복 없이 n장 뽑는다 (시드 RNG → 런마다 재현 가능). allow 로 카드(메타 언락·프리셋 적합)를 걸러낸다.
- * 희귀도 가중치를 반영한 비복원 추출 — 흔한 카드가 자주, 전설이 드물게 뜬다. 카드에 붙는 희귀도 배지가
- * 실제 등장 빈도와 일치한다. `level`(런 레벨=세대)이 오르면 높은 등급이 더 자주 나온다.
- * `pickedCounts`(id→고른 횟수)를 주면 이미 고른 카드를 뜸하게 뽑는다(반복 완화, PICK_DECAY).
+ * 내가 판 방향의 카드가 **조금 더 자주** 뜬다 — **[사용자 2026-08-06]**.
+ *
+ * 원문: "카드와 시험이 플레이어가 이미 가던 방향으로 뜨는 것도 무조건 그런 게 아니라 그냥 그럴 확률이
+ * 좀 더 높다는 정도로 하고. **애초에 로그라이크는 그 무작위성과 예측 불가능함 속 운적 요소가 핵심
+ * 재미인 거잖아.**"
+ *
+ * ⚠ 그래서 이건 **보장이 아니라 가중치**다. 가끔 내 길이 하나도 안 나오는 드래프트가 생기고,
+ *   그때 갈아탈지 버틸지가 진짜 질문이 된다. 지난 합의("3장 중 1장은 반드시 내 방향")는 무른 것이다.
  */
-/**
- * 지금 실제로 뽑힐 수 있는 카드들 — **공통 카드 + 내 갈래 전용 카드**. 남의 갈래 카드는 빠진다.
- * 등장 확률 표(대백과)도 반드시 이 풀로 계산해야 한다 — 안 뽑히는 카드까지 세면 표시가 거짓말이 된다.
- */
-export function cardPoolFor(lineage?: Lineage): Card[] {
-  return CARD_POOL.filter((c) => c.lineage === undefined || c.lineage === lineage);
-}
-
-/** 갈래 전용 카드(어느 갈래든) — 대백과에서 "이 카드는 그 갈래로 시작해야 나온다"를 알리는 데 쓴다. */
-export function lineageCards(lineage: Lineage): Card[] {
-  return CARD_POOL.filter((c) => c.lineage === lineage);
+export interface DraftBias {
+  /** 이 범주들의 카드 가중치를 올린다(보통 지금 도장이 가장 많은 한둘). */
+  cats: readonly Category[];
+  /** 곱해지는 배수. 1 이면 보정 없음. */
+  weight: number;
 }
 
 export function drawCards(
@@ -1089,22 +509,24 @@ export function drawCards(
   allow?: (c: Card) => boolean,
   level = 1,
   pickedCounts?: ReadonlyMap<string, number>,
-  lineage?: Lineage,
+  bias?: DraftBias,
+  /** 지금 도장 상황 — 「3장 중 최소 한 장은 문턱을 넘긴다」 보장에 쓴다. 없으면 보장을 안 건다. */
+  pips?: Pips,
 ): Card[] {
-  // 후보 = 공통 카드 + **내 갈래** 전용 카드. 남의 갈래 전용 카드는 아예 안 보인다.
-  const eligible = CARD_POOL.filter(
-    (c) => (allow ? allow(c) : true) && (c.lineage === undefined || c.lineage === lineage),
-  );
+  const eligible = CARD_POOL.filter((c) => (allow ? allow(c) : true));
   const weights = rarityWeightsAtLevel(level);
+  const biasOf = (c: Card): number => {
+    if (!bias || bias.weight === 1) return 1;
+    return bias.cats.some((cat) => cardPips(c, cat) > 0) ? bias.weight : 1;
+  };
   const weightOf = (c: Card): number =>
-    weights[cardRarity(c)] * PICK_DECAY ** (pickedCounts?.get(c.id) ?? 0);
+    weights[cardRarity(c)] * PICK_DECAY ** (pickedCounts?.get(c.id) ?? 0) * biasOf(c);
 
   /** 가중치 룰렛으로 pool 에서 한 장 뽑아 꺼낸다(뽑힌 카드는 pool 에서 빠진다). */
   const take = (pool: Card[]): Card | null => {
     if (pool.length === 0) return null;
     let total = 0;
     for (const c of pool) total += weightOf(c);
-    // 룰렛 휠 — rng.unit() 한 번으로 한 장. 부동소수 오차로 끝까지 못 고르면 마지막 장을 집는다.
     let r = rng.unit() * total;
     let idx = pool.length - 1;
     for (let i = 0; i < pool.length; i++) {
@@ -1122,15 +544,16 @@ export function drawCards(
   const out: Card[] = [];
   const rest = eligible.slice();
 
-  // **3장 중 1장은 반드시 내 갈래 전용 카드.** 이게 없으면 전용 카드가 40장 넘는 공통 풀에 묻혀
-  // 몇 판을 해도 구경조차 못 한다 — "내 종만의 길"이 매 판 이어지려면 자리를 보장해야 한다.
-  // 갈래가 없거나(옛 세이브) 전용 카드가 다 떨어지면 그냥 공통에서 채운다.
-  if (lineage) {
-    const own = rest.filter((c) => c.lineage === lineage);
-    const pickedOwn = take(own);
-    if (pickedOwn) {
-      out.push(pickedOwn);
-      rest.splice(rest.indexOf(pickedOwn), 1);
+  // **죽은 카드 규칙 (나) — 3장 중 최소 한 장은 지금 어느 범주의 문턱을 넘길 수 있어야 한다**
+  // (그런 카드가 풀에 남아 있는 한). 이게 없으면 "도장은 오르는데 아무 일도 안 일어나는 픽"이 쌓이고,
+  // 새끼를 확정으로 주는 스킵이 늘 정답이 된다.
+  if (pips) {
+    const crossing = rest.filter((c) => cardCrossesThreshold(c, pips));
+    const first = take(crossing);
+    if (first) {
+      out.push(first);
+      const i = rest.indexOf(first);
+      if (i >= 0) rest.splice(i, 1);
     }
   }
 
@@ -1140,8 +563,7 @@ export function drawCards(
     out.push(c);
   }
 
-  // 자리를 섞는다 — 안 섞으면 갈래 전용 카드가 **늘 첫 장**이라 위치만 보고 알아버린다(고르는 재미가
-  // 준다). 배지로 알리되 자리는 무작위여야 세 장을 실제로 견주게 된다. rng 는 같은 스트림(결정론 유지).
+  // 자리를 섞는다 — 안 섞으면 「문턱을 넘기는 장」이 늘 첫 자리라 위치만 보고 알아버린다.
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(rng.unit() * (i + 1));
     const a = out[i] as Card;
@@ -1153,76 +575,60 @@ export function drawCards(
 
 /** 한 희귀도가 얼마나 자주 뜨는가(대백과 표시용). `drawCards` 와 같은 가중치를 써서 계산한다. */
 export interface RarityOdds {
-  /** 이 풀에 있는 이 등급의 카드 수 */
   count: number;
-  /** 카드 한 장을 뽑을 때 이 등급이 나올 확률 (0~1) */
   perCard: number;
-  /** 후보 n장(기본 3장) 중 한 장이라도 이 등급일 확률 (0~1) */
-  inDraft: number;
+  inDraw: number;
 }
 
-const RARITIES: readonly Rarity[] = ["common", "uncommon", "rare", "epic", "legendary"];
-
-/** counts[skip] 등급을 한 장도 안 뽑고 draws 번 뽑을 확률. 같은 등급 카드는 가중치가 같아 묶어서 셀 수 있다. */
-function probNone(counts: number[], weights: readonly number[], skip: number, draws: number): number {
-  if (draws <= 0) return 1;
-  let total = 0;
-  for (let i = 0; i < counts.length; i++) total += (counts[i] ?? 0) * (weights[i] ?? 0);
-  if (total <= 0) return 1;
-  let p = 0;
-  for (let i = 0; i < counts.length; i++) {
-    const n = counts[i] ?? 0;
-    if (i === skip || n === 0) continue;
-    const pick = (n * (weights[i] ?? 0)) / total;
-    counts[i] = n - 1;
-    p += pick * probNone(counts, weights, skip, draws - 1);
-    counts[i] = n;
-  }
-  return p;
-}
-
-/**
- * 주어진 풀에서 등급별 등장 확률(정확값). `drawCards` 의 가중치 비복원 추출을 그대로 반영한다.
- * 풀은 호출자가 정한다 — 대백과는 "지금 열려 있는 카드"만 넘겨 실제 확률을 보여준다.
- * `level` 은 런 레벨(세대) — 같은 레벨의 `drawCards` 와 정확히 같은 가중치를 쓴다.
- */
 export function rarityOdds(pool: readonly Card[], draws = 3, level = 1): Record<Rarity, RarityOdds> {
-  const counts = RARITIES.map((r) => pool.filter((c) => cardRarity(c) === r).length);
-  const levelWeights = rarityWeightsAtLevel(level);
-  const weights = RARITIES.map((r) => levelWeights[r]);
+  const weights = rarityWeightsAtLevel(level);
   let total = 0;
-  for (let i = 0; i < counts.length; i++) total += (counts[i] ?? 0) * (weights[i] ?? 0);
-  const n = Math.min(draws, pool.length);
-
+  const byRarity = {} as Record<Rarity, { count: number; weight: number }>;
+  for (const r of Object.keys(RARITY_WEIGHT) as Rarity[]) byRarity[r] = { count: 0, weight: 0 };
+  for (const c of pool) {
+    const r = cardRarity(c);
+    const w = weights[r];
+    byRarity[r].count += 1;
+    byRarity[r].weight += w;
+    total += w;
+  }
   const out = {} as Record<Rarity, RarityOdds>;
-  RARITIES.forEach((r, i) => {
-    const count = counts[i] ?? 0;
-    const perCard = total > 0 ? (count * (weights[i] ?? 0)) / total : 0;
-    const inDraft = count === 0 ? 0 : 1 - probNone(counts.slice(), weights, i, n);
-    out[r] = { count, perCard, inDraft };
-  });
+  for (const r of Object.keys(RARITY_WEIGHT) as Rarity[]) {
+    const per = total > 0 ? byRarity[r].weight / total : 0;
+    out[r] = {
+      count: byRarity[r].count,
+      perCard: per,
+      inDraw: 1 - (1 - per) ** draws,
+    };
+  }
   return out;
 }
 
-/** 카드 효과를 게놈에 그 자리에서 적용 + 형질별 상한 클램프. (공유 게놈이라 즉시 반영)
- * 실제 증가폭은 **`cardDelta` 하나가 정한다** — 드래프트 화면이 보여주는 수치와 같은 함수라 표시와
- * 적용이 어긋날 수 없다(성장 스케일·상한 근접 감쇠·정점 고정·희생을 전부 그 안에서 처리).
- * set(프리셋 정체성 절대값)만 여기서 따로 — 증분이 아니라 "이 값으로 시작한다"는 선언이다. */
+/**
+ * 카드를 종에 적용한다 — **도장을 찍고, 열쇠를 열고, 파생 능치를 다시 낸다.**
+ *
+ * 이 세 줄이 성장의 전부다. 예전에는 여기에 성장 스케일 · 상한 근접 감쇠 · 정점 고정 · 수영 뚜껑이
+ * 겹겹이 얹혀 있었고, 그래서 "카드에 적힌 값"과 "실제로 붙는 값"이 달랐다.
+ */
 export function applyCard(genome: Genome, card: Card): void {
-  if (card.set) {
-    for (const key of Object.keys(card.set) as (keyof Traits)[]) {
-      genome.traits[key] = clampTraitValue(key, card.set[key] ?? genome.traits[key]);
+  if (card.pips) {
+    for (const c of CATEGORIES) {
+      const d = cardPips(card, c);
+      if (d !== 0) genome.pips[c] = Math.max(0, genome.pips[c] + d);
     }
   }
-  for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
-    genome.traits[key] = clampTraitValue(key, genome.traits[key] + cardDelta(card, key, genome.traits[key]));
+  if (card.key !== undefined && keyCount(genome.keys) < MAX_KEYS) genome.keys[card.key] = true;
+  refreshDerived(genome);
+}
+
+/** 카드 한 장을 한 줄로 요약 — 대백과·런 보고서가 쓴다. 예: 「이빨 +2」 · 「가죽 +3 · 다리 −1」 */
+export function cardSummary(card: Card): string {
+  const parts: string[] = [];
+  for (const c of cardCategories(card)) {
+    const v = cardPips(card, c);
+    parts.push(`${CATEGORY_LABELS[c]} ${v > 0 ? "+" : "−"}${Math.abs(v)}`);
   }
-  // 희생(관문 카드가 내놓기로 선언한 형질) — 정점(100)이어도 뚫고 0 이 된다. 맨 마지막이라 같은 카드가
-  // 그 형질을 만졌더라도 "버린다"가 최종 결론이다(박쥐가 되기로 했으면 눈은 먼다).
-  for (const key of card.sacrifice ?? []) genome.traits[key] = 0;
-  // 내 종은 물 전용(육지 통행 불가)이 되지 않게 수영 상한을 수륙양용 문턱 바로 아래로 막는다. 지느러미·물갈퀴를
-  // 쌓아도 바다까지 헤엄치되 육지에서 안 죽는다(예전엔 90 을 넘으면 갑자기 물 전용이 돼 땅에 갇혀 굶어 죽었다).
-  // 진짜 물 전용(바다 거주 물고기)은 야생 물고기 떼만 — 그들은 카드가 없어 이 상한을 안 거친다(swimming 95 유지).
-  const swimCap = SIM.aquaticOnlyThreshold - 1;
-  if (genome.traits.swimming > swimCap) genome.traits.swimming = swimCap;
+  if (card.key !== undefined) parts.push(`열쇠 「${KEY_LABELS[card.key]}」`);
+  if (card.ember) parts.push(`불씨 +${card.ember}`);
+  return parts.join(" · ");
 }

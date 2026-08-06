@@ -19,11 +19,33 @@ const DEATH_LABELS: Record<DeathCause, string> = {
   wound: "부상",
 };
 
-/** 형질이 높을 때/낮을 때의 한 단어 묘사 (식성 diet 는 명사라 제외). */
-type AdjKey = Exclude<keyof Traits, "diet">;
+/**
+ * 형질이 높을 때/낮을 때의 한 단어 묘사.
+ * v8 에서 Traits 에 파생 축(defense·upkeep·graze·hunt·carnivory·fovCos·sprintCost·plague)이 늘었다.
+ * 전부를 묘사할 필요는 없다. 사람이 읽어 뜻이 있는 축만 명시 목록으로 고른다
+ * (upkeep 이나 fovCos 로 종을 묘사하면 오히려 뜻이 흐려진다). defense(버티는 힘)만 새로 넣었다.
+ */
+const ADJ_KEYS = [
+  "speed",
+  "attack",
+  "defense",
+  "vision",
+  "herding",
+  "metabolism",
+  "fertility",
+  "swimming",
+  "echo",
+  "wings",
+  "venom",
+  "ranged",
+  "size",
+  "camouflage",
+] as const satisfies readonly (keyof Traits)[];
+type AdjKey = (typeof ADJ_KEYS)[number];
 const HIGH_ADJ: Record<AdjKey, string> = {
   speed: "발이 빠른",
   attack: "사나운",
+  defense: "가죽이 단단한",
   vision: "눈이 밝은",
   herding: "무리 짓는",
   metabolism: "몸이 뜨거운",
@@ -39,6 +61,7 @@ const HIGH_ADJ: Record<AdjKey, string> = {
 const LOW_ADJ: Record<AdjKey, string> = {
   speed: "발이 느린",
   attack: "순한",
+  defense: "살갗이 여린",
   vision: "눈이 어두운",
   herding: "혼자 다니는",
   metabolism: "몸이 차가운",
@@ -51,21 +74,6 @@ const LOW_ADJ: Record<AdjKey, string> = {
   size: "몸집 작은",
   camouflage: "눈에 띄는",
 };
-const ADJ_KEYS: readonly AdjKey[] = [
-  "speed",
-  "attack",
-  "vision",
-  "herding",
-  "metabolism",
-  "fertility",
-  "swimming",
-  "echo",
-  "wings",
-  "venom",
-  "ranged",
-  "size",
-  "camouflage",
-];
 
 const dietNoun = (diet: number): string =>
   diet < 35 ? "초식성" : diet > 70 ? "육식성" : "잡식성";
