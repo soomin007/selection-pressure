@@ -8,7 +8,6 @@ import {
   eraDifficulty,
   eraScarcity,
   eraPredatorPressure,
-  eraTraitCeiling,
   eraRewardBoostAt,
   bossPassNeeded,
   extinctionPassNeeded,
@@ -19,16 +18,27 @@ import {
   stepHasTrial,
   stepUsesDrawnMap,
   stepWorldOptions,
-  eraTraitCeilings,
 } from "@/game/config";
 import { MAP_SCALE } from "@/config";
 import { createBoss } from "@/sim/boss";
-import { applyCard, CARD_POOL, cardPrereqMet, cardRedundant, drawCards, effectiveDelta } from "@/game/cards";
+import { CARD_POOL, cardCategories, cardPips, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
 import { Rng } from "@/sim/rng";
-import { defaultGenome, isApexTrait, resetTraitCeilings, setTraitCeilings, traitCeiling } from "@/sim/genome";
+import { MUTABLE_TRAITS, genomeFromPips, refreshDerived } from "@/sim/genome";
+import {
+  CATEGORY_LABELS,
+  KEY_NAMES,
+  MAX_KEYS,
+  MAX_TIER,
+  TIER_STEPS,
+  emptyKeys,
+  emptyPips,
+  keyCount,
+  nearestTierGoal,
+  pipsForTier,
+  tierOf,
+} from "@/sim/tiers";
 import { SIM } from "@/sim/params";
 import { debugSetMetaLevel } from "@/game/meta";
-import { debugResetAchievements, debugUnlockAchievement } from "@/game/achievements";
 
 // 대멸종 이름 4종(game.ts extinctionName 과 일치) — 예고 title 이 보스 예고와 섞이지 않게 거른다.
 const EXTINCTION_NAMES = ["혹독한 추위", "대가뭄", "폭염", "대역병"] as const;
@@ -305,8 +315,9 @@ describe("다시 뽑기(리롤)", () => {
 });
 
 describe("런 보고서(히스토리)", () => {
-  // v7: herding 이 능력 형질로 강등되고 size(몸집)가 변이 축에 들어왔다(genome.ts MUTABLE_TRAITS).
-  const MUTABLE = ["attack", "fertility", "metabolism", "size", "speed", "vision"];
+  // 샘플이 담는 축 = **개체 변이 축**(genome.ts MUTABLE_TRAITS) 그대로다. 목록을 여기 다시 적으면
+  // 축이 바뀔 때마다 두 곳이 조용히 어긋난다(v8 에서 대사가 빠지고 버티는 힘이 들어왔을 때 실제로 그랬다).
+  const MUTABLE = [...MUTABLE_TRAITS].sort();
 
   // 한 런을 result 까지 끝까지 돌린다(드래프트는 첫 카드로 넘긴다).
   function playToEnd(seed: string): Game {
@@ -354,55 +365,27 @@ describe("런 보고서(히스토리)", () => {
   });
 });
 
-describe("도전 과제 보상 「거인」", () => {
-  it("과제를 못 땄으면 드래프트 후보에 절대 안 나온다", () => {
-    debugResetAchievements();
-    const g = runToDraft("titan-locked");
+// ⚠ **「거인」 절을 지웠다.** v8 카드 풀(72장)에 `titan` 카드가 없다 — 도장 카드로 갈아엎으면서
+//   사라졌는데 `game/achievements.ts` 의 보상(`cardId: "titan"`)만 남아 있다. 여기서 카드를 흉내 내
+//   테스트를 초록으로 만들면 **그 불일치가 감춰진다.** 결함 자체는 achievements.test 의
+//   「모든 보상이 실재한다 — 꾸밈은 COSMETICS 에, 카드는 CARD_POOL 에 있다」가 잡고 있으므로,
+//   보상 카드가 정해지면 이 절을 그 카드로 되살린다.
+//
+// 몸집은 이제 **고르는 축이 아니라 파생값**이다(가죽·이빨을 파면 커지고 다리·무리를 파면 작아진다 ·
+// `tiers.derivedSize`). "몸집을 키우는 카드"라는 것 자체가 v8 에는 없다.
+
+describe("시대를 넘어도 게놈이 이어진다", () => {
+  it("시대를 넘어 새 월드를 만들어도 도장·파생 능치가 그대로다", () => {
+    const g = runToDraft("carry-era");
     expect(g).not.toBeNull();
     if (!g) return;
-    expect(g.draftCards.some((c) => c.id === "titan")).toBe(false);
-  });
-
-  it("고르면 종의 몸집이 커진다(스탯과 외형이 함께 바뀐다)", () => {
-    debugResetAchievements();
-    debugUnlockAchievement("titan_born");
-    const g = runToDraft("titan-pick");
-    expect(g).not.toBeNull();
-    if (!g) return;
-
-    const titan = CARD_POOL.find((c) => c.id === "titan");
-    expect(titan).toBeDefined();
-    if (!titan) return;
-    const beforeAttack = g.genome.traits.attack;
-    const beforeSpeed = g.genome.traits.speed;
-    const beforeSize = g.genome.traits.size;
-
-    g.draftCards = [titan];
-    g.pickCard(0);
-
-    // v7: 「거인」은 **몸집 형질**을 키운다(예전엔 렌더 전용 bodyScale 배율이었다 — 이제 외형과
-    // 시뮬이 한 값에서 나온다). 몸집이 커지면 느려지고 많이 먹고 새끼를 덜 치는 대가도 자동으로 따라온다.
-    expect(g.genome.traits.size).toBeGreaterThan(beforeSize); // 몸이 실제로 커진다
-    expect(g.genome.traits.attack).toBeGreaterThan(beforeAttack); // 힘은 세지고
-    expect(g.genome.traits.speed).toBeLessThan(beforeSpeed); // 걸음은 굼떠진다
-    expect(g.pickedCardIds).toContain("titan");
-  });
-
-  it("시대를 넘어 새 월드를 만들어도 몸집을 유지한다", () => {
-    debugResetAchievements();
-    debugUnlockAchievement("titan_born");
-    const g = runToDraft("titan-era");
-    expect(g).not.toBeNull();
-    if (!g) return;
-    const titan = CARD_POOL.find((c) => c.id === "titan");
-    if (!titan) return;
-    g.draftCards = [titan];
-    g.pickCard(0);
-    const grown = g.genome.traits.size;
+    const pips = { ...g.genome.pips };
+    const size = g.genome.traits.size;
+    g.result = "win";
     g.continueToNextEra();
-    // 시대를 넘어 새 월드를 만들어도 커진 몸집이 유지된다(게놈이 이어지므로).
-    expect(g.genome.traits.size).toBe(grown);
-    expect(g.world.genome.traits.size).toBe(grown);
+    expect(g.genome.pips).toEqual(pips);
+    expect(g.genome.traits.size).toBe(size);
+    expect(g.world.genome.traits.size).toBe(size);
   });
 });
 
@@ -425,32 +408,62 @@ describe("런 통계(도전 과제 판정의 재료)", () => {
   });
 });
 
-describe("날개 강화 카드의 전제 조건(드래프트 후보 필터)", () => {
-  it("못 나는 종에게는 「튼튼한 날개」가 한 번도 안 나온다", () => {
-    debugSetMetaLevel(20); // 모든 카드 해금
-    const rng = new Rng("prereq");
-    const ground = defaultGenome(); // wings 0
-    let seen = 0;
-    for (let i = 0; i < 3000; i++) {
-      const drawn = drawCards(rng, 3, (c) => cardPrereqMet(c, ground.traits), 7);
-      if (drawn.some((c) => c.id === "strong_wings")) seen += 1;
-    }
-    expect(seen).toBe(0);
+// ⚠ **「튼튼한 날개」 절을 갈아엎었다.** v8 에는 강화 카드라는 것이 없다 — 능력은 **열쇠**이고,
+//   세기는 짝지어진 범주의 티어가 읽는다(`tiers.KEY_PARENT`). 그래서 "관문 한 장 + 강화 여러 장"이라는
+//   구조 자체가 사라졌고, 전제 조건도 「이미 가졌는가 · 상한에 닿았는가」 둘로 단순해졌다.
+//   같은 계약(못 쓰는 카드는 후보에 안 든다)을 새 구조에서 그대로 잰다.
+describe("열쇠 카드의 전제 조건(드래프트 후보 필터)", () => {
+  const keyCards = CARD_POOL.filter((c) => c.key !== undefined);
+
+  it("풀에 열쇠 카드가 일곱 종류 있다(열쇠마다 정확히 한 장)", () => {
+    expect(keyCards.length).toBe(KEY_NAMES.length);
+    expect(new Set(keyCards.map((c) => c.key)).size).toBe(KEY_NAMES.length);
   });
 
-  it("나는 종에게는 「튼튼한 날개」가 나오고, 관문 「날개」는 더 이상 안 나온다", () => {
-    const flyer = defaultGenome();
-    flyer.traits.wings = SIM.flyThreshold + 3; // 「날개」 한 장 고른 상태
-    const rng = new Rng("flyer");
-    let strong = 0;
-    let gateway = 0;
+  it("이미 가진 열쇠는 한 번도 다시 안 나온다", () => {
+    debugSetMetaLevel(20); // 모든 카드 해금
+    const rng = new Rng("prereq");
+    const g = genomeFromPips(emptyPips(), { ...emptyKeys(), fin: true });
+    let seen = 0;
     for (let i = 0; i < 3000; i++) {
-      const drawn = drawCards(rng, 3, (c) => cardPrereqMet(c, flyer.traits) && !cardRedundant(c, flyer.traits), 7);
-      if (drawn.some((c) => c.id === "strong_wings")) strong += 1;
-      if (drawn.some((c) => c.id === "wings")) gateway += 1;
+      const drawn = drawCards(rng, 3, (c) => cardPrereqMet(c, g), 7);
+      if (drawn.some((c) => c.key === "fin")) seen += 1;
     }
-    expect(strong).toBeGreaterThan(0);
-    expect(gateway).toBe(0); // 이미 나는 종에게 관문 카드는 무의미(cardRedundant)
+    expect(seen).toBe(0);
+    // 아직 안 가진 열쇠는 정상적으로 나온다(대조군 — 필터가 열쇠를 통째로 죽인 게 아니다).
+    const rng2 = new Rng("prereq2");
+    let other = 0;
+    for (let i = 0; i < 3000; i++) {
+      const drawn = drawCards(rng2, 3, (c) => cardPrereqMet(c, g), 7);
+      if (drawn.some((c) => c.key !== undefined)) other += 1;
+    }
+    expect(other).toBeGreaterThan(0);
+  });
+
+  it("열쇠 상한(3개)에 닿으면 열쇠 카드가 통째로 후보에서 빠진다", () => {
+    const full = genomeFromPips(emptyPips(), { ...emptyKeys(), fin: true, echo: true, venom: true });
+    expect(keyCount(full.keys)).toBe(MAX_KEYS);
+    for (const c of keyCards) {
+      expect(cardPrereqMet(c, full), `${c.id} 가 상한을 넘어 후보에 남았다`).toBe(false);
+      expect(cardRedundant(c, full)).toBe(true);
+    }
+    const rng = new Rng("keycap");
+    for (let i = 0; i < 500; i++) {
+      const drawn = drawCards(rng, 3, (c) => cardPrereqMet(c, full) && !cardRedundant(c, full), 7);
+      expect(drawn.some((c) => c.key !== undefined)).toBe(false);
+      expect(drawn.length).toBe(3); // 그래도 후보 3장은 채워진다(풀이 안 마른다)
+    }
+  });
+
+  it("도장이 최고 티어인 범주로만 가는 카드는 후보에서 빠진다(죽은 카드)", () => {
+    const maxed = genomeFromPips({ ...emptyPips(), fang: TIER_STEPS[3] }, emptyKeys());
+    const fangOnly = CARD_POOL.filter(
+      (c) => c.key === undefined && cardCategories(c).length === 1 && cardPips(c, "fang") > 0,
+    );
+    expect(fangOnly.length).toBeGreaterThan(0); // 전제: 이빨 한 우물 카드가 실제로 있다
+    for (const c of fangOnly) {
+      expect(cardPrereqMet(c, maxed), `${c.id} 가 최고 티어인데 후보에 남았다`).toBe(false);
+    }
   });
 });
 
@@ -525,15 +538,22 @@ describe("라운드 시험과 혈통의 불씨", () => {
     }
   });
 
-  it("순수 초식(diet 0)에게 사냥 시험이, 완전 육식(diet 100)에게 먹이 시험이 안 나온다(후보 필터)", () => {
+  it("이빨 0단(초식)에게 사냥 시험이, 풀을 못 뜯는 종에게 먹이 시험이 안 나온다(후보 필터)", () => {
+    // **[사용자 2026-08-06]** 「초식 거인 경로는 반드시 만든다」가 이 한 줄에 걸려 있다 — 이빨에
+    // 도장을 하나도 안 넣은 종은 사냥 효율이 정확히 0 이라 한 마리도 못 잡는데, 못 하는 시험을 내면
+    // 그건 판정이 아니라 사형 선고다(불씨는 다섯뿐이다).
     for (let s = 0; s < 20; s++) {
       const g = startRun(`filter-${s}`);
       const priv = g as unknown as GamePriv;
       for (let k = 0; k < 3; k++) {
         priv.stageIndex = k; // pickTrial 은 순수 계산이라 단계만 바꿔 여러 번 물어도 안전
-        g.genome.traits.diet = 0; // 순수 초식 → 사냥 못 함
+        // 이빨 0단 — 도장을 지우고 파생을 다시 낸다(카드가 도장을 찍는 것과 같은 길).
+        g.genome.pips.fang = 0;
+        refreshDerived(g.genome);
+        expect(g.genome.traits.hunt).toBe(0); // 전제: 사냥이 원리적으로 불가능하다
         expect(priv.pickTrial().kind).not.toBe("hunt");
-        g.genome.traits.diet = 100; // 완전 육식 → 채집 효율 0
+        // 풀 효율이 바닥인 종(극단 육식 야생 능치) — 채집 시험도 못 낸다.
+        g.genome.traits.graze = 0;
         expect(priv.pickTrial().kind).not.toBe("feed");
       }
     }
@@ -793,30 +813,18 @@ describe("온보딩 진도 (시대가 아니라 겪은 양으로 세계가 열�
 });
 
 
-describe("지수 성장 · 지수 난이도 (2026-08-05 · 성장 곡선과 난이도 곡선의 경주)", () => {
-  it("형질 천장은 시대마다 오르고, 첫 시대는 100(=지금까지의 세계) 그대로다", () => {
-    expect(eraTraitCeiling(0)).toBe(100);
-    for (let era = 1; era < GAME.eraCap; era++) {
-      expect(eraTraitCeiling(era)).toBeGreaterThan(eraTraitCeiling(era - 1));
-    }
-    // 복리(지수)다 — 뒤 시대의 계단이 앞 시대보다 크다.
-    expect(eraTraitCeiling(4) - eraTraitCeiling(3)).toBeGreaterThan(eraTraitCeiling(1) - eraTraitCeiling(0));
-    expect(eraTraitCeiling(-2)).toBe(100); // 음수 방어
-  });
-
-  it("정점(만렙) 문턱은 천장이 올라도 100 그대로다 — 한 번 얻은 정점은 안 빼앗긴다", () => {
-    setTraitCeilings(eraTraitCeilings(4)); // 천장 194 인 마지막 시대
-    try {
-      expect(isApexTrait("speed", 100)).toBe(true);
-      expect(isApexTrait("speed", 150)).toBe(true);
-      expect(traitCeiling("speed")).toBe(eraTraitCeiling(4));
-      // 정점이 없는 형질(양방향 축·능력형)의 천장은 안 오른다.
-      expect(traitCeiling("size")).toBe(100);
-      expect(traitCeiling("metabolism")).toBe(100);
-      expect(traitCeiling("swimming")).toBe(100);
-    } finally {
-      resetTraitCeilings();
-    }
+// ⚠ **「형질 천장 상승」 테스트 넷을 지웠다.** v8 에서 `eraTraitCeiling`·`eraTraitCeilings`·
+//   `setTraitCeilings`·`isApexTrait`·`effectiveDelta`(상한 근접 감쇠)가 전부 폐기됐다. 천장 상승은
+//   감쇠와 한 쌍으로 설계된 장치인데 티어 구조에서 감쇠 자체가 사라져 개념이 소멸했고, 무엇보다
+//   **[사용자 2026-08-06]** 이 문제 삼은 자리가 여기다: "천장이 점점 높아지는 건 무슨 의미고, 그럼
+//   정점이라는 건 왜 있는 건데?" 이제 성장의 끝은 **4단(규칙 면제)** 이고 시대가 올라도 안 움직인다.
+//   그 계약은 `sim/genome.test.ts` 의 티어 사다리 절이 맡는다.
+describe("지수 난이도 (성장 곡선과 난이도 곡선의 경주)", () => {
+  it("성장의 끝(4단)은 시대가 올라도 안 움직인다 — 도착점이 있는 사다리다", () => {
+    // 예전엔 시대마다 천장이 올라 "정점"이 통과점이 됐다. 지금은 반대다: 사다리 끝이 고정이고,
+    // 시대는 **난이도만** 올린다. 그래서 마지막 시대에 4단으로 치르는 판이 진짜 클라이맥스가 된다.
+    expect(pipsForTier(MAX_TIER)).toBe(TIER_STEPS[TIER_STEPS.length - 1]);
+    expect(tierOf(TIER_STEPS[3] + 100)).toBe(MAX_TIER); // 아무리 더 찍어도 그 위는 없다
   });
 
   it("관문 생존 기준은 시대마다 지수로 오르고, 첫 시대는 1(완전 멸종만 패배)이다", () => {
@@ -838,11 +846,16 @@ describe("지수 성장 · 지수 난이도 (2026-08-05 · 성장 곡선과 난�
     expect(eraRewardBoostAt(4)).toBeGreaterThan(eraRewardBoostAt(1));
   });
 
-  it("난이도 곡선이 성장 곡선보다 가파르다 — 안 그러면 후반이 시시해진다", () => {
+  it("난이도는 시대마다 복리로 오른다 — 뒤 시대의 계단이 앞 시대보다 크다", () => {
+    expect(eraDifficulty(0)).toBe(1);
+    for (let era = 1; era < GAME.eraCap; era++) {
+      expect(eraDifficulty(era)).toBeGreaterThan(eraDifficulty(era - 1));
+    }
     const last = GAME.eraCap - 1;
-    const growth = eraTraitCeiling(last) / eraTraitCeiling(0);
-    const threat = eraDifficulty(last);
-    expect(threat).toBeGreaterThan(growth);
+    expect(eraDifficulty(last) - eraDifficulty(last - 1)).toBeGreaterThan(eraDifficulty(1) - eraDifficulty(0));
+    // 마지막 시대는 첫 시대의 몇 배여야 한다 — 성장(사다리 넷)이 따라잡을 수 없을 만큼은 아니지만
+    // 손 놓으면 확실히 무너질 만큼.
+    expect(eraDifficulty(last)).toBeGreaterThan(2);
   });
 
   it("화면에 못박은 생존 기준과 실제 판정 기준이 같은 함수에서 나온다", () => {
@@ -857,50 +870,17 @@ describe("지수 성장 · 지수 난이도 (2026-08-05 · 성장 곡선과 난�
     expect(bossPassNeeded(0)).toBe(1);
   });
 
-  it("천장이 오르면 카드가 100 위로 올린다 — 정점이 도착점이 아니라 통과점이 된다", () => {
-    const swift = CARD_POOL.find((c) => c.id === "swift") as (typeof CARD_POOL)[number];
-    const at = (era: number): number => {
-      setTraitCeilings(eraTraitCeilings(era));
-      const g = defaultGenome();
-      g.traits.speed = 100; // 정점을 이미 찍은 종
-      applyCard(g, swift);
-      return g.traits.speed;
-    };
-    try {
-      expect(at(0)).toBe(100); // 첫 시대에는 100 이 끝이다
-      expect(at(2)).toBeGreaterThan(100); // 시대가 열리면 그 위로 오른다
-      expect(at(4)).toBeGreaterThan(at(2)); // 뒤 시대일수록 더 오른다(여유가 넓다)
-      expect(at(4)).toBeLessThanOrEqual(eraTraitCeiling(4));
-    } finally {
-      resetTraitCeilings();
-    }
-  });
-
-  it("정점(100) 문턱은 천장이 올라도 값비싸다 — 정점 도달을 늦추는 자리", () => {
-    // 천장만 보고 감쇠를 재면 시대가 열릴 때마다 100 근처가 헐거워져 정점이 오히려 더 빨리 찍힌다
-    // (실측으로 확인하고 되돌린 함정). 100 아래에서는 천장이 올라도 90 → 100 이 여전히 여러 장이다.
-    /** 속도 90 에서 정점(100)까지 「날쌘 걸음」류(+15) 카드가 몇 장 드는가. */
-    const cardsToApex = (era: number): number => {
-      setTraitCeilings(eraTraitCeilings(era));
-      let v = 90;
-      let n = 0;
-      while (v < 100 && n < 99) {
-        v += effectiveDelta("speed", 15, v);
-        n += 1;
-      }
-      return n;
-    };
-    try {
-      // 한 시대에 손에 쥐는 카드가 서너 장이다 — 문턱이 그보다 비싸야 "그 시대 안에서 값진 목표"가 된다.
-      expect(cardsToApex(0)).toBeGreaterThanOrEqual(4);
-      expect(cardsToApex(4)).toBeGreaterThanOrEqual(3);
-      // 다만 **닫힌 문이 아니다** — 비싼 것과 불가능한 것은 다르다(감쇠만 올렸을 때 99 에서 영영 멈췄다).
-      expect(cardsToApex(4)).toBeLessThan(99);
-      // 시대가 열리면 그래도 조금은 수월해진다(문턱은 비싸되 천장 상승이 아주 무의미하진 않게).
-      expect(cardsToApex(4)).toBeLessThanOrEqual(cardsToApex(0));
-    } finally {
-      resetTraitCeilings();
-    }
+  it("최고 티어는 한 런에 「닿을 만한」 목표다 — 반드시 찍히지도, 영영 못 찍지도 않는다", () => {
+    // 예전엔 정점 넷이 런 끝에 **반드시** 다 찍혔다(그래서 성장이 끝나 있었다). 사다리는 그 정확한
+    // 반대를 노린다: 한 범주만 파면 잘한 판에서 4단이 열리고, 다섯을 고루 뿌리면 어디에도 못 닿는다.
+    // 카드 한 장의 기대 도장이 약 1.09 개(3장 중 최댓값)이고 한 런의 카드 예산은 12~22 장이다.
+    const perCard = 1.09;
+    const oneWell = (cards: number): number => cards * perCard;
+    expect(oneWell(12)).toBeLessThan(TIER_STEPS[3]); // 손 놓은 판은 4단에 못 닿는다
+    expect(oneWell(22)).toBeGreaterThan(TIER_STEPS[3]); // 아주 잘한 판은 닿는다
+    // 다섯을 고루 뿌리면 잘한 판에서도 2단이 한계다(정책 없는 성장은 보상이 없다).
+    const spread = (22 * perCard) / 5;
+    expect(tierOf(Math.round(spread))).toBeLessThan(3);
   });
 });
 
@@ -936,8 +916,15 @@ describe("시대 전환 연출이 말하는 것 (nextEraBriefing)", () => {
     expect(brief.lines.some((l) => l.includes("사냥"))).toBe(true);
     // ② 관문 기준 · 판정과 같은 함수(bossPassNeeded)의 값이어야 한다.
     expect(brief.lines.some((l) => l.includes(`${bossPassNeeded(1)}마리`))).toBe(true);
-    // ③ 천장 · 카드가 실제로 올릴 수 있는 그 값이어야 한다.
-    expect(brief.lines.some((l) => l.includes(String(eraTraitCeiling(1))))).toBe(true);
+    // ③ **[사용자 2026-08-06]** 「천장이 올라간다」는 v8 에서 사라졌다(성장의 끝은 4단이고 시대가
+    //    올라도 안 움직인다). 대신 험해지는 소식 뒤에 **지금 내가 어디쯤인가**를 말한다 — 다음 문턱이
+    //    눈앞에 있다는 것이 이어갈 이유가 된다. 그 값도 화면이 읽는 함수(nearestTierGoal)에서 나와야 한다.
+    const near = nearestTierGoal(g.genome.pips);
+    expect(near, "시작 프리셋인데 다음 문턱이 없다").not.toBeNull();
+    if (near) {
+      expect(brief.lines.some((l) => l.includes(CATEGORY_LABELS[near.cat]))).toBe(true);
+      expect(brief.lines.some((l) => l.includes(`도장 ${near.need}개`))).toBe(true);
+    }
   });
 
   it("마지막 시대에서는 이어갈 곳이 없으니 예고도 없다", () => {
@@ -958,6 +945,8 @@ describe("시대 전환 연출이 말하는 것 (nextEraBriefing)", () => {
     const early = at(0);
     const late = at(GAME.eraCap - 2);
     expect(early).not.toBe(late);
-    expect(late).toContain(String(eraTraitCeiling(GAME.eraCap - 1)));
+    // 마지막 계단은 관문 기준을 판정과 같은 함수에서 읽어 말한다(화면이 자기 식으로 다시 계산하면
+    // 그 순간 두 진실이 생긴다 — 이 저장소가 이미 두 번 겪은 사고다).
+    expect(late).toContain(`${bossPassNeeded(GAME.eraCap - 1)}마리`);
   });
 });

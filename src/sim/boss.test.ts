@@ -18,8 +18,9 @@ import {
   BOSS_TYPES,
   type BossType,
 } from "@/sim/boss";
-import { defaultGenome, type Genome, type Traits } from "@/sim/genome";
+import { defaultGenome, genomeFromPips, genomeFromTraits, type Genome, type Traits } from "@/sim/genome";
 import { PRESET_CARDS, applyCard } from "@/game/cards";
+import { CATEGORY_LABELS, FANG_ATTACK, TIER_STEPS, tierOf } from "@/sim/tiers";
 import type { Entity } from "@/sim/entity";
 
 const W = 540;
@@ -42,11 +43,20 @@ const GAME_W: number = MOBILE.width * mapScale(0); // 1080
 const GAME_H: number = MOBILE.height * mapScale(0); // 1920
 const GAME_AREA: number = mapScale(0) * mapScale(0); // 4
 
+/**
+ * 능치를 직접 정한 종 — **야생과 같은 길**(`genomeFromTraits`)로 만든다.
+ *
+ * v8 에서 플레이어 종의 능치는 도장에서 파생되지만, 이 파일이 재는 것은 **층위 규칙과 카운터 규칙**이지
+ * 성장 규칙이 아니다. `genomeFromTraits` 는 새 축(방어·유지비·풀/사냥 효율·육식성)을 v7 공식으로 채우므로,
+ * 여기 세계가 v7 과 비트 단위로 같아 손으로 오래 튜닝한 카운터 밸런스가 안 흔들린다.
+ * (도장에서 자란 진짜 플레이어 종은 아래 「시작 프리셋 x 약탈자」 절이 따로 잰다.)
+ */
 function tune(over: Partial<Traits>): Genome {
-  const g = defaultGenome();
-  Object.assign(g.traits, over);
-  return g;
+  return genomeFromTraits(over);
 }
+
+/** 능치를 하나도 안 건드린 기준선 종(= v7 의 기본 게놈과 같은 능치). */
+const BASE = (): Genome => tune({});
 
 const FLYING = tune({ wings: 80 }); // 날개 ≥ flyThreshold(65) → 늘 하늘에 떠 있다
 const SWIMMER = tune({ swimming: 80 }); // 수륙양용 — 땅에도 물에도 있다
@@ -106,12 +116,12 @@ function at(genome: Genome, p: Vec): Entity {
 
 describe("보스 층위 — 규칙", () => {
   it("개체의 층: 나는 종은 늘 하늘, 물 위는 물, 나머지는 땅", () => {
-    const w = new World("env-1", W, H, defaultGenome());
+    const w = new World("env-1", W, H, BASE());
     const { sea, land } = spots(w);
     expect(w.terrain.isWater(sea.x, sea.y)).toBe(true);
     expect(w.terrain.isWater(land.x, land.y)).toBe(false);
 
-    expect(entityLayer(defaultGenome().traits, w.terrain, land.x, land.y)).toBe("land");
+    expect(entityLayer(BASE().traits, w.terrain, land.x, land.y)).toBe("land");
     expect(entityLayer(SWIMMER.traits, w.terrain, sea.x, sea.y)).toBe("water");
     // 나는 종은 바다 위를 지나도 물에 잠기지 않는다 — 하늘에 떠 있다.
     expect(entityLayer(FLYING.traits, w.terrain, sea.x, sea.y)).toBe("air");
@@ -122,60 +132,60 @@ describe("보스 층위 — 규칙", () => {
     expect(speciesLayers(FLYING.traits)).toEqual(["air"]);
     expect(speciesLayers(SWIMMER.traits)).toEqual(["land", "water"]);
     expect(speciesLayers(tune({ swimming: 95 }).traits)).toEqual(["water"]); // 물 전용(물고기)
-    expect(speciesLayers(defaultGenome().traits)).toEqual(["land"]);
+    expect(speciesLayers(BASE().traits)).toEqual(["land"]);
   });
 
   it("사냥 판정: 땅 보스는 나는 개체·물속 개체를 못 잡는다", () => {
-    const w = new World("env-1", W, H, defaultGenome());
+    const w = new World("env-1", W, H, BASE());
     const { sea, land } = spots(w);
     const chaser = createBoss("chaser", W, H, w.terrain);
 
-    expect(bossCanHunt(chaser, at(defaultGenome(), land), w)).toBe(true); // 땅의 땅 종 — 잡힌다
+    expect(bossCanHunt(chaser, at(BASE(), land), w)).toBe(true); // 땅의 땅 종 — 잡힌다
     expect(bossCanHunt(chaser, at(FLYING, land), w)).toBe(false); // 날면 못 잡는다(사용자 요청)
     expect(bossCanHunt(chaser, at(SWIMMER, sea), w)).toBe(false); // 물속도 못 잡는다(물이 피난처)
     expect(bossCanHunt(chaser, at(SWIMMER, land), w)).toBe(true); // 뭍에 오르면 다시 잡힌다
   });
 
   it("사냥 판정: 하늘 보스는 하늘·땅을 덮치되 수풀에 든 땅 개체는 못 본다(엄폐)", () => {
-    const w = new World("env-1", W, H, defaultGenome());
+    const w = new World("env-1", W, H, BASE());
     const { sea, land, grass } = spots(w);
     const raptor = createBoss("raptor", W, H, w.terrain);
 
     expect(bossCanHunt(raptor, at(FLYING, land), w)).toBe(true); // 나는 종이 진짜 표적
-    expect(bossCanHunt(raptor, at(defaultGenome(), land), w)).toBe(true); // 트인 땅도 내리꽂혀 낚아챈다
+    expect(bossCanHunt(raptor, at(BASE(), land), w)).toBe(true); // 트인 땅도 내리꽂혀 낚아챈다
     expect(bossCanHunt(raptor, at(SWIMMER, sea), w)).toBe(false); // 물속은 못 건드린다
     if (w.terrain.isGrass(grass.x, grass.y)) {
       // 수풀에 들면 하늘에서 안 보인다 — 그림자 매복자(수풀=사냥터)와 정반대.
-      expect(bossCanHunt(raptor, at(defaultGenome(), grass), w)).toBe(false);
+      expect(bossCanHunt(raptor, at(BASE(), grass), w)).toBe(false);
       // 나는 개체는 공중이라 수풀에 숨을 수 없다(같은 좌표여도 잡힌다).
       expect(bossCanHunt(raptor, at(FLYING, grass), w)).toBe(true);
     }
   });
 
   it("사냥 판정: 물 보스는 물속만 잡는다(뭍은 안전)", () => {
-    const w = new World("env-1", W, H, defaultGenome());
+    const w = new World("env-1", W, H, BASE());
     const { sea, land } = spots(w);
     const shark = createBoss("shark", W, H, w.terrain);
 
     expect(bossCanHunt(shark, at(SWIMMER, sea), w)).toBe(true);
     expect(bossCanHunt(shark, at(SWIMMER, land), w)).toBe(false); // 물 밖으로 나가면 산다
-    expect(bossCanHunt(shark, at(defaultGenome(), land), w)).toBe(false);
+    expect(bossCanHunt(shark, at(BASE(), land), w)).toBe(false);
     expect(bossCanHunt(shark, at(FLYING, sea), w)).toBe(false); // 하늘은 못 문다
   });
 
   it("독 안개는 전역 재난 — 층위로 못 피한다", () => {
-    const w = new World("env-1", W, H, defaultGenome());
+    const w = new World("env-1", W, H, BASE());
     const { sea, land } = spots(w);
     const poison = createBoss("poison", W, H, w.terrain);
     expect(bossCanHunt(poison, at(FLYING, land), w)).toBe(true);
     expect(bossCanHunt(poison, at(SWIMMER, sea), w)).toBe(true);
-    expect(bossCanHunt(poison, at(defaultGenome(), land), w)).toBe(true);
+    expect(bossCanHunt(poison, at(BASE(), land), w)).toBe(true);
   });
 });
 
 describe("보스 층위 — 풀 필터(무의미 보스 방지)", () => {
   it("내 종이 발 들일 수 없는 층만 사냥하는 보스는 안 뽑는다", () => {
-    const w = new World("env-1", W, H, defaultGenome());
+    const w = new World("env-1", W, H, BASE());
     const t = w.terrain;
     const el = (g: Genome): BossType[] => eligibleBossTypes(g.traits, t, W, H);
 
@@ -189,7 +199,7 @@ describe("보스 층위 — 풀 필터(무의미 보스 방지)", () => {
     expect(fly).toContain("poison");
 
     // 육상 종 — 물속 상어는 손도 못 대니 제외. 나머지는 다 걸린다.
-    const ground = el(defaultGenome());
+    const ground = el(BASE());
     expect(ground).not.toContain("shark");
     expect(ground).toContain("chaser");
     expect(ground).toContain("raptor");
@@ -199,18 +209,18 @@ describe("보스 층위 — 풀 필터(무의미 보스 방지)", () => {
     expect(el(SWIMMER)).toContain("chaser");
 
     // 어떤 종이든 최소 하나는 남는다(독 안개는 전 층위).
-    for (const g of [FLYING, SWIMMER, defaultGenome(), tune({ swimming: 95 })])
+    for (const g of [FLYING, SWIMMER, BASE(), tune({ swimming: 95 })])
       expect(el(g).length).toBeGreaterThan(0);
   });
 
   it("모든 보스 종류에 층위·사냥터가 정의돼 있다(새 보스 추가 시 누락 방지)", () => {
-    const w = new World("env-1", W, H, defaultGenome());
+    const w = new World("env-1", W, H, BASE());
     for (const t of BOSS_TYPES) {
       const b = createBoss(t, W, H, w.terrain);
       expect(b.huntLayers.length).toBeGreaterThan(0);
       expect(["air", "land", "water"]).toContain(b.roam);
       // 적격 판정이 게놈 하나에서라도 성립해야 한다(아무에게도 안 걸리는 죽은 보스 금지).
-      const anyone = [FLYING, SWIMMER, defaultGenome()].some((g) =>
+      const anyone = [FLYING, SWIMMER, BASE()].some((g) =>
         bossEligible(t, g.traits, w.terrain, W, H),
       );
       expect(anyone, `${t} 는 어떤 종에게도 안 걸린다`).toBe(true);
@@ -224,7 +234,7 @@ describe("보스 층위 — 실제로 그렇게 굴러간다", () => {
       expect(bossDeaths(FLYING, t), `나는 종이 ${t} 에게 잡혔다`).toBe(0);
     }
     // 대조 — 같은 보스가 땅에 사는 종은 실제로 솎는다(회피가 "보스가 약해서"가 아니다).
-    expect(bossDeaths(defaultGenome(), "chaser")).toBeGreaterThan(0);
+    expect(bossDeaths(BASE(), "chaser")).toBeGreaterThan(0);
   });
 
   it("나는 종도 하늘 보스에게는 잡힌다 — 땅 보스 회피가 공짜가 아니다", () => {
@@ -299,7 +309,7 @@ describe("보스 레이드 1단계 — 공격 카운터 보스(약탈자)를 전
   }
 
   it("raidEnabled 파라미터가 격퇴 체력을 켠다(false=버티기 · true=격퇴). 게임은 첫 시대부터 true 를 넘긴다", () => {
-    const w = new World("env-1", W, H, defaultGenome());
+    const w = new World("env-1", W, H, BASE());
     // raidEnabled=false: 모든 보스 maxHp 0(레이드 없는 버티기 경로 — 테스트가 이 경로를 따로 검증).
     for (const t of BOSS_TYPES) {
       expect(createBoss(t, W, H, w.terrain, 1, false).maxHp, `${t} 가 버티기 경로에서 격퇴 체력을 가졌다`).toBe(0);
@@ -311,7 +321,7 @@ describe("보스 레이드 1단계 — 공격 카운터 보스(약탈자)를 전
   });
 
   it("독 안개(전역)를 뺀 모든 풀 보스는 era 1+ 에 격퇴 체력이 있다(카운터 누락 방지)", () => {
-    const w = new World("env-1", W, H, defaultGenome());
+    const w = new World("env-1", W, H, BASE());
     for (const t of BOSS_TYPES) {
       const b = createBoss(t, W, H, w.terrain, 1, true);
       if (t === "poison") expect(b.raidCounter).toBeNull();
@@ -323,8 +333,10 @@ describe("보스 레이드 1단계 — 공격 카운터 보스(약탈자)를 전
   });
 
   it("공격형(전사)은 약탈자를 격퇴하고, 초식(공격력 낮음)은 흠집조차 못 낸다", () => {
-    const hunter = tune({ diet: 68, attack: 64, speed: 68, vision: 62 }); // 육식 사냥꾼
-    const herb = tune({ diet: 20, attack: 44, fertility: 88, herding: 92 }); // 다산 초식(공격력<문턱)
+    // 문턱을 상수에서 유도한다 — 숫자를 박아 두면 `raidWarriorAttack` 을 튠할 때마다 애먼 곳이 깨진다
+    // (v8 에서 55 → 65 로 올랐을 때 실제로 그랬다).
+    const hunter = tune({ diet: 68, attack: SIM.raidWarriorAttack + 10, speed: 68, vision: 62 }); // 육식 사냥꾼
+    const herb = tune({ diet: 20, attack: SIM.raidWarriorAttack - 20, fertility: 88, herding: 92 }); // 다산 초식(무는 힘<문턱)
     const hunterR = raidResult(hunter, 1, true);
     const herbR = raidResult(herb, 1, true);
     // 공격형은 시드 대부분에서 격퇴한다(전사 반격이 체력을 깎는다).
@@ -348,7 +360,7 @@ describe("보스 레이드 1단계 — 공격 카운터 보스(약탈자)를 전
   });
 
   it("상어는 물에 든 종만 솎는다 — 육상 종은 손도 못 댄다", () => {
-    expect(bossDeaths(defaultGenome(), "shark")).toBe(0); // 물에 못 들어가는 종엔 무해
+    expect(bossDeaths(BASE(), "shark")).toBe(0); // 물에 못 들어가는 종엔 무해
     expect(bossDeaths(SWIMMER, "shark")).toBeGreaterThan(0); // 헤엄치면 잡힌다
   });
 
@@ -459,9 +471,16 @@ describe("시작 프리셋 x 약탈자 · 화면이 말하는 것과 실제가 �
   function presetGenome(id: string): Genome {
     const card = PRESET_CARDS.find((c) => c.id === id);
     if (card === undefined) throw new Error(`프리셋 없음: ${id}`);
-    const g = defaultGenome();
+    const g = defaultGenome(); // 플레이어 경로 — 프리셋 카드가 도장을 찍는다
     applyCard(g, card);
     return g;
+  }
+
+  /** 그 프리셋에서 시작해 한 범주에 도장을 더 찍은 종(= 드래프트로 그 범주를 판 상태). */
+  function grown(id: string, cat: "fang" | "leg" | "eye" | "hide" | "herd", pips: number): Genome {
+    const g = presetGenome(id);
+    g.pips[cat] = pips;
+    return genomeFromPips(g.pips, g.keys);
   }
 
   /**
@@ -477,6 +496,9 @@ describe("시작 프리셋 x 약탈자 · 화면이 말하는 것과 실제가 �
     ticks: number = ROUND,
   ): { melee: number; ranged: number; minRatio: number; maxHp: number; hp: number } {
     const w = new World(seed, GAME_W, GAME_H, genome, GAME_AREA, [], mapType);
+    // ⚠ v8: 명령은 **목소리가 닿는 데까지만** 간다. 이 값을 안 넣으면 아래 「몰기」가 통째로 무효라
+    //   "몰아붙여도 못 깎는다"가 거짓 초록불이 된다. 여기서는 몰기 자체를 재는 게 아니므로 넉넉히 준다.
+    w.voiceR = Math.hypot(GAME_W, GAME_H);
     for (let i = 0; i < 300; i++) w.step();
     w.boss = createBoss(type, GAME_W, GAME_H, w.terrain, 1, true);
     const maxHp = w.boss.maxHp;
@@ -486,6 +508,7 @@ describe("시작 프리셋 x 약탈자 · 화면이 말하는 것과 실제가 �
     for (let i = 0; i < ticks; i++) {
       const b = w.boss;
       if (b === null) break;
+      w.armLead(); // game 이 매 프레임 하는 것과 같다(목소리는 알파에서부터 잰다)
       if (b.members.length > 0) {
         let mx = 0;
         let my = 0;
@@ -504,12 +527,14 @@ describe("시작 프리셋 x 약탈자 · 화면이 말하는 것과 실제가 �
     return { melee, ranged, minRatio, maxHp, hp: Math.max(0, w.boss?.hp ?? 0) };
   }
 
-  it("전사가 0 인 프리셋은 격퇴 체력을 한 톨도 못 깎는다(몰아붙여도)", () => {
-    // 공격력 44~50 · 원거리 없음 → 약탈자에 맞설 수단이 하나도 없다. 화면은 이걸 말해야 한다
+  it("이빨을 안 판 프리셋은 격퇴 체력을 한 톨도 못 깎는다(몰아붙여도)", () => {
+    // 무는 힘도 사거리도 문턱 아래 → 약탈자에 맞설 수단이 하나도 없다. 화면은 이걸 말해야 한다
     // ("맞설 수 있는 개체가 없습니다") · 가득 찬 격퇴 바를 보여 주는 것은 거짓말이다.
-    // 전사 수는 게놈이 정하므로 짧은 창으로도 결론이 같다(형질이 문턱 아래면 시간이 흘러도 안 생긴다).
-    for (const id of ["preset_herd", "preset_sea", "preset_venom"]) {
-      const r = raidWithDrive(presetGenome(id), "raider", "env-1", "continent", 400);
+    // 전사 수는 게놈이 정하므로 짧은 창으로도 결론이 같다(능치가 문턱 아래면 시간이 흘러도 안 생긴다).
+    for (const id of ["preset_herd", "preset_scout", "preset_giant"]) {
+      const g = presetGenome(id);
+      expect(tierOf(g.pips.fang), `${id} 가 이빨을 파고 시작한다`).toBe(0);
+      const r = raidWithDrive(g, "raider", "env-1", "continent", 400);
       expect(r.melee + r.ranged, `${id} 에 약탈자 전사가 생겼다`).toBe(0);
       expect(r.hp, `${id} 가 약탈자 체력을 깎았다`).toBe(r.maxHp);
     }
@@ -518,15 +543,29 @@ describe("시작 프리셋 x 약탈자 · 화면이 말하는 것과 실제가 �
   it("전사가 있는 프리셋은 몰아붙이면 격퇴 체력이 깎인다(균형 잡식 포함)", () => {
     // 사용자가 첫 판에 고른 바로 그 프리셋이 preset_omni 다. 여기서 실패하면 "체력바 흠집조차
     // 못 낸다"가 재현된 것이므로, 이 단언은 완화 대상이 아니라 **그 사건의 감지기**다.
+    //
+    // v8 에서 이 계약이 서는 자리는 **이빨 1단**이다: 파생 무는 힘 66 이 전사 문턱(raidWarriorAttack 65)을
+    // 간발로 넘는다. 둘은 한 쌍이라 어느 한쪽만 만지면 이 테스트가 먼저 빨개진다.
+    expect(SIM.raidWarriorAttack).toBeLessThanOrEqual(FANG_ATTACK[1] as number);
     for (const id of ["preset_omni", "preset_ranged"]) {
-      const r = raidWithDrive(presetGenome(id), "raider", "env-1", "continent");
+      const g = presetGenome(id);
+      expect(tierOf(g.pips.fang), `${id} 가 이빨 1단으로 시작하지 않는다`).toBe(1);
+      const r = raidWithDrive(g, "raider", "env-1", "continent");
       expect(r.melee + r.ranged, `${id} 에 약탈자 전사가 없다`).toBeGreaterThan(0);
       expect(r.minRatio, `${id} 가 약탈자 격퇴 바를 못 움직였다`).toBeLessThan(0.9);
     }
   });
 
-  it("군도에서도 전사 판정 자체는 그대로다(맞설 자격은 맵과 무관하다)", () => {
-    // ⚠ 맞설 **자격**(형질 문턱)은 맵과 무관하지만, 실제로 **닿는지**는 맵이 정한다.
+  it("이빨을 더 파면 더 확실히 깎인다(성장이 격퇴로 읽힌다)", () => {
+    const g = grown("preset_omni", "fang", TIER_STEPS[2]);
+    expect(tierOf(g.pips.fang)).toBe(3);
+    const r = raidWithDrive(g, "raider", "env-1", "continent");
+    expect(r.melee, `${CATEGORY_LABELS.fang} III 인데 약탈자 전사가 없다`).toBeGreaterThan(0);
+    expect(r.minRatio, "이빨 III 가 약탈자 격퇴 바를 못 움직였다").toBeLessThan(0.5);
+  });
+
+  it("맞설 자격은 맵과 무관하다 — 군도에서도 전사 판정 자체는 그대로다", () => {
+    // ⚠ 맞설 **자격**(능치 문턱)은 맵과 무관하지만, 실제로 **닿는지**는 맵이 정한다.
     //   실측(프로브 · 군도 · 8시드 · 몰기까지 하고도): 균형 잡식 x 약탈자 격퇴 2/8 · 무흠집 6/8.
     //   같은 조건이 대륙에선 8/8 이다. 땅 떼와 땅 무리가 다른 섬에 있으면 35초 내내 만나지도 못한다.
     //   그래서 "이 게놈은 약탈자를 잡을 수 있다"를 맵을 합쳐 한 분수로 말하면 그 자체가 거짓말이 된다
@@ -548,12 +587,15 @@ describe("레이드 관측값 (world.raid* · entity.raidFighter)", () => {
    */
   function driveRound(genome: Genome, ticks: number, stopOnFighters = false): World {
     const w = new World("env-1", W, H, genome);
+    // v8: 목소리를 안 넣으면 아래 몰기가 통째로 무효다(위 raidWithDrive 주석 참조).
+    w.voiceR = Math.hypot(W, H);
     for (let i = 0; i < 600; i++) w.step();
     w.boss = createBoss("raider", W, H, w.terrain, 1, true);
     for (let i = 0; i < ticks; i++) {
       const b = w.boss;
       if (b === null) break;
       if (b.maxHp > 0 && b.hp <= 0) break;
+      w.armLead();
       let mx = 0;
       let my = 0;
       for (const m of b.members) {
@@ -572,7 +614,7 @@ describe("레이드 관측값 (world.raid* · entity.raidFighter)", () => {
   }
 
   it("보스가 없는 틱에는 맞서는 개체 수가 0 이고 아무도 전사 표식을 달지 않는다", () => {
-    const w = new World("env-1", W, H, defaultGenome());
+    const w = new World("env-1", W, H, BASE());
     for (let i = 0; i < 60; i++) w.step();
     expect(w.raidMeleeFighters).toBe(0);
     expect(w.raidRangedFighters).toBe(0);

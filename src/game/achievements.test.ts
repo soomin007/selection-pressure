@@ -19,6 +19,7 @@ import {
 } from "@/game/achievements";
 import { CARD_POOL } from "@/game/cards";
 import { defaultGenome } from "@/sim/genome";
+import { MAX_TIER, TIER_STEPS } from "@/sim/tiers";
 
 /** 아무것도 달성 못한 평범한 멸종 판. */
 function baseRun(over: Partial<RunSummary> = {}): RunSummary {
@@ -56,10 +57,10 @@ describe("도전 과제 정의", () => {
     }
   });
 
-  it("형질 보상은 딱 하나다(나머지는 전부 효과 없는 꾸밈)", () => {
+  it("카드 보상은 딱 하나다(나머지는 전부 효과 없는 꾸밈)", () => {
     const cards = ACHIEVEMENTS.filter((a) => a.reward.kind === "card");
     expect(cards.length).toBe(1);
-    expect(ACHIEVEMENT_CARDS.has("titan")).toBe(true);
+    expect(ACHIEVEMENT_CARDS.has("lp_hide2")).toBe(true);
   });
 
   it("몸 꾸밈 목록에 이름 목록(mythicNames)은 안 들어간다", () => {
@@ -91,9 +92,11 @@ describe("판정", () => {
     expect(evaluateRun(baseRun({ won: true, rerollsUsed: 0 })).map((a) => a.id)).toContain("unshaken");
   });
 
-  it("거인의 태동 — 공격력 150 이상 + 승리", () => {
+  // v8: 조건이 「공격력 150」에서 **가죽 4단**으로 바뀌었다 — 형질 천장이 시대마다 오르던 시절의
+  // 조건이라 이제 파생 최댓값(104)으로는 원리적으로 닿을 수 없다. 도장으로 조건을 만든다.
+  it("거인의 태동 — 가죽 4단 + 승리", () => {
     const strong = defaultGenome();
-    strong.traits.attack = 150;
+    strong.pips.hide = TIER_STEPS[MAX_TIER - 1] as number;
     expect(evaluateRun(baseRun({ won: false, genome: strong })).map((a) => a.id)).not.toContain("titan_born");
     debugResetAchievements();
     expect(evaluateRun(baseRun({ won: true, genome: strong })).map((a) => a.id)).toContain("titan_born");
@@ -108,16 +111,16 @@ describe("판정", () => {
 });
 
 describe("카드 문지기", () => {
-  it("「거인」은 도전 과제 전이면 어떤 레벨에서도 안 열린다", () => {
-    expect(isAchievementCardUnlocked("titan")).toBe(false);
-    expect(cardAvailable("titan", 1)).toBe(false);
-    expect(cardAvailable("titan", 99)).toBe(false);
+  it("보상 카드는 도전 과제 전이면 어떤 레벨에서도 안 열린다", () => {
+    expect(isAchievementCardUnlocked("lp_hide2")).toBe(false);
+    expect(cardAvailable("lp_hide2", 1)).toBe(false);
+    expect(cardAvailable("lp_hide2", 99)).toBe(false);
   });
 
-  it("과제를 달성하면 「거인」이 열린다", () => {
+  it("과제를 달성하면 보상 카드가 열린다", () => {
     debugUnlockAchievement("titan_born");
-    expect(isAchievementCardUnlocked("titan")).toBe(true);
-    expect(cardAvailable("titan", 1)).toBe(true);
+    expect(isAchievementCardUnlocked("lp_hide2")).toBe(true);
+    expect(cardAvailable("lp_hide2", 1)).toBe(true);
   });
 
   it("두 문지기를 모두 통과해야 한다 — 레벨로 잠긴 카드는 과제와 무관하게 닫혀 있다", () => {
@@ -130,8 +133,8 @@ describe("카드 문지기", () => {
     expect(cardAvailable("swift", 1)).toBe(true);
   });
 
-  it("「거인」을 여는 과제를 이름으로 찾을 수 있다(대백과 잠금 문구)", () => {
-    expect(achievementForCard("titan")?.id).toBe("titan_born");
+  it("보상 카드를 여는 과제를 이름으로 찾을 수 있다(대백과 잠금 문구)", () => {
+    expect(achievementForCard("lp_hide2")?.id).toBe("titan_born");
     expect(achievementForCard("swift")).toBeNull();
   });
 });

@@ -4,10 +4,16 @@
 // 증명한다. 지시는 sim 한복판(stepEntity 의 desired)에 손을 넣는 기능이라, 잘못 걸면 난수 스트림이
 // 통째로 밀려 여태 쌓은 밸런스가 조용히 다른 세계가 된다(known_issues 의 "쌍둥이 rng" 계열).
 // 여기 결정론 테스트는 **완화 대상이 아니라 감지기**다 · 빨간불이면 테스트가 낡은 게 아니라 설계가 틀렸다.
+//
+// v8 추가 — **명령은 목소리가 닿는 데까지만 간다**(`herdOrder.voiceRadius`). 그래서 이 파일의 헬퍼는
+// `world.voiceR` 을 반드시 세워야 한다. 안 세우면(0) 명령이 아무에게도 안 가고, 그건 "지시가 고장 났다"가
+// 아니라 "game 이 아직 목소리를 안 넣어 줬다"는 뜻이다 · game 은 매 단계 무리 티어에서 계산해 넣는다.
 import { describe, it, expect } from "vitest";
 import { World } from "@/sim/world";
 import { ORDER } from "@/sim/params";
-import { defaultGenome, type Genome, type Traits } from "@/sim/genome";
+import { genomeFromPips, genomeFromTraits, type Genome, type Traits } from "@/sim/genome";
+import { vacuumTicks, voiceRadius } from "@/sim/herdOrder";
+import { HERD_VOICE, TIER_STEPS, emptyKeys, emptyPips, tierOf } from "@/sim/tiers";
 
 const W = 540;
 const H = 960;
@@ -20,16 +26,30 @@ function snapshot(world: World): string {
   return `t${world.tick}|p${world.population}|${ents.join(";")}`;
 }
 
+/**
+ * 능치를 직접 정한 종. v8 에서 능치는 도장에서 파생되지만, 여기서 재는 것은 **지시 규칙**이지
+ * 성장 규칙이 아니다 — 야생과 같은 길(`genomeFromTraits`)로 만들어 v7 과 같은 세계 위에서 잰다.
+ */
 function tune(over: Partial<Traits>): Genome {
-  const g = defaultGenome();
-  Object.assign(g.traits, over);
-  return g;
+  return genomeFromTraits(over);
+}
+
+/** 이 게놈으로 명령이 닿는 거리. game 이 매 단계 넣어 주는 그 값과 같은 함수에서 나온다. */
+function voiceOf(genome: Genome): number {
+  return voiceRadius(genome.pips, genome.keys);
 }
 
 function run(seed: string, genome: Genome, steps: number, order: { x: number; y: number } | null): World {
   const w = new World(seed, W, H, genome);
-  w.herdOrder = order;
-  for (let i = 0; i < steps; i++) w.step();
+  w.voiceR = voiceOf(genome);
+  for (let i = 0; i < steps; i++) {
+    // game 이 매 프레임 하는 것과 같다(멱등 · rng 미소비). 목소리는 알파에서부터 재므로 알파가 있어야 한다.
+    w.armLead();
+    // 알파가 쓰러지면 걸려 있던 명령이 풀리는 것이 v8 규칙이라, **사람이 그 점을 계속 찍고 있는 상태**를
+    // 흉내 낸다(안 그러면 알파가 죽는 시드에서만 조용히 다른 것을 재게 된다).
+    w.herdOrder = order;
+    w.step();
+  }
   return w;
 }
 
@@ -49,21 +69,21 @@ function playerCentroid(w: World): { x: number; y: number; n: number } {
 
 describe("무리 지시 — 결정론 (뜻을 안 내리면 기존과 동일)", () => {
   it("herdOrder 가 null 이면 지문이 완전히 같다(부동소수점까지)", () => {
-    const a = run("order-det-1", defaultGenome(), 300, null);
-    const b = run("order-det-1", defaultGenome(), 300, null);
+    const a = run("order-det-1", tune({}), 300, null);
+    const b = run("order-det-1", tune({}), 300, null);
     expect(snapshot(a)).toBe(snapshot(b));
   });
 
   it("같은 뜻을 내리면 같은 세계가 나온다(재현 가능)", () => {
     const o = { x: 80, y: 120 };
-    const a = run("order-det-2", defaultGenome(), 300, o);
-    const b = run("order-det-2", defaultGenome(), 300, o);
+    const a = run("order-det-2", tune({}), 300, o);
+    const b = run("order-det-2", tune({}), 300, o);
     expect(snapshot(a)).toBe(snapshot(b));
   });
 
   it("뜻을 내리면 세계가 달라진다(지시가 실제로 작동한다는 증거)", () => {
-    const none = run("order-det-3", defaultGenome(), 300, null);
-    const some = run("order-det-3", defaultGenome(), 300, { x: 60, y: 900 });
+    const none = run("order-det-3", tune({}), 300, null);
+    const some = run("order-det-3", tune({}), 300, { x: 60, y: 900 });
     expect(snapshot(some)).not.toBe(snapshot(none));
   });
 });
@@ -144,7 +164,7 @@ describe("무리 지시 — 뜻은 분명하다 (방향은 반드시 따른다)"
 
   it("야생 종은 지시를 안 따른다(내 종에게만 내리는 뜻)", () => {
     const target = { x: 60, y: 900 };
-    const withOrder = run("order-wild", defaultGenome(), 600, target);
+    const withOrder = run("order-wild", tune({}), 600, target);
     let wildNear = 0;
     let wildTotal = 0;
     for (const e of withOrder.entities) {
@@ -154,5 +174,151 @@ describe("무리 지시 — 뜻은 분명하다 (방향은 반드시 따른다)"
     }
     // 야생이 우연히 근처에 있을 수는 있지만, 무리 전체가 몰려 있으면 안 된다.
     if (wildTotal > 0) expect(wildNear / wildTotal).toBeLessThan(0.5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v8 — 목소리가 닿는 데까지만 간다 (**[사용자 2026-08-06]** 확정)
+//
+// 이 규칙 하나가 조작 감각을 둘로 가른다: 무리를 안 판 종은 소수를 직접 데리고 다니는 손맛,
+// 무리를 판 종은 대군을 한 번에 움직이는 맛. 그래서 여기 테스트는 "기능이 된다"가 아니라
+// **"티어가 손끝에서 읽힌다"** 를 못 박는다.
+// ---------------------------------------------------------------------------
+describe("명령이 닿는 거리 — 무리 티어가 넓힌다", () => {
+  it("무리 티어가 오를수록 목소리가 멀리 간다(3단부터는 사실상 종 전체)", () => {
+    const at = (pips: number): number =>
+      voiceRadius({ ...emptyPips(), herd: pips }, emptyKeys());
+    expect(at(0)).toBe(HERD_VOICE[0]);
+    expect(at(TIER_STEPS[0])).toBeGreaterThan(at(0));
+    expect(at(TIER_STEPS[1])).toBeGreaterThan(at(TIER_STEPS[0]));
+    // 폰 논리 해상도(540x960)의 화면 대각(약 1100px)을 3단에서 넘어선다 = 종 전체가 듣는다.
+    expect(at(TIER_STEPS[2])).toBeGreaterThan(Math.hypot(W, H));
+  });
+
+  it("열쇠 「부름」은 그 거리를 더 넓힌다(대신 포식자도 듣는다)", () => {
+    const pips = { ...emptyPips(), herd: TIER_STEPS[0] };
+    expect(voiceRadius(pips, { ...emptyKeys(), call: true })).toBeGreaterThan(
+      voiceRadius(pips, emptyKeys()),
+    );
+  });
+
+  it("목소리가 0 이면 명령이 아무에게도 안 간다 — 세계가 자율로 굴러간 것과 같다", () => {
+    const target = { x: 60, y: 900 };
+    const silent = (): World => {
+      const w = new World("order-mute", W, H, tune({ herding: 40 }));
+      w.voiceR = 0; // game 이 목소리를 안 넣어 준 상태
+      for (let i = 0; i < 300; i++) {
+        w.armLead();
+        w.herdOrder = target;
+        w.step();
+      }
+      return w;
+    };
+    const w = silent();
+    expect(w.orderFollowers).toBe(0);
+    expect(w.orderPending).toBe(0);
+    // 뜻을 아예 안 내린 세계와 부동소수점까지 같다(안 닿는 명령은 세계를 1비트도 안 건드린다).
+    const idle = run("order-mute", tune({ herding: 40 }), 300, null);
+    expect(snapshot(w)).toBe(snapshot(idle));
+  });
+
+  it("흩어진 무리에서는 목소리가 좁을수록 듣는 개체가 적다(반경이 실제 게이트다)", () => {
+    // 시작 무리는 한 덩어리라 260px 안에 다 들어간다 — 그 상태로 재면 반경 차이가 안 드러난다.
+    // 그래서 **무리를 실제로 흩뜨린 뒤** 잰다. 이게 무리가 커졌을 때의 실제 모습이기도 하다.
+    const target = { x: 60, y: 900 };
+    const heardWith = (voice: number): number => {
+      const w = new World("order-reach", W, H, tune({ herding: 40 }));
+      w.voiceR = voice;
+      w.armLead();
+      // 알파를 축으로 무리를 여섯 배로 벌린다(같은 시드 = 두 판의 배치가 완전히 같다).
+      const ax = w.lead.x;
+      const ay = w.lead.y;
+      for (const e of w.entities) {
+        if (!e.species.isPlayer || e.id === w.lead.leaderId) continue;
+        e.x = Math.max(2, Math.min(W - 2, ax + (e.x - ax) * 6));
+        e.y = Math.max(2, Math.min(H - 2, ay + (e.y - ay) * 6));
+      }
+      w.herdOrder = target;
+      w.step();
+      return w.orderPending;
+    };
+    const near = heardWith(HERD_VOICE[0]);
+    const far = heardWith(HERD_VOICE[3]);
+    expect(near).toBeGreaterThan(0); // 코앞의 몇은 여전히 듣는다
+    expect(far).toBeGreaterThan(near); // 멀리 가는 목소리는 흩어진 무리까지 닿는다
+  });
+
+  it("무리 도장을 찍으면 그 종의 목소리 자체가 넓어진다(게놈 → 조작)", () => {
+    const solo = genomeFromPips(emptyPips(), emptyKeys());
+    const crowd = genomeFromPips({ ...emptyPips(), herd: TIER_STEPS[2] }, emptyKeys());
+    expect(tierOf(crowd.pips.herd)).toBe(3);
+    expect(voiceOf(crowd)).toBeGreaterThan(voiceOf(solo));
+  });
+});
+
+describe("지휘 공백 — 알파가 쓰러지면 잠시 명령이 안 통한다", () => {
+  it("무리 티어가 오를수록 공백이 짧아진다(조직이 있으면 곧바로 이어받는다)", () => {
+    const at = (pips: number): number => vacuumTicks({ ...emptyPips(), herd: pips });
+    expect(at(TIER_STEPS[0])).toBeLessThan(at(0));
+    expect(at(TIER_STEPS[1])).toBeLessThan(at(TIER_STEPS[0]));
+    expect(at(TIER_STEPS[3])).toBeLessThan(at(TIER_STEPS[2]));
+    expect(at(TIER_STEPS[3])).toBeGreaterThan(0); // 그래도 공짜는 아니다
+  });
+
+  it("알파가 죽으면 공백이 걸리고, 그동안 명령이 아무에게도 안 간다", () => {
+    const w = new World("order-vacuum", W, H, tune({ herding: 40 }));
+    w.voiceR = 4000; // 목소리는 넉넉하다 — 막는 것이 거리가 아님을 분명히 한다
+    w.vacuumOnLeadDeath = 90;
+    for (let i = 0; i < 120; i++) {
+      w.armLead();
+      w.herdOrder = { x: 60, y: 900 };
+      w.step();
+    }
+    expect(w.orderFollowers).toBeGreaterThan(0); // 전제: 공백 전에는 실제로 따르고 있었다
+
+    // 알파를 쓰러뜨린다 — 그 틱 끝의 승계가 공백을 건다.
+    const alphaId = w.lead.leaderId;
+    for (const e of w.entities) if (e.id === alphaId) e.alive = false;
+    w.step();
+    expect(w.leadVacuum).toBeGreaterThan(0);
+    expect(w.herdOrder).toBeNull(); // 걸려 있던 명령도 함께 풀린다(누가 시켰는지가 없어졌다)
+
+    // 공백 동안에는 다시 찍어도 안 통한다.
+    for (let i = 0; i < 20; i++) {
+      w.armLead();
+      w.herdOrder = { x: 60, y: 900 };
+      w.step();
+      expect(w.orderFollowers).toBe(0);
+    }
+    // 공백이 다 지나면 다시 통한다.
+    while (w.leadVacuum > 0) {
+      w.armLead();
+      w.herdOrder = { x: 60, y: 900 };
+      w.step();
+    }
+    let after = 0;
+    for (let i = 0; i < 30; i++) {
+      w.armLead();
+      w.herdOrder = { x: 60, y: 900 };
+      w.step();
+      after = Math.max(after, w.orderFollowers);
+    }
+    expect(after).toBeGreaterThan(0);
+  });
+
+  it("공백은 불씨를 안 깎는다 — 대가는 손끝이 치른다(sim 은 불씨를 아예 모른다)", () => {
+    // sim 에는 불씨라는 개념이 없다. 이 단언은 "알파 죽음의 대가가 sim 밖으로 새지 않는다"를 못 박는다.
+    const w = new World("order-vacuum-2", W, H, tune({}));
+    w.voiceR = 4000;
+    w.vacuumOnLeadDeath = vacuumTicks(emptyPips());
+    for (let i = 0; i < 60; i++) {
+      w.armLead();
+      w.step();
+    }
+    const alphaId = w.lead.leaderId;
+    for (const e of w.entities) if (e.id === alphaId) e.alive = false;
+    w.step();
+    expect(w.leadVacuum).toBe(vacuumTicks(emptyPips()));
+    expect(w.lead.leaderId).not.toBe(alphaId); // 다음 개체가 지휘봉을 이어받았다
   });
 });

@@ -867,20 +867,30 @@ export function createGlossary(): Glossary {
   const detailView = document.createElement("div");
   detailView.style.display = "none";
 
-  // --- 따라다니는 목차 (패널 우하단 고정) ---
-  // 대백과가 길어져(7개 섹션·수십 항목) 폰에서 원하는 곳까지 한참 굴려야 했다. 목차로 바로 뛴다.
+  // --- 목차 (패널 아래 고정 띠) ---
+  // 대백과가 길어져(섹션 여럿·수십 항목) 폰에서 원하는 곳까지 한참 굴려야 했다. 목차로 바로 뛴다.
+  //
+  // ⚠ 예전엔 이 버튼이 본문 위에 **떠 있었다**(position:absolute; right/bottom). 그러면 본문 문단의
+  //   줄 수가 조금만 바뀌어도 어떤 줄이든 버튼 밑에 깔려 글자가 가려진다 · 실제로 390x640 에서
+  //   카드 도감 첫 문단이 539px² 가려진 것을 겹침 검사기가 잡았다(2026-08-06). 자리를 안 겹치게
+  //   **띠 하나를 따로 내주는** 것으로 이 부류를 구조적으로 막는다(본문은 띠 위에서만 흐른다).
+  const tocBar = document.createElement("div");
+  tocBar.style.cssText =
+    "flex:none; display:flex; justify-content:flex-end; padding:6px 10px;" +
+    "border-top:1px solid var(--line); background:var(--bg-report);";
   const tocBtn = document.createElement("button");
   tocBtn.textContent = "≡ 목차";
   tocBtn.style.cssText =
-    "position:absolute; right:14px; bottom:14px; z-index:2;" +
     "border:1px solid var(--line); background:var(--panelSolid); color:var(--ink);" +
-    "border-radius:999px; padding:9px 15px; font-family:var(--font-title); font-size:14px;" +
+    "border-radius:999px; padding:7px 14px; font-family:var(--font-title); font-size:14px;" +
     "cursor:pointer; box-shadow:0 3px 12px rgba(0,0,0,0.45);";
+  tocBar.appendChild(tocBtn);
 
-  // 목차 메뉴 — 버튼 위로 펼쳐진다(드롭업). 섹션을 누르면 그 자리로 스크롤하고 닫힌다.
+  // 목차 메뉴 · 버튼 위로 펼쳐진다(드롭업). 섹션을 누르면 그 자리로 스크롤하고 닫힌다.
+  // 띠 높이(약 44px) 위에 뜬다 · 메뉴는 눌러서 여는 것이라 본문을 잠깐 덮는 것이 정상이다.
   const tocMenu = document.createElement("div");
   tocMenu.style.cssText =
-    "position:absolute; right:14px; bottom:56px; z-index:3; display:none; flex-direction:column; gap:2px;" +
+    "position:absolute; right:14px; bottom:52px; z-index:3; display:none; flex-direction:column; gap:2px;" +
     "background:var(--bg-report); border:1px solid var(--line); border-radius:var(--r-card);" +
     "padding:6px; box-shadow:0 6px 20px rgba(0,0,0,0.55); min-width:150px;";
   SECTIONS.forEach((sec, i) => {
@@ -944,7 +954,7 @@ export function createGlossary(): Glossary {
     detailView.style.display = "none";
     listView.style.display = "block";
     back.style.visibility = "hidden";
-    tocBtn.style.display = "block";
+    tocBar.style.display = "flex";
     if (!keepScroll) body.scrollTop = listScroll;
   }
   function showDetail(e: Entry): void {
@@ -1038,13 +1048,13 @@ export function createGlossary(): Glossary {
     listView.style.display = "none";
     detailView.style.display = "block";
     back.style.visibility = "visible";
-    tocBtn.style.display = "none"; // 상세에선 목차를 숨긴다(목록의 좌표계라 뜻이 없다)
+    tocBar.style.display = "none"; // 상세에선 목차를 숨긴다(목록의 좌표계라 뜻이 없다)
     closeToc();
     body.scrollTop = 0;
   }
 
   body.append(listView, detailView);
-  panel.append(header, body, tocMenu, tocBtn);
+  panel.append(header, body, tocMenu, tocBar);
   scrim.appendChild(panel);
   document.body.appendChild(scrim);
 

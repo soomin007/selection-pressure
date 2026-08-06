@@ -8,16 +8,21 @@ import {
   DEATH_LINE_PREFIX,
 } from "@/game/runReport";
 import { SIM } from "@/sim/params";
-import { defaultGenome, type Genome } from "@/sim/genome";
+import { genomeFromTraits, type Genome } from "@/sim/genome";
 import { emptyDeathTally, type DeathTally } from "@/sim/world";
 
+/**
+ * 일부 능치만 지정한 종 — **야생과 같은 길**(`genomeFromTraits`)로 만든다.
+ * 런 보고서는 「이 종이 어떤 종이었나」를 능치로 묘사하는 곳이라, 도장이 아니라 능치가 입력이다.
+ * (v8 의 기본 게놈은 도장 0 의 파생값이라 "평범한 종"이 아니다 — 이빨 0단은 사냥을 못 하는 초식이다.)
+ */
 function tune(partial: Partial<Genome["traits"]>): Genome {
-  const g = defaultGenome();
-  for (const key of Object.keys(partial) as (keyof Genome["traits"])[]) {
-    const v = partial[key];
-    if (v !== undefined) g.traits[key] = v;
-  }
-  return g;
+  return genomeFromTraits(partial);
+}
+
+/** 능치를 하나도 안 건드린 기준선 종(= v7 의 기본 게놈과 같은 능치 · 식성 50 잡식). */
+function baseGenome(): Genome {
+  return genomeFromTraits({});
 }
 
 function tally(partial: Partial<DeathTally>): DeathTally {
@@ -26,7 +31,7 @@ function tally(partial: Partial<DeathTally>): DeathTally {
 
 describe("describeSpecies", () => {
   it("형질이 평범하면 '균형 잡힌'으로 묘사", () => {
-    expect(describeSpecies(defaultGenome())).toBe("균형 잡힌 잡식성");
+    expect(describeSpecies(baseGenome())).toBe("균형 잡힌 잡식성");
   });
 
   it("두드러진 형질을 식성 명사와 함께 묘사", () => {
@@ -68,7 +73,7 @@ describe("buildRunReport", () => {
   });
 
   it("죽음이 없으면 사망 원인 문단을 넣지 않는다", () => {
-    const report = buildRunReport("승리", defaultGenome(), emptyDeathTally());
+    const report = buildRunReport("승리", baseGenome(), emptyDeathTally());
     expect(report).not.toContain("사망 원인");
   });
 });
@@ -82,7 +87,7 @@ describe("parseDeathLine — 결과 화면 막대용 역파싱", () => {
   it("buildRunReport 가 만든 사망 원인 문단을 행으로 되돌린다 (포맷↔파싱 왕복)", () => {
     const report = buildRunReport(
       "멸종",
-      defaultGenome(),
+      baseGenome(),
       tally({ cold: 41, starve: 18, predation: 7 }),
     );
     const deathBlock = report.split("\n\n").find((b) => b.startsWith(DEATH_LINE_PREFIX));

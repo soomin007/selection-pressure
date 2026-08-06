@@ -1085,14 +1085,14 @@ async function runScale() {
 
 /**
  * **티어 사다리 검산** — 시뮬 없이 산수만. 카드 예산 띠(12~22장) 전체에서 사다리가 성립하는지 본다.
- * 실제 72장 풀에 실제 희귀도 가중치를 걸고 「3장 중 1장」을 몬테카를로로 굴린다.
+ * 실제 75장 풀에 실제 희귀도 가중치를 걸고 「3장 중 1장」을 몬테카를로로 굴린다.
  */
 async function runTiers() {
   const N = Number(opt("runs", "4000"));
   const budgets = [12, 17, 22];
   const policies = ["focus", "two", "best", "random"];
-  console.log("# 티어 사다리 검산 · 실제 72장 풀 · " + N + "런 · 3장 중 1장");
-  console.log("# 문턱 " + TIER_STEPS.join("·") + " · 프리셋 시작 도장 6(주 4 + 부 2)");
+  console.log("# 티어 사다리 검산 · 실제 75장 풀 · " + N + "런 · 3장 중 1장");
+  console.log("# 문턱 " + TIER_STEPS.join("·") + " · 프리셋 시작 도장 7(주 4 + 부 3)");
   console.log(["정책", "카드", "최고범주", "2위", "T4", "T3이상", "듀오", "저축픽%"].join("	"));
   for (const policy of policies) {
     for (const cards of budgets) {

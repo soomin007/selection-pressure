@@ -1,170 +1,230 @@
+// 티어 표시 규칙 — **칩이 사실을 말하는가**.
+//
+// v7 시절 이 파일은 「카드 효과 칩」(속도 +15 …)의 색·수치를 쟀다. 그 세계가 통째로 사라져
+// (카드는 이제 도장만 찍는다) 다음 계약들은 **뜻이 없어져 지웠다**:
+//   · 중립 형질(대사·식성) 색 규칙 — 그 형질들이 카드 효과 축에서 사라졌다.
+//   · traitWord/dietWord(값형질은 숫자, 능력형은 단어) — 표시 축이 능치에서 티어로 바뀌었다.
+//   · 상한 근접 감쇠 취소선 · 정점 고정 · 희생 표시 · APEX_BOON — 그 장치들이 전부 폐기됐다.
+//
+// **살린 계약은 하나이고, 그것이 이 파일의 존재 이유다**: 화면이 말하는 것과 실제로 일어나는 일이
+// 같아야 한다("수치가 화면 표시와 다르면 그건 거짓말이다"). v8 에서 그 문장은 이렇게 바뀐다 —
+// **칩이 예고한 티어 이동이 카드를 고른 뒤의 게놈과 정확히 같아야 한다.**
 import { describe, it, expect } from "vitest";
-import { APEX_BOON, cardEffectChips, chipColor, NEUTRAL_TRAITS, traitWord, dietWord } from "@/ui/traitDisplay";
-import { applyCard, cardDelta, CARD_POOL } from "@/game/cards";
-import { APEX_TRAITS, defaultGenome, type Traits } from "@/sim/genome";
-import { SIM } from "@/sim/params";
+import {
+  DOWN_CHIP_COLOR,
+  KEY_CHIP_COLOR,
+  PIP_BAR_MAX,
+  SAVE_CHIP_COLOR,
+  cardAccent,
+  cardTierChips,
+  categoryColor,
+  crossingMoves,
+  demotingMoves,
+  hexColor,
+  iGa,
+  pipPct,
+  tierBadges,
+  tierTrackBackground,
+} from "@/ui/traitDisplay";
+import { CARD_POOL, EMBER_CARD, applyCard, cardPips, PRESET_CARDS } from "@/game/cards";
+import { defaultGenome, genomeFromPips } from "@/sim/genome";
+import {
+  CATEGORIES,
+  CATEGORY_COLORS,
+  CATEGORY_LABELS,
+  MAX_TIER,
+  TIER_ROMAN,
+  TIER_STEPS,
+  emptyKeys,
+  emptyPips,
+  tierOf,
+  type Pips,
+} from "@/sim/tiers";
 
-const cardOf = (id: string) => {
-  const card = CARD_POOL.find((c) => c.id === id);
-  if (!card) throw new Error(`카드 없음: ${id}`);
-  return card;
+const card = (id: string) => {
+  const c = CARD_POOL.find((x) => x.id === id);
+  if (!c) throw new Error(`카드 없음: ${id}`);
+  return c;
 };
 
-const chipsOf = (id: string) => cardEffectChips(cardOf(id));
+const pipsOf = (partial: Partial<Pips>): Pips => ({ ...emptyPips(), ...partial });
 
-describe("칩 색 규칙 — 좋고 나쁨이 없는 형질은 중립색", () => {
-  it("대사와 식성만 중립 형질이다", () => {
-    expect([...NEUTRAL_TRAITS].sort()).toEqual(["diet", "metabolism"]);
-  });
+/** 이 파일이 훑는 도장 상황들 — 0단부터 최고 티어까지, 문턱 바로 앞과 바로 뒤를 모두 지난다. */
+const SAMPLE_PIPS: number[] = [
+  0,
+  1,
+  TIER_STEPS[0] - 1,
+  TIER_STEPS[0],
+  TIER_STEPS[1] - 1,
+  TIER_STEPS[1],
+  TIER_STEPS[2] - 1,
+  TIER_STEPS[2],
+  TIER_STEPS[3] - 1,
+  TIER_STEPS[3],
+];
 
-  it("「올빼미 눈」의 대사 -8 은 손해가 아니다(중립색, 빨강 아님)", () => {
-    const met = chipsOf("owl_eye").find((c) => c.text.startsWith("대사"));
-    expect(met).toBeDefined();
-    expect(met?.tone).toBe("neutral");
-    expect(met?.up).toBe(false); // 방향은 사실대로 ▼
-    expect(chipColor("neutral")).not.toBe(chipColor("loss"));
-  });
+describe("칩이 사실을 말한다 — 예고한 티어 이동이 실제 결과와 같다", () => {
+  it("풀 전체 · 모든 도장 상황에서 칩의 예고와 적용 결과가 정확히 같다", () => {
+    for (const c of [...CARD_POOL, ...PRESET_CARDS, EMBER_CARD]) {
+      for (const start of SAMPLE_PIPS) {
+        const pips = pipsOf({ fang: start, leg: start, eye: start, hide: start, herd: start });
+        const chips = cardTierChips(c, pips);
+        const cross = crossingMoves(c, pips);
+        const down = demotingMoves(c, pips);
 
-  it("「뜨거운 피」의 대사 +14 는 이득이 아니다(중립색, 초록 아님)", () => {
-    const met = chipsOf("hotblood").find((c) => c.text.startsWith("대사"));
-    expect(met?.tone).toBe("neutral");
-    expect(met?.up).toBe(true);
-    expect(chipColor("neutral")).not.toBe(chipColor("gain"));
-  });
+        const g = genomeFromPips(pips, emptyKeys());
+        applyCard(g, c);
 
-  it("식성은 어느 쪽으로 기울어도 중립이다(초식·육식 어느 쪽도 더 낫지 않다)", () => {
-    expect(chipsOf("predator").find((c) => c.text.startsWith("식성"))?.tone).toBe("neutral");
-    expect(chipsOf("grazer").find((c) => c.text.startsWith("식성"))?.tone).toBe("neutral");
-  });
-
-  it("보통 형질은 여전히 얻음/잃음으로 갈린다", () => {
-    const cheetah = chipsOf("cheetah");
-    expect(cheetah.find((c) => c.text.startsWith("속도"))?.tone).toBe("gain");
-    expect(cheetah.find((c) => c.text.startsWith("번식력"))?.tone).toBe("loss");
-  });
-
-  it("풀 전체에서 대사·식성 칩은 하나도 gain/loss 로 새지 않는다", () => {
-    for (const card of CARD_POOL) {
-      for (const chip of cardEffectChips(card)) {
-        if (chip.text.startsWith("대사") || chip.text.startsWith("식성")) {
-          expect(chip.tone, `${card.id}: ${chip.text}`).toBe("neutral");
+        // ① 넘긴다고 말한 범주는 실제로 티어가 올랐다.
+        for (const m of cross) {
+          expect(tierOf(g.pips[m.cat]), `${c.id}@${start} / ${m.cat}: 넘긴다고 해 놓고 안 넘었다`).toBe(m.to);
+          expect(m.to).toBeGreaterThan(m.from);
         }
-      }
-    }
-  });
-});
-
-describe("형질 표시(traitWord) — 값형질·대사는 숫자, 능력형·식성은 단어", () => {
-  it("값형질(속도 등)·대사는 날숫자로 보여준다(상한 100 이라 직관적)", () => {
-    expect(traitWord("speed", 68)).toBe("68");
-    expect(traitWord("speed", 50)).toBe("50");
-    expect(traitWord("metabolism", 30)).toBe("30");
-    // 다섯 값형질이 같은 규칙(숫자). v7: herding 이 능력형으로 내려가고 size(몸집)가 값형질이 됐다.
-    for (const k of ["speed", "vision", "attack", "fertility", "size"] as const) {
-      expect(traitWord(k, 72)).toBe("72");
-    }
-    // 무리 성향은 이제 능력형 — 숫자가 아니라 없음/보통/강함으로 읽는다.
-    expect(traitWord("herding", 0)).toBe("없음");
-    expect(traitWord("herding", 50)).toBe("보통");
-    expect(traitWord("herding", SIM.herdShieldThreshold + 1)).toBe("강함"); // 무리 방어가 켜지는 선
-  });
-
-  it("소수 값도 반올림해 자연수로 보여준다", () => {
-    expect(traitWord("attack", 66.6)).toBe("67");
-  });
-
-  it("식성: 초식/잡식/육식 — sim 문턱과 같은 경계", () => {
-    expect(traitWord("diet", SIM.dietHuntMin - 1)).toBe("초식");
-    expect(traitWord("diet", 50)).toBe("잡식");
-    expect(traitWord("diet", SIM.dietGrazeMax + 1)).toBe("육식");
-    expect(dietWord(20)).toBe("초식"); // 직접도 같은 값
-  });
-
-  it("능력형(수영·날개·독…): 없음/보통/강함 3단계(기존 규칙 그대로)", () => {
-    expect(traitWord("swimming", 30)).toBe("없음"); // 문턱 아래
-    expect(traitWord("swimming", SIM.swimThreshold)).toBe("보통"); // 수륙양용
-    expect(traitWord("wings", SIM.flyThreshold)).toBe("강함"); // 비행(켜짐)
-    expect(traitWord("venom", 0)).toBe("없음");
-    expect(traitWord("venom", 70)).toBe("강함");
-  });
-});
-
-describe("칩이 사실을 말한다 — 화면 수치와 실제 적용이 갈라지면 그게 거짓말이다", () => {
-  it("칩에 뜬 수치는 게놈에 실제로 붙는 값과 정확히 같다 (풀 전체 · 여러 형질값)", () => {
-    for (const card of CARD_POOL) {
-      for (const start of [50, 70, 90, 100]) {
-        const g = defaultGenome();
-        // 값형질을 start 로 맞춰 감쇠·정점 구간을 모두 훑는다.
-        for (const k of ["speed", "vision", "attack", "fertility"] as const) g.traits[k] = start;
-        const before = { ...g.traits };
-        applyCard(g, card);
-        for (const key of Object.keys(card.effects) as (keyof Traits)[]) {
-          const shown = cardDelta(card, key, before[key]);
-          const actual = g.traits[key] - before[key];
-          // 희생 형질은 아래 별도 테스트 — 여기선 effects 만 본다(같은 카드가 둘 다 건드리진 않는다).
-          if (card.sacrifice?.includes(key)) continue;
-          expect(actual, `${card.id} · ${key} · 시작 ${start}`).toBe(shown);
+        // ② 내려간다고 말한 범주는 실제로 내려갔다.
+        for (const m of down) {
+          expect(tierOf(g.pips[m.cat]), `${c.id}@${start} / ${m.cat}: 내려간다고 해 놓고 안 내려갔다`).toBe(m.to);
         }
+        // ③ 칩이 말하지 않은 범주는 티어가 안 움직였다(말 안 한 변화가 없다).
+        const spoken = new Set([...cross, ...down].map((m) => m.cat));
+        for (const cat of CATEGORIES) {
+          if (spoken.has(cat)) continue;
+          expect(tierOf(g.pips[cat]), `${c.id}@${start} / ${cat}: 말 안 한 티어가 움직였다`).toBe(tierOf(pips[cat]));
+        }
+        // ④ 칩은 최대 세 개다(폰 한 줄 제약 · 넘치면 카드 밖으로 삐져나간다).
+        expect(chips.length, `${c.id}@${start}`).toBeLessThanOrEqual(3);
       }
     }
   });
 
-  it("상한 근접 감쇠가 걸리면 감쇠 전 값(base)을 함께 준다 — 취소선으로 보여주려고", () => {
-    const swift = cardOf("swift"); // 속도 +15
-    // 50 에서는 감쇠가 없다 → base 없음(취소선을 띄울 이유가 없다).
-    const at50 = cardEffectChips(swift, defaultGenome().traits).find((c) => c.text.startsWith("속도"));
-    expect(at50?.base).toBeUndefined();
+  it("칩 종류가 실제 상황과 맞는다 — 넘김·저축·강등·열쇠·불씨", () => {
+    // 넘김: 문턱 바로 앞(도장 1)에서 이빨 +2 를 고르면 그 자리에서 1단이 켜진다.
+    const cross = cardTierChips(card("wc_fang1"), pipsOf({ fang: TIER_STEPS[0] - 2 }));
+    expect(cross[0]?.kind).toBe("cross");
+    expect(cross[0]?.color).toBe(categoryColor("fang"));
+    expect(cross[0]?.text).toContain(CATEGORY_LABELS.fang);
+    expect(cross[0]?.text).toContain("켜짐"); // 0단에서 켜질 땐 「이빨 I 켜짐」
 
-    // 90 에서는 감쇠가 크게 걸린다 → base 가 붙고, 실제 값보다 커야 한다("원래 이만큼 오를 값이었다").
-    const high = defaultGenome();
-    high.traits.speed = 90;
-    const at90 = cardEffectChips(swift, high.traits).find((c) => c.text.startsWith("속도"));
-    expect(at90?.base).toBeDefined();
-    const shown = cardDelta(swift, "speed", 90);
-    expect(at90?.text).toBe(`속도 +${shown}`);
-    expect(Number(at90?.base?.replace("+", ""))).toBeGreaterThan(shown);
+    // 저축: 문턱을 못 넘기면 회색으로 **몇 칸 남았는지**를 말한다(그게 곧 정보다).
+    const save = cardTierChips(card("wc_fang1"), pipsOf({ fang: TIER_STEPS[0] }));
+    expect(save[0]?.kind).toBe("save");
+    expect(save[0]?.color).toBe(SAVE_CHIP_COLOR);
+    expect(save[0]?.text).toContain("칸 남음");
+
+    // 강등: 맞바꿈 카드의 대가가 문턱을 되넘으면 붉은 칩이 「▾」로 말한다.
+    const trade = CARD_POOL.find((c) => CATEGORIES.some((cat) => cardPips(c, cat) < 0));
+    expect(trade).toBeDefined();
+    if (trade) {
+      const loss = CATEGORIES.find((cat) => cardPips(trade, cat) < 0);
+      expect(loss).toBeDefined();
+      if (loss) {
+        const chips = cardTierChips(trade, pipsOf({ [loss]: TIER_STEPS[0] } as Partial<Pips>));
+        const downChip = chips.find((c) => c.kind === "down");
+        expect(downChip).toBeDefined();
+        expect(downChip?.color).toBe(DOWN_CHIP_COLOR);
+        expect(downChip?.text).toContain("▾");
+      }
+    }
+
+    // 열쇠·불씨는 금빛 한 칩으로.
+    const key = cardTierChips(card("ky_fin"), emptyPips()).find((c) => c.kind === "key");
+    expect(key?.color).toBe(KEY_CHIP_COLOR);
+    const ember = cardTierChips(EMBER_CARD, emptyPips()).find((c) => c.kind === "ember");
+    expect(ember?.color).toBe(KEY_CHIP_COLOR);
+    expect(ember?.text).toContain("불씨");
   });
 
-  it("정점 고정 — 대가가 막히면 칩도 '안 내려감'이라 말한다(-10 이라 써 놓고 안 내려가면 거짓말)", () => {
-    const g = defaultGenome();
-    g.traits.fertility = 100;
-    const chips = cardEffectChips(cardOf("hunter_apex"), g.traits); // 번식력을 깎는 카드
-    const fert = chips.find((c) => c.text.startsWith("번식력"));
-    expect(fert?.apexLocked).toBe(true);
-    expect(fert?.tone).toBe("gain"); // 대가가 사라진 것이니 이득이다
-    expect(fert?.text).not.toContain("-"); // 음수를 보여주면 안 된다
+  it("최고 티어에 이미 닿은 범주는 「몇 칸 남음」이라 거짓말하지 않는다", () => {
+    const chips = cardTierChips(card("wc_fang1"), pipsOf({ fang: TIER_STEPS[3] }));
+    const chip = chips[0];
+    expect(chip?.kind).toBe("save");
+    expect(chip?.text).not.toContain("칸 남음"); // 남은 칸이 없다
+    expect(chip?.text).toContain(TIER_ROMAN[MAX_TIER]);
   });
 
-  it("희생(초음파) — '시야 -75' 같은 숫자가 아니라 '잃음'이라 말한다", () => {
-    const g = defaultGenome();
-    g.traits.vision = 90;
-    const chips = cardEffectChips(cardOf("echo"), g.traits);
-    const vision = chips.find((c) => c.label === "시야");
-    expect(vision).toBeDefined();
-    expect(vision?.tone).toBe("loss");
-    expect(vision?.value).toContain("잃음");
+  it("카드 대표 색은 가장 크게 찍는 범주의 색이다(카드 점·오라가 같은 값을 쓴다)", () => {
+    expect(cardAccent(card("wc_fang1"))).toBe(categoryColor("fang"));
+    expect(cardAccent(card("wc_leg1"))).toBe(categoryColor("leg"));
+    expect(cardAccent(EMBER_CARD)).toBe(KEY_CHIP_COLOR); // 도장이 없는 카드
+    // 「치우침」 카드는 주 범주(도장이 큰 쪽) 색이다.
+    const lean = card("ln_fl"); // 이빨 +2 · 다리 +1
+    expect(cardAccent(lean)).toBe(categoryColor("fang"));
+  });
+});
 
-    // 이미 눈이 먼 종(시야 0)에게는 "잃음"이라 말하지 않는다 — 잃을 눈이 없다(없는 대가를 있는 척 금지).
-    const blind = defaultGenome();
-    blind.traits.vision = 0;
-    expect(cardEffectChips(cardOf("echo"), blind.traits).find((c) => c.label === "시야")).toBeUndefined();
+describe("헤더 티어 줄 — 다섯 범주가 고정 순서로 늘 보인다", () => {
+  it("다섯 칩이 늘 나오고 순서가 고정이다(폰 한 줄 제약)", () => {
+    const badges = tierBadges(emptyPips());
+    expect(badges.map((b) => b.cat)).toEqual([...CATEGORIES]);
+    expect(badges.length).toBe(5);
   });
 
-  it("칩은 이름과 수치를 따로 들고 있다 — 취소선을 그 사이에 끼워야 읽힌다", () => {
-    const high = defaultGenome();
-    high.traits.vision = 90;
-    const owl = cardEffectChips(cardOf("owl_eye"), high.traits).find((c) => c.label === "시야");
-    expect(owl?.label).toBe("시야"); // 이름만
-    expect(owl?.value).toMatch(/^\+\d+$/); // 수치만
-    expect(owl?.text).toBe(`시야 ${owl?.value}`); // 한 줄 표시는 둘을 합친 것
-    // 화면은 [이름][취소선][수치] 순으로 그린다 → "시야 ~~+12~~ +6". base 를 text 앞에 붙이면
-    // "~~+12~~ 시야 +6" 이 된다(실제 앱에서 그렇게 나왔다 — 그래서 label/value 를 나눴다).
-    expect(owl?.base).toBeDefined();
+  it("0단은 이름만 회색으로, 1단부터는 로마 숫자와 범주 색으로", () => {
+    const badges = tierBadges(pipsOf({ fang: TIER_STEPS[1] }));
+    const fang = badges.find((b) => b.cat === "fang");
+    const leg = badges.find((b) => b.cat === "leg");
+    expect(fang?.tier).toBe(2);
+    expect(fang?.text).toBe(`${CATEGORY_LABELS.fang} ${TIER_ROMAN[2]}`);
+    expect(fang?.color).toBe(categoryColor("fang"));
+    expect(leg?.tier).toBe(0);
+    expect(leg?.text).toBe(CATEGORY_LABELS.leg); // 숫자를 안 붙인다
+    expect(leg?.color).toBe(SAVE_CHIP_COLOR);
   });
 
-  it("정점이 있는 형질에는 전부 '무엇이 열렸는지' 문구가 있다(도감 없이 화면에서 알아채게)", () => {
-    for (const key of APEX_TRAITS) {
-      expect(APEX_BOON[key], `${key} 의 정점 보상 문구가 없다`).toBeDefined();
+  it("헤더가 말하는 티어는 sim 이 쓰는 티어와 같은 함수에서 나온다", () => {
+    for (const start of SAMPLE_PIPS) {
+      const pips = pipsOf({ herd: start });
+      const badge = tierBadges(pips).find((b) => b.cat === "herd");
+      expect(badge?.tier).toBe(tierOf(start));
+    }
+  });
+});
+
+describe("도장 막대 — 눈금이 「다음 계단이 더 멀다」를 말한다", () => {
+  it("막대 오른쪽 끝은 최고 문턱보다 넉넉해 IV 눈금이 막대 안에 보인다", () => {
+    expect(PIP_BAR_MAX).toBeGreaterThan(TIER_STEPS[TIER_STEPS.length - 1] as number);
+  });
+
+  it("채움 비율은 0~100 안에 있고 도장이 늘면 안 줄어든다", () => {
+    expect(pipPct(0)).toBe(0);
+    expect(pipPct(PIP_BAR_MAX)).toBe(100);
+    expect(pipPct(PIP_BAR_MAX * 3)).toBe(100); // 상한 밖도 100 에서 멈춘다
+    expect(pipPct(-5)).toBe(0);
+    for (let i = 1; i < SAMPLE_PIPS.length; i++) {
+      expect(pipPct(SAMPLE_PIPS[i] as number)).toBeGreaterThanOrEqual(pipPct(SAMPLE_PIPS[i - 1] as number));
+    }
+  });
+
+  it("눈금은 문턱 수만큼 있고, 마지막 하나만 금빛이다(사다리의 끝)", () => {
+    const bg = tierTrackBackground();
+    expect(bg.split("linear-gradient").length - 1).toBe(TIER_STEPS.length);
+    expect(bg.split("rgba(255,226,122,0.9)").length - 1).toBeGreaterThan(0);
+  });
+});
+
+describe("색 · 조사 — 화면 문구가 어색해지지 않게", () => {
+  it("범주 색은 sim 의 단일 진실을 CSS 로 옮긴 것뿐이다", () => {
+    for (const cat of CATEGORIES) {
+      expect(categoryColor(cat)).toBe(hexColor(CATEGORY_COLORS[cat]));
+      expect(categoryColor(cat)).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it("받침 유무로 이/가 를 고른다(「늑대의 법이」 vs 「덮치기가」)", () => {
+    expect(iGa("늑대의 법")).toBe("이");
+    expect(iGa("덮치기")).toBe("가");
+    expect(iGa("원진")).toBe("이");
+    expect(iGa("파도")).toBe("가");
+  });
+});
+
+describe("시작 갈래 카드도 같은 규칙으로 보인다", () => {
+  it("프리셋은 두 범주를 켜므로 칩도 둘이고, 둘 다 「켜짐」이다", () => {
+    for (const p of PRESET_CARDS) {
+      const chips = cardTierChips(p, defaultGenome().pips);
+      const cross = chips.filter((c) => c.kind === "cross");
+      expect(cross.length, `${p.id}: 켜지는 칩이 둘이 아니다`).toBe(2);
+      for (const c of cross) expect(c.text).toContain("켜짐");
+      if (p.key !== undefined) expect(chips.some((c) => c.kind === "key")).toBe(true);
     }
   });
 });

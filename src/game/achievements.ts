@@ -3,13 +3,14 @@
 // ## 레벨과 업적의 역할 분담
 // - **플레이어 레벨**(meta.ts): 런을 거듭하면 자동으로 오른다 → **선택지**가 열린다(갈래·카드·리롤).
 //   시간만 쓰면 누구나 도달한다.
-// - **도전 과제**(이 파일): 특정한 플레이를 해내야 열린다 → **자랑거리**가 열린다(꾸밈)와 딱 하나의
-//   특별 형질(「거인」). 시간이 아니라 솜씨가 연다.
+// - **도전 과제**(이 파일): 특정한 플레이를 해내야 열린다 → **자랑거리**가 열린다(꾸밈)와
+//   카드 한 장. 시간이 아니라 솜씨가 연다.
 //
 // 보상이 파워로 쏠리지 않게 대부분을 **꾸밈(효과 없음)** 으로 둔다. meta.ts 의 "수직 언락 금지" 원칙과 같다.
-// 유일한 형질 보상 「거인」도 명백한 대가(걸음 -18, 번식 -14)를 지녀 "강해지는 해금"이 아니다.
+// 유일한 카드 보상도 **이미 풀에 있는 카드**를 여는 것이라 새 파워가 생기지 않는다.
 
 import type { Genome } from "@/sim/genome";
+import { MAX_TIER, tierOf } from "@/sim/tiers";
 import { isCardUnlocked } from "@/game/meta";
 
 const STORAGE_KEY = "selpress_achievements_v1";
@@ -107,9 +108,12 @@ export const ACHIEVEMENTS: readonly Achievement[] = [
   {
     id: "titan_born",
     name: "거인의 태동",
-    desc: "공격력 150 이상인 종으로 승리한다.",
-    reward: { kind: "card", cardId: "titan" },
-    check: (s) => s.won && s.genome.traits.attack >= 150,
+    // v8: 「공격력 150」은 형질 천장이 시대마다 오르던 시절의 조건이라 이제 원리적으로 불가능하다
+    // (파생 최댓값이 104다). 티어 구조에서 같은 뜻은 **가죽 4단** — 몸집이 최대로 부풀고 환경 피해를
+    // 통째로 면제받는 자리다. 보상 카드도 실재하는 것으로 바꾼다(「바위 같은 등」 = 가죽 +3).
+    desc: "가죽을 최고 단계까지 키운 종으로 승리한다.",
+    reward: { kind: "card", cardId: "lp_hide2" },
+    check: (s) => s.won && tierOf(s.genome.pips.hide) >= MAX_TIER,
   },
   {
     id: "conqueror",

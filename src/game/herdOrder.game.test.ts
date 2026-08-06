@@ -46,8 +46,11 @@ describe("무리 지시 — game 층 배선", () => {
   it("관전 중에 내린 뜻은 sim 에 닿는다", () => {
     const g = startRun("order-game-on", true);
     g.setHerdOrder(120, 200);
-    expect(g.world.herdOrder).toEqual({ x: 120, y: 200 });
-    expect(g.herdOrder).toEqual({ x: 120, y: 200 });
+    // v8: 뜻에 **무엇을 하라는 것인가**(kind)와 유효 시간(ticks)이 붙었다. 기본은 「가라」(이동)이고
+    // 이동만 무기한(ticks 0)이라, 좌표 계약은 그대로 두고 종류까지 함께 못 박는다.
+    expect(g.world.herdOrder).toMatchObject({ x: 120, y: 200, kind: "move" });
+    expect(g.herdOrder).toMatchObject({ x: 120, y: 200, kind: "move" });
+    expect(g.world.herdOrder?.ticks).toBe(0); // 「가라」는 거둘 때까지 산다
   });
 
   it("드래프트 중에는 뜻이 안 닿는다(카드 고르다 화면을 탭해도 무리가 안 움직인다)", () => {
@@ -88,14 +91,22 @@ describe("무리 지시 — game 층 배선", () => {
     expect(g.world.herdOrder).toBeNull();
   });
 
-  it("알파는 더 이상 세워지지 않는다(한 마리를 모는 개념이 없어졌다)", () => {
+  it("알파는 「지휘봉」으로 다시 세워지되, 한 마리를 직접 모는 명령은 없다", () => {
+    // ⚠ **v8 에서 뒤집힌 계약이다.** 2026-08-04 에 알파 개념을 뺐다가 **[사용자 2026-08-06]** 이
+    //   다시 세웠다 — 알파는 특별한 개체가 아니라 **옮길 수 있는 자리**이고, 명령은 그 자리에서
+    //   나가 목소리가 닿는 데까지만 간다(`world.voiceR`). 다만 손으로 한 마리를 조종하던 옛
+    //   `lead.cmd` 경로는 그대로 죽어 있다 — 조작은 무리 명령 하나뿐이다.
     const g = startRun("order-game-noalpha", true);
     for (let i = 0; i < 60; i++) {
       g.update(34);
       if (g.phase !== "watch") break;
     }
-    expect(g.world.lead.leaderId).toBe(-1);
-    expect(g.world.lead.cmd).toBeNull();
+    expect(g.world.lead.leaderId).toBeGreaterThanOrEqual(0); // 지휘봉이 서 있다
+    expect(g.world.lead.cmd).toBeNull(); // 그 자리에 개체 조종 명령은 안 들어간다
+    expect(g.world.lead.commanded).toBe(false);
+    // 목소리가 닿는 거리와 지휘 공백 길이도 game 이 매 단계 넣어 준다(sim 은 티어를 모른다).
+    expect(g.world.voiceR).toBeGreaterThan(0);
+    expect(g.world.vacuumOnLeadDeath).toBeGreaterThan(0);
   });
 
   it("지시 모드면 한 단계에 쌓이는 경험치가 leadStageXpCap 을 못 넘는다", () => {
