@@ -12,6 +12,8 @@ import type { Entity } from "@/sim/entity";
 import type { Food } from "@/sim/food";
 import type { Traits } from "@/sim/genome";
 import { TRAIT_MAX, cloneGenome, mutateGenome } from "@/sim/genome";
+import { carnivory01, grazeEfficiency, huntEfficiency } from "@/sim/diet";
+import { hasDuo } from "@/sim/tiers";
 import { createEntity } from "@/sim/entity";
 import { areFriends } from "@/sim/species";
 import { bossCanHunt, isRaidFighter, isRaidRangedFighter, raidRangedPower, dealRaidHit, bossRaidTargetFor } from "@/sim/boss";
@@ -23,73 +25,40 @@ interface Vec {
 }
 
 /**
- * 비행이 대사에 곱하는 배수(못 나는 종은 1 = 영향 없음).
+ * 비행이 유지비에 곱하는 배수(못 나는 종은 1 = 영향 없음).
  *
- * 날개가 클수록 같은 거리를 덜 지치며 난다 — 문턱(flyThreshold)에서 대가가 가장 크고, 100 에서
- * `flyMetabolismRelief` 만큼 줄어든다. 이 기울기가 없으면 날개 수치는 순전히 켜짐/꺼짐이라
- * 「튼튼한 날개」 같은 강화 카드가 아무 의미도 없다(수영·초음파·독·원거리는 모두 수치가 의미를 갖는다).
+ * ⚠ **v8 에서 뒤집었다.** 예전엔 날개가 클수록 이 대가가 **줄었다**(`flyMetabolismRelief`) — 저장소에서
+ * 유일하게 "투자할수록 싸지는" 자리였고, **[사용자 2026-08-06]** 「티어가 오를수록 대가도 확연히
+ * 벌어진다」와 정면으로 어긋났다. 이제 문턱을 넘으면 **고정 ×1.25** 이고 티어가 올라도 안 깎인다.
+ * 나는 것은 편해지는 일이 아니라 계속 비싼 일이다.
  */
 export function flyDrainMultiplier(wings: number): number {
   if (wings < SIM.flyThreshold) return 1;
-  const span = Math.max(1, TRAIT_MAX - SIM.flyThreshold);
-  const span01 = Math.min(1, Math.max(0, (wings - SIM.flyThreshold) / span));
-  return 1 + SIM.flyMetabolismCost * (1 - SIM.flyMetabolismRelief * span01);
+  return 1 + SIM.flyMetabolismCost;
 }
 
+// 식성 곡선은 **야생종 전용의 옛 규칙**이라 `sim/diet.ts` 로 옮겼다(게놈이 순환 import 없이 쓰려고).
+// 여기서 재수출해 기존 호출부·테스트를 그대로 살린다.
+export { carnivory01, grazeEfficiency, huntEfficiency };
+
 /**
- * 식성(diet) 섭취 효율 — 특화할수록 자기 먹이에서 온전히(1.0), 잡식일수록 페널티(제너럴리스트 페널티).
+ * 사냥 스퍼트 배수(질주형 육식) — 육식성이 강한 종이 먹잇감을 추격할 때 최대 속도가 오른다(치타·사자의
+ * 폭발적 추격). 추격 중(hunting)이 아니거나 초식이면 1(영향 없음).
  *
- * 곡선: 순수 초식(diet ≤ dietHuntMin)은 채집 1.0, 잡식 구간(dietHuntMin~dietGrazeMax)에서 효율이 떨어진다
- * (잡식 끝 diet 70 에서 0.7). 야생 초식종(diet 12~30)은 효율이 안 변해 통과기준 밸런스가 **잡식 기준선에만**
- * 걸린다(밸런스 이동 최소화).
- *
- * **diet 70 위(순수 육식)는 채집 효율이 완만히 0 으로 감소한다(2026-07-15 채집 절벽 완화).** 예전엔 여기가
- * `canGraze` 이진 게이트로 **뚝 끊겨**(70% → 0%) 순수 육식이 사냥 사이에 굶어 죽었다 — 이제 사냥이 주력이되
- * 풀도 조금 뜯어 연명하는 fallback 이 된다. tail 이 급해(carnGrazeFalloff) 야생 포식자(diet 85)에겐 채집
- * 이득이 거의 안 간다(생태 보존): diet 74=46% · 85=9% · 100=0%.
+ * v8: 입력이 식성 값에서 **육식성 세기(carnivory 0~1)** 로 바뀌었다. 플레이어는 이빨 티어가 이 값을
+ * 정하고(0 · 0.15 · 0.45 · 0.75 · 1.0), 야생종은 예전 식성 곡선이 정한다 — 두 세계가 같은 축을 쓴다.
  */
-export function grazeEfficiency(diet: number): number {
-  const span = SIM.dietGrazeMax - SIM.dietHuntMin;
-  const omni01 = clamp((diet - SIM.dietHuntMin) / span, 0, 1); // 0=순수 초식 … 1=채집 상한(잡식 끝)
-  const base = 1 - SIM.dietSpecializationPenalty * omni01; // diet 70 에서 0.7
-  if (diet <= SIM.dietGrazeMax) return base;
-  // 순수 육식 구간(70~100): base 에서 완만히 0 으로. over=0(diet 70)→1(diet 100).
-  const over = clamp((diet - SIM.dietGrazeMax) / Math.max(1, TRAIT_MAX - SIM.dietGrazeMax), 0, 1);
-  return base * (1 - over) ** SIM.carnGrazeFalloff;
-}
-export function huntEfficiency(diet: number): number {
-  const span = SIM.dietGrazeMax - SIM.dietHuntMin;
-  const omni01 = clamp((SIM.dietGrazeMax - diet) / span, 0, 1); // 0=순수 육식 … 1=사냥 하한(잡식 끝)
-  return 1 - SIM.dietSpecializationPenalty * omni01;
-}
-
-/**
- * 순수 육식도(0~1) — 문턱(dietGrazeMax=70)에서 0, 완전 육식(100)에서 1. 잡식/초식(diet ≤ 70)은 0.
- * "순수 육식일수록 세지는" 형질(스퍼트·큰 사냥·긴 포만)이 공유하는 스케일이라, 잡식·야생 초식은 이 값이
- * 0 이라 전부 영향 0(통과기준 밸런스 보존). 야생 포식자(diet 85)만 ≈0.5 로 절반 세기를 받는다.
- */
-export function carnivory01(diet: number): number {
-  return clamp((diet - SIM.dietGrazeMax) / Math.max(1, TRAIT_MAX - SIM.dietGrazeMax), 0, 1);
-}
-
-/**
- * 사냥 스퍼트 배수(질주형 육식) — 순수 육식이 먹잇감을 추격할 때 최대 속도가 오른다(치타·사자의 폭발적
- * 추격). 순수 육식일수록 크다(문턱 dietGrazeMax 에서 0, 완전 육식 100 에서 최대). 추격 중(hunting)이
- * 아니거나 잡식/초식이면 1(영향 없음). speed 형질이 "질주형 육식"의 사냥법이 된다 — 도망치는 초식을
- * speed 50 으론 못 잡아 순수 육식이 첫 사냥 전에 굶던 병목(known_issues)을 푼다.
- */
-export function huntSprintFactor(diet: number, hunting: boolean): number {
+export function huntSprintFactor(carnivory: number, hunting: boolean): number {
   if (!hunting) return 1;
-  return 1 + SIM.huntSprintBonus * carnivory01(diet);
+  return 1 + SIM.huntSprintBonus * carnivory;
 }
 
 /**
- * "큰 사냥" 배수 — 순수 육식의 한 번의 사냥이 주는 에너지를 키운다(문턱 70=1, 완전 육식 100=최대).
- * 잡식·초식(carnivory01=0)은 1(영향 없음). maxEnergyFor 의 높아진 상한과 짝을 이뤄, 드문 사냥으로도
- * 창고를 채워 오래 버티게 한다(긴 포만). 이게 없으면 높아진 상한이 드문 사냥으로 안 채워져 무의미하다.
+ * "큰 사냥" 배수 — 육식성이 강할수록 한 번의 사냥이 주는 에너지가 커진다.
+ * `maxEnergyFor` 의 높아진 상한과 짝이다 — 이게 없으면 높아진 상한이 드문 사냥으로 안 채워져 무의미하다.
  */
-export function gorgeFactor(diet: number): number {
-  return 1 + SIM.carnGorgeBonus * carnivory01(diet);
+export function gorgeFactor(carnivory: number): number {
+  return 1 + SIM.carnGorgeBonus * carnivory;
 }
 
 /**
@@ -109,8 +78,8 @@ export function gorgeFactor(diet: number): number {
 export function packHerdFactor(herding: number): number {
   return clamp((herding - SIM.packShareThreshold) / Math.max(1, TRAIT_MAX - SIM.packShareThreshold), 0, 1);
 }
-export function packShareGain(huntGain: number, diet: number, herding: number): number {
-  return huntGain * SIM.packSharePerMember * packHerdFactor(herding) * carnivory01(diet);
+export function packShareGain(huntGain: number, carnivory: number, herding: number): number {
+  return huntGain * SIM.packSharePerMember * packHerdFactor(herding) * carnivory;
 }
 
 /**
@@ -119,30 +88,27 @@ export function packShareGain(huntGain: number, diet: number, herding: number): 
  * 그냥 대사로 천천히 줄어 다음 사냥까지의 생존 시간이 된다 — 드물게 성공해도 크게 먹고 오래 버티는 대형
  * 포식자. 잡식(diet 50)은 carnivory01=0 이라 100 그대로 → 통과기준(잡식 기준선) 밸런스 불변.
  */
-export function maxEnergyFor(diet: number): number {
-  return SIM.maxEnergy + SIM.carnGorgeReserve * carnivory01(diet);
+export function maxEnergyFor(carnivory: number): number {
+  return SIM.maxEnergy + SIM.carnGorgeReserve * carnivory;
 }
 
 /**
- * **정점(apex)** — 값 형질이 상한(100)에 닿았는가. 닿으면 그 형질만의 특별한 능력이 켜진다.
+ * **규칙 면제** — 파생 능치가 100 에 닿았는가. v8 에서 이것은 곧 **그 범주의 최고 티어(4단)** 다.
  *
- * 왜 필요한가: 상한 근접 감쇠(cards.ts growthFalloff)로 100 은 **값비싼 목표**가 됐다. 비싸진 만큼
- * 닿았을 때 뭔가 있어야 한다(사용자: "100에 도달했을 때 뭔가 보상을 줄 거리는 없어?").
- * 예전엔 그냥 멈춤(clamp)일 뿐이라 "최고조"에 아무 의미가 없었다.
+ * 파생표(`sim/tiers.ts`)는 4단에서만 100 을 넘게 잡혀 있다: 다리 112 · 눈 112 · 이빨 100 ·
+ * 가죽 104 · 무리 번식 100. 3단은 전부 90 대 아래라 걸리지 않고, 야생종은 어느 축도 100 에 못 닿는다.
+ * 그래서 `isApex` 한 줄이 「4단 = 규칙 면제」를 **표 하나만 고치면 되는 구조**로 구현한다.
  *
- * 정점 효과는 **그 형질의 약점을 지우는** 쪽으로 준다 — 수치를 더 키우는 게 아니라 "규칙에서 벗어난다":
- *   · 속도 100 — 험한 땅도 이 걸음을 늦추지 못하고(험지 감속 면제), **아무도 따라잡지 못한다**
- *               (사냥하는 야생이 표적으로 삼는 단계에서 통째로 빠진다 · `outrunsHunters`)
- *   · 시야 100 — 어둠도 수풀도 눈을 가리지 못하고(밤·수풀 감쇠 면제), **뒤통수에도 눈이 있으며**
- *               (앞만 보는 부채꼴 규칙 면제 · `makeFovTest`) **숨은 것도 보인다**(은신 무효)
+ * **[사용자 2026-08-06]** 최고 티어의 보상은 수치가 아니라 **규칙 밖으로 나가는 것**이다:
+ *   · 다리 IV — 험한 땅이 걸음을 못 늦추고, **사냥하는 야생의 표적 목록에서 통째로 빠진다**
+ *   · 눈  IV — 밤도 수풀도 상대의 은신도 눈을 못 가린다. **다만 좁아진 시야각은 그대로다**
+ *              (자기 고유 대가를 되사지 않는다 · 사각을 메우려면 듀오 「파수꾼」을 켜야 한다)
+ *   · 이빨 IV — 어떤 가죽도 이빨을 막지 못한다(체급 차로 "안 박힘"이 안 걸린다)
+ *   · 가죽 IV — 대멸종의 환경 피해(한파·기근·역병·폭염)를 안 받는다
+ *   · 무리 IV — 어미가 치르는 출산 대가가 준다
  *
- * ⚠ 2026-08-05 에 속도·시야의 보상을 다시 설계했다. 예전 둘은 **사실상 0** 이었다(실측: 험지 면제
- * +0.15% · 수풀 면제 +0.50%) — 99 에서 이미 거의 다 얻은 것의 나머지였기 때문이다. 수치를 조금 더
- * 주는 방식으로는 절대 보상이 되지 않는다. **규칙 자체에서 벗어나는** 쪽(표적 제외 · 부채꼴 면제 ·
- * 은신 무효)이라야 "정점을 찍었다"가 화면에서 읽힌다.
- *   · 공격력 100 — 어떤 가죽도 이빨을 막지 못한다(체급 차로 "안 박힘"이 안 걸린다)
- *   · 번식력 100 — 한 배에 둘을 친다(쌍둥이)
- *   · 몸집 100 — 따로 안 준다. 이미 체급만으로 보통 포식자의 이빨이 안 박힌다(그 자체가 정점 보상).
+ * ⚠ 수치를 조금 더 주는 방식으로는 절대 보상이 안 된다(실측: 옛 정점의 험지 면제 +0.15% ·
+ *   수풀 면제 +0.50%). 99 에서 이미 거의 다 얻은 것의 나머지이기 때문이다.
  */
 export function isApex(v: number): boolean {
   return v >= TRAIT_MAX;
@@ -204,26 +170,31 @@ export interface BiteOutcome {
 }
 
 /**
- * 한 번의 물기 결과. **공격력 차 + 몸집 차**로 정한다(v7 부터).
+ * 한 번의 물기 결과. **무는 힘 − 버티는 힘 + 몸집 차**로 정한다.
  *
- * v6 까지는 attack 하나가 "무기이자 몸집"을 겸했다. v7 에서 몸집(size)을 떼어내 두 축이 됐다:
- *   · attack — 사냥 무기(이빨·발톱). 얼마나 잘 죽이는가.
- *   · size   — 체급. 얼마나 안 죽는가.
- * 유효 체급 차 = (공격력 차 + sizeBiteWeight × 몸집 차) / 100. **몸집이 둘 다 50 이면 몸집 항이 정확히
- * 0** 이라 v6 판정과 완전히 같다(밸런스 보존).
+ * v8 에서 **공격력을 무기와 방어로 쪼갰다** (**[사용자 2026-08-06]** 승인). 예전엔 상대의 `attack` 을
+ * 내 피해에서 뺐으므로 **공격력 한 칸이 무기와 방어를 동시에 올렸다** — 어떤 값어치를 매겨도 이빨이
+ * 항상 정답이 되는 구조였다. **[사용자]** "뭐가 됐든 특정 선택이 '항상 정답'이 되어서는 안 돼."
+ *   · attack(이빨)  — 무기. 얼마나 잘 죽이는가.
+ *   · defense(가죽) — 방어. 얼마나 안 죽는가.
+ *   · size          — 체급. 파생값이라 이빨·가죽을 파면 저절로 커지고, 다리·무리를 파면 작아진다.
  *
- * - 체급이 `biteIgnoreDiff` 넘게 밀리면 **아무 일도 안 일어난다** — "일정 공격력 이하의 공격은 무시".
+ * ⚠ **야생종은 `defense = attack` 으로 채운다**(`genomeFromTraits`). 그러면 이 식이 v7 과 비트 단위로
+ *   같은 수를 내므로 손으로 오래 튜닝한 야생 생태가 1도 안 흔들린다. 쪼갠 것은 플레이어 쪽 선택지이지
+ *   세계의 물리를 바꾸는 일이 아니다.
+ *
+ * - 체급이 `biteIgnoreDiff` 넘게 밀리면 **아무 일도 안 일어난다** — "일정 이하의 공격은 무시".
  *   몸집이 크면 여기에 걸려 아예 안 물린다("코끼리는 못 문다").
  * - 그 위에서는 즉사 확률이 체급 차에 비례하고, 못 죽인 물기는 기운을 깎는다("여러 번 물리다 쓰러진다").
  */
 export function biteOutcome(
   attack: number,
-  preyAttack: number,
+  preyDefense: number,
   size: number = TRAIT_MAX / 2,
   preySize: number = TRAIT_MAX / 2,
 ): BiteOutcome {
   const diff01 =
-    (attack - preyAttack) / TRAIT_MAX + (SIM.sizeBiteWeight * (size - preySize)) / TRAIT_MAX;
+    (attack - preyDefense) / TRAIT_MAX + (SIM.sizeBiteWeight * (size - preySize)) / TRAIT_MAX;
   // **정점 공격력(100)** — 어떤 가죽도 이빨을 막지 못한다. 체급 차로 "안 박힘"이 되는 규칙에서 벗어난다
   // (아무리 큰 상대라도 물 수는 있다 — 다만 확률·피해는 여전히 체급 차를 따른다).
   if (diff01 <= -SIM.biteIgnoreDiff && !isApex(attack)) {
@@ -277,10 +248,9 @@ export function leadRelation(lead: Entity, other: Entity): LeadRelation {
   }
   const me = lead.genome.traits;
   const it = other.genome.traits;
-  const threat =
-    it.diet > SIM.dietHuntMin && !biteOutcome(it.attack, me.attack, it.size, me.size).ignored;
-  const canHunt = me.diet > SIM.dietHuntMin;
-  const lands = !biteOutcome(me.attack, it.attack, me.size, it.size).ignored;
+  const threat = it.hunt > 0 && !biteOutcome(it.attack, me.defense, it.size, me.size).ignored;
+  const canHunt = me.hunt > 0;
+  const lands = !biteOutcome(me.attack, it.defense, me.size, it.size).ignored;
   return { threat, prey: canHunt && lands, tough: canHunt && !lands };
 }
 
@@ -328,6 +298,8 @@ export function herdShielded(p: Entity, world: World): boolean {
     SIM.herdShieldRadius,
     (m) => m.alive && m !== p && m.species.id === p.species.id,
   );
+  // 듀오 「원진」(가죽 III + 무리 III): 이웃이 **하나만** 있어도 벽이 선다(사향소의 원).
+  if (hasDuo(p.genome.pips, "ring") && neighbors >= 1) return true;
   return herdShieldedBy(herding, neighbors);
 }
 
@@ -341,25 +313,31 @@ function devour(e: Entity, prey: Entity, world: World): void {
   prey.alive = false;
   world.recordDeath(prey.species, "predation");
   world.emit("kill", prey.x, prey.y, e.species.isPlayer || prey.species.isPlayer); // 연출: 잡아먹힘(빨강 터짐)
-  if (e.species.isPlayer) world.roundCounts.hunts += 1; // 시험 계수: 내 종의 사냥 성공(잡은 쪽만, 잡아먹힌 쪽 아님)
+  if (e.species.isPlayer) {
+    world.roundCounts.hunts += 1; // 시험 계수: 내 종의 사냥 성공(잡은 쪽만, 잡아먹힌 쪽 아님)
+    world.playerHuntKills += 1; // 경험치 원천 ② — 사냥은 하이 리스크 하이 리턴이다(**[사용자 2026-08-06]**)
+  }
   if (preyVenom > 0) e.poison += SIM.venomOnHit * (preyVenom / TRAIT_MAX);
-  const diet = e.genome.traits.diet;
-  // 사냥 수입 = 기본 × 방어독 감쇠 × 식성 효율(육식 특화일수록 온전히, 잡식은 페널티) × 큰 사냥(순수 육식은
-  // 크게 먹는다). 순수 육식은 상한(maxEnergyFor)이 100 위로 올라 이 큰 사냥을 비축한다(긴 포만) — 잡식은
-  // gorgeFactor 1·상한 100 이라 기존과 동일.
-  const huntGain =
-    SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX) * huntEfficiency(diet) * gorgeFactor(diet);
-  e.energy = Math.min(maxEnergyFor(diet), e.energy + huntGain);
+  const et = e.genome.traits;
+  const carn = et.carnivory;
+  // 사냥 수입 = 기본 × 방어독 감쇠 × 사냥 효율(이빨 티어) × 큰 사냥(육식성이 강할수록 크게 먹는다).
+  // 육식 빌드는 상한(maxEnergyFor)이 100 위로 올라 이 큰 사냥을 비축한다(긴 포만) — 초식은 상한 100 그대로.
+  // 듀오 「큰 턱」(가죽 III + 이빨 III): 한 번 문 것으로 기력이 훨씬 많이 찬다.
+  const jaw = hasDuo(e.genome.pips, "bigjaw") ? 1.5 : 1;
+  const huntGain = SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX) * et.hunt * gorgeFactor(carn) * jaw;
+  e.energy = Math.min(maxEnergyFor(carn), e.energy + huntGain);
   // 무리사냥 먹이 나눔: 사냥감을 같은 종 무리가 함께 먹는다(늑대). 사냥감 주위 같은 종 순수 육식 무리에게
   // 카커스 몫을 지급 — 뭉친 팩은 소수의 사냥으로 다 같이 먹어 자생한다(herding 이 육식 생존 레버). 순수
   // 육식 킬에서만(carnivory01>0) 순회 비용을 치른다. 밀도가 열쇠라 흩어진 야생 포식자(4마리)는 팩을 못 이뤄
   // 나눔이 거의 없다(자연 격리). 나눔 몫은 packmate 자신의 herding·식성으로 스케일(무리 성향이 클수록 많이).
-  if (carnivory01(diet) > 0) {
+  if (carn > 0) {
+    // 듀오 「늑대의 법」(이빨 III + 무리 III): 같이 잡은 것을 나누는 몫이 커진다.
+    const law = hasDuo(e.genome.pips, "wolflaw") ? 1.6 : 1;
     world.grid.forEachMatching(prey.x, prey.y, SIM.packShareRadius, (m) => {
       if (!m.alive || m === e || m.species.id !== e.species.id) return;
-      const md = m.genome.traits.diet;
-      const share = packShareGain(huntGain, md, m.genome.traits.herding);
-      if (share > 0) m.energy = Math.min(maxEnergyFor(md), m.energy + share);
+      const mt = m.genome.traits;
+      const share = packShareGain(huntGain, mt.carnivory, mt.herding) * law;
+      if (share > 0) m.energy = Math.min(maxEnergyFor(mt.carnivory), m.energy + share);
     });
   }
   e.targetPrey = null;
@@ -401,7 +379,16 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
   if (ranged) world.emit("spit", e.x, e.y, e.species.isPlayer || prey.species.isPlayer, prey.x, prey.y);
   // 독은 방어(삼킨 쪽이 중독)라 사냥 성공과 무관 — 물기 판정은 공격력 차와 **몸집 차**를 본다.
   // 큰 먹잇감은 잘 안 죽고, 아주 크면 이빨이 아예 안 박힌다(biteIgnoreDiff).
-  const bite = biteOutcome(t.attack, prey.genome.traits.attack, t.size, prey.genome.traits.size);
+  // 듀오 「매복」(눈 III + 이빨 III): **아직 한 번도 안 다친** 상대에 넣는 첫 이빨은 피해 2배.
+  // 듀오 「덮치기」(이빨 III + 다리 III): 쫓던 표적에 넣는 물기는 거의 빗나가지 않는다.
+  const pips = e.genome.pips;
+  const bite = biteOutcome(t.attack, prey.genome.traits.defense, t.size, prey.genome.traits.size);
+  if (!bite.ignored) {
+    if (prey.woundTicks <= 0 && hasDuo(pips, "ambush")) bite.damage *= 2;
+    if (e.targetPrey === prey && hasDuo(pips, "pounce")) {
+      bite.killChance = Math.min(SIM.killChanceMax, bite.killChance + 0.25);
+    }
+  }
   // 이빨이 안 박혔다("일정 공격력 이하의 공격은 무시"). 판정상 아무 일도 안 일어나지만 **화면에는
   // 튕겨 나가는 게 보여야 한다** — 안 그러면 "왜 공격이 안 먹히는지"를 알 방법이 화면에 없다.
   // 물린 쪽 자리에서, 문 쪽을 향해(tx,ty) 튕김을 그린다. rng 미사용이라 결정론·밸런스 불변이고,
@@ -523,7 +510,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 사냥 스퍼트(질주형 육식): 순수 육식이 먹잇감을 추격 중이면 속도가 오른다 — 도망치는 초식을 speed 50
   // 으론 못 잡던 병목을 speed 형질로 푼다(치타의 폭발적 추격). 순수 육식일수록·추격 중일 때만이라 야생
   // 초식·잡식은 영향 0.
-  const sprintFactor = huntSprintFactor(t.diet, e.targetPrey !== null);
+  const sprintFactor = huntSprintFactor(t.carnivory, e.targetPrey !== null);
   // 험지(거친 땅)에선 이동이 느려진다 — speed 형질이 높을수록 덜 느려진다(속도가 지형에서 가치). 비행은 무시.
   // 몸집이 크면 느리다(sizeSpeedFactor — 몸집 50 이면 1.0 이라 영향 없음).
   // **정점 속도(100)**: 험한 땅도 이 걸음을 늦추지 못한다(험지 감속 완전 면제).
@@ -535,17 +522,23 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 이 자리에서 실제로 보는 반경. 밤·수풀 감쇠, 비행 보너스, 정점 시야(100) 면제가 전부 visionRadius
   // 안에 있다(렌더가 같은 함수로 안개 구멍을 뚫어 화면과 로직을 1:1 로 맞춘다).
   const vision = visionRadius(t, world, e.x, e.y);
-  // 큰 몸은 많이 먹는다(sizeDrainFactor — 몸집 50 이면 1.0). 대사(metabolism)가 "효율"이라면 몸집은
-  // "총량"이다: 큰 몸은 효율이 좋아도 절대 소모가 크다.
+  // **공통 유지비(청구서)** — v8 의 두 겹 대가 중 (a). 티어가 오르면 이 배수가 오른다
+  // (**[사용자 2026-08-06]** "대가는 두 겹. 공통 대사 유지비 + 범주마다 고유한 대가 하나씩").
+  // 야생종은 `upkeep = 0.5 + 대사/100` 이라 v7 과 비트 단위로 같다.
+  // 거기에 곱해지는 둘: 나는 것은 계속 비싸고(flyDrainMultiplier), 큰 몸은 많이 먹는다(sizeDrainFactor).
+  // 그리고 **다리의 고유 대가** — 최고 속도에 가까울수록 배가 고파진다(질주 뒤 지침).
+  const sprintDrain = t.sprintCost > 0 ? 1 + t.sprintCost * Math.min(1, Math.hypot(e.vx, e.vy) / Math.max(0.01, maxSpeed)) : 1;
   const drain =
-    SIM.metabolismDrain * (0.5 + metabolism01) * flyDrainMultiplier(t.wings) * sizeDrainFactor(t.size);
+    SIM.metabolismDrain * t.upkeep * flyDrainMultiplier(t.wings) * sizeDrainFactor(t.size) * sprintDrain;
+  // ⚠ 수명은 **일부러 유지비와 안 묶었다.** 여기에 유지비를 곱하면 야생 전 종의 수명이 함께 움직여
+  //   손으로 튜닝한 붐-버스트가 흔들린다. 유지비의 대가는 「굶주림」 한 축으로만 낸다(읽히는 축이 하나여야
+  //   플레이어가 무엇 때문에 죽었는지 안다).
   const maxAge = SIM.baseMaxAge;
-  // 식성 구간: 초식(<35) 식물만 / 잡식(35~70) 둘 다 / 육식(>70) 사냥 위주 + 채집 fallback(효율이 남는 한).
-  const canHunt = t.diet > SIM.dietHuntMin;
-  // 채집 게이트를 효율 기반으로(2026-07-15 채집 절벽 완화). 예전엔 `diet < 70` 이진이라 순수 육식이 채집을
-  // 아예 못 해 굶어 죽었다. 이제 채집 효율이 유의미하게 남아 있으면(diet ~86 까지) 풀도 뜯는다. 극단 육식
-  // (diet 87+, 효율 <6%)은 무의미한 채집 이동을 안 하게 여기서 끊는다 — grazeEfficiency 의 tail 과 한 쌍이다.
-  const canGraze = grazeEfficiency(t.diet) > SIM.grazeMinEff;
+  // **사냥/채집 자격은 이제 효율이 직접 말한다.** 이빨 0단은 `hunt === 0` 이라 사냥이 원리적으로 불가하고
+  // (**[사용자]** 초식 거인 경로 = 이빨에 도장을 하나도 안 넣는 것 자체가 빌드), 채집은 효율이 바닥
+  // (grazeMinEff)보다 남아 있는 한 계속된다 — 극단 육식이 무의미한 채집 이동을 하지 않게 여기서 끊는다.
+  const canHunt = t.hunt > 0;
+  const canGraze = t.graze > SIM.grazeMinEff;
   // 수영 종만 물에 들어가고(산은 못 넘되 비행은 예외), 물 전용(수영 아주 높음)은 육지에 못 올라온다.
   const canSwim = t.swimming >= SIM.swimThreshold;
   const canLand = t.swimming < SIM.aquaticOnlyThreshold;
@@ -684,8 +677,18 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   //
   // ★ chooseGoal 은 한 글자도 안 건드린다 · targetFood 는 그대로 세팅해 두고 **이동 벡터만** 덮는다.
   //   먹기는 근접(eatRadius) 판정이라 행진 중 지나치는 먹이는 자동으로 먹힌다(아래 섭취 블록).
+  //
+  // ★ **목소리가 닿는 데까지만 간다** (**[사용자 2026-08-06]** 확정). 명령은 알파에서 이 거리 안의
+  //   개체에게만 걸리고, 그 거리를 **무리 티어가 넓힌다**(260px → 4000px · 열쇠 「부름」이면 ×1.6).
+  //   그래서 무리를 안 판 종은 소수를 직접 데리고 다니는 손맛, 무리를 판 종은 대군을 한 번에 움직이는
+  //   맛이 된다 — **같은 게임에서 조작 감각이 둘로 갈린다.**
+  //   ⚠ 반경이 0 이하면(알파 없음·지휘 공백) 이 블록이 통째로 안 돈다 = 명령이 아예 안 통한다.
   const order = world.herdOrder;
-  if (order !== null && e.species.isPlayer) {
+  const inVoice =
+    world.leadVacuum <= 0 &&
+    world.voiceR > 0 &&
+    (world.lead.x - e.x) ** 2 + (world.lead.y - e.y) ** 2 <= world.voiceR * world.voiceR;
+  if (order !== null && e.species.isPlayer && inVoice) {
     const odx = order.x - e.x;
     const ody = order.y - e.y;
     const od2 = odx * odx + ody * ody;
@@ -860,8 +863,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
           SIM.foodRegrowTicks * world.foodRegrowMultiplier * SIM.mountainTreasureRegrow,
         );
       } else {
-        // 채집 수입 = 기본 × 식성 효율(초식 특화일수록 온전히, 잡식은 페널티).
-        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy * grazeEfficiency(t.diet));
+        // 채집 수입 = 기본 × 풀 효율. 이빨 티어가 낮출수록 줄고(이빨의 고유 대가), 무리 티어가 높을수록
+        // 개체당 몫이 준다(무리의 고유 대가 · "잡은 것은 함께 먹지만 풀은 나눠 뜯어 몫이 준다").
+        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy * t.graze);
         // 시대가 지날수록(foodScarcity) 먹힌 풀이 더 느리게 자란다 — 큰 무리일수록 고갈이 빨라 회복이 억제된다.
         food.regrowTimer = Math.round(SIM.foodRegrowTicks * world.foodRegrowMultiplier * world.foodScarcity);
         if (e.species.isPlayer) world.roundCounts.feeds += 1; // 시험 계수: 채집 섭취 확정(산 보물은 births 로 센다)
@@ -879,10 +883,13 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const warmthFactor = 1 - SIM.huddleWarmth * huddle;
   // 평상시 추위(빙하 바이옴 env.coldness)는 그대로, 대멸종 한파(globalCold)만 더 매섭게(클라이맥스 필터).
   const coldField = env.coldness + world.globalCold * SIM.globalColdLethality;
-  const coldDrain = SIM.coldPenalty * coldField * (1 - metabolism01) * warmthFactor;
-  // 열기 = 국소 사막·열대우림 열기(env.heat) + 대멸종 폭염(world.heat). 둘 다 고대사(고에너지) 개체에 불리.
+  // **가죽 4단(규칙 면제)** — 대멸종의 환경 피해(한파·폭염)를 안 받는다. 눈보라가 화면을 덮는데
+  // 내 무리만 색이 안 바랜다. 대신 가죽은 여기 닿기까지 21개의 도장을 먹는다.
+  const envProof = isApex(t.defense);
+  const coldDrain = envProof ? 0 : SIM.coldPenalty * coldField * (1 - metabolism01) * warmthFactor;
+  // 열기 = 국소 사막·열대우림 열기(env.heat) + 대멸종 폭염(world.heat). 두꺼운 몸일수록 더위에 약하다.
   const heatField = env.heat + world.heat;
-  const heatDrain = SIM.heatPenalty * heatField * metabolism01;
+  const heatDrain = envProof ? 0 : SIM.heatPenalty * heatField * metabolism01;
   // 독(중독) — 누적 독이 있으면 매 틱 에너지를 깎는다(지속 피해). poison 풀이 소진될 때까지.
   const poisonDmg = e.poison > 0 ? Math.min(e.poison, SIM.venomTickDamage) : 0;
   if (poisonDmg > 0) e.poison -= poisonDmg;
@@ -1000,13 +1007,17 @@ function computeFlee(
     const fr = boss.killRadius + SIM.fleeRadiusPad + boss.visionFlee * (t.vision / TRAIT_MAX);
     if (bd2 < fr * fr) return clearFleeDir(e, world, bdx, bdy, maxSpeed, canSwim, canLand, canFly);
   }
+  // 듀오 「먼저 보고 먼저 뛴다」(눈 III + 다리 III): 포식자를 1.5배 멀리서 알아챈다(가젤·영양).
+  const senseR = hasDuo(e.genome.pips, "seefirst") ? SIM.predatorSenseRange * 1.5 : SIM.predatorSenseRange;
   const predator = world.grid.nearestMatching(
     e.x,
     e.y,
-    SIM.predatorSenseRange,
+    senseR,
     (p) =>
       p.alive && p !== e && p.species.id !== e.species.id && !areFriends(e.species, p.species) &&
-      p.genome.traits.diet > SIM.dietHuntMin && p.genome.traits.attack >= t.attack &&
+      // v8: "사냥하는 종인가"는 사냥 효율이(이빨 0단은 0), "나를 위협하는가"는 **저쪽 무는 힘 vs 내 버티는
+      // 힘**이 판정한다. 야생은 `defense = attack` 이라 v7 과 같은 수가 나온다.
+      p.genome.traits.hunt > 0 && p.genome.traits.attack >= t.defense &&
       // **닿을 수 있는 포식자만 무섭다.** 먹잇감 조준(chooseGoal)과 같은 규칙 — 물 건너 물고기한테서
       // 도망칠 이유가 없다. 지금 야생 물고기는 초식이라 실제로는 안 걸리지만(프로브: 0건), 육식 수생종이
       // 생기면 곧바로 터진다. 같은 종류의 버그를 먹잇감 쪽에서 이미 겪었다(물가 머리박기).
@@ -1127,7 +1138,14 @@ function chooseGoal(
     const dx = p.x - e.x;
     const dy = p.y - e.y;
     const d2 = dx * dx + dy * dy;
-    const camoF = apexEye ? 1 : camoVisionFactor(p.genome.traits.camouflage, p.genome.traits.size);
+    // 듀오 「바위」(가죽 III + 눈 III): 가만히 있으면 돌처럼 보인다 — 숨기 열쇠가 없어도 안 띈다.
+    const still = p.vx * p.vx + p.vy * p.vy < 0.02 && hasDuo(p.genome.pips, "stone");
+    const camoF = apexEye
+      ? 1
+      : Math.min(
+          camoVisionFactor(p.genome.traits.camouflage, p.genome.traits.size),
+          still ? 0.35 : 1,
+        );
     const hidden2 = vision2 * camoF * camoF; // 반경에 곱하므로 제곱거리엔 제곱으로
     return (d2 < hidden2 && inFov(p.x, p.y)) || d2 < echo2;
   };
@@ -1290,19 +1308,32 @@ function nearestFood(
  * (단위 테스트용 export.)
  */
 export function makeFovTest(e: Entity): (tx: number, ty: number) => boolean {
-  // **정점 시야(100)** — 앞만 본다는 규칙에서 벗어난다(달리면서도 사방을 본다). 정지·저속일 때만
-  // 전방위이던 것이 늘 전방위가 되므로, 달리는 내내 놓치던 먹이·위협이 시야에 들어온다.
-  if (isApex(e.genome.traits.vision)) return () => true;
   const speed = Math.hypot(e.vx, e.vy);
   if (speed <= SIM.fovMinSpeed) return () => true;
   const fvx = e.vx / speed;
   const fvy = e.vy / speed;
+  const cos = fovCosOf(e);
   return (tx: number, ty: number): boolean => {
     const dx = tx - e.x;
     const dy = ty - e.y;
     const d = Math.hypot(dx, dy);
-    return d < 1e-6 || (fvx * dx + fvy * dy) / d >= SIM.fovHalfCos;
+    return d < 1e-6 || (fvx * dx + fvy * dy) / d >= cos;
   };
+}
+
+/**
+ * 이 개체의 시야각(부채꼴) cos — **클수록 좁다.** 눈 티어의 고유 대가가 여기 산다.
+ *
+ * ⚠ **최고 티어여도 안 넓어진다.** 예전 「정점 시야」는 부채꼴 규칙을 통째로 면제해 줬는데, 그건
+ * **[사용자 2026-08-06]** 「티어가 오를수록 대가도 확연히 벌어진다」와 정면으로 어긋난다. 눈 4단은
+ * 밤·수풀·상대 은신에서 규칙 밖으로 나가되(`isApex`), **뒤는 끝까지 캄캄하다.**
+ * 사각을 메우는 유일한 길은 듀오 「파수꾼」(눈 III + 무리 III)이다 — 무리가 사각을 나눠 진다.
+ */
+export function fovCosOf(e: Entity): number {
+  const cos = e.genome.traits.fovCos;
+  if (cos <= SIM.fovHalfCos) return cos;
+  // 파수꾼: 기본 시야각을 넘어 좁아진 몫을 절반만 진다.
+  return hasDuo(e.genome.pips, "sentinel") ? SIM.fovHalfCos + (cos - SIM.fovHalfCos) * 0.5 : cos;
 }
 
 /**

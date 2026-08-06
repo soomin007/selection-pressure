@@ -3,7 +3,7 @@
 // 식성(diet): 0=초식(식물 섭취), 1=육식(다른 종 사냥). 0.5 초과면 육식.
 
 import type { Rng } from "@/sim/rng";
-import { defaultGenome, clampGenome, TRAIT_KEYS, type Genome, type Traits } from "@/sim/genome";
+import { clampGenome, genomeFromTraits, type Genome, type Traits } from "@/sim/genome";
 import { SIM } from "@/sim/params";
 import type { Biome } from "@/sim/environment";
 
@@ -90,36 +90,29 @@ const KIN_DIET_FOLLOW = 0.3; // 식성: 플레이어 방향을 약하게만 따�
  */
 export function makeKinSpecies(id: number, rng: Rng, playerGenome: Genome): Species {
   const p = playerGenome.traits;
-  const g = defaultGenome();
   const blend = (v: number, follow: number): number => 50 + (v - 50) * follow;
-  for (const key of TRAIT_KEYS) {
-    if (key === "swimming" || key === "wings") {
-      g.traits[key] = clampTrait(blend(p[key], KIN_MOVE_FOLLOW)); // 이동 정체성(50 기준). rng 없이 → 스트림 보존
-      continue;
-    }
-    if (key === "echo" || key === "venom" || key === "ranged" || key === "camouflage") {
-      g.traits[key] = clampTrait(p[key] * KIN_MOVE_FOLLOW); // 감각·전투는 0 기준 특화. rng 없이 → 스트림 보존
-      continue;
-    }
-    if (key === "size") {
-      // 몸집은 50(중립) 기준으로 플레이어를 약하게 따른다 — 친척이니 체격이 닮는다. rng 없이 → 스트림 보존.
-      g.traits[key] = clampTrait(blend(p[key], KIN_MOVE_FOLLOW));
-      continue;
-    }
-    if (key === "diet") continue; // 아래서 따로
-    // 능력치는 플레이어와 독립(기존과 동일 50±10) → 극단 게놈에서도 밸런스 이동 없음.
-    // ⚠ herding 은 v7 에서 능력 형질이 됐지만 **여기서는 계속 rng 로 뽑는다**(50±10). 두 가지 이유:
-    //   ① 친척 무리는 "뭉쳐 다니는 종"이라는 성격을 유지해야 한다(뭉침·보온은 종 성격이지 플레이어 빌드가 아니다).
-    //   ② 여기서 herding 을 rng 없이 설정하면 **rng 소비가 한 칸 줄어 스트림이 밀린다** — 밸런스가 통째로 이동한다.
-    g.traits[key] = clampTrait(50 + rng.range(-10, 10));
+  const t: Partial<Traits> = {};
+  // ⚠ **rng 소비 여섯 · 이 순서 그대로**(v7 의 TRAIT_KEYS 순회가 실제로 뽑던 것). 순서나 개수를 바꾸면
+  //   친척 무리의 게놈이 통째로 이동한다. 능력치는 플레이어와 독립(50±10)이라, 극단 게놈으로 시작해도
+  //   친척이 같은 환경 압력을 함께 버티며 과경쟁하는 일이 없다.
+  for (const key of ["speed", "attack", "vision", "herding", "metabolism", "fertility"] as const) {
+    t[key] = clampTrait(50 + rng.range(-10, 10));
   }
-  // 식성: 플레이어 방향을 약하게 따르되 초식 우세로 당긴다. 기본 플레이어(diet 50)면 30 = 기존 친척과
-  // 동일 → 기본 밸런스 보존. 육식 프리셋이면 살짝 잡식쪽(친척다움)이되 사냥 경쟁은 억제.
-  g.traits.diet = clampTrait(blend(p.diet, KIN_DIET_FOLLOW) - 20 + rng.range(-5, 5));
+  // 식성: 플레이어 방향을 약하게 따르되 초식 우세로 당긴다. 기본 플레이어(식성 눈금 50)면 30 = 기존 친척과
+  // 동일 → 기본 밸런스 보존. 육식 갈래면 살짝 잡식쪽(친척다움)이되 사냥 경쟁은 억제.
+  t.diet = clampTrait(blend(p.diet, KIN_DIET_FOLLOW) - 20 + rng.range(-5, 5));
+  // 이동·감각 정체성만 플레이어를 닮는다("나는 무리 / 헤엄치는 무리"). rng 없이 → 스트림 보존.
+  t.swimming = clampTrait(blend(p.swimming, KIN_MOVE_FOLLOW));
+  t.wings = clampTrait(p.wings * KIN_MOVE_FOLLOW);
+  t.echo = clampTrait(p.echo * KIN_MOVE_FOLLOW);
+  t.venom = clampTrait(p.venom * KIN_MOVE_FOLLOW);
+  t.ranged = clampTrait(p.ranged * KIN_MOVE_FOLLOW);
+  t.camouflage = clampTrait(p.camouflage * KIN_MOVE_FOLLOW);
+  t.size = clampTrait(blend(p.size, KIN_MOVE_FOLLOW)); // 친척이니 체격이 닮는다
   return {
     id,
     name: "친척 무리",
-    genome: clampGenome(g),
+    genome: clampGenome(genomeFromTraits(t)),
     isPlayer: false,
     friendly: true,
     color: 0x3fbf8f, // 내 종 초록과 같은 계열의 민트 초록(같은 편 느낌 + 구분)
@@ -228,45 +221,45 @@ const clampTrait = (v: number): number => {
   return n < 0 ? 0 : n > 100 ? 100 : n;
 };
 
+/**
+ * **야생종이 rng 를 소비하는 축 일곱 · 이 순서 그대로.**
+ *
+ * ⚠ **이 배열은 밸런스 그 자체다.** 예전에는 `TRAIT_KEYS` 를 순회하면서 능력 축만 건너뛰는 방식이었는데,
+ * v8 에서 능치 목록이 열넷에서 스물둘로 늘어나 그 방식으로는 소비 횟수가 조용히 바뀐다. 소비 횟수나
+ * 순서가 한 칸만 밀려도 **야생 생태가 통째로 다른 세계가 된다**(known_issues: rng 스트림을 늘리면 분포가
+ * 통째로 이동한다). 그래서 순회 대상을 명시 목록으로 못 박았다 — v7 이 실제로 뽑던 일곱을 그 순서대로.
+ * 나머지 축(수영·날개·초음파·독·원거리·몸집·은신)은 **rng 없이** 아키타입 값 또는 기본값으로 채운다.
+ */
+const WILD_RNG_KEYS = ["speed", "attack", "vision", "herding", "metabolism", "fertility", "diet"] as const;
+
+/** 아키타입 + 흔들기 → 야생 능치 한 벌. rng 소비는 위 일곱뿐이다. */
+function wildTraits(archTraits: Partial<Traits>, rng: Rng, jitter: number): Partial<Traits> {
+  const t: Partial<Traits> = {};
+  for (const key of WILD_RNG_KEYS) {
+    t[key] = clampTrait((archTraits[key] ?? 50) + rng.range(-jitter, jitter));
+  }
+  // rng 없이 채우는 축 — 아키타입이 값을 주면 그것, 없으면 "그 능력이 없음"(수영·몸집만 중립 50).
+  t.swimming = archTraits.swimming ?? 50;
+  t.size = archTraits.size ?? 50;
+  t.echo = archTraits.echo ?? 0;
+  t.wings = archTraits.wings ?? 0;
+  t.venom = archTraits.venom ?? 0;
+  t.ranged = archTraits.ranged ?? 0;
+  t.camouflage = archTraits.camouflage ?? 0;
+  return t;
+}
+
 /** 야생종 목록 생성 (시드로 약간씩 흔들어 매 런 다르게). */
 export function generateWildSpecies(rng: Rng): Species[] {
   const out: Species[] = [];
   let id = 1;
   for (const arch of WILD_ARCHETYPES) {
-    const g = defaultGenome();
-    for (const key of TRAIT_KEYS) {
-      // swimming 은 아직 야생종에 안 쓰므로 rng 없이 기본값 유지 — 기존 rng 스트림 보존(밸런스 불변).
-      // (나중에 수생 야생종을 넣을 때 아키타입에 swimming 을 주면 된다.)
-      if (key === "swimming") {
-        g.traits.swimming = arch.traits.swimming ?? 50;
-        continue;
-      }
-      if (key === "echo") {
-        g.traits.echo = arch.traits.echo ?? 0; // 야생종 초음파 기본 없음. rng 없이 → rng 스트림 보존
-        continue;
-      }
-      if (key === "wings") {
-        g.traits.wings = arch.traits.wings ?? 0; // 야생종 날개 기본 없음(고산 종만 값). rng 없이 → rng 스트림 보존
-        continue;
-      }
-      if (key === "venom" || key === "ranged") {
-        g.traits[key] = arch.traits[key] ?? 0; // 야생종 전투 형질 기본 없음. rng 없이 → rng 스트림 보존
-        continue;
-      }
-      if (key === "size" || key === "camouflage") {
-        // v7 형질. 몸집은 중립 50, 은신은 없음 0 이 기본 — 아키타입이 값을 주면 그것을 쓴다.
-        // **rng 없이** 설정하는 게 핵심이다. 여기서 rng 를 뽑으면 스트림이 두 칸 밀려 야생 생태가
-        // 통째로 이동한다(known_issues: rng 스트림을 늘리면 분포가 통째로 이동).
-        g.traits[key] = arch.traits[key] ?? (key === "size" ? 50 : 0);
-        continue;
-      }
-      const base = arch.traits[key] ?? 50;
-      g.traits[key] = clampTrait(base + rng.range(-7, 7));
-    }
     out.push({
       id: id++,
       name: arch.name,
-      genome: clampGenome(g),
+      // `genomeFromTraits` 가 v8 의 새 축(방어·유지비·풀/사냥 효율·육식성)을 **v7 이 그 자리에서 쓰던
+      // 공식으로** 채운다 → 야생 생태가 v7 과 비트 단위로 같다. `sim/genome.ts` 주석 참조.
+      genome: clampGenome(genomeFromTraits(wildTraits(arch.traits, rng, 7))),
       isPlayer: false,
       color: arch.color,
       initialCount: arch.initialCount,
@@ -431,21 +424,10 @@ export function makeMapSpecies(rng: Rng, mapType: string): Species[] {
   const out: Species[] = [];
   let id = 700;
   for (const a of arch) {
-    const g = defaultGenome();
-    for (const key of TRAIT_KEYS) {
-      if (
-        key === "swimming" || key === "wings" || key === "echo" || key === "venom" ||
-        key === "ranged" || key === "size" || key === "camouflage" // v7 — rng 없이(스트림 보존)
-      ) {
-        g.traits[key] = a.traits[key] ?? (key === "swimming" || key === "size" ? 50 : 0);
-        continue;
-      }
-      g.traits[key] = clampTrait((a.traits[key] ?? 50) + rng.range(-6, 6));
-    }
     out.push({
       id: id++,
       name: a.name,
-      genome: clampGenome(g),
+      genome: clampGenome(genomeFromTraits(wildTraits(a.traits, rng, 6))),
       isPlayer: false,
       color: a.color,
       initialCount: a.initialCount,
@@ -473,21 +455,10 @@ export function makeBiomeSpecies(startId: number, rng: Rng): Species[] {
   const out: Species[] = [];
   let id = startId;
   for (const arch of BIOME_ARCHETYPES) {
-    const g = defaultGenome();
-    for (const key of TRAIT_KEYS) {
-      if (
-        key === "swimming" || key === "echo" || key === "wings" || key === "venom" ||
-        key === "ranged" || key === "size" || key === "camouflage" // v7 — rng 없이(스트림 보존)
-      ) {
-        g.traits[key] = arch.traits[key] ?? (key === "swimming" || key === "size" ? 50 : 0);
-        continue;
-      }
-      g.traits[key] = clampTrait((arch.traits[key] ?? 50) + rng.range(-6, 6));
-    }
     out.push({
       id: id++,
       name: arch.name,
-      genome: clampGenome(g),
+      genome: clampGenome(genomeFromTraits(wildTraits(arch.traits, rng, 6))),
       isPlayer: false,
       color: arch.color,
       initialCount: arch.initialCount,

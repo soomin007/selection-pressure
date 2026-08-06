@@ -15,7 +15,7 @@ import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
 import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeMapSpecies, mapSpeciesHabitat, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
 import type { Biome } from "@/sim/environment";
-import { stepEntity, visionRadius, leadBiteTarget } from "@/sim/behavior";
+import { stepEntity, visionRadius, leadBiteTarget, isApex } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
 import { createLeadState, type LeadState } from "@/sim/lead";
 import type { HerdOrder } from "@/sim/herdOrder";
@@ -200,6 +200,11 @@ export class World {
   tick = 0;
   /** 내 종이 먹은 먹이 누적 수 — 레벨업 경험치의 소스. rng 미사용 → 결정론·밸런스 무관(game 이 delta 로 XP). */
   playerFoodEaten = 0;
+  /**
+   * 내 종이 성공시킨 사냥 누적 수 — **[사용자 2026-08-06]** 사냥도 경험치를 준다.
+   * `roundCounts.hunts` 와 달리 라운드 경계에서 안 비워진다(누적이라야 game 이 delta 를 뽑는다).
+   */
+  playerHuntKills = 0;
   /** 이번 단계(라운드)의 내 종 사건 계수 · 시험 판정용. game 이 beginStage 마다 resetRoundCounts 로
    * 비운다. 정수 증가만 한다(rng 미사용 → 결정론·밸런스 무관). */
   readonly roundCounts: RoundCounts = { hunts: 0, feeds: 0, births: 0 };
@@ -210,6 +215,23 @@ export class World {
    * rng 미소비 · null 이면 관련 분기가 통째로 안 돌아 기존 세계와 부동소수점까지 같다.
    */
   herdOrder: HerdOrder | null = null;
+  /**
+   * **명령이 닿는 거리(px).** game 이 매 단계 무리 티어에서 계산해 넣어 준다(`herdOrder.voiceRadius`).
+   * sim 은 티어를 모른다 — 받은 숫자를 쓰기만 한다(`foodScarcity` 와 같은 구조).
+   * 0 이면 명령이 아무에게도 안 간다.
+   */
+  voiceR = 0;
+  /**
+   * **지휘 공백** — 알파가 죽고 나서 명령이 안 통하는 남은 틱 수. 무리 티어가 이 길이를 줄인다.
+   * 0 이면 정상(명령이 통한다). 매 틱 1씩 준다.
+   *
+   * ⚠ **알파의 죽음으로 불씨를 깎지 않는다.** 불씨는 다섯뿐인데 알파는 앞장서는 자리라 자주 죽고,
+   *   무엇보다 불씨는 「시험에 떨어졌다」 한 뜻만 가진 미터인데 알파 죽음을 섞으면 뜻이 흐려진다.
+   *   공백은 **손끝으로 치르는 대가**다 — 몇 초 동안 무리가 자율로 흩어진다.
+   */
+  leadVacuum = 0;
+  /** 알파가 죽었을 때 걸 지휘 공백의 길이(틱). game 이 무리 티어에서 계산해 넣어 준다. */
+  vacuumOnLeadDeath = 0;
 
   /**
    * 이번 틱에 **실제로 뜻을 향해 움직인** 내 종 개체 수. 순종의 질을 화면에 보여 주는 유일한 숫자다
@@ -518,6 +540,12 @@ export class World {
     // 죽은 이의 조준까지 물려받지 않는다(다음 틱 syncLeadStart 가 새 알파 기준으로 다시 잡는다).
     L.biteTargetId = -1;
     L.changedTick = this.tick;
+    // **지휘 공백** — 알파가 쓰러지면 몇 초 동안 명령이 안 통하고 무리가 자율로 흩어진다.
+    // **[사용자 2026-08-06]** 확정: 알파는 특별한 개체가 아니라 옮길 수 있는 「지휘봉」이고, 그것을
+    // 놓쳤을 때의 대가는 불씨가 아니라 **손끝**이 치른다. 길이는 무리 티어가 줄인다(조직이 있으면
+    // 다음 개체가 곧바로 이어받는다) — game 이 `vacuumOnLeadDeath` 로 그 값을 미리 넣어 준다.
+    this.leadVacuum = this.vacuumOnLeadDeath;
+    this.herdOrder = null; // 공백 동안은 걸려 있던 명령도 풀린다(누가 시켰는지가 없어졌다)
     if (best === null) {
       L.leaderId = -1; // 내 종 전멸 — 패배 판정은 기존 그대로(game.ts)
       return;
@@ -541,6 +569,8 @@ export class World {
       // 반격 쿨다운은 여기 한 자리에서만 줄인다(정수 카운터 · rng 미사용 → 스트림 불변).
       if (e.raidCounterCd > 0) e.raidCounterCd -= 1;
     }
+    // 지휘 공백은 여기 한 자리에서만 줄인다(정수 카운터 · rng 미사용 → 스트림 불변).
+    if (this.leadVacuum > 0) this.leadVacuum -= 1;
     // 알파의 파생값을 틱 시작에 한 번 굳힌다(알파가 없으면 첫 줄에서 빠진다 = 기존과 동일).
     this.syncLeadStart();
     if (this.boss) {
@@ -565,7 +595,12 @@ export class World {
     if (this.plagueRate > 0) {
       for (const e of this.entities) {
         if (!e.alive) continue;
-        const rate = this.plagueRate * (1 - SIM.plagueFertilityResist * (e.genome.traits.fertility / TRAIT_MAX));
+        // 가죽 4단(규칙 면제) — 환경이 통째로 바뀌어도 이 몸은 안 죽는다.
+        const et = e.genome.traits;
+        if (isApex(et.defense)) continue;
+        // 무리의 고유 대가: 붙어 살면 병이 돈다(무리 티어가 올릴수록 크게 솎인다). 야생은 plague = 1.
+        const rate =
+          this.plagueRate * (1 - SIM.plagueFertilityResist * (et.fertility / TRAIT_MAX)) * et.plague;
         if (rate > 0 && this.rng.unit() < rate) {
           e.alive = false;
           this.recordDeath(e.species, "plague");

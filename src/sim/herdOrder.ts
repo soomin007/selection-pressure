@@ -36,8 +36,122 @@
 // "내 말을 듣는다는 느낌이 전혀 안 든다"고 했다. 이 파일은 숫자가 아니라 **계약**이다 · 코드와 이
 // 주석이 갈리면 다음 세션이 주석을 근거로 또 잘못 판단한다. 조건문을 고치면 위 문장부터 고칠 것.
 
-/** 무리에게 내린 뜻. 월드 좌표 한 점. 없으면(null) 무리는 완전히 자율로 산다(= 관전). */
+import { HERD_VOICE, HERD_VACUUM_TICKS, tierOf, type Category, type Keys, type Pips } from "@/sim/tiers";
+
+/**
+ * 무리 명령의 종류. **[사용자 2026-08-06]** 조작 다양화 지시("탭으로 이동 명령 하나만 두지 말고,
+ * 꾹 눌러서 여러 개의 명령 휠에서 하나를 정하게 한다든가, 더블탭으로 회피 명령이라든가")의 구현이다.
+ *
+ * **칸은 티어로 열린다.** 못 여는 칸은 회색으로 보인다 → 다음 판의 동기가 되고, 무엇보다
+ * **성장이 숫자가 아니라 손에서 읽힌다.** 이것이 티어 구조가 조작에 닿는 자리다.
+ */
+export type OrderKind = "move" | "hunt" | "evade" | "gather" | "scan" | "brace" | "ring" | "drive";
+
+export interface OrderSpec {
+  kind: OrderKind;
+  /** 명령 휠에 뜨는 이름(두 글자~네 글자). */
+  label: string;
+  /** 이 칸을 여는 범주. `null` = 처음부터 열려 있다. */
+  cat: Category | null;
+  /** 그 범주가 이 티어 이상이어야 열린다. */
+  tier: number;
+  /** 잠겨 있을 때 보이는 한 줄 — **무엇을 하면 열리는지**를 그 자리에서 말한다(대백과에 안 미룬다). */
+  hint: string;
+  /** 무엇을 하는 명령인가(휠에 뜨는 설명 한 줄). */
+  desc: string;
+  /**
+   * 쿨타임(틱). **[사용자 2026-08-06]** 특수 명령에만 건다 — 「가라」에는 안 건다.
+   * 기본 조작이 막히면 조종 감각 자체가 죽는다.
+   */
+  cooldown: number;
+  /** 이 명령이 개체의 기력을 이만큼 쓴다(회피처럼 몸을 쥐어짜는 것). */
+  energy: number;
+}
+
+/**
+ * 명령 휠의 여덟 칸. 다섯 범주가 저마다 하나씩 열고, 마지막 하나는 듀오가 연다.
+ * ⚠ 여기 티어 조건과 `sim/tiers.ts` 의 파생표는 한 쌍이다. 한쪽만 만지면 「이 티어에서 열린다」가
+ *   화면과 실제로 갈라진다.
+ */
+export const ORDER_SPECS: readonly OrderSpec[] = [
+  {
+    kind: "move", label: "가라", cat: null, tier: 0,
+    hint: "", desc: "그 자리로 무리를 보냅니다.", cooldown: 0, energy: 0,
+  },
+  {
+    kind: "hunt", label: "잡아라", cat: "fang", tier: 1,
+    hint: "이빨 1단이 되면 열립니다", desc: "표시한 것을 함께 쫓습니다.", cooldown: 60, energy: 0,
+  },
+  {
+    kind: "evade", label: "피해라", cat: "leg", tier: 1,
+    hint: "다리 1단이 되면 열립니다", desc: "반대 방향으로 흩어져 달아납니다.", cooldown: 90, energy: 8,
+  },
+  {
+    kind: "gather", label: "모여라", cat: "herd", tier: 1,
+    hint: "무리 1단이 되면 열립니다", desc: "알파 곁으로 바짝 모입니다.", cooldown: 60, energy: 0,
+  },
+  {
+    kind: "scan", label: "살펴라", cat: "eye", tier: 2,
+    hint: "눈 2단이 되면 열립니다", desc: "잠시 멈춰 사방을 살핍니다.", cooldown: 120, energy: 0,
+  },
+  {
+    kind: "brace", label: "버텨라", cat: "hide", tier: 3,
+    hint: "가죽 3단이 되면 열립니다", desc: "그 자리에 버티고 서서 물러서지 않습니다.", cooldown: 180, energy: 4,
+  },
+  {
+    kind: "ring", label: "원진", cat: "herd", tier: 3,
+    hint: "무리 3단이 되면 열립니다", desc: "둥글게 서서 안쪽을 지킵니다.", cooldown: 180, energy: 0,
+  },
+  {
+    kind: "drive", label: "몰아라", cat: null, tier: 0,
+    hint: "듀오 「늑대의 법」이 켜지면 열립니다", desc: "먹잇감을 한쪽으로 몹니다.", cooldown: 150, energy: 0,
+  },
+];
+
+export const ORDER_SPEC_BY_KIND: ReadonlyMap<OrderKind, OrderSpec> = new Map(
+  ORDER_SPECS.map((s) => [s.kind, s]),
+);
+
+/** 이 명령 칸이 지금 열려 있는가. 「몰아라」만 듀오 조건이라 따로 본다. */
+export function orderUnlocked(spec: OrderSpec, pips: Pips): boolean {
+  if (spec.kind === "drive") return tierOf(pips.fang) >= 3 && tierOf(pips.herd) >= 3;
+  if (spec.cat === null) return true;
+  return tierOf(pips[spec.cat]) >= spec.tier;
+}
+
+/**
+ * **명령이 닿는 거리(px)** — **[사용자 2026-08-06]** 확정. 명령은 목소리가 닿는 데까지만 가고,
+ * 그 거리를 무리 티어가 넓힌다. 열쇠 「부름」이 여기 붙는다.
+ *
+ * 이 하나가 조작 감각을 둘로 가른다: 무리를 안 판 종은 **소수를 직접 데리고 다니는 손맛**,
+ * 무리를 판 종은 **대군을 한 번에 움직이는 맛**. 같은 게임에서 두 가지 조종이 나온다.
+ */
+export function voiceRadius(pips: Pips, keys: Keys): number {
+  const base = HERD_VOICE[Math.min(HERD_VOICE.length - 1, tierOf(pips.herd))] as number;
+  return keys.call ? base * 1.6 : base;
+}
+
+/**
+ * **지휘 공백** — 알파가 죽고 나서 명령이 안 통하는 틱 수. 무리 티어가 줄인다(조직이 있으면 다음
+ * 개체가 곧바로 이어받는다).
+ *
+ * ⚠ 알파의 죽음으로 **불씨를 깎지 않는다.** 불씨는 다섯뿐인데 알파는 앞장서는 자리라 자주 죽고
+ *   (한 번에 판의 20%), 무엇보다 불씨는 「시험에 떨어졌다」 한 뜻만 가진 미터인데 알파 죽음을 섞으면
+ *   그 뜻이 흐려진다.
+ */
+export function vacuumTicks(pips: Pips): number {
+  return HERD_VACUUM_TICKS[Math.min(HERD_VACUUM_TICKS.length - 1, tierOf(pips.herd))] as number;
+}
+
+/**
+ * 무리에게 내린 뜻. 월드 좌표 한 점 + 무엇을 하라는 것인가.
+ * 없으면(null) 무리는 완전히 자율로 산다(= 관전).
+ */
 export interface HerdOrder {
   readonly x: number;
   readonly y: number;
+  /** 무엇을 하라는 명령인가. 없으면 「가라」(이동) — 기존 호출부·테스트가 그대로 산다. */
+  readonly kind?: OrderKind;
+  /** 이 명령이 몇 틱 더 유효한가(특수 명령만). 0 이하 = 무기한(이동). */
+  readonly ticks?: number;
 }
