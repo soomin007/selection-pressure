@@ -19,6 +19,9 @@ docs/적자생존 UI *.html
 # 동시 세션 작업 조율판 (로컬 실시간 공유, 절대 커밋하지 않음)
 ACTIVE_WORK.md
 
+# 밸런스 실험용 임시 worktree (프로젝트 안에 두어야 node_modules 가 상위에서 해결된다)
+.wt/
+
 # 에디터/OS
 .vscode/*
 !.vscode/extensions.json
