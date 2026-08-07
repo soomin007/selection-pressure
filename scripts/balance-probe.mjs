@@ -27,6 +27,7 @@
 //   npm run probe -- encounter    내 종과 가장 가까운 포식자의 초기 거리 · 첫 감지 시각
 //   npm run probe -- steps        온보딩 진도 0~3 의 세계를 나란히(종 수·지형 비율·맵 치수·개체 수)
 //   npm run probe -- growth       한 런 전체(시대 0~4 · 정복까지) · 카드 장 수 · 정점 도달 시점 · 시대별 위험
+//   npm run probe -- econ         방울(유전자 점수) 출처 실측 — 티어 가격표의 재료(수입 쪽)
 //   npm run probe -- apex         정점 4개를 찍은 게놈의 드래프트 후보 구성(죽은 카드·몸집만 바꾸는 카드 비율)
 //   npm run probe -- scale        0~100 스케일의 산수만(시뮬 없음): 감쇠·정점 보상·형질 1의 실제 크기
 //   옵션: --seeds=6 --presets=omni,herd --boss=raider --era=0 --step=2 --cards=first|skip
@@ -164,6 +165,13 @@ if (SEEDS_WANT > SEEDS_ALL.length) {
       `  더 넓게 재려면 SEEDS_ALL 뒤에 이어 붙여라(앞 순서는 절대 건드리지 말 것).\n`,
   );
 }
+// --- 「위기 회복」의 정의 (econ 모드 · 방울 출처 하나) ---------------------------------------
+// 개체 수가 최고 기록의 CRISIS_FRAC 아래로 떨어졌다가 RECOVER_FRAC 위로 돌아오면 한 번으로 센다.
+// 값은 **아직 근거 없는 첫 모델**이다 — 여기서 나온 분포를 보고 정한다. 플래그로 바꿔 가며 재라.
+const CRISIS_FRAC = Number(opt("crisis", "0.5")); // 최고의 이 비율 아래로 떨어지면 위기
+const RECOVER_FRAC = Number(opt("recover", "0.9")); // 위기 시점 최고의 이 비율 위로 돌아오면 회복
+const CRISIS_MIN_PEAK = Number(opt("crisismin", "20")); // 최고가 이만큼은 돼야 위기를 센다(초반 출렁임 제외)
+
 const BOSS_HORDES = ["swarm", "raider", "isolation", "stalker", "hornet"];
 const WARMUP = 600; // 틱. 무리가 자리를 잡고 흩어진 뒤 (라운드 중반과 비슷한 상태)
 
@@ -816,6 +824,18 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
   const polRng = new Rng(`${seed}-${preset.key}-policy`);
   const stepMs = 1000 / SIM.stepsPerSecond;
 
+  // --- 방울(유전자 점수) 경제의 재료 · econ 모드가 읽는다 -------------------------------------
+  // 방울은 **양이 아니라 사건**에 붙이기로 했다([사용자 2026-08-07]). 여기서 그 사건들의 실제
+  // 발생 횟수를 센다. 아직 게임에 방울은 없다 — 이미 있는 사건을 세어 **가격표의 재료**를 만든다.
+  let maxPop = 0; // 한 판 최고 개체 수(개체 수 문턱 방울의 개수 = 이 값 아래 눈금의 수)
+  let inCrisis = false;
+  let crisisPeak = 0;
+  let crises = 0; // 위기 회복 횟수(바닥을 쳤다가 돌아온 횟수)
+  let overachieves = 0; // 시험 초과 달성
+  game.onTrialVerdict = (v) => {
+    if (v.overachieved) overachieves += 1;
+  };
+
   const picks = []; // 고른 카드마다 { n, era, level, name, apexHit }
   const offers = []; // 열린 드래프트의 후보 카드마다 { era, n, postApex, kind, key }
   const apexAt = {}; // 형질 → 몇 번째 카드에서 100 에 닿았나 { card, era }
@@ -924,12 +944,35 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
     const r = eraRow(game.era);
     const pop = game.world.playerPopulation;
     if (pop < r.minPop) r.minPop = pop;
+    // 최고 기록과 위기 회복. 최고가 CRISIS_MIN_PEAK 에 닿기 전에는 안 센다 — 판 시작 직후의
+    // 자연스러운 출렁임을 "위기"로 세면 숫자가 부풀어 가격표가 통째로 어긋난다.
+    if (pop > maxPop) maxPop = pop;
+    if (!inCrisis) {
+      if (maxPop >= CRISIS_MIN_PEAK && pop <= maxPop * CRISIS_FRAC) {
+        inCrisis = true;
+        crisisPeak = maxPop;
+      }
+    } else if (pop >= crisisPeak * RECOVER_FRAC) {
+      crises += 1;
+      inCrisis = false;
+    }
   }
 
   const conquered = game.result === "win" && game.isFinalEra;
+  // 보스 처치/버팀·대멸종 견딤은 런 연대기에 남는다(game.runEvents · logEvent 가 적는다).
+  const evs = game.runEvents ?? [];
+  const econ = {
+    maxPop,
+    crises,
+    overachieves,
+    bossKilled: evs.filter((e) => e.kind === "boss" && e.label.includes("처치")).length,
+    bossHeld: evs.filter((e) => e.kind === "boss" && e.label.includes("버팀")).length,
+    extinctions: evs.filter((e) => e.kind === "extinction").length,
+  };
   return {
     preset: preset.key,
     seed,
+    econ,
     conquered,
     lost: game.result === "lose",
     lostByEmbers: game.lostByEmbers,
@@ -1199,6 +1242,108 @@ async function runTiers() {
   }
 }
 
+/**
+ * econ · **방울(유전자 점수) 경제의 재료를 실측한다.**
+ *
+ * 아직 게임에 방울은 없다. 그런데 방울이 붙을 사건 넷 중 셋(보스 격퇴 · 대멸종 생존 · 시험 초과)은
+ * **이미 게임에 있다.** 그 발생 횟수를 세면 구현 전에 가격표의 재료를 얻을 수 있다.
+ * 나머지 하나(개체 수 문턱)는 최고 개체 수만 알면 눈금 수로 환산된다.
+ *
+ * ⚠ 여기서 나오는 것은 **수입(공급)** 이다. 가격표(지출)는 이 수입을 보고 정한다.
+ *   지금은 손 놓은 판 기준이라 **하한선**이다. 조종이 붙으면 개체 수가 더 커져 수입도 는다.
+ */
+async function runEcon() {
+  const policy = opt("policy", "best");
+  // ⚠ **첫 판에 실제로 고를 수 있는 갈래만** 태운다(runGrowth 와 같은 처리). 잠긴 갈래를 넣으면
+  //   playFullRun 의 `want >= 0 ? want : 0` 이 첫 카드로 떨어져 **전부 같은 판을 돌린다** — 처음엔
+  //   이 걸르개가 없어서 네 갈래가 소수점까지 똑같은 수치로 나왔고, 그게 평균을 오염시켰다.
+  setSavedProgress(0, 0);
+  const unlockProbe = new Game(MOBILE.width, MOBILE.height);
+  unlockProbe.fixedSeed = "unlock-probe";
+  unlockProbe.beginRun();
+  const openIds = new Set(unlockProbe.draftCards.map((c) => c.id));
+  const presets = pickPresets().filter((p) => openIds.has(`preset_${p.key}`));
+  console.log(
+    `# econ · 방울 출처 실측 · 카드 정책 ${policy} · 시드 ${SEEDS.length} · 지시 없음(손 놓음 = 수입 하한선)`,
+  );
+  console.log(`# 갈래 ${presets.length}종(첫 판에 열려 있는 것만 · 잠긴 갈래를 태우면 같은 판이 중복된다)`);
+  console.log(
+    `# 위기 회복 정의: 최고의 ${CRISIS_FRAC} 아래로 떨어졌다가 그 최고의 ${RECOVER_FRAC} 위로 복귀 ` +
+      `(최고 ${CRISIS_MIN_PEAK} 이상일 때만 셈 · --crisis= --recover= --crismin= 로 바꿈)`,
+  );
+
+  const all = [];
+  for (const p of presets) for (const seed of SEEDS) all.push(playFullRun(p, seed, policy, 0, 0, false));
+
+  const avg = (rs, f) => rs.reduce((a, r) => a + f(r), 0) / Math.max(1, rs.length);
+  console.log(`\n# 표1 · 판당 사건 횟수 (프리셋별 평균)`);
+  console.log(["프리셋".padEnd(18), "최고개체", "위기회복", "보스처치", "보스버팀", "대멸종생존", "시험초과", "도달시대"].join("\t"));
+  for (const p of presets) {
+    const rs = all.filter((r) => r.preset === p.key);
+    console.log(
+      [
+        p.name.padEnd(18),
+        fmt(avg(rs, (r) => r.econ.maxPop), 1),
+        fmt(avg(rs, (r) => r.econ.crises), 2),
+        fmt(avg(rs, (r) => r.econ.bossKilled), 2),
+        fmt(avg(rs, (r) => r.econ.bossHeld), 2),
+        fmt(avg(rs, (r) => r.econ.extinctions), 2),
+        fmt(avg(rs, (r) => r.econ.overachieves), 2),
+        fmt(avg(rs, (r) => r.finalEra + 1), 1),
+      ].join("\t"),
+    );
+  }
+
+  // 개체 수 문턱 사다리 — 최고 개체 수를 방울 개수로 환산한다. 시작값 S, 배수 R 의 등비 눈금.
+  // 「한 마리마다 하나」가 왜 안 되는지가 여기서 숫자로 보인다(선형 눈금과 나란히 찍는다).
+  const ladders = [
+    { label: "S20 ×1.5", rungs: (m) => countRungs(m, 20, 1.5) },
+    { label: "S20 ×1.35", rungs: (m) => countRungs(m, 20, 1.35) },
+    { label: "S25 ×1.5", rungs: (m) => countRungs(m, 25, 1.5) },
+    { label: "S30 ×1.6", rungs: (m) => countRungs(m, 30, 1.6) },
+    { label: "선형 +10", rungs: (m) => Math.max(0, Math.floor((m - 20) / 10) + 1) },
+    { label: "한 마리마다(참고)", rungs: (m) => Math.max(0, m - 15) },
+  ];
+  console.log(`\n# 표2 · 개체 수 문턱 사다리별 · 판당 방울 개수 (전 프리셋 평균 · 최고개체 ${fmt(avg(all, (r) => r.econ.maxPop), 1)})`);
+  console.log(["사다리".padEnd(18), "방울(평균)", "최소", "최대", "눈금"].join("\t"));
+  for (const L of ladders) {
+    const ns = all.map((r) => L.rungs(r.econ.maxPop));
+    const rungList = [];
+    let v = 20;
+    if (L.label.startsWith("S")) {
+      const S = Number(L.label.slice(1, 3));
+      const R = Number(L.label.split("×")[1]);
+      v = S;
+      while (v <= 400 && rungList.length < 9) {
+        rungList.push(Math.round(v));
+        v *= R;
+      }
+    }
+    console.log(
+      [
+        L.label.padEnd(18),
+        fmt(ns.reduce((a, b) => a + b, 0) / ns.length, 2),
+        String(Math.min(...ns)),
+        String(Math.max(...ns)),
+        rungList.length ? rungList.join("·") : "-",
+      ].join("\t"),
+    );
+  }
+
+  // 사건 방울(개체 수 제외)의 합 — 여기에 문턱 방울을 더한 것이 총수입이다.
+  const evAvg = avg(all, (r) => r.econ.crises + r.econ.bossKilled + r.econ.extinctions + r.econ.overachieves);
+  console.log(`\n# 사건 방울(위기회복+보스처치+대멸종생존+시험초과) 판당 평균 ${fmt(evAvg, 2)}개`);
+  console.log(`# 총수입 = 위 + 표2 에서 고른 사다리의 방울. 티어 한 단계 값을 정할 때 이 합을 쓴다.`);
+  console.log(`# ⚠ 손 놓은 판이라 **하한선**이다. 조종이 붙으면 개체 수와 격퇴가 함께 는다.`);
+}
+
+/** 시작값 S, 배수 R 의 등비 눈금 중 max 이하인 것의 개수. */
+function countRungs(max, S, R) {
+  let n = 0;
+  for (let v = S; v <= max; v *= R) n += 1;
+  return n;
+}
+
 async function runSens() {
   const key = opt("trait", "speed");
   const values = opt("values", "50,51,60,61,70,80,90,100").split(",").map(Number);
@@ -1303,6 +1448,7 @@ try {
   else if (MODE === "apex") await runApex();
   else if (MODE === "scale") await runScale();
   else if (MODE === "tiers") await runTiers();
+  else if (MODE === "econ") await runEcon();
   else if (MODE === "sens") await runSens();
   else {
     console.error(
