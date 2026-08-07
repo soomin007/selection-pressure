@@ -183,6 +183,20 @@ async function boot(): Promise<void> {
     },
   );
 
+  // **막 오른 티어 승급 연출을 몰아서 내보낸다**(반드시 카드창이 닫힌 뒤에 부를 것 — 떠 있는 동안
+  // 띄우면 카드 뒤에 가려 아무도 못 본다). 여럿이면 차례로 보여준다(하나만 띄우고 나머지를 삼키면
+  // 무엇이 열렸는지 영영 모른다). 내보낸 수를 돌려준다.
+  const playTierUps = (): number => {
+    const ups = game.takeNewTiers();
+    ups.forEach((up, k) => {
+      const line = tierLine(up.cat, up.tier);
+      const title = `${CATEGORY_LABELS[up.cat]} ${TIER_ROMAN[up.tier]}`;
+      if (k === 0) moment.apex(title, up.tier, line.gain);
+      else window.setTimeout(() => moment.apex(title, up.tier, line.gain), k * 2300);
+    });
+    return ups.length;
+  };
+
   const draft = createDraftPanel(app.renderer, app.canvas, {
     onPick: (i) => {
       // 고르기 **전** 게놈을 떠 둔다 — 아래에서 "무엇이 얼마나 세졌는지"를 실제 차이로 말하기 위해서다.
@@ -193,21 +207,17 @@ async function boot(): Promise<void> {
       refreshBuild(); // 방금 고른 카드를 빌드 패널(설계도=최신 게놈)에 반영
       // 세대별 형질: 텍스처를 새로 만들지 않는다 — 이미 태어난 개체는 옛 모습을 유지하고, 이후 태어난
       // 개체가 새 게놈 서명으로 lazy 생성된다(worldView.textureFor). refreshSpecies(전체 교체)는 안 부른다.
+      // ⚠ **한 라운드에 레벨이 두 번 오르면** pickCard 가 동기로 다음 카드창을 연다(onDraft → draft.show).
+      // 그때 아래 hide() 를 부르면 방금 연 카드창이 사라지고, phase 는 "draft" 라 시뮬이 영영 멈춘다
+      // (2026-08-07 실기 제보: 카드를 고르자 월드로 돌아왔는데 다들 멈춰 있었다). 창이 다시 열렸으면
+      // 그대로 두고, 승급 연출은 마지막 장까지 고른 뒤 몰아서 내보낸다(newTiers 큐가 모아 둔다).
+      if (game.phase === "draft") return;
       draft.hide();
-      // **정점(만렙) 도달** — 반드시 draft.hide() 뒤에. 드래프트 화면이 떠 있는 동안 띄우면 카드 뒤에
-      // 가려 아무도 못 본다. 한 카드가 둘을 동시에 올리는 일은 드물지만, 생기면 차례로 보여준다
-      // (하나만 띄우고 나머지를 삼키면 무엇이 열렸는지 영영 모른다).
-      const ups = game.takeNewTiers();
-      ups.forEach((up, k) => {
-        const line = tierLine(up.cat, up.tier);
-        const title = `${CATEGORY_LABELS[up.cat]} ${TIER_ROMAN[up.tier]}`;
-        if (k === 0) moment.apex(title, up.tier, line.gain);
-        else window.setTimeout(() => moment.apex(title, up.tier, line.gain), k * 2300);
-      });
+      const upCount = playTierUps();
       // **고른 직후 무엇이 얼마나 세졌는가.** 티어가 안 오른 판에서도 도장은 쌓였으니, 다음 문턱까지
       // 몇 개 남았는지를 그 자리에서 말한다("저축했다"가 손해로 읽히지 않게).
       // 승급 연출이 나가는 판에는 생략한다 — 그쪽이 훨씬 큰 소식이고, 겹치면 서로 덮는다.
-      if (ups.length === 0) {
+      if (upCount === 0) {
         const line = savingLine(beforePips, game.pipsNow);
         if (line) highlights.flash(line, 0x8fd14f);
       }
@@ -216,7 +226,12 @@ async function boot(): Promise<void> {
       // 스킵 — 형질 대신 새끼 몇 마리를 낳고 관전으로 복귀.
       game.skipDraft();
       refreshBuild();
+      // 연속 레벨업의 다음 카드창이 이미 떠 있으면 그대로 둔다(onPick 과 같은 유령 드래프트 함정).
+      if (game.phase === "draft") return;
       draft.hide();
+      // 스킵으로 사슬이 끝나도 앞 장들이 올린 승급 연출은 여기서 내보낸다 — 안 그러면 큐가 다음
+      // 드래프트까지 새어 엉뚱한 순간에 터진다(프리셋 알림 누수와 같은 함정).
+      playTierUps();
     },
     onReroll: () => {
       // 다시 뽑기 — 카드를 새로 뽑는다(game.reroll 이 onDraft 를 다시 불러 패널이 새 카드로 갱신된다).
@@ -431,7 +446,13 @@ async function boot(): Promise<void> {
   let camZoom = 1;
   // 사용자 줌 배율 — 자동/수동 시점 무관하게 모든 모드의 목표 줌에 곱한다(버튼·휠·핀치로 조절).
   let userZoom = 1;
-  const clampUserZoom = (z: number): number => Math.max(0.5, Math.min(3.5, z));
+  // 줌아웃 하한은 절대값이 아니라 **맵이 화면을 꽉 채우는 배율**이다 — 그보다 물러나면 맵 바깥의
+  // 검은 빈 공간이 보인다(2026-08-07 실기 제보: 첫 시대는 맵=화면 크기라 줌아웃이 아예 안 되는 게
+  // 맞는데 검은 바깥으로 빠졌다). 맵은 시대마다 커지므로(mapScale) 하한은 저절로 내려가고,
+  // 0.5 는 거대한 후반 맵에서도 너무 멀어지지 않게 막는 바닥이다.
+  const minUserZoom = (): number =>
+    Math.max(0.5, layout.width / game.width, layout.height / game.height);
+  const clampUserZoom = (z: number): number => Math.max(minUserZoom(), Math.min(3.5, z));
   // 무리 지시 표시 상태 · onWorldChanged 가 game.start()에서 곧장 불려 이 값들을 초기화하므로,
   // 그 콜백보다 반드시 먼저 선언한다(아래쪽에 두면 TDZ ReferenceError 로 부팅이 죽는다 — known_issues).
   let leadZeroMs = 0; // 아무도 안 따라오는 상태가 이어진 시간(ms)
@@ -1162,8 +1183,11 @@ async function boot(): Promise<void> {
       ty = focus.y;
       tz = 1;
     }
-    // 사용자 줌을 모든 모드의 목표 줌에 곱한다(자동/수동 무관). 최종 줌은 안전 범위로 클램프.
-    tz = Math.max(0.5, Math.min(5, tz * userZoom));
+    // 사용자 줌을 모든 모드의 목표 줌에 곱한다(자동/수동 무관). 하한은 맵 크기 기준(minUserZoom) —
+    // 시대가 바뀌거나 화면이 회전하면 저장된 userZoom 이 새 하한 밑일 수 있어 매 프레임 다시 조인다
+    // (예: 큰 맵에서 0.5 까지 물러난 채 새 런의 작은 첫 맵으로 오면 검은 바깥이 그대로 보인다).
+    userZoom = clampUserZoom(userZoom);
+    tz = Math.max(minUserZoom(), Math.min(5, tz * userZoom));
     // 지시 모드에선 카메라가 무리에 바짝 붙는다(기본 3.5 는 시상수 286ms 라 화면이 물먹은 느낌이 된다).
     const ease = leadMode ? LEAD_CAM_EASE : 3.5;
     const k = Math.min(1, (dtMS / 1000) * ease); // 시간 기반 이징
