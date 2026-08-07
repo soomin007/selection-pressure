@@ -1112,16 +1112,46 @@ async function runScale() {
  * **티어 사다리 검산** — 시뮬 없이 산수만. 카드 예산 띠(12~22장) 전체에서 사다리가 성립하는지 본다.
  * 실제 90장 풀에 실제 희귀도 가중치를 걸고 「3장 중 1장」을 몬테카를로로 굴린다.
  */
+/**
+ * 한 판에 **시대 보상 드래프트가 몇 번** 도는가.
+ *
+ * ⚠ 이걸 0 으로 두고 사다리 3·8·14·20 을 계산했던 것이 2026-08-07 에 드러난 함정이다. 실제 게임은
+ *   시대를 넘을 때마다 **3장 전부가 강화된** 드래프트를 한 번 준다(`game.ts` 의 `beginEraReward`).
+ *   배수는 시대마다 커진다(×2.0 · 2.7 · 3.6 · 4.9). 아주 귀함(+5) 한 장이 ×2 면 **한 장에 +10칸**이라
+ *   문턱 두 개를 통째로 넘는다 — 모델에 없으면 사다리가 실제보다 한참 느리게 계산된다.
+ *
+ * 기본값은 48시드 growth 실측(2026-08-07 · 도달 시대 2.3~2.7 에 카드 9.6~12.1장)에 맞춰 잡았다:
+ * 12장이면 시대 전환 1회 · 17장이면 2회 · 22장이면 3회. `--eras=N` 으로 덮어쓸 수 있다.
+ * **추정값이므로 머리글에 그대로 찍는다** — 가정이 숨으면 시드 절단 때와 같은 사고가 난다.
+ */
+const ERAS_OPT = opt("eras", "");
+function eraRewardCount(cards) {
+  const n = ERAS_OPT === "" ? Math.round((cards - 7) / 5) : Number(ERAS_OPT);
+  return Math.max(0, Math.min(4, n));
+}
+
 async function runTiers() {
   const N = Number(opt("runs", "4000"));
   const budgets = [12, 17, 22];
   const policies = ["focus", "two", "best", "random"];
   console.log("# 티어 사다리 검산 · 실제 90장 풀 · " + N + "런 · 3장 중 1장");
   console.log("# 문턱 " + TIER_STEPS.join("·") + " · 프리셋 시작 도장 7(주 4 + 부 3)");
+  console.log(
+    "# 시대 보상(3장 전부 강화) " +
+      budgets.map((b) => `${b}장→${eraRewardCount(b)}회`).join(" · ") +
+      " · 배수 " +
+      [1, 2, 3, 4].map((k) => eraRewardBoostAt(k).toFixed(1)).join("·") +
+      (ERAS_OPT === "" ? " (--eras=N 으로 덮어씀)" : " (--eras 지정됨)"),
+  );
   console.log(["정책", "카드", "최고범주", "2위", "T4", "T3이상", "듀오", "저축픽%"].join("	"));
   for (const policy of policies) {
     for (const cards of budgets) {
       const acc = { top: 0, second: 0, t4: 0, t3: 0, duo: 0, dead: 0, picks: 0 };
+      // 시대 보상이 도는 자리 · 판 전체에 고르게 놓는다(실제로는 시대 길이에 따라 흩어지지만,
+      // 이 모델은 "몇 번 도는가"만 맞추면 된다 — 위치를 정밀하게 하려면 growth 모드를 써야 한다).
+      const rewardAt = new Map();
+      const eras = eraRewardCount(cards);
+      for (let k = 1; k <= eras; k++) rewardAt.set(Math.round((k * cards) / (eras + 1)), k);
       for (let run = 0; run < N; run++) {
         const rng = new Rng("tiers-" + policy + "-" + cards + "-" + run);
         const g = defaultGenome();
@@ -1129,8 +1159,11 @@ async function runTiers() {
         const picked = new Map();
         for (let i = 0; i < cards; i++) {
           const level = 1 + Math.floor((i / cards) * 12);
-          const cs = drawCards(rng, 3, (c) => cardPrereqMet(c, g) && !cardRedundant(c, g), level, picked, undefined, g.pips);
+          let cs = drawCards(rng, 3, (c) => cardPrereqMet(c, g) && !cardRedundant(c, g), level, picked, undefined, g.pips);
           if (cs.length === 0) break;
+          // 시대 보상이면 **3장 전부** 강화된 사본으로 바꾼다(game.ts 와 같은 처리).
+          const rk = rewardAt.get(i);
+          if (rk !== undefined) cs = cs.map((c) => boostCard(c, eraRewardBoostAt(rk)));
           const ranked = [...CATEGORIES].sort((a, b) => g.pips[b] - g.pips[a]);
           let idx = 0;
           if (policy === "focus") {

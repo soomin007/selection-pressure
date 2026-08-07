@@ -798,7 +798,11 @@ export class Game {
     this.rerollsLeft -= 1;
     this.rerollsUsed += 1;
     const drawn = this.drawDraft();
-    this.draftCards = this.eraReward ? drawn.map((c) => boostCard(c, GAME.eraRewardBoost)) : drawn;
+    // ⚠ 배수는 `eraRewardBoostAt(era)` 여야 한다. 고정 `GAME.eraRewardBoost`(=2) 를 쓰면 시대 5 의
+    //   보상을 다시 뽑는 순간 ×4.9 가 ×2 로 떨어져, **리롤이 조용한 벌칙**이 된다(2026-08-07 발견).
+    this.draftCards = this.eraReward
+      ? drawn.map((c) => boostCard(c, eraRewardBoostAt(this.era)))
+      : drawn;
     this.onDraft?.(this.draftCards, this.preview);
   }
 

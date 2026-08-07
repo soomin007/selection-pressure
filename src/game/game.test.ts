@@ -285,6 +285,51 @@ describe("다시 뽑기(리롤)", () => {
     }
   });
 
+  it("시대 보상을 다시 뽑아도 강화 배수가 안 떨어진다", () => {
+    // 배수는 시대마다 커지는데(×2.0 · 2.7 · 3.6 · 4.9) 리롤 경로만 고정 ×2 를 썼다.
+    // 그래서 후반 시대에 다시 뽑으면 배수가 조용히 반토막 나는 **숨은 벌칙**이었다(2026-08-07).
+    // 시대 2 진입은 배수가 마침 2 라 버그가 안 드러난다 → 그 위 시대까지 올라가서 잰다.
+    const store: Record<string, string> = {
+      selpress_meta_v1: JSON.stringify({ metaXp: 300, conquered: false }),
+    };
+    const gl = globalThis as unknown as { localStorage?: Storage | undefined };
+    const prev = gl.localStorage;
+    gl.localStorage = memStorage(store);
+    try {
+      /** 카드 이름에 박히는 "(강화 ×N)" 의 N 들. 열쇠 카드는 도장이 없어 이름이 안 바뀐다 → 빠진다. */
+      const muls = (g: Game): number[] =>
+        g.draftCards
+          .map((c) => /강화 ×(\d+)/.exec(c.name)?.[1])
+          .filter((m): m is string => m !== undefined)
+          .map(Number);
+
+      let checked = 0;
+      for (let s = 0; s < 20 && checked === 0; s++) {
+        const g = startRun(`era-reroll-boost-${s}`);
+        for (let e = 0; e < 3; e++) {
+          g.result = "win"; // 승리 직후 상태를 흉내(continueToNextEra 의 가드)
+          g.continueToNextEra();
+          let guard = 0;
+          if (e < 2) {
+            while (g.phase === "draft" && guard++ < 12) g.pickCard(0);
+          }
+        }
+        if (g.phase !== "draft" || !g.canReroll) continue;
+        const want = Math.round(eraRewardBoostAt(g.era));
+        expect(want).toBeGreaterThan(2); // 이 시대에선 고정 ×2 와 값이 갈린다(안 갈리면 시험이 무의미)
+        expect(muls(g).every((m) => m === want)).toBe(true);
+        g.reroll();
+        const after = muls(g);
+        if (after.length === 0) continue; // 셋 다 열쇠 카드였다 → 다음 시드로
+        expect(after.every((m) => m === want)).toBe(true);
+        checked += 1;
+      }
+      expect(checked).toBeGreaterThan(0); // 실제로 검사한 판이 있었다(빈 통과 방지)
+    } finally {
+      gl.localStorage = prev;
+    }
+  });
+
   it("해금 전이면 다시 뽑기가 잠겨 있다(canReroll=false)", () => {
     // 저장소를 비워 두면(런 0회) 리롤이 잠긴다 — 기본 상태.
     const gl = globalThis as unknown as { localStorage?: Storage | undefined };
