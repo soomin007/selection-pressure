@@ -1069,6 +1069,7 @@ export class Game {
     this.xp = 0;
     this.xpToNext = GAME.xpBase;
     this.lastFoodEaten = 0;
+    this.lastHuntKills = 0; // 새 World 는 사냥 누계도 0 부터다 — 둘은 언제나 짝으로 되돌린다
     this.stageXp = 0;
     this.draftRng = new Rng(`${this.currentSeed}-draft`);
     this.stageRng = new Rng(`${this.currentSeed}-stage`);
@@ -1605,9 +1606,15 @@ export class Game {
     this.extRng = new Rng(`${this.currentSeed}-ext`);
     this.bossQueue = shuffle(BOSS_TYPES, this.stageRng);
     this.extinctionQueue = shuffle(EXTINCTION_TYPES, this.extRng);
-    // 게놈은 유지(성장 이어짐). xp/레벨도 유지하되, 새 월드라 먹이 누적 기준값만 리셋.
+    // 게놈은 유지(성장 이어짐). xp/레벨도 유지하되, 새 월드라 먹이·사냥 누적 기준값을 함께 리셋.
     this.world = this.makeWorld();
     this.lastFoodEaten = 0;
+    // ⚠ 사냥 누계도 **반드시 함께** 되돌린다. 이 한 줄이 빠져 있어서, 새 World 의 사냥 수 0 에서
+    //   직전 시대의 누계를 빼는 (0 − 누계) × huntXp 가 전환 직후 경험치에 그대로 들어갔다.
+    //   실측(2026-08-07 · 프로브 계측): 전환마다 −85 ~ −2410. 사냥을 많이 한 판일수록 크게 깎여
+    //   레벨 막대가 시대 초반 내내 멈춰 있었고, 진행률이 음수(%)로 표시되기도 했다.
+    //   막고 나니 런당 카드가 다섯 프리셋 전부 +1.0~+1.5 늘었다(48시드).
+    this.lastHuntKills = 0;
     this.stageXp = 0;
     // 성장한 종의 색·형질을 새 초기 무리에 반영(프리셋 선택 때와 같은 처리).
     if (this.playerColor !== undefined) this.world.playerSpecies.color = this.playerColor;

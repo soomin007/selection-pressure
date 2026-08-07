@@ -390,6 +390,37 @@ describe("시대를 넘어도 게놈이 이어진다", () => {
   });
 });
 
+describe("시대를 넘겨도 쌓은 경험치를 게워 내지 않는다", () => {
+  // 새 시대는 새 World 라 먹이·사냥 누계가 0 부터 다시 센다. game 이 들고 있는 「직전 값」을 함께
+  // 되돌리지 않으면 전환 뒤 첫 계산이 (0 − 직전 시대 누계) 를 경험치에 그대로 더한다.
+  // 사냥 축이 실제로 그랬다(2026-08-07 계측: 전환마다 −85 ~ −2410 · 카드 1장 이상 손해).
+  function crossEra(g: Game): void {
+    g.result = "win"; // 승리 직후 상태를 흉내(continueToNextEra 의 가드)
+    g.continueToNextEra();
+    let guard = 0;
+    while (g.phase === "draft" && guard++ < 12) g.pickCard(0); // 시대 보상 + 밀린 레벨업 카드
+    g.update(34); // 새 월드의 첫 경험치 계산 — 빚이 남아 있으면 여기서 음수가 들어온다
+  }
+
+  it("직전 시대에 사냥을 많이 했어도 시대를 넘긴 뒤 경험치가 음수가 되지 않는다", () => {
+    const g = startRun("xp-carry-hunt");
+    g.world.playerHuntKills = 500; // 직전 시대에 사냥을 많이 한 상태
+    for (let i = 0; i < 5; i++) g.update(34); // 그 사냥이 경험치·레벨로 반영된다
+    const levelBefore = g.level;
+    crossEra(g);
+    expect(g.xp).toBeGreaterThanOrEqual(0);
+    expect(g.level).toBeGreaterThanOrEqual(levelBefore); // 쌓은 레벨을 되돌려 뱉지 않는다
+  });
+
+  it("풀만 뜯은 종도 시대를 넘긴 뒤 경험치가 음수가 되지 않는다(채집 축 회귀 방지)", () => {
+    const g = startRun("xp-carry-food");
+    g.world.playerFoodEaten = 400;
+    for (let i = 0; i < 5; i++) g.update(34);
+    crossEra(g);
+    expect(g.xp).toBeGreaterThanOrEqual(0);
+  });
+});
+
 describe("런 통계(도전 과제 판정의 재료)", () => {
   it("개체 수 최고치를 기록한다", () => {
     const g = startRun("peak");
