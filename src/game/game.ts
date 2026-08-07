@@ -447,11 +447,12 @@ export class Game {
   pickCard(index: number): void {
     if (this.phase !== "draft") return;
     const card = this.draftCards[index];
-    // 정점(100)에 **막 닿는 순간**을 잡으려면 적용 전 값을 떠 둬야 한다. 정점은 수치가 커지는 게 아니라
-    // 그 형질의 약점이 사라지는 보상이라, 도달 순간에 알려 주지 않으면 화면에서 영영 안 읽힌다.
     // **티어가 오르는 순간**을 잡으려면 적용 전 티어를 떠 둬야 한다. 티어 승급은 수치가 커지는 게 아니라
     // 규칙이 통째로 켜지는 사건이라, 그 자리에서 알려 주지 않으면 화면에서 영영 안 읽힌다.
-    const beforeTiers = tiersOf(this.genome.pips);
+    // ⚠ 시작 프리셋(firstChoice)은 큐에 **안 넣는다** — 시작 상태는 승급 사건이 아니다. 게다가 프리셋
+    // 화면(presetPanel)은 이 큐를 안 꺼내 가서, 넣으면 알림이 첫 레벨업까지 새었다가 그때 몰아서 터진다
+    // (2026-08-07 실기 제보: 잡식 프리셋의 이빨·눈 승급이 다리 카드의 알림과 함께 3개로 보였다).
+    const beforeTiers = this.firstChoice ? null : tiersOf(this.genome.pips);
     if (card) {
       if (card.ember) {
         // 불씨 회복 카드 — 도장은 0. 「이번엔 자라지 않습니다」가 카드에 그대로 적혀 있다.
@@ -462,9 +463,11 @@ export class Game {
       }
       this.pickedCardNames.push(card.name);
       this.pickedCardIds.push(card.id);
-      const afterTiers = tiersOf(this.genome.pips);
-      for (const cat of CATEGORIES) {
-        if (afterTiers[cat] > beforeTiers[cat]) this.newTiers.push({ cat, tier: afterTiers[cat] });
+      if (beforeTiers) {
+        const afterTiers = tiersOf(this.genome.pips);
+        for (const cat of CATEGORIES) {
+          if (afterTiers[cat] > beforeTiers[cat]) this.newTiers.push({ cat, tier: afterTiers[cat] });
+        }
       }
     }
     if (this.eraReward) {
