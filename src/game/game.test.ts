@@ -5,6 +5,7 @@ import { Game, type RunHistory, type Trial, type TrialKind, type TrialVerdict } 
 import {
   GAME,
   ONBOARDING_MAX_STEP,
+  SCHEDULE,
   eraDifficulty,
   eraScarcity,
   eraPredatorPressure,
@@ -19,12 +20,13 @@ import {
   stepUsesDrawnMap,
   stepWorldOptions,
 } from "@/game/config";
-import { MAP_SCALE } from "@/config";
+import { MAP_SCALE, MOBILE } from "@/config";
 import { createBoss } from "@/sim/boss";
 import { CARD_POOL, cardCategories, cardPips, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
 import { Rng } from "@/sim/rng";
 import { MUTABLE_TRAITS, genomeFromPips, refreshDerived } from "@/sim/genome";
 import {
+  CATEGORIES,
   CATEGORY_LABELS,
   KEY_NAMES,
   MAX_KEYS,
@@ -35,8 +37,11 @@ import {
   keyCount,
   nearestTierGoal,
   pipsForTier,
+  pipsToNext,
   tierOf,
+  type Category,
 } from "@/sim/tiers";
+import { GENE_AWARD, milestonesCrossed, type GeneReason } from "@/sim/gene";
 import { SIM } from "@/sim/params";
 import { biteOutcome } from "@/sim/behavior";
 import { debugSetMetaLevel } from "@/game/meta";
@@ -1134,5 +1139,352 @@ describe("시대 전환 연출이 말하는 것 (nextEraBriefing)", () => {
     // 마지막 계단은 관문 기준을 판정과 같은 함수에서 읽어 말한다(화면이 자기 식으로 다시 계산하면
     // 그 순간 두 진실이 생긴다 — 이 저장소가 이미 두 번 겪은 사고다).
     expect(late).toContain(`${bossPassNeeded(GAME.eraCap - 1)}마리`);
+  });
+});
+
+// ─────────────────────────────── 방울(유전자 점수) ───────────────────────────────
+//
+// **[사용자 2026-08-07]** 확정 설계: 방울은 필드에 나타나고 무리가 **밟고 지나가야** 주워진다.
+// 모은 방울로 범주의 티어를 산다. 값은 「양」이 아니라 **사건**에 붙는다.
+//
+// 이 절이 지키는 것 셋:
+//   ① 다섯 사건이 실제로 방울을 떨어뜨린다(사건이 났는데 아무것도 안 나오면 화면이 거짓말한다).
+//   ② 시대를 넘어도 지갑이 깎이지 않는다 · 오늘(2026-08-07) 사냥 누계에서 실제로 터진 버그의 형제다.
+//      새 World 는 geneCollected 를 0 부터 다시 세므로, game 이 든 직전값을 짝으로 안 되돌리면
+//      전환마다 (0 − 직전 누계) 가 지갑에서 빠진다.
+//   ③ 가격이 화면 표시(= tiers.ts 의 문턱)와 정확히 같다. 「3개 필요」라 적었으면 3개가 나가고 3개가 든다.
+describe("방울(유전자 점수) · 사건에서 나와 티어로 바뀐다", () => {
+  /** private 접근(기존 GamePriv 패턴). 지갑을 직접 채우는 것은 sim 의 줍기 판정이 아직 없기 때문이다. */
+  type GenePriv = {
+    stageIndex: number;
+    currentTrial: Trial | null;
+    finishStage(a: boolean, b?: boolean): void;
+    geneBankValue: number;
+    awardGenes(reason: GeneReason, times?: number): void;
+  };
+
+  /** 지갑에 방울 n 개를 넣는다(필드에 떨어뜨렸다 밟는 과정을 생략한 것 · 구매 계약만 재는 자리). */
+  function fundGenes(g: Game, n: number): void {
+    (g as unknown as GenePriv).geneBankValue = n;
+  }
+
+  const dropsOf = (g: Game, reason: string): { amount: number; taken: boolean }[] =>
+    g.world.geneDrops.filter((d) => d.reason === reason);
+
+  it("보스를 격퇴하면 방울이 떨어진다 · 버티기만 해서는 안 떨어진다", () => {
+    const g = startRun("gene-boss");
+    const priv = g as unknown as GenePriv;
+    priv.stageIndex = 2; // SCHEDULE[2] = "boss"
+    expect(g.world.geneDrops).toHaveLength(0); // 판이 시작만 된 상태에는 아무것도 없다
+    priv.finishStage(true, true); // 격퇴
+    const got = dropsOf(g, "boss");
+    expect(got).toHaveLength(1);
+    expect(got[0]?.amount).toBe(GENE_AWARD.boss);
+    expect(got[0]?.taken).toBe(false); // 필드에 놓인다 · 지갑에 바로 들어가지 않는다
+
+    // 버틴 것은 격퇴가 아니다. 이 차이가 「위협을 잡으러 가는 이유」다.
+    const h = startRun("gene-boss-hold");
+    const hp = h as unknown as GenePriv;
+    hp.stageIndex = 2;
+    hp.finishStage(true, false);
+    expect(dropsOf(h, "boss")).toHaveLength(0);
+  });
+
+  it("대멸종을 견디면 방울이 떨어지고, 세계가 바뀌어도 사라지지 않는다", () => {
+    const g = startRun("gene-ext");
+    const priv = g as unknown as GenePriv;
+    priv.stageIndex = SCHEDULE.length - 1; // 대멸종은 시대의 마지막 단계다
+    priv.finishStage(true);
+    expect(g.result).toBe("win");
+    const got = dropsOf(g, "extinction");
+    expect(got).toHaveLength(1);
+    expect(got[0]?.amount).toBe(GENE_AWARD.extinction);
+
+    // 대멸종 방울은 이 세계에서는 주울 시간이 0 이다(바로 시대가 끝난다). 그대로 두면 화면이
+    // 「대멸종 생존 · 방울 +4」라 말해 놓고 한 개도 안 주는 거짓말이 된다.
+    g.continueToNextEra();
+    const carried = dropsOf(g, "extinction");
+    expect(carried, "새 세계로 안 옮겨져 영영 못 줍는 방울이 됐다").toHaveLength(1);
+    expect(carried[0]?.amount).toBe(GENE_AWARD.extinction);
+    expect(carried[0]?.taken).toBe(false);
+  });
+
+  it("시험을 크게 넘겨 합격하면 방울이 떨어진다", () => {
+    const g = startRun("gene-trial");
+    const priv = g as unknown as GenePriv;
+    priv.stageIndex = 0; // SCHEDULE[0] = "forage"
+    priv.currentTrial = { kind: "hunt", target: 1, label: "사냥 1회" };
+    g.world.roundCounts.hunts = 99; // 목표의 1.8배를 한참 넘겼다
+    let overachieved = false;
+    g.onTrialVerdict = (v) => {
+      overachieved = v.overachieved;
+    };
+    priv.finishStage(true);
+    expect(overachieved).toBe(true);
+    const got = dropsOf(g, "trialExceed");
+    expect(got).toHaveLength(1);
+    expect(got[0]?.amount).toBe(GENE_AWARD.trialExceed);
+  });
+
+  it("개체 수 최고 기록이 사다리 눈금을 넘을 때마다 방울이 떨어진다", () => {
+    const g = startRun("gene-milestone");
+    expect(g.peakPopulation).toBe(0);
+    g.world.spawnPlayerBrood(30); // 첫 눈금(20) 위로 한 번에 올린다 · 대량 번식과 같은 상황
+    g.update(34);
+    const got = dropsOf(g, "milestone");
+    // 눈금 수는 최고 기록 하나로 정해진다(지금 개체 수가 아니라) · 두 곳에 규칙이 있으면 반드시 어긋난다.
+    expect(got).toHaveLength(milestonesCrossed(0, g.peakPopulation));
+    expect(got.length).toBeGreaterThan(0);
+    for (const d of got) expect(d.amount).toBe(GENE_AWARD.milestone);
+
+    // 최고 기록은 단조 증가라 같은 눈금을 두 번 주지 않는다.
+    const n = got.length;
+    for (let i = 0; i < 5; i++) g.update(34);
+    expect(dropsOf(g, "milestone")).toHaveLength(milestonesCrossed(0, g.peakPopulation));
+    expect(dropsOf(g, "milestone").length).toBeGreaterThanOrEqual(n);
+  });
+
+  it("위기 회복 · 절반 아래로 무너졌다 돌아온 순간에만 떨어진다", () => {
+    const g = startRun("gene-recovery");
+    g.world.spawnPlayerBrood(30); // 최고 기록을 문턱(geneCrisisMinPeak) 위로 올린다
+    g.update(34);
+    const peak = g.peakPopulation;
+    expect(peak).toBeGreaterThanOrEqual(GAME.geneCrisisMinPeak);
+    expect(dropsOf(g, "recovery")).toHaveLength(0); // 아직 무너진 적이 없다
+
+    // 무리가 절반 아래로 무너진다(굶주림·잡아먹힘으로 실제로 일어나는 일).
+    let kept = 0;
+    const keep = Math.floor(peak * 0.4);
+    for (const e of g.world.entities) {
+      if (!e.species.isPlayer) continue;
+      kept += 1;
+      if (kept > keep) e.alive = false;
+    }
+    g.update(34); // 죽은 것이 걸러지며 개체 수가 실제로 떨어진다
+    expect(g.world.playerPopulation).toBeLessThan(peak * 0.5);
+    expect(dropsOf(g, "recovery"), "가라앉기만 했는데 회복 방울이 나왔다").toHaveLength(0);
+
+    // 다시 최고의 90% 위로 돌아온다.
+    g.world.spawnPlayerBrood(peak);
+    g.update(34);
+    const got = dropsOf(g, "recovery");
+    expect(got).toHaveLength(1);
+    expect(got[0]?.amount).toBe(GENE_AWARD.recovery);
+
+    // 돌아온 뒤에 계속 돌려도 다시 주지 않는다(한 번 무너져야 한 번 회복이다).
+    for (let i = 0; i < 5; i++) g.update(34);
+    expect(dropsOf(g, "recovery")).toHaveLength(1);
+  });
+
+  it("시대를 넘겨도 지갑이 깎이지 않는다 (오늘 터진 사냥 누계 버그의 형제)", () => {
+    const g = startRun("gene-bank-era");
+    g.world.geneCollected = 30; // 이 시대에 방울 30개를 주웠다
+    g.update(34);
+    const banked = g.geneBank;
+    expect(banked).toBeGreaterThanOrEqual(30);
+
+    g.result = "win"; // 승리 직후 상태를 흉내(continueToNextEra 의 가드)
+    g.continueToNextEra();
+    let guard = 0;
+    while (g.phase === "draft" && guard++ < 12) g.pickCard(0);
+    // 새 World 의 geneCollected 는 0 이다. 직전값을 짝으로 안 되돌렸으면 여기서 −30 이 들어온다.
+    for (let i = 0; i < 5; i++) g.update(34);
+    expect(g.geneBank).toBeGreaterThanOrEqual(banked); // 시대가 바뀌었다고 모은 것이 사라지지 않는다
+    expect(g.geneBank).toBeGreaterThanOrEqual(0);
+  });
+
+  // ⚠ 바로 위 테스트만으로는 **이 버그를 못 잡는다.** `harvestGenes` 가 `if (got > last)` 로 막고 있어
+  //   지갑은 애초에 줄어들 수 없다 · "안 깎였다"는 짝을 되돌리든 말든 늘 참이다(항진명제).
+  //   짝을 놓쳤을 때 실제로 나는 증상은 **깎이는 것이 아니라 「새 시대의 수입이 통째로 증발하는 것」**이다
+  //   (직전값이 30 으로 남아, 새 World 의 누계가 30 을 넘을 때까지 delta 가 하나도 안 잡힌다).
+  //   실측: `continueToNextEra` 의 `lastGeneCollected = 0` 한 줄을 지우면 런당 주운 방울의 절반 가까이가
+  //   지갑에 안 들어온다(9프리셋 × 4시드 · 예: 42개를 주웠는데 지갑 17). 그런데 game.test.ts 73개가
+  //   전부 통과했다. 그래서 「수입이 들어오는가」를 직접 재는 이 테스트를 짝으로 둔다.
+  it("시대를 넘긴 뒤에도 새 시대에 주운 방울이 지갑에 들어온다 (직전값 짝의 진짜 증상)", () => {
+    const g = startRun("gene-bank-era-income");
+    g.world.geneCollected = 30; // 옛 시대에 30개를 벌었다
+    g.update(34);
+    const banked = g.geneBank;
+    expect(banked).toBeGreaterThanOrEqual(30);
+
+    g.result = "win"; // 승리 직후 상태를 흉내(continueToNextEra 의 가드)
+    g.continueToNextEra();
+    let guard = 0;
+    while (g.phase === "draft" && guard++ < 12) g.pickCard(0);
+
+    // 이월된 방울을 치워 잡음을 없앤다(이 테스트가 재는 것은 「delta 가 잡히는가」 하나다).
+    g.world.geneDrops.length = 0;
+    g.world.geneCollected = 5; // 새 시대에서 5개를 주웠다
+    g.update(34);
+    expect(g.geneBank, "새 시대의 수입이 지갑에 안 들어왔다(직전값 짝을 놓쳤다)").toBe(banked + 5);
+  });
+
+  it("새 런은 빈 지갑으로 시작한다", () => {
+    const g = startRun("gene-bank-reset");
+    fundGenes(g, 17);
+    expect(g.geneBank).toBe(17);
+    g.beginRun();
+    expect(g.geneBank).toBe(0);
+  });
+
+  it("가격은 tiers.ts 의 문턱 그대로다 · 새 가격표를 만들지 않는다", () => {
+    const g = startRun("gene-price");
+    for (const cat of CATEGORIES) expect(g.tierCost(cat)).toBe(pipsToNext(g.pipsNow[cat]));
+  });
+
+  it("방울이 모자라면 못 사고 상태를 하나도 안 바꾼다", () => {
+    const g = startRun("gene-buy-poor");
+    const cat: Category = "leg";
+    const cost = g.tierCost(cat);
+    expect(cost).toBeGreaterThan(0);
+    fundGenes(g, cost - 1); // 딱 하나 모자라다
+    const pipsBefore = { ...g.pipsNow };
+    const traitsBefore = { ...g.genome.traits };
+    expect(g.canBuyTier(cat)).toBe(false);
+    expect(g.buyTier(cat)).toBe(false);
+    expect(g.pipsNow).toEqual(pipsBefore);
+    expect(g.genome.traits).toEqual(traitsBefore);
+    expect(g.geneBank).toBe(cost - 1); // 실패는 지갑도 안 건드린다
+    expect(g.takeNewTiers()).toEqual([]); // 승급 알림도 안 샌다
+  });
+
+  it("사면 도장이 정확히 다음 문턱에 닿고 방울이 정확히 그 비용만큼 준다", () => {
+    const g = startRun("gene-buy");
+    const cat: Category = "leg";
+    const cost = g.tierCost(cat);
+    const tierBefore = tierOf(g.pipsNow[cat]);
+    fundGenes(g, cost + 4); // 거스름돈이 남는지도 본다
+    expect(g.canBuyTier(cat)).toBe(true);
+    expect(g.buyTier(cat)).toBe(true);
+    expect(g.pipsNow[cat]).toBe(pipsForTier(tierBefore + 1)); // 더도 덜도 아닌 정확히 문턱
+    expect(tierOf(g.pipsNow[cat])).toBe(tierBefore + 1);
+    expect(g.geneBank).toBe(4); // 화면에 적힌 비용만큼만 나갔다
+
+    // 살아 있는 무리도 함께 올라야 한다 · 종 기준선만 올리면 화면은 올랐는데 뛰는 몸은 그대로다.
+    let checked = 0;
+    for (const e of g.world.entities) {
+      if (!e.species.isPlayer || !e.alive) continue;
+      checked += 1;
+      expect(e.genome.pips[cat]).toBe(g.pipsNow[cat]);
+    }
+    expect(checked).toBeGreaterThan(0);
+
+    // 승급 알림이 큐에 실린다(화면이 「무엇이 켜졌나」를 말하는 근거).
+    expect(g.takeNewTiers()).toEqual([{ cat, tier: tierBefore + 1 }]);
+  });
+
+  it("최고 티어에서는 더 살 수 없다", () => {
+    const g = startRun("gene-buy-max");
+    const cat: Category = "leg";
+    fundGenes(g, 999);
+    let guard = 0;
+    while (g.buyTier(cat) && guard++ < 10) {
+      // 4단에 닿을 때까지 산다
+    }
+    expect(tierOf(g.pipsNow[cat])).toBe(MAX_TIER);
+    expect(g.pipsNow[cat]).toBe(pipsForTier(MAX_TIER));
+    expect(g.tierCost(cat)).toBe(0); // 더 살 것이 없다
+    expect(g.canBuyTier(cat)).toBe(false);
+    const bankBefore = g.geneBank;
+    expect(g.buyTier(cat)).toBe(false);
+    expect(g.geneBank).toBe(bankBefore);
+  });
+
+  it("0단에서 4단까지 드는 방울은 TIER_STEPS 의 끝(20)과 같다", () => {
+    // 「한 범주를 0에서 4단까지 = 총 20개」가 확정 설계다. 두 곳에 적히면 조용히 어긋나므로
+    // 실제 구매를 돌려 합계를 잰다(가격표가 tiers.ts 하나라는 것의 증거).
+    const g = startRun("gene-total");
+    const cat: Category = "leg";
+    const startPips = g.pipsNow[cat];
+    fundGenes(g, 999);
+    let spent = 0;
+    let guard = 0;
+    while (g.canBuyTier(cat) && guard++ < 10) {
+      spent += g.tierCost(cat);
+      g.buyTier(cat);
+    }
+    expect(startPips + spent).toBe(TIER_STEPS[TIER_STEPS.length - 1]);
+    expect(g.geneBank).toBe(999 - spent);
+  });
+
+  // ── sim 의 줍기와 game 의 지갑을 잇는 이음매 ────────────────────────────────────
+  // 이 두 층은 따로따로 테스트돼 있었다(sim 은 `world.geneCollected` 가 는다 · game 은 지갑을 직접
+  // 채워 구매 계약을 잰다). **그 사이가 안 이어져 있어도 양쪽 테스트는 다 통과한다** · 실제로
+  // 오늘(2026-08-07) 사냥 누계가 정확히 그 이음매에서 끊겨 시대마다 경험치를 깎았다. 여기서 못 박는다.
+  it("필드의 방울을 밟으면 그만큼 지갑이 는다 (sim 줍기 → game 지갑)", () => {
+    const g = startRun("gene-pickup");
+    expect(g.geneBank).toBe(0);
+    // **개체 발밑**에 놓는다 · 이번에 재는 것은 「자리 고르기」가 아니라 「주운 것이 지갑까지
+    // 오는가」다. 무게중심에 놓으면 무리가 흩어져 있을 때 아무도 줍기 반경(16) 안에 없을 수 있다.
+    const me = g.world.entities.find((e) => e.species.isPlayer && e.alive);
+    if (me === undefined) throw new Error("내 종이 하나도 없다 · 이 테스트가 아무것도 안 재고 있다");
+    g.world.spawnGeneDrop(me.x, me.y, 3, "boss");
+    let guard = 0;
+    while (g.geneBank === 0 && guard++ < 40) g.update(34);
+    expect(g.world.geneCollected, "sim 이 아예 안 주웠다").toBe(3);
+    expect(g.geneBank, "sim 은 주웠는데 지갑에 안 들어왔다(이음매 끊김)").toBe(3);
+
+    // 한 번 주운 방울이 매 틱 다시 세이지 않는다(누계 delta 를 잘못 뜨면 지갑이 무한히 는다).
+    for (let i = 0; i < 20; i++) g.update(34);
+    expect(g.geneBank).toBe(3);
+  });
+
+  /**
+   * **이 기능 전체가 서 있는 한 문장**: 방울이 뜬 곳을 탭하면 무리가 가서 줍는다.
+   *
+   * 왜 따로 재는가: 「가라」 명령은 개체가 목표 64px 안(`ORDER.releaseRadius`)에 들면 놓아 주는데
+   * 줍기 반경은 16px(`GENE_PICK_RADIUS`)이다. **명령만으로는 자동으로 안 겹친다** · 무리가 그 원
+   * 안에서 돌아다니다 누군가 스치는 것에 기댄다. 두 상수 중 하나만 움직여도 「보냈는데 안 주워진다」가
+   * 되고, 그건 이 설계에서 가장 나쁜 고장이다(사람은 명령이 안 먹혔다고 읽는다).
+   *
+   * 세계는 **실제 플레이 치수**로 만든다(startRun 의 240x400 은 고리가 통째로 클램프돼 거리가 거짓이
+   * 된다). 실측(2026-08-07 · 6시드)은 0.2~11.8초였고, 예산 900틱(약 30초)은 한 라운드 안이라는 뜻이다.
+   */
+  it("방울로 보낸 무리가 실제로 줍는다 (명령 반경 64 vs 줍기 반경 16)", () => {
+    for (const seed of ["reach-a", "reach-b", "reach-c"]) {
+      const g = new Game(MOBILE.width, MOBILE.height);
+      g.fixedSeed = seed;
+      g.beginRun();
+      let guard = 0;
+      while (g.phase === "draft" && guard++ < 12) g.pickCard(0);
+      for (let i = 0; i < 30; i++) g.update(34); // 무리가 자리를 잡는다
+
+      const before = g.world.geneCollected;
+      expect(g.world.spawnGeneDropNear(3, "boss"), `${seed}: 방울을 아예 못 놨다`).toBe(true);
+      const drop = g.world.geneDrops[g.world.geneDrops.length - 1];
+      expect(drop).toBeDefined();
+      if (drop === undefined) return;
+      expect(g.setHerdOrder(drop.x, drop.y, "move"), `${seed}: 그 자리로 보내는 명령이 거부됐다`).toBe(true);
+
+      let t = 0;
+      while (g.world.geneCollected === before && t < 900) {
+        g.update(34);
+        t++;
+      }
+      expect(t, `${seed}: 보냈는데 30초 안에 아무도 못 주웠다`).toBeLessThan(900);
+      expect(g.geneBank).toBe(3); // 주운 만큼 정확히 지갑으로
+    }
+  }, 60000);
+
+  it("방울은 무리가 갈 수 있는 곳에만 떨어진다 (못 줍는 방울을 약속하지 않는다)", () => {
+    // 화면이 「보스 격퇴 · 방울 +3」이라 말해 놓고 그 방울이 건너편 섬이면 그건 거짓말이다.
+    // 자리 고르기는 sim(`spawnGeneDropNear`)이 맡고 game 은 부르기만 한다 · 그 계약을 여기서 잰다.
+    const g = startRun("gene-reach");
+    const terr = g.world.terrain;
+    const tr = g.genome.traits;
+    const canSwim = tr.swimming >= SIM.swimThreshold;
+    const canLand = tr.swimming < SIM.aquaticOnlyThreshold;
+    const canFly = tr.wings >= SIM.flyThreshold;
+    const priv = g as unknown as GenePriv;
+    for (let i = 0; i < 15; i++) priv.awardGenes("boss");
+    expect(g.world.geneDrops.length).toBeGreaterThan(10);
+    const c = g.world.playerCentroid();
+    for (const d of g.world.geneDrops) {
+      expect(terr.isPassable(d.x, d.y, canSwim, canLand, canFly), "못 가는 지형에 떨어졌다").toBe(true);
+      const sameTile = terr.tileIndex(c.x, c.y) === terr.tileIndex(d.x, d.y);
+      const seen = terr.lineOfSight(c.x, c.y, d.x, d.y, canSwim, canLand, canFly);
+      const walk = sameTile || seen || terr.findPath(c.x, c.y, d.x, d.y, canSwim, canLand, canFly).length > 0;
+      expect(walk, "걸어서 닿을 수 없는 자리에 떨어졌다").toBe(true);
+    }
   });
 });

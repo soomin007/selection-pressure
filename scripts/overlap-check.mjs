@@ -66,6 +66,35 @@ async function toWatch(page) {
 }
 
 /**
+ * **HUD(목표 줄)가 실제로 눌리는 상태까지** 데려간다 · `toWatch` 뒤 HUD 를 클릭하는 장면의 앞부분.
+ *
+ * 왜 필요한가(2026-08-08 에 실제로 터진 것): `toWatch` 는 4.2초를 고정으로 기다릴 뿐이라, 그 사이에
+ * **레벨업 드래프트가 열려 있으면** 목표 줄이 통째로 숨는다(`goalBar.update({ visible: phase === "watch" })`).
+ * 그러면 `.goal-gene` 클릭이 30초를 기다리다 죽고 "화면까지 못 갔다"로 실패한다. 런 시드가 무작위라
+ * (`Math.random` 기반 randomSeed) **어느 장면이 걸리는지가 실행마다 바뀐다** — 한 번 초록불이 떠도
+ * 다음 실행에서 다른 장면이 빨간불이 된다. 고정 대기로는 못 막는 종류의 실패다.
+ *
+ * 열려 있는 드래프트는 골라서 닫는다(게임이 실제로 진행되는 길 그대로). 카드를 고르면 다음 단계가
+ * 시작되며 목표 줄이 돌아온다.
+ */
+async function toHud(page) {
+  await toWatch(page);
+  for (let i = 0; i < 6; i += 1) {
+    if (await page.locator(".goal-root").first().isVisible()) return;
+    const draft = page.locator(".draft-root");
+    if (await draft.isVisible()) {
+      await page.locator(".draft-card").first().click();
+      await page.waitForTimeout(1200);
+      continue;
+    }
+    await page.waitForTimeout(600);
+  }
+  if (!(await page.locator(".goal-root").first().isVisible())) {
+    throw new Error("목표 줄(HUD)이 안 떴다 — 드래프트가 안 닫혔거나 런이 끝났다");
+  }
+}
+
+/**
  * 캔버스 글씨가 실제로 떠오를 때까지 기다린다. 상단 플래시는 **단일 슬롯 + 우선순위 대기열**이라
  * (highlights.ts) 첫 안내가 끝나야 다음 문구가 나온다 → 고정 대기로는 "안 떠 있는 순간"을 재게 된다.
  * 여기서 헛되이 통과시키면 검사기가 또 초록불 거짓말을 한다.
@@ -263,6 +292,32 @@ const SCREENS = {
       await page.waitForTimeout(700);
     },
   },
+  // ── 티어 구입 화면(방울) ─────────────────────────────────────────────────────────
+  // 문은 목표 줄 알약 옆의 방울 카운터(.goal-gene)다 · 새 제스처를 안 만들고 기존 HUD 손잡이를 쓴다.
+  // **두 상태를 다 잰다.** 지갑이 0 이면 다섯 줄이 전부 「모자람」이라 켜진 테두리·방울 색 값 칩·
+  // 구입 성공 줄을 영영 안 재게 된다(화면의 절반만 검사하는 셈) → 채운 장면을 따로 둔다.
+  genePanel: {
+    label: "티어 올리기(방울 0개 · 전부 모자람)",
+    async go(page) {
+      await toHud(page); // 드래프트가 떠 있으면 목표 줄이 숨어 클릭이 죽는다(toHud 주석 참고)
+      await page.locator(".goal-gene").first().click();
+      await page.locator(".gene-root.open").waitFor({ state: "visible", timeout: 5000 });
+      await page.waitForTimeout(400);
+    },
+  },
+  genePanelRich: {
+    label: "티어 올리기(방울 넉넉 · 살 수 있는 줄)",
+    async go(page) {
+      await toHud(page); // 드래프트가 떠 있으면 목표 줄이 숨어 클릭이 죽는다(toHud 주석 참고)
+      await page.evaluate(() => window.__ov.genes(60)); // 다섯 줄이 전부 살 수 있는 상태
+      await page.locator(".goal-gene").first().click();
+      await page.locator(".gene-root.open").waitFor({ state: "visible", timeout: 5000 });
+      await page.waitForTimeout(400);
+      // 살 수 있는 줄이 실제로 켜졌는지 확인 · 안 켜졌으면 이 장면은 아무것도 안 재고 있는 것이다.
+      const ok = await page.locator(".gene-price.ok").count();
+      if (ok === 0) throw new Error("살 수 있는 줄이 하나도 없다(지갑 주입이 안 먹었다)");
+    },
+  },
   levelUp: {
     label: "런 종료 진척도(해금 여러 개 + 도전 과제)",
     async go(page) {
@@ -317,6 +372,13 @@ const SCENES = [
   // 런 종료 진척도 · 내용이 길면 위(제목)가 잘렸다. 짧은 화면이 최악.
   { screen: "levelUp", viewport: PHONE_SHORT, query: "?ovhook" },
   { screen: "levelUp", viewport: PHONE_NARROW, query: "?ovhook" },
+  // 티어 구입 화면 · 다섯 줄이 세로로 자라는 전체화면 오버레이라 **짧은 폰이 최악**이다(패널이 화면보다
+  // 길어지는 유일한 폭 · 위가 잘리는 사고가 여기서만 난다). 좁은 폰은 값 칩과 이름이 부딪히는 폭이다.
+  { screen: "genePanel", viewport: PHONE_NARROW, query: "?ovhook" },
+  { screen: "genePanel", viewport: PHONE_SHORT, query: "?ovhook" },
+  { screen: "genePanelRich", viewport: PHONE_NARROW, query: "?ovhook" },
+  { screen: "genePanelRich", viewport: PHONE_SHORT, query: "?ovhook" },
+  { screen: "genePanelRich", viewport: DESKTOP, query: "?ovhook" },
 ];
 
 mkdirSync(OUT, { recursive: true });

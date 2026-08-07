@@ -64,4 +64,22 @@ export const COLORS = {
   text: 0xe6e6e6,
   textDim: 0x8a93a6,
   accent: 0x6cc24a,
+  /**
+   * 방울(유전자 점수) 색 · **필드에 떨어지는 방울과 HUD 카운터·구입 화면이 같은 값을 읽는다.**
+   *
+   * 왜 여기 있나: 색이 갈라지면 「저 반짝이는 것을 밟았더니 이 숫자가 올랐다」가 안 이어진다.
+   * 그런데 필드는 Pixi(숫자 0x…), HUD 는 CSS(문자열 #…)라 서로 import 할 수 없다
+   * (`render/` 가 `ui/` 를 부르거나 그 반대가 되면 안 된다). 양쪽이 다 부를 수 있는 자리가 여기다.
+   *  · `src/render/geneDrops.ts` 가 그대로 쓰고,
+   *  · `src/ui/genePanel.ts` 가 `#RRGGBB` 로 바꿔 `--gene` 토큰에 싣는다(goalBar 도 그 토큰을 쓴다).
+   *
+   * 금빛인 이유: 먹이 점이 초록·청록·황록·주황·흰빛·하늘색이라 **청록은 이미 먹이 색**이다.
+   * HUD 의 경험치 막대는 `--lime` 이라 금빛과 안 부딪힌다.
+   */
+  gene: 0xffc233,
 } as const;
+
+/** 0xRRGGBB → "#rrggbb" · CSS 로 넘길 때만 쓴다(Pixi 는 숫자를 그대로 받는다). */
+export function hexColor(v: number): string {
+  return `#${v.toString(16).padStart(6, "0")}`;
+}

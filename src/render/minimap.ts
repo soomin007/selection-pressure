@@ -3,6 +3,7 @@
 // sim 상태를 "읽기"만 한다. 화면 좌표(app.stage 직속) — 카메라 변환 밖이라 항상 모서리 고정.
 
 import { Container, Graphics, Rectangle, type FederatedPointerEvent } from "pixi.js";
+import { COLORS } from "@/config";
 import type { World } from "@/sim/world";
 import { TILE } from "@/sim/terrain";
 
@@ -104,6 +105,14 @@ export class Minimap {
     // 보스 — 눈에 띄는 red(3a 위협 색).
     const boss = world.boss;
     if (boss) this.dynG.circle(boss.x * s, boss.y * s, 2.4).fill(0xe85c43);
+
+    // 방울(유전자 점수) · 아직 안 주운 것만 금빛 점으로. **화면 밖 방울을 여기서 세어 볼 수 있다.**
+    // 화면 가장자리 쐐기(render/geneDrops.ts)는 「어느 쪽인가」만 말하고 가까운 셋까지만 그린다 →
+    // 「지금 이 세계에 몇 개가 어디 남았나」는 이 지도가 아니면 알 길이 없다.
+    // 내 무리 점(1.6px lime 사각)보다 크고 둥글어 섞이지 않는다. 색은 필드의 방울과 같은 값이다.
+    for (const d of world.geneDrops) {
+      if (!d.taken) this.dynG.circle(d.x * s, d.y * s, 1.9).fill(COLORS.gene);
+    }
 
     // 알파(조종 중인 앞장 개체) — 기본 줌이 2.2 로 오르며 미니맵이 사실상 유일한 조망 수단이 됐다.
     // "내가 지금 어디인가"가 즉시 읽혀야 하므로 내 종 점(1.6px lime)보다 밝고 큰 흰 점 + 링으로 띄운다.

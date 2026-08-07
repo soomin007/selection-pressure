@@ -38,6 +38,9 @@ import {
   leadTargetRange,
 } from "@/sim/behavior";
 import type { CosmeticId } from "@/game/achievements";
+// 방울(유전자 점수) · 그리기·줍기 연출·화면 밖 쐐기가 전부 그 파일 안에 산다. 여기서는 레이어를
+// 올바른 z 순서에 끼우고 프레임마다 한 번 부르기만 한다(worldView 가 이미 1900줄이다).
+import { GeneDropLayer } from "@/render/geneDrops";
 import {
   LeadTerrainLayer,
   bodyRadiusOf,
@@ -72,6 +75,14 @@ export class WorldView {
   private readonly trialZoneG = new Graphics(); // 시험이 세계에 찍은 자리(「표시된 자리에 N마리」)
   private readonly trialMarkG = new Graphics(); // 표식이 찍힌 야생(「표시된 것 N마리 사냥」)
   private readonly bossG = new Graphics();
+  // 방울(유전자 점수) · 지면 표식은 생물 아래, 본체는 생물 위, 문구는 밤 틴트 위로 나뉘어 붙는다.
+  private readonly geneLayer = new GeneDropLayer();
+  /**
+   * **DOM 목표 줄이 지금 차지한 아래 끝**(이 뷰의 논리 화면 단위) · main 이 매 프레임 넣는다.
+   * 화면 밖 방울을 가리키는 쐐기가 그 줄 뒤에 깔리지 않게 하는 유일한 근거다
+   * (고정값은 문구가 길어지는 순간 틀린다 · main.ts 의 `hudSafe` 주석과 같은 사정).
+   */
+  hudSafeLogical = 0;
   private readonly overlayG = new Graphics();
   // 격퇴 바 옆 남은 체력 숫자. 밤·대멸종 틴트(overlayG) **위**에 둔다 · 이 숫자는 어떤 조명에서도
   // 읽혀야 한다(바 1픽셀이 6HP 라 숫자가 유일하게 정직한 눈금이다).
@@ -108,6 +119,9 @@ export class WorldView {
     // 못 가는 지형은 지형 바로 위·먹이 아래 — 먹이와 생물은 안 어둡게 하고 "땅"만 죽인다.
     this.container.addChild(this.leadTerrain.g);
     this.container.addChild(this.foodG);
+    // 방울의 지면 표식(그림자·바닥 광원·조여드는 파문)은 먹이 위·생물 아래 · 땅에 눕는 빛이라
+    // 몸을 안 덮으면서 "저 자리에 뭔가 있다"를 무리 발밑에서도 알린다.
+    this.container.addChild(this.geneLayer.groundG);
     this.container.addChild(this.playerG);
     // 알파 표식은 스프라이트 **아래**(지면에 눕는 표식) — 몸을 가리면 무슨 종인지가 안 읽힌다.
     this.container.addChild(this.leadG);
@@ -121,9 +135,13 @@ export class WorldView {
     this.container.addChild(this.trialZoneG);
     this.container.addChild(this.moveTargetG);
     this.container.addChild(this.trialMarkG);
+    // 방울 본체는 스프라이트 **위** · 무리가 밟고 지나가는 물건이라 몸에 파묻히면 "주우러 갈 것"이
+    // 화면에서 사라진다(이동 목표 깃발과 같은 이유). 보스보다는 아래 · 덮치는 것이 늘 우선이다.
+    this.container.addChild(this.geneLayer.mainG);
     this.container.addChild(this.bossG);
     this.container.addChild(this.overlayG);
     this.container.addChild(this.raidTextC); // 밤 틴트 위 · 남은 체력 숫자만은 늘 또렷하게
+    this.container.addChild(this.geneLayer.textC); // 같은 이유로 밤 틴트 위(「보스 격퇴 +3」·「+3」)
   }
 
   /**
@@ -213,6 +231,9 @@ export class WorldView {
     // 플레이어가 그리로 무리를 몰다 시간을 버린다.
     this.trialZoneG.clear();
     this.trialMarkG.clear();
+    // 방울 연출도 런 단위로 비운다 · 지난 런에서 주운 「+3」이 새 세계 첫 프레임에 뜨면 안 된다.
+    // (시대 전환은 geneLayer 가 방울 배열 참조가 바뀐 것으로 스스로 알아채 비운다.)
+    this.geneLayer.reset();
     // 격퇴 바 상태도 런 단위로 리셋 · 안 그러면 지난 런의 잔상·번쩍임이 새 보스의 첫 프레임에 뜬다.
     this.fighterG.clear();
     this.raidBossRef = null;
@@ -713,6 +734,18 @@ export class WorldView {
     this.drawMoveTarget();
     this.drawTrialZone(world);
     this.drawTrialMarks(world);
+
+    // 방울(유전자 점수) · 카메라 상태를 그대로 넘긴다(화면 밖 방울을 가리키는 쐐기가 이 값을 쓴다).
+    // setCamera 가 이 프레임보다 늦게 도는 경우가 있어 한 프레임 낡을 수 있는데, 쐐기는 가장자리
+    // 여백 안쪽에 붙으므로 그 정도 어긋남은 눈에 안 띈다(격퇴 바가 같은 값을 같은 방식으로 쓴다).
+    this.geneLayer.sync(world, dtMS, {
+      cx: this.viewCX,
+      cy: this.viewCY,
+      halfW: this.viewHalfW,
+      halfH: this.viewHalfH,
+      zoom: this.viewZoom,
+      topSafe: this.hudSafeLogical,
+    });
 
     // 보스 시각은 로직과 1:1 (known_issues). 실제로 쫓아와 무는 개체만 점 + 물기 반경 + 주목 펄스로
     // 그린다(도망 대상): 단일 추격자(chaser) 또는 사나운 무리(members 여러 마리가 사방에서 몰려온다).

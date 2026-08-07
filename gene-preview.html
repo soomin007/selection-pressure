@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>방울 시각 프리뷰</title>
+    <style>
+      body { margin: 0; background: #2a3320; font-family: system-ui, sans-serif; color: #e8ecdd; }
+      #app { display: inline-block; }
+      .hint { padding: 8px 12px; font-size: 13px; opacity: 0.85; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <div class="hint">
+      방울(유전자 점수) 시각 검증 · dev 전용, 미배포. 왼쪽 열은 먹이(비교용) · 가운데는 값 2~5 방울 ·
+      오른쪽은 나타나는 중 / 줍는 중 / 화면 밖 쐐기. 폰 기본 줌(2.2)으로 그린다.
+    </div>
+    <div id="app"></div>
+    <script type="module">
+      import { Application, Container, Graphics, Text } from "pixi.js";
+      import { GeneDropLayer } from "/src/render/geneDrops.ts";
+
+      const W = 820;
+      const H = 620;
+      const ZOOM = 2.2; // 폰 기본 줌
+      const app = new Application();
+      await app.init({ width: W, height: H, background: 0x36432a, antialias: true, resolution: 2, autoDensity: true });
+      document.getElementById("app").appendChild(app.canvas);
+
+      // 월드 좌표 컨테이너 · 실제 게임의 카메라 변환과 같은 방식(scale=zoom).
+      const world = new Container();
+      world.scale.set(ZOOM);
+      app.stage.addChild(world);
+
+      const layer = new GeneDropLayer();
+      world.addChild(layer.groundG);
+      world.addChild(layer.mainG);
+      world.addChild(layer.textC);
+
+      // 비교용 먹이 · worldView 의 그것과 같은 색·반지름.
+      const foodG = new Graphics();
+      world.addChildAt(foodG, 0);
+      const FOOD = [0x9bee5a, 0x5ad6b0, 0xd8de5a, 0xf0a848, 0xfff0c0, 0x7fe9ff];
+      FOOD.forEach((c, i) => foodG.circle(30, 30 + i * 26, 4.6).fill({ color: c, alpha: 1 }));
+
+      const labelC = new Container();
+      app.stage.addChild(labelC);
+      const put = (s, x, y) => {
+        const t = new Text({ text: s, style: { fill: 0xd8e2c8, fontSize: 12 } });
+        t.x = x; t.y = y;
+        labelC.addChild(t);
+      };
+      put("먹이 6종(비교)", 8, 6);
+      put("값 2 / 3 / 4 / 5 (빛살 개수 = 값)", 150, 6);
+      put("나타나는 중 · 주운 순간 · 화면 밖 쐐기 3개", 150, 236);
+
+      // 가짜 world · GeneDropLayer 는 geneDrops 와 tick 만 읽는다.
+      const drops = [];
+      const mk = (x, y, amount, reason, bornTick) => ({ x, y, amount, taken: false, bornTick, reason });
+      // 값 2~5 (충분히 자란 상태)
+      [2, 3, 4, 5].forEach((a, i) => drops.push(mk(110 + i * 55, 60, a, "boss", -999)));
+      // 나타나는 중(등장 연출) · tick 을 뒤에서 맞춘다
+      drops.push(mk(110, 150, 4, "extinction", 0));
+      // 주울 것(아래에서 taken 을 켠다)
+      drops.push(mk(230, 150, 5, "recovery", -999));
+      // 화면 밖 · 쐐기가 가장자리에 붙어야 한다
+      drops.push(mk(-400, 60, 3, "milestone", -999));
+      drops.push(mk(600, 250, 5, "recovery", -999));
+      drops.push(mk(180, 900, 2, "trialExceed", -999));
+
+      const fake = { geneDrops: drops, tick: 0 };
+      // 카메라(뷰) · 화면 절반을 월드px 로 환산해 넘긴다(worldView 가 넘기는 것과 같은 값).
+      const view = { cx: W / (2 * ZOOM), cy: H / (2 * ZOOM), halfW: W / (2 * ZOOM), halfH: H / (2 * ZOOM), zoom: ZOOM };
+
+      let t = 0;
+      app.ticker.add((tk) => {
+        t += tk.deltaMS;
+        fake.tick = Math.floor(t / (1000 / 30));
+        // 1.2초에 하나를 줍는다 · 줍는 연출(고리 + 위로 빨려 올라가는 알갱이 5개 + 「+5」)이 여기서 돈다.
+        if (t > 1200) drops[5].taken = true;
+        layer.sync(fake, tk.deltaMS, view);
+        window.__geneT = t;
+      });
+    </script>
+  </body>
+</html>

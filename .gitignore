@@ -5,8 +5,9 @@ node_modules/
 dist/
 *.local
 
-# 시각 검증 스크린샷(boss-preview 기본 출력)
+# 시각 검증 스크린샷(boss-preview · gene-preview 기본 출력 · 언제든 재생성)
 boss-preview.png
+gene-preview-*.png
 
 # 화면 소개 스크린샷 이미지(scripts/screenshots.mjs 출력 — 언제든 재생성). README(설명서)는 추적한다.
 screenshots/*

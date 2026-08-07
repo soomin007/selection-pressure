@@ -12,6 +12,7 @@
     "test": "vitest run",
     "smoke": "npm run build && node scripts/smoke.mjs",
     "boss-preview": "node scripts/boss-preview.mjs",
+    "gene-preview": "node scripts/gene-preview.mjs",
     "overlap": "node scripts/overlap-check.mjs",
     "probe": "node scripts/balance-probe.mjs"
   },

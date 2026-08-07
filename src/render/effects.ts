@@ -33,8 +33,14 @@ interface Particle {
 // go/deny(명령 핑)도 짧게 — 명령은 연달아 내리므로 오래 남으면 이전 핑이 다음 명령을 어지럽힌다.
 // counter(반격)는 bite 보다 **짧고 날카롭게** · 격퇴 바가 한 번에 0.1px 도 안 움직이는 판이라,
 // 사람이 실제로 읽는 것은 이 스파크다. 길게 끌면 여러 번의 반격이 뭉개져 "몇 번 쳤는지"가 사라진다.
+// gene(방울을 주움)은 **여기서 안 그린다** · 값은 0 이다. 이유: `VisualEvent` 에는 amount 가 없어서
+// 이 파일은 "몇 개짜리 방울을 주웠는지"를 원리적으로 알 수 없고, 그러면 3개짜리와 5개짜리가 같은
+// 그림이 된다(수치가 화면 표시와 다르면 그건 거짓말이다). 방울 연출은 amount 를 아는
+// `src/render/geneDrops.ts` 가 통째로 맡는다(방울 그리기 · 줍는 순간 · 화면 밖 쐐기).
+// Record 가 모든 키를 요구하므로 항목 자체는 남겨 둔다 · 아래 spawn 이 gene 을 먼저 걸러낸다.
 const LIFE: Record<ParticleKind, number> = {
   birth: 720, death: 820, kill: 620, bite: 240, spit: 200, block: 300, go: 350, deny: 250, counter: 190,
+  gene: 0,
 };
 const TAU = Math.PI * 2;
 
@@ -69,6 +75,7 @@ export class Effects {
   // ⚠ 인자 타입에 CounterKind 를 더해 둔 이유: sim 이 "counter" 를 VisualEventKind 에 더하기 전에도
   //   이 파일이 홀로 컴파일되고, 더한 뒤엔 union 이 합쳐져 호출부가 그대로 통과한다(배선 변경 0).
   spawn(kind: VisualEventKind | CounterKind, x: number, y: number, mine: boolean, tx?: number, ty?: number): void {
+    if (kind === "gene") return; // 방울은 geneDrops.ts 가 맡는다(위 LIFE 주석). 여기 오면 회색 먼지가 된다.
     if (this.particles.length > 220) return; // 과부하 방지(대량 사망 시)
     // 야생끼리의 사건은 다이어트한다(2026-08-02 사용자: 남의 연출이 정신사납다) — 탄생·자연사는
     // 아예 생략(생태 배경 소음), 사냥·발사체 같은 격한 사건만 훨씬 옅게 남긴다(세계가 살아 있다는

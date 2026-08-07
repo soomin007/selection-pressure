@@ -21,12 +21,21 @@
 // 있었다(반투명해지면 겹침이 더 잘 보인다). 세로 flex 로 이어 붙이면 겹칠 수가 없다.
 
 import { ensurePanelStyles } from "@/ui/panelStyles";
+// 방울 구슬 표식은 티어 구입 화면과 **같은 것을 쓴다** · 색·모양이 갈라지면 「저 숫자가 저 화면의
+// 그것인지」가 안 이어진다. 표식을 만드는 함수 하나가 자기 스타일 주입까지 맡는다(genePanel).
+import { createGeneOrb } from "@/ui/genePanel";
 
 export interface GoalBarCallbacks {
   onPauseToggle: () => void;
   onSpeedCycle: () => void;
   onTraitsToggle: () => void;
   onGlossary: () => void;
+  /**
+   * 티어 구입 화면 열기(`genePanel`). **일부러 옵셔널이다** · 이 콜백을 필수로 만들면 아직 배선을
+   * 안 한 `main.ts` 가 컴파일 에러로 무너진다(여러 세션이 같은 트리에서 일한다). 안 넘기면 방울
+   * 카운터는 **누를 수 없는 숫자**로만 뜨고, 넘기는 순간 문이 열린다.
+   */
+  onGeneOpen?: () => void;
 }
 
 export interface GoalData {
@@ -54,6 +63,17 @@ export interface GoalData {
   followTone: "plain" | "warn" | "danger";
   seconds: number;
   night: boolean;
+  /**
+   * 가진 방울 수(`game.geneBank`). **일부러 옵셔널이다** · 필수로 만들면 아직 이 값을 안 넘기는
+   * `main.ts` 가 컴파일 에러로 무너진다. 넘기지 않으면 카운터를 통째로 숨기고, 넘기는 순간 뜬다.
+   */
+  genes?: number;
+  /**
+   * 지금 **당장 살 수 있는 범주가 하나라도 있는가**(`CATEGORIES.some((c) => game.canBuyTier(c))`).
+   * 카운터가 방울 색으로 살아나 「지금 뭘 올릴 수 있다」를 숫자를 읽기 전에 알린다.
+   * 안 넘기면 평상 모양으로만 뜬다(거짓말이 아니라 말을 덜 하는 것이다).
+   */
+  geneReady?: boolean;
 }
 
 export interface GoalBar {
@@ -142,6 +162,27 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
   caret.setAttribute("aria-hidden", "true");
   pill.append(pillBody, caret);
 
+  // 방울 카운터 · **상시 HUD 에 늘 떠 있는 자리.** 알약 첫 줄에 넣지 않은 이유: 그 줄은 할 일
+  // 문구와 순종/생존 칩이 이미 나눠 쓰고 있고, 관문 동안에는 "생존 21/8마리"가 그 줄을 거의 다
+  // 먹는다. 알약 옆에 제 칸으로 두면 **줄이 안 늘어나고**(세로 압박 0 · 폰 세로 화면 제약),
+  // 알약 탭(상세 펼치기)과 겹치지 않는 제 손잡이가 생긴다.
+  // 높이는 .goal-head 의 stretch 가 알약과 맞춰 주므로 따로 잡지 않는다.
+  const geneBtn = document.createElement("button");
+  geneBtn.className = "goal-gene";
+  geneBtn.type = "button";
+  geneBtn.style.display = "none"; // genes 를 안 넘기면 통째로 숨긴다(아직 배선 전인 화면)
+  const geneNum = document.createElement("span");
+  geneNum.className = "goal-gene-num";
+  geneBtn.append(createGeneOrb(), geneNum);
+  if (cb.onGeneOpen !== undefined) {
+    const openGene = cb.onGeneOpen;
+    geneBtn.title = "모은 방울로 티어 올리기";
+    geneBtn.addEventListener("click", () => openGene());
+  } else {
+    // 열 문이 없으면 누를 것도 없다 · 눌리는 척하는 버튼은 고장 난 버튼과 구별이 안 된다.
+    geneBtn.classList.add("static");
+  }
+
   const pauseBtn = document.createElement("button");
   pauseBtn.className = "goal-pause";
   pauseBtn.type = "button";
@@ -149,7 +190,7 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
   pauseBtn.title = "멈춤/이어하기 (Space)";
   pauseBtn.addEventListener("click", cb.onPauseToggle);
 
-  head.append(pill, pauseBtn);
+  head.append(pill, geneBtn, pauseBtn);
 
   // 상세 패널 · 옛 상태 바·칩이 담던 정보의 새 집. 필요할 때만 연다.
   const panel = document.createElement("div");
@@ -169,6 +210,23 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
   panel.appendChild(xpTrack);
   const countRow = row(panel);
   const timeRow = row(panel);
+
+  // 방울 줄 · 접힌 알약의 작은 숫자만으로는 "저게 뭐지"가 안 풀린다. 펼쳤을 때 한 번 더,
+  // 이번엔 **이름과 함께** 말하고 문까지 연다(두 번째 문 · 첫 문은 알약 옆 카운터).
+  // 아래 버튼 줄(배속·내 형질·대백과)에 네 번째 버튼으로 끼우지 않은 이유: 폰 좁은 폭에서
+  // 버튼 하나가 약 63px 이 되어 "티어 올리기" 다섯 글자가 안 들어간다.
+  const geneRow = document.createElement("button");
+  geneRow.className = "goal-generow";
+  geneRow.type = "button";
+  geneRow.style.display = "none";
+  if (cb.onGeneOpen !== undefined) {
+    const openGene = cb.onGeneOpen;
+    geneRow.addEventListener("click", () => {
+      openGene();
+      setOpen(false); // 구입 화면이 이 패널을 덮으므로 접어 둔다(같은 자리에 둘을 겹치지 않는다)
+    });
+  }
+  panel.appendChild(geneRow);
 
   const btnRow = document.createElement("div");
   btnRow.className = "goal-btnrow";
@@ -222,6 +280,18 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
       el.textContent = s;
     }
   };
+  const setDisplay = (el: HTMLElement, v: string): void => {
+    if (el.style.display !== v) el.style.display = v;
+  };
+
+  // 방울이 늘어난 순간에만 카운터를 한 번 튀긴다. 폰으로 검토하는 게임이라 조용한 숫자 변화는
+  // 그냥 안 읽힌다 · 방울은 "밟고 지나가면 주워지는" 것이라 **주웠다는 사실 자체**가 피드백이다.
+  let lastGenes = -1;
+  const popGene = (): void => {
+    geneBtn.classList.remove("pop");
+    void geneBtn.offsetWidth; // 리플로우 강제 · 연달아 주워도 애니메이션이 처음부터 다시 돈다
+    geneBtn.classList.add("pop");
+  };
 
   return {
     update: (d: GoalData): void => {
@@ -241,6 +311,22 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
       if (followEl.style.display !== followVis) followEl.style.display = followVis;
       const toneCls = `goal-follow ${d.followTone}`;
       if (followEl.className !== toneCls) followEl.className = toneCls;
+      // 방울 카운터. 값이 없으면(아직 배선 전) 카운터도 상세의 방울 줄도 통째로 숨긴다.
+      // ⚠ 클래스는 className 대입이 아니라 toggle 로 켠다 · 대입하면 방금 붙인 pop 이 지워진다.
+      if (d.genes === undefined) {
+        setDisplay(geneBtn, "none");
+        setDisplay(geneRow, "none");
+        lastGenes = -1;
+      } else {
+        setDisplay(geneBtn, "flex");
+        setText(geneNum, String(d.genes));
+        geneBtn.classList.toggle("ready", d.geneReady === true);
+        if (lastGenes >= 0 && d.genes > lastGenes) popGene();
+        lastGenes = d.genes;
+        // 상세의 방울 줄은 열 문이 있을 때만 · 못 여는 줄을 눌러 보게 만들지 않는다.
+        setDisplay(geneRow, cb.onGeneOpen !== undefined ? "block" : "none");
+        setText(geneRow, `방울 ${d.genes}개 · 티어 올리기 ›`);
+      }
       if (!open) return; // 패널이 닫혀 있으면 상세 갱신도 생략(비용 0)
       setText(stageRow, d.stage);
       setText(levelRow, `레벨 ${d.level} · 다음 카드까지 ${Math.round(d.xp01 * 100)}%`);
@@ -335,6 +421,30 @@ function ensureGoalStyles(): void {
      그때만 자른다. 문구 자체를 한 줄에 들어오게 짧게 쓰는 게 먼저다(main 의 goalSub 참고). */
   .goal-sub { font-family: var(--font-mono); font-size: 11.5px; opacity: 0.75; margin-top: 2px;
     overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  /* 방울 카운터 · 알약과 멈춤 사이의 제 칸. flex:none 이라 알약이 대신 줄어들고, 알약 안의 글은
+     min-width:0 + ellipsis 라 밀려 나가지 않는다(첫 줄 계산: goal-line 주석 참고).
+     색은 티어 구입 화면과 같은 --gene(genePanel 이 :root 에 싣는다) · 두 곳에 색을 적지 않는다. */
+  .goal-gene { pointer-events: auto; flex: none; align-items: center; gap: 4px; padding: 0 8px;
+    border-radius: 12px; cursor: pointer; background: var(--panel); border: 1px solid var(--line);
+    color: var(--ink); font-family: var(--font-mono);
+    backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+    transition: transform 0.07s ease, border-color 0.15s ease, box-shadow 0.15s ease; }
+  .goal-gene:active { transform: translateY(1px); }
+  /* 열 문이 아직 없으면 그냥 숫자다(누르는 척하지 않는다). */
+  .goal-gene.static { pointer-events: none; cursor: default; }
+  /* 지금 올릴 수 있는 범주가 하나라도 있으면 카운터가 살아난다 · 숫자를 읽기 전에 먼저 보인다. */
+  .goal-gene.ready { border-color: var(--gene); box-shadow: 0 0 11px -3px var(--gene); }
+  .goal-gene-num { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  /* 주운 순간 한 번 튄다 · 자리는 그대로고 크기만 잠깐 커진다(옆 버튼과 스치지 않는다). */
+  .goal-gene.pop { animation: goal-gene-pop 0.42s ease-out; }
+  @keyframes goal-gene-pop { 0% { transform: scale(1); } 34% { transform: scale(1.16); } 100% { transform: scale(1); } }
+  /* 상세 패널의 방울 줄 · 왼쪽 띠만 방울 색으로 물들여 위 카운터와 같은 것임을 잇는다. */
+  .goal-generow { width: 100%; box-sizing: border-box; text-align: left; margin-top: 2px;
+    padding: 8px 10px; border-radius: 9px; cursor: pointer; background: rgba(18,13,9,0.55);
+    border: 1px solid var(--line); border-left: 3px solid var(--gene); color: var(--ink);
+    font-family: var(--font-body); font-size: 12.5px; text-shadow: inherit;
+    transition: transform 0.07s ease, background 0.12s ease; }
+  .goal-generow:active { transform: translateY(1px); background: rgba(255,255,255,0.10); }
   .goal-pause { pointer-events: auto; width: 42px; border-radius: 12px; cursor: pointer;
     background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: 15px;
     backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); flex: none;
@@ -375,7 +485,9 @@ function ensureGoalStyles(): void {
   @media (prefers-reduced-motion: reduce) {
     .goal-caret { transition: none; }
     .goal-caret.hint { animation: none; opacity: 0.85; }
-    .goal-pill, .goal-pause, .goal-btn { transition: none; }
+    .goal-pill, .goal-pause, .goal-btn, .goal-gene, .goal-generow { transition: none; }
+    /* 주웠다는 사실은 숫자가 이미 말한다 · 움직임만 뺀다(테두리 발광은 그대로 남는다). */
+    .goal-gene.pop { animation: none; }
     /* 깜빡임을 멈춰도 색은 남는다 — 경고는 움직임이 아니라 색으로도 읽혀야 한다. */
     .goal-follow.danger { animation: none; }
   }

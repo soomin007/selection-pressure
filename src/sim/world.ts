@@ -19,6 +19,15 @@ import type { Biome } from "@/sim/environment";
 import { stepEntity, visionRadius, leadBiteTarget, isApex } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
 import { createLeadState, type LeadState } from "@/sim/lead";
+import {
+  GENE_PICK_RADIUS,
+  GENE_SPAWN_RING,
+  createGeneDrop,
+  geneDropOffset,
+  geneDropReached,
+  type GeneDrop,
+  type GeneReason,
+} from "@/sim/gene";
 import type { HerdOrder } from "@/sim/herdOrder";
 import { SIM, LEAD } from "@/sim/params";
 
@@ -126,7 +135,18 @@ export function syncWildDerived(t: Traits): void {
 // "counter" = 내 무리가 보스에게 **되받아친** 순간(dealRaidHit 이 나는 자리). 물린 것(bite)과 갈라 놓는다 ·
 // 반격 한 번은 체력 200 짜리 바에서 몇 픽셀도 못 움직인다(공격력 64 기준 3.05 HP ≈ 1픽셀). 몇 번 쳤는지를
 // 사람이 실제로 읽는 것은 그 순간의 스파크다(전달 규칙 2순위: 일어나는 순간의 피드백).
-export type VisualEventKind = "birth" | "death" | "kill" | "bite" | "spit" | "block" | "counter";
+// "gene" = 내 무리가 **방울을 밟아 주운** 순간. 방울은 세계에 놓인 물건이지 화면의 응답이 아니므로
+// (명령 핑 "go"/"deny" 와 다르다) 자리는 여기 sim 쪽 union 이 맞다. 판정이 나는 곳은 step() 의 줍기
+// 블록 한 자리뿐이라, 렌더가 좌표를 보고 "주웠나 보다" 하고 추정할 필요가 없다.
+// ⚠ **지금 이 사건을 그리는 쪽은 없다**(2026-08-07 통합 시점). `render/effects.ts` 는 "gene" 을 받으면
+//   곧장 return 하고, 줍기 연출은 `render/geneDrops.ts` 가 `drop.taken` 이 false→true 로 바뀌는 것을
+//   스스로 보고 그린다 · `VisualEvent` 에는 `amount` 가 없어서 effects 는 3개짜리와 5개짜리를
+//   구별할 수 없기 때문이다(「수치가 화면 표시와 다르면 거짓말」 규칙). 사건 자체는 남겨 둔다:
+//   비용이 0 에 가깝고, 소리·햅틱처럼 「값을 모르는 채로 반응해도 되는 것」이 붙을 자리다.
+// ⚠ 이 union 에 멤버를 더하면 `src/render/effects.ts` 의 `LIFE: Record<ParticleKind, number>` 가
+//   즉시 컴파일 에러가 난다(Record 는 모든 키를 요구한다). 거기 `gene: <수명ms>` 한 줄을 함께 넣어야
+//   짝이 맞는다 · 렌더 쪽이 이미 "counter" 로 같은 함정을 겪고 주석에 적어 둔 그 자리다.
+export type VisualEventKind = "birth" | "death" | "kill" | "bite" | "spit" | "block" | "counter" | "gene";
 export interface VisualEvent {
   kind: VisualEventKind;
   x: number;
@@ -227,6 +247,12 @@ export class World {
   private readonly wildEvoRng: Rng;
 
   /**
+   * **방울 전용 rng.** 방울이 나타나는 자리를 여기서만 뽑는다 · 메인 `rng` 를 쓰면 소비 횟수가
+   * 밀려 야생 스폰·진화 밸런스가 통째로 이동한다. 결정론은 그대로다(같은 시드 = 같은 자리).
+   */
+  readonly geneRng: Rng;
+
+  /**
    * 알파 조종 상태. leaderId < 0 이면 이 기능은 존재하지 않는 것과 같다(= 기존 모드).
    * 알파를 **지정만** 하고 명령을 한 번도 안 줘도 마찬가지다: sim 안에서 조종이 갈라놓는 분기는
    * followTicks(무리 추종)와 commanded(수풀 봉인) 둘뿐이고, 둘 다 첫 명령 전에는 0/false 다.
@@ -249,6 +275,21 @@ export class World {
   /** 이번 단계(라운드)의 내 종 사건 계수 · 시험 판정용. game 이 beginStage 마다 resetRoundCounts 로
    * 비운다. 정수 증가만 한다(rng 미사용 → 결정론·밸런스 무관). */
   readonly roundCounts: RoundCounts = { hunts: 0, feeds: 0, births: 0, marked: 0 };
+
+  /**
+   * **필드에 놓인 방울들.** 주운 것도 `taken: true` 로 배열에 남는다(`Food.available` 과 같은 결).
+   * 한 시대에 30개 남짓이라 지울 필요가 없고, 남겨 둬야 렌더가 주운 자리에 연출을 그릴 수 있다.
+   */
+  geneDrops: GeneDrop[] = [];
+  /**
+   * 내 종이 주운 방울 **누계**. `playerFoodEaten` 과 같은 결이다 · sim 은 더하기만 하고,
+   * game 이 delta 를 떠서 자기 지갑(`geneBank`)에 넣는다. rng 미사용 → 결정론·밸런스 무관.
+   *
+   * ⚠ **이 값은 새 World 마다 0 부터 다시 센다.** game 이 든 직전값(`lastGeneCollected`)도
+   *   World 를 갈아 끼우는 **모든** 자리에서 함께 0 으로 되돌려야 한다. 오늘(2026-08-07)
+   *   `lastHuntKills` 가 바로 그 짝을 놓쳐 시대 전환마다 경험치가 −85~−2410 씩 깎였다.
+   */
+  geneCollected = 0;
 
   /**
    * 무리에게 내린 뜻(신탁). null 이면 무리는 완전히 자율로 산다 = 관전.
@@ -413,6 +454,9 @@ export class World {
     );
     this.grid = new SpatialGrid(width, height, SIM.gridCellSize);
     this.wildEvoRng = new Rng(String(seed) + "-wildevo");
+    // 방울 전용 독립 스트림. 방울 위치를 메인 rng 로 뽑으면 소비 횟수가 밀려 야생 스폰·진화가
+    // 통째로 이동한다(`WILD_RNG_KEYS` 제약과 같은 계열). 여기 없는 스트림을 새로 만들지 말 것.
+    this.geneRng = new Rng(String(seed) + "-gene");
     // 물 전용 플레이어(바다 개척자)는 바다만 살아 과밀하므로 시작 수를 줄인다(다른 게놈엔 영향 없음).
     // areaScale 은 spawnEntities 에서 일괄 곱하므로 여기선 기본 수만(이중 곱 방지).
     const baseStart =
@@ -690,6 +734,16 @@ export class World {
     // 알파가 이번 틱에 쓰러졌으면 옆에 있던 한 마리가 이어받는다(죽은 개체를 걸러낸 뒤라야 정확하다).
     this.syncLeader();
 
+    // ── 방울 줍기 ────────────────────────────────────────────────────────────────
+    //   **왜 하필 여기인가**: 죽은 개체를 걸러낸 뒤라 "이번 틱에 죽은 개체가 줍는" 일이 없고,
+    //   개체가 이번 틱 이동을 마친 좌표를 본다("밟고 지나가면"이 손끝의 감각과 맞는다).
+    //   ⚠ rng 를 한 번도 안 쓴다 · 여기서 한 번이라도 뽑으면 기존 밸런스가 통째로 이동한다.
+    //   ⚠ 순회 순서에 안 기댄다: 어느 개체가 먼저 닿든 방울 하나는 한 번만 주워지고, 늘어나는 값도
+    //     연출 좌표(방울 자리)도 같다. 그래서 결정론 지문이 개체 배열 순서에 안 흔들린다.
+    //   방울 바깥 루프 · 개체 안쪽 루프 + 첫 개체에서 break 인 이유: 이미 주운 방울은 첫 줄에서
+    //   통째로 건너뛰므로, 한 시대에 30개 남짓인 방울이 다 주워진 뒤에는 사실상 공짜다(격자 불필요).
+    this.collectGeneDrops();
+
     this.maybeImmigrate();
     this.maybeEvolveWild();
   }
@@ -789,6 +843,88 @@ export class World {
     this.roundCounts.feeds = 0;
     this.roundCounts.births = 0;
     this.roundCounts.marked = 0;
+  }
+
+  /**
+   * **방울 하나를 필드에 놓는다.** 자리는 부르는 쪽이 정한다 · 방울을 주는 다섯 사건
+   * (보스 격퇴 · 대멸종 생존 · 개체 수 문턱 · 위기 회복 · 시험 초과)은 전부 **game 이 아는 사건**이고,
+   * sim 은 게임 규칙을 판정하지 않는다(`trialZone` 과 같은 구조).
+   *
+   * 무작위 자리가 필요하면 `gene.geneDropOffset(this.geneRng, …)` 을 쓴다. **메인 `rng` 는 쓰지 마라** ·
+   * 소비 횟수가 밀리면 야생 생태가 통째로 이동한다.
+   *
+   * rng 미사용(자리를 받아 쓰기만 한다) → 이 함수 자체는 결정론·밸런스에 무관하다.
+   */
+  spawnGeneDrop(x: number, y: number, amount: number, reason: GeneReason): void {
+    if (amount <= 0) return;
+    this.geneDrops.push(createGeneDrop(x, y, amount, this.tick, reason));
+  }
+
+  /**
+   * **자리를 골라 방울 하나를 놓는다** · 다섯 사건이 부르기 좋은 형태(좌표를 부르는 쪽이 안 만든다).
+   * 자리는 `pickGeneDropSpot` 이 정한다: 내 종이 **지나갈 수 있고 실제로 걸어 닿는** 지형 중,
+   * 무리에서 고리(`GENE_SPAWN_RING`) 만큼 떨어진 곳. 자리 뽑기는 전용 `geneRng` 만 쓴다.
+   *
+   * 자리를 끝내 못 고르면(고리가 통째로 막힌 세계 · 작은 섬에 갇힌 무리) **무리 발밑**에 떨어뜨린다.
+   * 화면에 「보스 격퇴 · 방울 +3」이라 적어 놓고 방울이 안 나오면 그건 거짓말이라, 자리를 못 찾는 것이
+   * 약속을 무르는 이유가 되어선 안 된다. (이건 내 판단이다 · 아주 드문 막다른 세계에서만 일어난다.)
+   *
+   * 내 종이 전멸했으면 아무것도 안 하고 false · 줍을 무리가 없는데 놓아 봐야 세계만 어지럽다.
+   */
+  spawnGeneDropNear(amount: number, reason: GeneReason): boolean {
+    if (amount <= 0) return false;
+    if (this.playerPopulation === 0) return false;
+    const spot = pickGeneDropSpot(this.geneRng, this) ?? this.playerFootSpot();
+    this.spawnGeneDrop(spot.x, spot.y, amount, reason);
+    return true;
+  }
+
+  /** 무리 발밑(무게중심)에서 내 종이 설 수 있는 가장 가까운 자리. rng 미사용. */
+  private playerFootSpot(): { x: number; y: number } {
+    const c = this.playerCentroid();
+    const t = this.genome.traits;
+    return this.terrain.nearestPassable(
+      c.x,
+      c.y,
+      t.swimming >= SIM.swimThreshold,
+      t.swimming < SIM.aquaticOnlyThreshold,
+      t.wings >= SIM.flyThreshold,
+    );
+  }
+
+  /**
+   * **밟고 지나간 방울을 줍는다** · step() 안 딱 한 자리에서만 불린다.
+   *
+   * 규칙(전부 여기 한 곳에만 적는다):
+   * · 줍는 것은 **내 종뿐**이다. 야생이 주우면 사람이 번 방울이 화면 밖에서 증발한다.
+   * · 거리 판정은 `geneDropReached` 하나로만 한다(반경을 두 곳에 적으면 반드시 어긋난다).
+   * · 주운 방울은 `taken` 만 세우고 **배열에서 지우지 않는다** · 렌더가 사라지는 연출을 그릴 자리다
+   *   (`Food.available` 과 같은 결).
+   * · rng 를 한 번도 안 쓴다 → 결정론·밸런스 무관.
+   *
+   * **수명(만료)은 두지 않았다**(내 판단). 근거 셋:
+   *  ① 방울은 사람이 이미 **번 것**이다. 시간이 지났다고 사라지면 「접으려는 플레이어를 은근히
+   *     돕는다」는 이 프로젝트의 방향과 정면으로 어긋난다 · 못 가져간 쪽은 늘 밀리는 판이다.
+   *  ② 사라지는 규칙은 **합의된 적이 없다.** 이번 단계는 「가만히 있는 방울」까지이고, 안 정해진
+   *     규칙을 먼저 넣으면 그게 규칙인 척 굳는다.
+   *  ③ 무한히 쌓이지 않는다 · World 는 시대마다 통째로 새로 만들어지므로 **라운드가 끝나면 저절로
+   *     사라진다.** 즉 "영원히 남는다"가 아니라 "**이 시대 안에서는** 안 없어진다"이다.
+   *     (시대 끝에 못 주운 방울을 어떻게 할지는 game 이 정할 일이지 sim 이 정할 일이 아니다.)
+   */
+  private collectGeneDrops(): void {
+    for (const d of this.geneDrops) {
+      if (d.taken) continue;
+      for (const e of this.entities) {
+        if (!e.species.isPlayer) continue;
+        if (!geneDropReached(d, e.x, e.y)) continue;
+        d.taken = true;
+        this.geneCollected += d.amount;
+        // 연출은 **방울 자리**에서 난다(주운 개체 자리가 아니라) · 어느 개체가 먼저 닿았느냐로
+        // 화면이 달라지면 그것부터가 순회 순서 의존이다.
+        this.emit("gene", d.x, d.y, true);
+        break;
+      }
+    }
   }
 
   /** 죽음 1건 집계. 정산은 "왜 내 종이 죽었나"가 핵심이라 내 종만 센다. (rng 미사용 → 결정론 유지) */
@@ -1352,4 +1488,93 @@ export class World {
       }
     }
   }
+}
+
+// ─────────────────────────────── 방울을 놓을 자리 고르기 ───────────────────────────────
+
+/**
+ * 고리 위에서 자리를 던져 보는 횟수. 12번이면 대륙에서는 거의 첫 판에 잡히고, 바다가 많은 세계
+ * (군도·대양)에서도 육지 방향이 한 번은 걸린다. 실패해도 뽑는 것은 전용 rng 뿐이라 대가가 없다.
+ * (이 수치는 내 판단이다.)
+ */
+const GENE_SPOT_TRIES = 12;
+
+/**
+ * "직선으로는 안 보이지만 돌아가면 닿는" 후보를 길찾기(BFS)로 확인해 보는 상한.
+ * BFS 는 지형 격자 전체를 훑으므로 한 번이 싸지 않다 · 방울 하나에 두 번까지만 쓴다.
+ * (이 수치는 내 판단이다.)
+ */
+const GENE_SPOT_PATH_TRIES = 2;
+
+/**
+ * **방울을 떨어뜨릴 자리 하나를 고른다.** 내 종이 하나도 없으면 null.
+ *
+ * 두 조건을 다 만족하는 자리만 돌려준다:
+ *  1. **내 종이 지나갈 수 있는 지형** · 못 가는 땅(물 못 건너는 종에게 바다 · 못 나는 종에게 산)에
+ *     떨어뜨리면 그 방울은 영영 안 주워진다. 화면에 보이는데 못 먹는 것만큼 나쁜 것이 없다.
+ *  2. **실제로 걸어 닿는 곳** · 통행 가능한 타일이어도 건너편 섬이면 못 간다. 먼저 직선(`lineOfSight`)
+ *     으로 싸게 보고, 막혔으면 길찾기로 돌아가는 길이 있는지 확인한다.
+ *
+ * 거리(`GENE_SPAWN_RING`)가 곧 **대가**다 · 방울을 주우러 가는 동안 무리는 본진을 비운다. 발밑에
+ * 떨어뜨리면 가만히 있어도 주워져 조종이 아무 뜻이 없어지고, 너무 멀면 화면 밖이라 있는 줄도 모른다.
+ * 고리가 통째로 막힌 세계(작은 섬)에서는 **고리를 좁혀** 다시 던진다 · 대가는 줄지만 0 은 아니다.
+ *
+ * ⚠ `rng` 는 반드시 `world.geneRng` 다. 메인 `world.rng` 를 넣으면 소비 횟수가 밀려 야생 스폰·진화가
+ *   통째로 이동한다(`species.ts` 의 `WILD_RNG_KEYS` 제약과 같은 계열).
+ * ⚠ 세계를 하나도 안 바꾼다(읽기만) · 뽑는 것은 넘겨받은 rng 뿐이다.
+ */
+export function pickGeneDropSpot(rng: Rng, world: World): { x: number; y: number } | null {
+  if (world.playerPopulation === 0) return null;
+
+  const c = world.playerCentroid();
+  // 통행 특성은 **내 종 게놈** 에서 낸다(개체 하나가 아니라). 개체별로 다르지 않고, 게놈은 드래프트가
+  // 바꾸는 즉시 반영되므로 "수영을 배운 순간부터 바다에도 방울이 뜬다"가 저절로 맞는다.
+  const t = world.genome.traits;
+  const canSwim = t.swimming >= SIM.swimThreshold;
+  const canLand = t.swimming < SIM.aquaticOnlyThreshold;
+  const canFly = t.wings >= SIM.flyThreshold;
+  const terr = world.terrain;
+  const homeTile = terr.tileIndex(c.x, c.y);
+
+  // 방울이 화면·세계 밖으로 반쯤 걸치면 줍기 반경이 잘린다 → 반경만큼 안쪽으로 물린다.
+  const lo = Math.min(GENE_PICK_RADIUS, world.width / 2, world.height / 2);
+  const clampX = (v: number): number => Math.max(lo, Math.min(world.width - lo, v));
+  const clampY = (v: number): number => Math.max(lo, Math.min(world.height - lo, v));
+
+  // 통행은 되는데 직선이 막힌 후보들 · 고리 한 바퀴가 끝난 뒤에만(길찾기가 비싸다) 살펴본다.
+  let detour: { x: number; y: number }[] = [];
+
+  const tryRing = (minR: number, maxR: number): { x: number; y: number } | null => {
+    detour = [];
+    for (let i = 0; i < GENE_SPOT_TRIES; i += 1) {
+      const { dx, dy } = geneDropOffset(rng, minR, maxR);
+      const x = clampX(c.x + dx);
+      const y = clampY(c.y + dy);
+      if (!terr.isPassable(x, y, canSwim, canLand, canFly)) continue;
+      // 무리가 서 있는 바로 그 타일은 뺀다 · 발밑은 대가가 0 이다(좁힌 고리에서만 걸린다).
+      if (terr.tileIndex(x, y) === homeTile) continue;
+      if (terr.lineOfSight(c.x, c.y, x, y, canSwim, canLand, canFly)) return { x, y };
+      if (detour.length < GENE_SPOT_PATH_TRIES) detour.push({ x, y });
+    }
+    return null;
+  };
+
+  const viaPath = (): { x: number; y: number } | null => {
+    for (const d of detour) {
+      // findPath 는 길이 없으면 빈 배열이다. 같은 타일은 위에서 이미 걸렀으므로 빈 배열 = 못 간다.
+      if (terr.findPath(c.x, c.y, d.x, d.y, canSwim, canLand, canFly).length > 0) return d;
+    }
+    return null;
+  };
+
+  const far = tryRing(GENE_SPAWN_RING.min, GENE_SPAWN_RING.max);
+  if (far !== null) return far;
+  const farDetour = viaPath();
+  if (farDetour !== null) return farDetour;
+
+  // 고리가 통째로 막혔다(작은 섬에 갇힌 무리 · 물 전용 종이 좁은 만에 있는 경우).
+  // 고리를 줍기 반경의 세 배까지 좁혀 다시 던진다 · 몇 걸음이라도 걸어가야 하는 것은 그대로다.
+  const near = tryRing(GENE_PICK_RADIUS * 3, GENE_SPAWN_RING.min);
+  if (near !== null) return near;
+  return viaPath();
 }

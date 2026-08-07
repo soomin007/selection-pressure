@@ -7,12 +7,21 @@
 
 import { World } from "@/sim/world";
 import { Rng } from "@/sim/rng";
-import { defaultGenome, cloneGenome, MUTABLE_TRAITS, type Genome, type MutableTrait } from "@/sim/genome";
+import { defaultGenome, cloneGenome, refreshDerived, MUTABLE_TRAITS, type Genome, type MutableTrait } from "@/sim/genome";
+import {
+  GENE_AWARD,
+  createCrisisWatch,
+  milestonesCrossed,
+  stepCrisisWatch,
+  type CrisisWatch,
+  type GeneReason,
+} from "@/sim/gene";
 import {
   CATEGORIES,
   CATEGORY_LABELS,
   TIER_ROMAN,
   nearestTierGoal,
+  pipsToNext,
   tiersOf,
   type Category,
 } from "@/sim/tiers";
@@ -333,6 +342,30 @@ export class Game {
   xpToNext: number = GAME.xpBase; // 다음 레벨까지 필요한 경험치(GAME.xpBase 는 리터럴이라 number 명시)
   private lastFoodEaten = 0; // world.playerFoodEaten 직전 값(매 update 의 delta 를 xp 로 누적)
   private lastHuntKills = 0; // world.playerHuntKills 직전 값(사냥 경험치의 delta 원천)
+
+  // ── 방울(유전자 점수) ────────────────────────────────────────────────────────────
+  /**
+   * 아직 안 쓴 방울. **런 전체를 따라간다** · 시대를 넘어도 지갑은 안 비운다(새 런에서만 0).
+   * 세계가 바뀌는 것과 내가 모은 것이 사라지는 것은 다른 이야기다.
+   */
+  private geneBankValue = 0;
+  /**
+   * `world.geneCollected` 직전 값 · 매 스텝 delta 를 지갑에 옮긴다.
+   *
+   * ⚠ **새 World 를 만드는 모든 자리에서 0 으로 되돌려야 한다**(누계가 0 부터 다시 세므로).
+   *   `lastFoodEaten`/`lastHuntKills` 와 **언제나 같은 줄에 붙여 둔다** · 오늘(2026-08-07)
+   *   `lastHuntKills` 가 continueToNextEra 에서 빠져 시대마다 경험치가 크게 깎이는 버그가 있었다.
+   */
+  private lastGeneCollected = 0;
+  /**
+   * 「위기 회복」 판정의 상태(가라앉았는가 · 지금까지의 최고). 규칙은 `sim/gene.ts` 의
+   * `stepCrisisWatch` 하나가 정하고 여기서는 상태만 들고 있는다.
+   *
+   * ⚠ **시대를 넘어도 안 비운다.** 최고 기록은 런 전체를 관통하는 값이고(`peakPopulation` 과 같은 결),
+   *   2026-08-07 econ 프로브도 런 내내 이어서 쟀다 · 판당 0.86회라는 값이 그 조건에서 나왔다.
+   *   시대마다 비우면 새 시대의 작은 시작 무리가 매번 「최고」가 되어 위기 자체가 성립하지 않는다.
+   */
+  private crisisWatch: CrisisWatch = createCrisisWatch();
 
   // 런 보고서(연대기 + 형질 추이) — 이 혈통의 일생을 game 층에서만 기록한다(world/sim rng 미소비 →
   // 결정론·밸런스 무관). 시대를 넘어가도 이어서 누적하고, 새 런(setupRun)에서만 비운다.
@@ -701,7 +734,26 @@ export class Game {
       // 배속만큼 한 번에 여러 스텝 진행.
       for (let s = 0; s < this.speed; s++) {
         this.world.step();
-        if (this.world.playerPopulation > this.peakPopulation) this.peakPopulation = this.world.playerPopulation;
+        // ── 매 틱 보는 방울 사건 둘(개체 수 문턱 · 위기 회복) ──────────────────────────────
+        // 둘 다 **최고 기록**을 기준으로 삼는다. 지금 개체 수로 재면 문턱 언저리를 오르내릴 때마다
+        // 방울이 쏟아진다(최고 기록은 단조 증가라 눈금 하나를 한 런에 한 번만 지난다).
+        const pop = this.world.playerPopulation;
+        if (pop > this.peakPopulation) {
+          const crossed = milestonesCrossed(this.peakPopulation, pop);
+          this.peakPopulation = pop;
+          // 한 틱에 여러 눈금을 건너뛰었으면(대량 번식) 그만큼 떨어진다 · 화면에 적힌 눈금은 다 준다.
+          if (crossed > 0) this.awardGenes("milestone", crossed);
+        }
+        // 위기 회복 · 최고의 절반 아래로 가라앉았다 90% 위로 돌아온 순간 딱 한 번.
+        // 최고가 아직 작을 때(판 시작 직후의 자연스러운 출렁임)는 사건으로 안 친다 · 근거는
+        // `GAME.geneCrisisMinPeak` 주석(econ 프로브가 쓴 것과 같은 문턱).
+        if (stepCrisisWatch(this.crisisWatch, pop) && this.crisisWatch.peak >= GAME.geneCrisisMinPeak) {
+          this.awardGenes("recovery");
+        }
+        // 주운 방울을 지갑으로 옮긴다. **step 바로 뒤에서** 한다 · 아래 finishStage 갈래들이 return
+        // 으로 프레임을 빠져나가고, 시대 전환은 World 를 통째로 갈아 끼워 누계를 0 으로 되돌리므로,
+        // update 끝에서 모으면 마지막 몇 틱에 주운 방울이 그대로 증발한다.
+        this.harvestGenes();
         this.stageTicksLeft -= 1;
         this.runSteps += 1;
         // 런 보고서 시계열 — 일정 주기로 개체 수·형질 평균을 남긴다(연대기 그래프의 점들).
@@ -1073,7 +1125,11 @@ export class Game {
     this.xp = 0;
     this.xpToNext = GAME.xpBase;
     this.lastFoodEaten = 0;
-    this.lastHuntKills = 0; // 새 World 는 사냥 누계도 0 부터다 — 둘은 언제나 짝으로 되돌린다
+    this.lastHuntKills = 0; // 새 World 는 사냥 누계도 0 부터다 · 셋은 언제나 짝으로 되돌린다
+    this.lastGeneCollected = 0; // 방울 누계도 0 부터다(짝을 놓치면 지갑이 어긋난다)
+    this.geneBankValue = 0; // 새 런 = 빈 지갑. 시대 전환에서는 **안** 비운다(모은 것은 런을 따라간다).
+    this.crisisWatch = createCrisisWatch(); // 위기 회복의 최고 기록도 새 혈통과 함께 처음부터
+    // (개체 수 문턱 사다리가 읽는 peakPopulation 은 위에서 이미 0 으로 되돌렸다)
     this.stageXp = 0;
     this.draftRng = new Rng(`${this.currentSeed}-draft`);
     this.stageRng = new Rng(`${this.currentSeed}-stage`);
@@ -1118,6 +1174,138 @@ export class Game {
   /** 지금 종의 도장 상태(화면이 티어 칩·막대를 그릴 때 읽는다). */
   get pipsNow(): Readonly<Record<Category, number>> {
     return this.genome.pips;
+  }
+
+  // ─────────────────────────────── 방울(유전자 점수) ───────────────────────────────
+
+  /** **아직 안 쓴 방울.** 화면의 방울 카운터가 읽는 유일한 값이다. */
+  get geneBank(): number {
+    return this.geneBankValue;
+  }
+
+  /**
+   * 이 범주의 **다음 단까지 드는 방울 수**. 이미 4단이면 0(= 더 살 것이 없다).
+   *
+   * ⚠ **여기서 새 가격표를 만들지 않는다.** 방울은 도장(pip)과 같은 단위라 값은 `tiers.ts` 의
+   *   `TIER_STEPS` 하나가 정하고, 이 함수는 `pipsToNext` 를 그대로 읽기만 한다. 카드로 이미 받은
+   *   도장이 비용을 그만큼 깎는 것도 저절로 따라온다(남은 거리 = 비용).
+   */
+  tierCost(cat: Category): number {
+    return pipsToNext(this.genome.pips[cat]);
+  }
+
+  /** 지금 이 범주의 다음 단을 살 수 있는가 · 버튼을 켤지 끌지의 단일 진실. */
+  canBuyTier(cat: Category): boolean {
+    const cost = this.tierCost(cat);
+    return cost > 0 && this.geneBankValue >= cost;
+  }
+
+  /**
+   * **모은 방울로 이 범주의 다음 단을 산다.** 성공하면 true, 못 사면(최고 티어이거나 방울이 모자라면)
+   * false 를 돌려주고 **아무것도 안 바꾼다**(부분 적용이 없다 · 실패가 상태를 반쯤 흔들면 화면과 어긋난다).
+   *
+   * 지키는 계약:
+   * · 값은 `tierCost` 하나만 읽는다 = `tiers.ts` 의 `TIER_STEPS`. 여기에 새 가격표를 만들지 않는다.
+   * · 도장은 **정확히 비용만큼** 오른다 → 다음 문턱에 정확히 닿는다. 화면에 「3개 필요」라 적었으면
+   *   정확히 3개가 들어가고 3개가 나간다(수치가 화면 표시와 다르면 그건 거짓말이다).
+   * · 무리 전체에 같은 도장을 찍는다 · 레벨업 카드가 하는 것과 **같은 처리**다(`pickCard` 의
+   *   `applyCard(e.genome, card)` 갈래). 종 기준선만 올리고 살아 있는 개체를 안 건드리면, 화면의
+   *   티어 칩은 올라갔는데 실제로 뛰는 몸은 예전 그대로인 거짓말이 된다.
+   * · 도장이 바뀌었으니 지휘 값(목소리 반경·공백 시간)도 그 자리에서 다시 읽는다.
+   *
+   * ⚠ **부른 쪽은 곧바로 `takeNewTiers()` 를 꺼내 가라.** 승급 알림은 꺼내 가는 큐다. 안 꺼내면
+   *   다음 카드창을 닫을 때 몰아서 터진다(2026-08-07 에 프리셋 승급이 그렇게 새서 고친 자리가 있다).
+   */
+  buyTier(cat: Category): boolean {
+    if (!this.canBuyTier(cat)) return false;
+    const cost = this.tierCost(cat);
+    this.geneBankValue -= cost;
+    this.genome.pips[cat] += cost; // 정확히 다음 문턱 (cost = pipsToNext)
+    refreshDerived(this.genome); // 종 기준선의 파생 능치 갱신 (applyCard 와 같은 마무리)
+    // 무리 전체에 같은 도장. 도장은 정수라 개체마다 갈릴 여지가 없다(티어는 종 단위 성취다).
+    for (const e of this.world.entities) {
+      if (!e.species.isPlayer || !e.alive) continue;
+      e.genome.pips[cat] += cost;
+      refreshDerived(e.genome);
+    }
+    this.syncCommandReach(); // 무리 도장이 올랐으면 목소리가 더 멀리 간다 · 즉시 반영
+    this.newTiers.push({ cat, tier: tiersOf(this.genome.pips)[cat] });
+    this.logEvent("card", `방울 · ${CATEGORY_LABELS[cat]} ${TIER_ROMAN[tiersOf(this.genome.pips)[cat]]}`);
+    return true;
+  }
+
+  // ─────────────────────────────── 방울을 필드에 떨어뜨린다 ───────────────────────────────
+
+  /**
+   * 사건 하나가 낸 방울을 **필드에 떨어뜨린다**(지갑에 바로 넣지 않는다).
+   * **[사용자 2026-08-07]**: 방울은 무리가 **밟고 지나가야** 주워진다. 지갑에 바로 넣으면
+   * 그건 그냥 점수판이고, 「가라」 명령이 방울을 줍는 손이 되는 이 설계 전체가 사라진다.
+   *
+   * 값은 `GENE_AWARD`(sim/gene.ts) 하나만 읽는다 · 사건별 개수를 여기 적으면 두 곳이 어긋난다.
+   * `times` 는 한 번에 여러 눈금을 넘겼을 때(개체 수 사다리) 그만큼 떨어뜨리기 위한 것이다.
+   */
+  private awardGenes(reason: GeneReason, times = 1): void {
+    const amount = GENE_AWARD[reason];
+    for (let i = 0; i < times; i += 1) this.dropGene(amount, reason);
+  }
+
+  /**
+   * 방울 하나를 무리 곁의 고리 위에 놓는다.
+   *
+   * **자리를 여기서 만들지 않는다** · `world.spawnGeneDropNear` 가 정한다. 좌표를 game 이 직접
+   * 계산하면 조용히 두 가지가 깨진다:
+   *  ① 통행 가능한 타일이어도 **건너편 섬**이면 무리가 영영 못 간다(지형 검사만으로는 안 걸러진다).
+   *     sim 쪽은 `lineOfSight` → `findPath` 로 「실제로 걸어 닿는가」까지 본다.
+   *  ② 실수로 `world.rng` 를 쓰면 야생 스폰·진화의 난수 순서가 밀려 밸런스가 통째로 이동한다
+   *     (`species.ts` 의 `WILD_RNG_KEYS` 제약과 같은 계열). sim 쪽은 방울 전용 `geneRng` 만 쓴다.
+   * (처음엔 여기서 `geneDropOffset` + `nearestLargePassable` 로 직접 잡았는데, ①을 못 걸러
+   *  「화면에 보이는데 영영 못 줍는 방울」이 날 수 있었다. 같은 규칙을 두 곳에 적지 않는다.)
+   *
+   * 내 종이 전멸했으면 아무것도 안 한다(줍을 무리가 없다).
+   */
+  private dropGene(amount: number, reason: GeneReason): void {
+    this.world.spawnGeneDropNear(amount, reason);
+  }
+
+  /**
+   * 내 종이 주운 방울 delta 를 지갑으로 옮긴다. 매 sim 스텝 뒤에 불린다(멱등하지 않으니
+   * **부르는 자리를 늘리지 마라** · 누계 기준이라 중복 호출은 해가 없지만, 자리가 흩어지면
+   * 「직전값을 되돌리는 짝」을 다시 놓친다).
+   */
+  private harvestGenes(): void {
+    const got = this.world.geneCollected;
+    if (got > this.lastGeneCollected) {
+      this.geneBankValue += got - this.lastGeneCollected;
+      this.lastGeneCollected = got;
+    }
+  }
+
+  /**
+   * 디버그 · 지갑에 방울을 곧장 넣는다(필드에 떨어뜨렸다 밟는 과정을 건너뛴다).
+   *
+   * 왜 필요한가: 겹침 검사기(`?ovhook`)가 티어 구입 화면을 **살 수 있는 상태**로도 재야 한다.
+   * 지갑이 0 이면 다섯 줄이 전부 「모자람」이라 그 화면의 절반(켜진 테두리 · 방울 색 값 칩 ·
+   * 구입 성공 줄)이 영영 안 재진다. `?dev` 패널도 같은 문으로 쓴다.
+   *
+   * rng 를 안 쓰고 세계를 안 건드린다 → 밸런스·결정론 무관.
+   */
+  debugGrantGenes(amount: number): void {
+    this.geneBankValue = Math.max(0, this.geneBankValue + Math.trunc(amount));
+  }
+
+  /**
+   * 디버그 · 방울 하나를 **지금 필드에 떨어뜨린다**(사건이 나기를 기다리지 않고).
+   *
+   * 왜 필요한가: 방울이 실제로 나오는 사건(보스 격퇴 · 대멸종 생존 …)은 판당 몇 번뿐이라, 화면에서
+   * 확인해야 하는 것들 ▸ 방울이 먹이와 갈리는가 · 화면 밖 쐐기가 미니맵·목표 줄과 안 겹치는가 ·
+   * 밟으면 정말 주워지는가 ▸ 을 보려고 몇 분씩 기다려야 한다. 폰으로 검토하는 프로젝트라 그 대기가
+   * 곧 "확인 안 함"이 된다. `?dev` 패널의 버튼 하나가 그 자리를 연다.
+   *
+   * 값·자리는 실제 경로 그대로다(GENE_AWARD 를 읽고 `spawnGeneDropNear` 가 자리를 고른다) ·
+   * 가짜 방울을 놓으면 확인이 거짓말이 된다.
+   */
+  debugDropGene(reason: GeneReason = "boss"): void {
+    this.awardGenes(reason);
   }
 
   /** 이 런의 갈래(시작 프리셋이 정한다) — 화면이 「내 갈래」를 표시하는 데 쓴다. */
@@ -1439,7 +1627,12 @@ export class Game {
       //   그래서 아무것도 안 해도 1.8배를 넘기기 쉽다(공짜 불씨가 된다).
       const overachieved =
         trialPassed && trial.kind !== "pop" && prog >= Math.ceil(trial.target * GAME.trialOverachieveMul);
-      if (overachieved) this.embers = Math.min(GAME.emberMax, this.embers + 1);
+      if (overachieved) {
+        this.embers = Math.min(GAME.emberMax, this.embers + 1);
+        // 방울도 같은 자리에서 떨어진다. 불씨는 상한에 걸려 사라질 수 있지만(가득 차 있으면 +1 이
+        // 아무것도 아니다) 방울에는 상한이 없어, 잘 친 시험이 언제나 무언가를 남긴다.
+        this.awardGenes("trialExceed");
+      }
       const verdict: TrialVerdict = {
         passed: trialPassed,
         trial,
@@ -1458,9 +1651,20 @@ export class Game {
 
     // 보고서: 위협을 넘긴 순간(연대기). stageLabel 은 "보스 · 약탈자" · "대멸종 · 혹독한 추위" 형태.
     if (kind === "boss") {
-      if (bossDefeated) this.embers = Math.min(GAME.emberMax, this.embers + 1); // 격퇴 보상: 불씨 하나 회복
+      if (bossDefeated) {
+        this.embers = Math.min(GAME.emberMax, this.embers + 1); // 격퇴 보상: 불씨 하나 회복
+        // 격퇴한 자리에 방울이 떨어진다. **버틴 것에는 안 준다** · 직접 잡은 것과 시간이 흐른 것은
+        // 다른 사건이고, 이 차이가 「위협을 잡으러 가는 이유」다.
+        this.awardGenes("boss");
+      }
       this.logEvent("boss", bossDefeated ? `${this.stageLabel} 처치` : `${this.stageLabel} 버팀`);
-    } else if (kind === "extinction") this.logEvent("extinction", `${this.stageLabel} 견딤`);
+    } else if (kind === "extinction") {
+      // 대멸종을 견딘 방울. ⚠ 이 방울은 **이 세계에서는 못 줍는다** · 대멸종은 SCHEDULE 의 마지막
+      // 단계라 바로 아래에서 런이 끝나고, 이어가면 세계가 통째로 새로 만들어진다. 그래서
+      // `continueToNextEra` 가 안 주운 방울을 새 세계로 옮겨 놓는다(거기서 걸어가 밟으면 주워진다).
+      this.awardGenes("extinction");
+      this.logEvent("extinction", `${this.stageLabel} 견딤`);
+    }
 
     this.stageIndex += 1;
     if (this.stageIndex >= SCHEDULE.length) {
@@ -1610,6 +1814,13 @@ export class Game {
     this.extRng = new Rng(`${this.currentSeed}-ext`);
     this.bossQueue = shuffle(BOSS_TYPES, this.stageRng);
     this.extinctionQueue = shuffle(EXTINCTION_TYPES, this.extRng);
+    // 아직 안 주운 방울을 **옛 세계에서 떠 둔다**(세계를 갈아 끼우기 전에 해야 한다).
+    // 왜 옮기는가: 「대멸종 생존」 방울은 시대의 **마지막 단계**에서 떨어져 주울 시간이 원리적으로
+    // 0 이다. 그대로 두면 화면이 「대멸종 생존 · 방울 +4」라 말해 놓고 한 개도 안 주는 거짓말이 된다.
+    // 공짜로 주는 것이 아니다 · 새 세계에서도 값과 사유는 그대로이고 **걸어가 밟아야** 주워진다.
+    const carriedDrops = this.world.geneDrops
+      .filter((d) => !d.taken)
+      .map((d) => ({ amount: d.amount, reason: d.reason }));
     // 게놈은 유지(성장 이어짐). xp/레벨도 유지하되, 새 월드라 먹이·사냥 누적 기준값을 함께 리셋.
     this.world = this.makeWorld();
     this.lastFoodEaten = 0;
@@ -1619,12 +1830,19 @@ export class Game {
     //   레벨 막대가 시대 초반 내내 멈춰 있었고, 진행률이 음수(%)로 표시되기도 했다.
     //   막고 나니 런당 카드가 다섯 프리셋 전부 +1.0~+1.5 늘었다(48시드).
     this.lastHuntKills = 0;
+    // ⚠ 방울 누계도 **같은 자리에서** 되돌린다. 새 World 의 `geneCollected` 는 0 부터 시작하므로
+    //   직전값을 안 지우면 다음 delta 가 음수가 되어 지갑이 영영 안 는다(위 사냥 누계와 같은 함정).
+    //   ⚠ 지갑(`geneBankValue`)은 **안 비운다** · 시대가 바뀌는 것과 모은 것이 사라지는 것은 다르다.
+    this.lastGeneCollected = 0;
     this.stageXp = 0;
     // 성장한 종의 색·형질을 새 초기 무리에 반영(프리셋 선택 때와 같은 처리).
     if (this.playerColor !== undefined) this.world.playerSpecies.color = this.playerColor;
     for (const e of this.world.entities) {
       if (e.species.isPlayer) e.genome = cloneGenome(this.world.genome);
     }
+    // 옛 세계에서 못 주운 방울을 새 무리 곁에 다시 놓는다(위 carriedDrops 주석 참고).
+    // 자리는 새 세계의 `geneRng` 가 정하므로 기존 스트림을 1비트도 안 건드린다.
+    for (const d of carriedDrops) this.dropGene(d.amount, d.reason);
     this.onWorldChanged?.(this.world);
     // 첫 채집 단계로 바로 가지 않고, 먼저 "시대 보상" 드래프트를 띄운다(강해진 형질 하나 = 난이도 도약 보상).
     this.beginEraRewardDraft();

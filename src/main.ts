@@ -23,6 +23,7 @@ import { createUnlockLadder } from "@/ui/unlockLadder";
 import { createControls } from "@/ui/controls";
 import { registerKeyLayer } from "@/ui/keys";
 import { createBuildPanel } from "@/ui/buildPanel";
+import { createGenePanel, type GeneShop } from "@/ui/genePanel";
 import { createGlossary } from "@/ui/glossary";
 import { ACHIEVEMENTS, equippedCosmetic, mythicNamesUnlocked } from "@/game/achievements";
 import { setMythicNames } from "@/ui/creatureName";
@@ -41,6 +42,7 @@ import {
   tierOf,
   type Category,
 } from "@/sim/tiers";
+import type { Genome } from "@/sim/genome";
 import { ORDER_SPEC_BY_KIND, type OrderKind } from "@/sim/herdOrder";
 import { CommandWheel, OrderLine } from "@/ui/commandWheel";
 import { isPredatorBoss, bossRaidable } from "@/sim/boss";
@@ -196,6 +198,42 @@ async function boot(): Promise<void> {
     });
     return ups.length;
   };
+
+  // ── 티어 구입 화면(방울) ───────────────────────────────────────────────────────
+  // **새 제스처를 만들지 않았다.** 월드 조작은 이미 꽉 차 있다(탭=가라 · 더블탭=피해라 · 길게
+  // 누르기=명령 휠 · 명령 줄 탭=철회) · 여기에 하나를 더 얹으면 그때부터 오작동이 규칙이 된다.
+  // 그래서 문은 전부 **이미 있는 HUD 손잡이**다:
+  //   ① 목표 줄 알약 옆의 방울 카운터(상시로 떠 있고, 살 수 있으면 테두리가 켜진다)
+  //   ② 알약을 펼쳤을 때 나오는 「방울 N개 · 티어 올리기 ›」 줄
+  // 둘 다 goalBar 의 `onGeneOpen` 하나로 들어온다(아래 createGoalBar). 화면 안에 손잡이가 보이므로
+  // 숨은 단축키를 따로 두지 않았다 · 안 보이는 키는 이 프로젝트의 「화면에서 알아채게」 규칙에 어긋난다.
+  //
+  // ⚠ `game` 을 그대로 넘기지 않고 **감싼다.** `Game.buyTier` 는 승급을 「꺼내 가는 큐」
+  //   (`takeNewTiers`)에 싣는데, 산 자리에서 안 꺼내면 다음 카드창을 닫을 때 몰아서 터진다
+  //   (2026-08-07 프리셋 승급이 정확히 그렇게 샜다). 여기서 산 즉시 꺼내 연출까지 내보낸다.
+  const geneShop: GeneShop = {
+    get geneBank(): number {
+      return game.geneBank;
+    },
+    get genome(): Genome {
+      return game.genome;
+    },
+    tierCost: (cat: Category): number => game.tierCost(cat),
+    canBuyTier: (cat: Category): boolean => game.canBuyTier(cat),
+    buyTier: (cat: Category): boolean => {
+      if (!game.buyTier(cat)) return false;
+      refreshBuild(); // 설계도(내 형질)에 방금 오른 단을 반영
+      // 승급 연출(moment.apex)은 전체 화면 z18 이라 이 패널(z16)을 2.2초 동안 통째로 덮는다.
+      // 덮인 채로 두면 "닫힌 건지 멈춘 건지" 모를 화면이 되므로 먼저 접고 연출을 내보낸다.
+      // 다시 사려면 알약 옆 카운터를 한 번 더 누르면 된다(문이 상시로 떠 있다).
+      genePanel.close();
+      playTierUps();
+      // 세대별 형질과 같은 처리 · 텍스처를 새로 만들지 않는다(이미 태어난 개체는 옛 모습을 유지하고
+      // 이후 태어난 개체가 새 게놈 서명으로 생성된다 · 카드를 골랐을 때와 같다).
+      return true;
+    },
+  };
+  const genePanel = createGenePanel(geneShop);
 
   const draft = createDraftPanel(app.renderer, app.canvas, {
     onPick: (i) => {
@@ -361,6 +399,8 @@ async function boot(): Promise<void> {
       traitsOpen = !traitsOpen;
     },
     onGlossary: (): void => glossary.show(),
+    // 방울 카운터(알약 옆) · 상세의 「티어 올리기」 줄 · 둘 다 이 문으로 들어온다.
+    onGeneOpen: (): void => genePanel.open(),
   });
 
   game.onDraft = (cards, preview) => {
@@ -368,6 +408,8 @@ async function boot(): Promise<void> {
     // 드래프트 화면은 게임 객체를 모른다 — 그릴 때 필요한 종 상태만 넘긴다(레벨 = 세대).
     // 시작 종을 고르는 화면엔 "이번 세계"(대륙·판게아·군도·대양 + 바다 비율)를 함께 띄운다 —
     // 세계를 보고 종을 고르는 게 이 게임이라, 모르고 고르면 선택이 아니라 운이 된다.
+    // 카드창은 전체 화면(z 15)인데 티어 구입 화면은 그 위(z 16)다 → 열린 채로 두면 카드를 덮는다.
+    genePanel.close();
     if (game.isChoosingPreset) presetPanel.show(cards, preview, game.worldBriefing());
     else
       draft.show(cards, {
@@ -422,6 +464,7 @@ async function boot(): Promise<void> {
   const levelScreen = createLevelUpScreen();
   game.onResult = (res, summary, canContinue, progress, achievements) => {
     controls.setVisible(false);
+    genePanel.close(); // 런이 끝났다 · 결과·진척도 화면 아래에 구입 화면이 남지 않게
     // 정복 = 마지막 시대 승리(더 이어갈 수 없음), 승리 = 한 시대 넘김(이어감), 멸종 = 패배.
     const kind = res === "lose" ? "lose" : canContinue ? "win" : "conquest";
     const showResult = (): void => {
@@ -466,6 +509,7 @@ async function boot(): Promise<void> {
     view.drawEnvironment(world);
     view.refreshSpecies(world);
     goalBar.collapse(); // 새 월드 = 상세 패널 접기(낡은 수치가 열린 채 남지 않게)
+    genePanel.close(); // 같은 이유 · 새 세계로 넘어가는데 구입 화면이 떠 있으면 안 된다
     effects.clear();
     moment.clear(); // 멸종 암전 등 남은 순간 연출을 지운다(새 월드 시작).
     levelScreen.clear(); // 진척도 화면도 닫는다(혹시 남아 있으면).
@@ -547,6 +591,10 @@ async function boot(): Promise<void> {
     // 반복 플레이 없이 재생(+120 경험치 적립 애니메이션). 리롤은 드래프트 중 눌러 바로 확인 가능.
     for (const lv of [1, 2, 3, 5, 9, 12])
       grid.appendChild(devBtn(`Lv${lv}`, (b) => { game.debugSetMetaLevel(lv); flash(b); updateToggle(); }));
+    // 방울 두 문 · 필드에 놓기(먹이와 갈리는지 · 화면 밖 쐐기 · 밟아서 주워지는지를 바로 본다)와
+    // 지갑 채우기(구입 화면을 바로 눌러 본다). 둘 다 실제 경로를 그대로 탄다.
+    grid.appendChild(devBtn("방울 놓기", (b) => { game.debugDropGene(); flash(b); }));
+    grid.appendChild(devBtn("방울+20", (b) => { game.debugGrantGenes(20); flash(b); }));
     grid.appendChild(
       devBtn("진척도+120", (b) => {
         flash(b);
@@ -601,6 +649,12 @@ async function boot(): Promise<void> {
     setEra: (n: number) => void;
     /** 시대 전환 연출을 지금 재생한다(문구는 game.nextEraBriefing 이 만든 진짜 세 줄). */
     eraMoment: () => void;
+    /**
+     * 지갑에 방울을 넣는다 · **티어 구입 화면을 「살 수 있는 상태」로도 재기 위해서다.**
+     * 지갑이 0 이면 그 화면의 다섯 줄이 전부 「모자람」이라, 켜진 테두리 · 방울 색 값 칩 ·
+     * 구입 성공 줄을 영영 안 재게 된다(화면의 절반만 검사하는 셈).
+     */
+    genes: (n: number) => void;
   }
   if (new URLSearchParams(window.location.search).has("ovhook")) {
     const hooks: OverlapHooks = {
@@ -620,6 +674,7 @@ async function boot(): Promise<void> {
         game.result = was;
         if (b) moment.era(b.title, b.lines, () => {});
       },
+      genes: (n) => game.debugGrantGenes(n),
     };
     (window as unknown as { __ov: OverlapHooks }).__ov = hooks;
   }
@@ -1071,6 +1126,11 @@ async function boot(): Promise<void> {
         followTone,
         seconds: game.secondsLeft,
         night: gw.daylight < 0.5,
+        // 방울 지갑 · 카운터가 읽는 유일한 값(game.geneBank). 늘면 카운터가 한 번 튄다.
+        genes: game.geneBank,
+        // 지금 당장 올릴 수 있는 범주가 하나라도 있나 · 카운터가 방울 색으로 살아나 「살 게 있다」를
+        // 숫자를 읽기 전에 알린다. 판정은 game 한 곳(canBuyTier)이 하고 화면은 읽기만 한다.
+        geneReady: CATEGORIES.some((c) => game.canBuyTier(c)),
       });
     }
     // 불씨 첫 안내(런당 1회): "불씨"라는 말은 처음 나올 때 한 번 풀이한다(UI 문구 규칙).
@@ -1137,6 +1197,11 @@ async function boot(): Promise<void> {
     // 논리 좌표로 바꿔 넘긴다 · Pixi UI 는 uiZoom 배율 안에서 산다.
     const hudSafe = goalBar.bottomPx() / uiZoom;
     highlights.update(ticker.deltaMS, app.screen.width / uiZoom, hudSafe);
+    // 화면 밖 방울을 가리키는 쐐기도 같은 근거로 HUD 를 피한다. 다만 **좌표계가 다르다** ▸ 쐐기는
+    // 월드 컨테이너(논리 화면 layout.width 기준) 안에서 그려지고 goalBar 는 DOM(CSS px)이라,
+    // 논리/CSS 비율을 곱해 옮긴다. 안 옮기면 폰에서 78 이 56 CSS px 로 줄어 알약(59~74) 뒤에 깔린다.
+    view.hudSafeLogical =
+      app.screen.width > 0 ? goalBar.bottomPx() * (layout.width / app.screen.width) : 0;
     // 전광판은 HUD 뿐 아니라 **위 플래시 아래**로도 비켜 앉는다. 둘 다 "HUD 아래"로만 밀면 서로
     // 겹친다(상세를 펼친 짧은 폰에서 보스 등장 플래시와 예고 띠가 같은 자리에 얹혔다). 위에서부터
     // HUD → 플래시 → 전광판 순으로 쌓는다.
