@@ -7,6 +7,13 @@
 //     만든 문장을 그대로 건다. 표를 튜닝하면 이 화면도 저절로 따라 바뀐다(거짓말이 원리적으로 불가).
 //  ③ **못 사는 이유가 그 자리에서 읽혀야 한다.** 회색으로 죽이는 데서 끝내지 않고 「2개 모자랍니다」
 //     처럼 남은 수를 적는다. 왜 안 눌리는지 모르는 버튼은 고장 난 버튼과 구별이 안 된다.
+//  ④ **어느 단의 값인지를 줄마다 못 박는다.** 줄 머리의 로마 숫자는 「지금 단」인데 그 아래 수치는
+//     「사면 되는 단」이라, 표시를 안 하면 같은 문구가 단마다 뜻이 조용히 바뀐다(가죽 I단에서
+//     「버티는 힘 ×1.43」은 지금 값이 아니라 II단 값이다). 그래서 대상 단을 문장 앞에 적는다 ·
+//     카드 각주(`draftPanel`)·승급 연출(`main.playTierUps`)·대백과가 이미 쓰는 표기와 같다.
+//  ⑤ **몸집은 상수표가 아니라 실값 전후로 적는다.** 몸집은 20~100 으로 잘리는 파생값이라
+//     「+8」 같은 증분을 적으면 상한에 걸린 종에게 거짓말이 된다 · `derivedSize` 를 두 번 불러
+//     「몸집 94 ▸ 100」처럼 적으면 잘림이 저절로 반영된다(카드 미리보기와 같은 표기).
 //
 // ⚠ 폰 함정 하나를 피해 만들었다: 세로로 자라는 전체 화면 오버레이에서 가운데 정렬을
 //    `justify-content`/`align-items` 로 잡으면, 내용이 화면보다 길어질 때 **시작 모서리를 안 지켜**
@@ -20,14 +27,17 @@ import {
   CATEGORY_DESC,
   CATEGORY_LABELS,
   SIZE_MEANING,
-  SIZE_PER_TIER,
   TIER_ROMAN,
+  derivedSize,
+  pipsForTier,
   tierLine,
   tierOf,
 } from "@/sim/tiers";
-import type { Category, Pips } from "@/sim/tiers";
+import type { Category, Keys, Pips } from "@/sim/tiers";
 import { GENE_AWARD, GENE_REASON_LABELS } from "@/sim/gene";
 import type { GeneReason } from "@/sim/gene";
+import { TRIAL_EXCEED_EXCLUDED, type TrialKind } from "@/game/game";
+import { GAME } from "@/game/config";
 import { COLORS, hexColor } from "@/config";
 import { categoryColor, pipPct, tierTrackBackground } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
@@ -80,8 +90,14 @@ export function createGeneOrb(big = false): HTMLElement {
 export interface GeneShop {
   /** 아직 안 쓴 방울. */
   readonly geneBank: number;
-  /** 지금 도장 · 티어와 막대를 여기서 읽는다. */
-  readonly genome: { readonly pips: Pips };
+  /**
+   * 지금 도장과 열쇠 · 티어·막대·몸집을 전부 여기서 읽는다.
+   *
+   * 열쇠까지 받는 이유는 **몸집** 하나다. 몸집은 도장과 열쇠가 함께 정하고 20~100 으로 잘리는
+   * 파생값이라(`tiers.derivedSize`), 열쇠를 모르면 「사면 몸집이 얼마가 되는가」를 정확히 못 적는다.
+   * `Game.genome` 이 이미 이 모양이라 부르는 쪽은 그대로 통과한다(구조적 타이핑).
+   */
+  readonly genome: { readonly pips: Pips; readonly keys: Keys };
   /** 이 범주의 다음 단까지 드는 방울 수(이미 최고 단이면 0). */
   tierCost(cat: Category): number;
   /** 지금 살 수 있는가 · 버튼을 켜고 끄는 단일 진실. */
@@ -107,6 +123,37 @@ export interface GenePanel {
 
 /** 방울이 나오는 사건을 적는 순서(표시 전용 · 규칙이 아니다). 값과 이름은 `sim/gene.ts` 가 정한다. */
 const REASON_ORDER: readonly GeneReason[] = ["boss", "extinction", "milestone", "recovery", "trialExceed"];
+
+/** 시험 종류의 한국어 낱말 · 아래 제외 문구를 사람 말로 만들기 위한 것뿐이다(규칙은 안 담는다).
+ *  `Record<TrialKind, …>` 라 시험이 늘면 여기서 컴파일이 막힌다 = 조용히 빠지는 일이 없다. */
+const TRIAL_KIND_WORD: Record<TrialKind, string> = {
+  hunt: "사냥",
+  feed: "먹이",
+  birth: "새끼",
+  pop: "무리",
+  hold: "자리 지키기",
+  mark: "표시된 것 사냥",
+};
+
+/** 초과 달성 보상에서 빠지는 시험들의 이름 · 목록은 `game.ts` 의 `TRIAL_EXCEED_EXCLUDED` 가 정한다. */
+const EXCLUDED_TRIAL_WORDS: string = TRIAL_EXCEED_EXCLUDED.map((k) => TRIAL_KIND_WORD[k]).join("·");
+
+/**
+ * 사건마다 붙는 **조건 한 마디**. 조건이 없는 사건은 빈 문자열이다.
+ *
+ * ⚠ **여기에 규칙을 옮겨 적지 않는다.** 숫자와 목록은 실제로 게이트가 읽는 그 값
+ * (`GAME.geneCrisisMinPeak` · `TRIAL_EXCEED_EXCLUDED`)에서 만든다. 손으로 적으면 문턱을
+ * 튜닝하는 순간 화면이 거짓말을 한다 · 실제로 이 두 조건이 빠져 있어서, 목표를 크게 넘겨 합격하거나
+ * 작은 무리가 무너졌다 돌아와도 필드에 아무것도 안 떨어지는 화면이 됐다.
+ */
+const REASON_NOTE: Readonly<Record<GeneReason, string>> = {
+  boss: "",
+  extinction: "",
+  milestone: "",
+  // 「최고 20마리」로 줄이면 「많아야 20마리」로 읽힌다 · 뜻이 뒤집히므로 풀어 쓴다.
+  recovery: `가장 많았을 때 ${GAME.geneCrisisMinPeak}마리 이상`,
+  trialExceed: EXCLUDED_TRIAL_WORDS === "" ? "" : `${EXCLUDED_TRIAL_WORDS} 시험은 빼고`,
+};
 
 /** 이 오버레이의 z-index 이자 키보드 레이어 우선순위(같은 값을 쓰는 것이 이 저장소 관례다).
  *  드래프트(15) 위 · 로비/프리셋(20) 아래 · 관전 중에만 열리는 화면이다. */
@@ -158,24 +205,27 @@ export function createGenePanel(shop: GeneShop): GenePanel {
   lead.textContent =
     "모은 방울로 범주의 다음 단을 삽니다. 단이 오르면 능력이 통째로 바뀝니다. 카드로 받은 도장은 그만큼 값을 깎습니다.";
 
-  // 방울이 어디서 나오는지 · 값은 `GENE_AWARD`, 이름은 `GENE_REASON_LABELS` 가 정한다(둘 다 sim/gene).
-  // 여기서 손으로 적으면 표를 튜닝하는 순간 화면이 거짓말을 한다.
+  // 방울이 어디서 나오는지 · 값은 `GENE_AWARD`, 이름은 `GENE_REASON_LABELS`, 조건은 `REASON_NOTE`
+  // (게이트가 읽는 상수에서 만든다). 여기서 손으로 적으면 표를 튜닝하는 순간 화면이 거짓말을 한다.
   const sources = document.createElement("div");
   sources.className = "gene-sources";
   sources.textContent =
     "방울이 떨어지는 순간: " +
-    REASON_ORDER.map((r) => `${GENE_REASON_LABELS[r]} +${GENE_AWARD[r]}`).join(" · ") +
+    REASON_ORDER.map((r) => {
+      const note = REASON_NOTE[r];
+      return `${GENE_REASON_LABELS[r]} +${GENE_AWARD[r]}${note === "" ? "" : `(${note})`}`;
+    }).join(" · ") +
     ". 무리가 밟고 지나가면 주워집니다.";
 
-  // 샀을 때 그 자리에서 말해 주는 줄(성공했을 때만 잠깐 뜬다).
-  const flash = document.createElement("div");
-  flash.className = "gene-flash";
-  flash.style.display = "none";
-
+  // ⚠ **샀을 때의 알림 줄은 여기 없다.** 예전엔 이 자리에 `.gene-flash` 가 있었는데 한 번도 안 보였다:
+  //   `main.ts` 의 `buyTier` 감싼 객체가 승급 연출을 내보내기 전에 이 패널을 **동기로 닫으므로**,
+  //   줄은 이미 숨겨진 화면 안에서 켜졌고 다시 열면 아무것도 안 산 화면에 지난 알림이 붙어 떴다.
+  //   말하려던 내용(범주 · 오른 단 · 무엇이 켜졌는가)은 전체 화면 승급 연출(`main.playTierUps` →
+  //   `moment.apex`)이 글자까지 똑같이 말한다 · 같은 말을 두 곳에 두는 대신 여기서 지웠다.
   const list = document.createElement("div");
   list.className = "gene-list";
 
-  panel.append(head, bankRow, lead, sources, flash, list);
+  panel.append(head, bankRow, lead, sources, list);
   document.body.appendChild(root);
 
   // ── 범주 다섯 줄 · 한 줄이 통째로 버튼이다(폰에서 손가락이 크다) ────────────
@@ -238,7 +288,6 @@ export function createGenePanel(shop: GeneShop): GenePanel {
   // 아래 함수들이 서로를 부르므로 상태를 먼저 선언한다(선언 전 사용은 읽는 사람을 헷갈리게 한다).
   let open_ = false;
   let raf = 0;
-  let flashTimer = 0;
   /** 마지막으로 그린 상태의 지문. 바뀔 때만 DOM 에 쓴다. */
   let sig = "";
 
@@ -293,11 +342,22 @@ export function createGenePanel(shop: GeneShop): GenePanel {
         setText(r.cost, "");
         setText(r.size, "");
       } else {
-        const line = tierLine(cat, t + 1);
-        setText(r.gain, line.gain);
-        setText(r.cost, line.cost);
-        const dSize = SIZE_PER_TIER[cat];
-        setText(r.size, dSize === 0 ? "" : `몸집 ${dSize > 0 ? "+" : ""}${dSize}`);
+        // **어느 단의 값인지를 앞에 못 박는다.** 줄 머리의 로마 숫자는 「지금 단」이고 아래 수치는
+        // 「사면 되는 단」이라, 안 적으면 가죽 I단 화면이 「가죽 I」과 「버티는 힘 ×1.43」(= II단 값)을
+        // 나란히 보여 준다. 0단에서 I단을 살 때만 우연히 두 해석이 같아서 더 안 들킨다.
+        const next = t + 1;
+        const roman = TIER_ROMAN[next] ?? "";
+        const line = tierLine(cat, next);
+        setText(r.gain, `${roman}단 · ${line.gain}`);
+        setText(r.cost, line.cost === "" ? "" : `${roman}단 대가 · ${line.cost}`);
+        // 몸집은 **실값 전후**로 적는다 · 20~100 으로 잘리는 파생값이라 상수표(「+8」)를 그대로 찍으면
+        // 이미 큰 종에게 거짓말이 된다(94 인 종이 가죽 IV 를 사면 102 가 100 에 잘려 실제로는 +6).
+        // 몸집이 안 움직이는 범주(눈)와 상한에 완전히 걸린 경우는 저절로 빈 줄이 된다.
+        const nextPips: Pips = { ...shop.genome.pips };
+        nextPips[cat] = pipsForTier(next);
+        const sizeFrom = derivedSize(shop.genome.pips, shop.genome.keys);
+        const sizeTo = derivedSize(nextPips, shop.genome.keys);
+        setText(r.size, sizeTo === sizeFrom ? "" : `몸집 ${sizeFrom} ▸ ${sizeTo}`);
       }
       r.cost.style.display = r.cost.textContent ? "block" : "none";
       r.size.style.display = r.size.textContent ? "block" : "none";
@@ -307,20 +367,12 @@ export function createGenePanel(shop: GeneShop): GenePanel {
     }
   }
 
+  // 산 뒤에 무엇이 열렸는지 말하는 것은 **부르는 쪽**이다(`main.ts` 가 패널을 닫고 승급 연출을 낸다).
+  // 이 함수는 상태만 바꾸고 다음 프레임에 다시 그리게 표시한다.
   function buy(cat: Category): void {
     if (!shop.canBuyTier(cat)) return;
     if (!shop.buyTier(cat)) return;
-    const t = tierOf(shop.genome.pips[cat]);
-    const line = tierLine(cat, t);
-    setText(flash, `${CATEGORY_LABELS[cat]} ${TIER_ROMAN[t] ?? ""} · ${line.gain}`);
-    flash.style.display = "block";
-    flash.style.color = categoryColor(cat);
-    if (flashTimer !== 0) window.clearTimeout(flashTimer);
-    flashTimer = window.setTimeout(() => {
-      flash.style.display = "none";
-      flashTimer = 0;
-    }, 4200);
-    sig = ""; // 다음 프레임에 반드시 다시 그린다
+    sig = ""; // 다음 프레임에 반드시 다시 그린다(닫히지 않고 열려 있는 경우)
   }
 
   // 열려 있는 동안만 도는 갱신 루프. 방울은 세계가 굴러가는 중에도 계속 들어오므로, 열어 둔 채
@@ -426,7 +478,6 @@ function ensureGeneStyles(): void {
      처음엔 --faint 로 깔았는데 폰 실측 화면에서 거의 안 보였다 → 보조 본문색으로 올린다. */
   .gene-sources { font-family: var(--font-mono); font-size: 10.5px; color: var(--sub);
     opacity: 0.9; line-height: 1.6; margin-top: 8px; word-break: keep-all; }
-  .gene-flash { font-size: 12px; line-height: 1.5; margin-top: 10px; word-break: keep-all; }
   .gene-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
   /* 한 줄이 통째로 버튼 · 폰에서 작은 버튼을 겨냥하게 만들지 않는다. */
   .gene-row { width: 100%; box-sizing: border-box; text-align: left; display: block;
