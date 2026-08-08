@@ -128,21 +128,29 @@ export interface UnlockTier {
 }
 /**
  * 해금 사다리. 전설 카드는 전부 "능력 계열의 관문"(cards.ts 참조)이므로, 이 표가 곧 **전설을 언제 보느냐**를
- * 정한다. 그래서 지느러미(바다)는 **처음부터 열어 둔다** — 안 그러면 첫 판에 전설 등급이 아예 없어서
+ * 정한다. 그래서 지느러미(바다)는 **처음부터 열어 둔다** · 안 그러면 첫 판에 전설 등급이 아예 없어서
  * 콘페티·금빛 플래시를 볼 길이 없다(수영은 기본 50 이라 문턱이 가장 낮은 능력이기도 하다).
+ * 흐린 무늬·멀리 가는 울음도 여기 없으므로 처음부터 열려 있다(첫 판의 전설은 이 셋).
  * 나머지 네 계열은 한 계열씩 열린다: 초음파 → 하늘 → 원거리 → 독.
+ *
+ * ⚠ **이 표는 2026-08-08 까지 통째로 죽어 있었다.** `cardIds` 가 게놈 v8 이전 이름
+ * (`echo`·`bat_ear`·`webbed`·`wings`·`strong_wings`·`long_horn`·`spit`·`venom_fang`·`venom_gland`)
+ * 이라 지금 풀의 어떤 카드와도 안 맞았고, 그래서 `isCardUnlocked` 가 전부 통과시켜 **전설 일곱이
+ * 첫 판부터 전부 후보에 들었다**(두 건의 독립 실측에서 각각 발견). 카드 id 를 바꿀 때 이 표를 같이
+ * 안 고치면 조용히 죽는다 · 잠긴 것이 없어도 게임이 멀쩡히 돌아가므로 아무도 눈치채지 못한다.
+ * `meta.test.ts` 가 이제 「여기 적힌 id 가 실제 카드 풀에 있다」를 못박는다.
  *
  * 프리셋(갈래)은 카드보다 한 걸음 늦게 연다 — 카드로 그 능력을 겪어 본 뒤에 "그 종으로 시작하기"가 열린다.
  */
 export const UNLOCK_TIERS: readonly UnlockTier[] = [
   { atLevel: 2, presetIds: [], cardIds: [], reroll: true, label: "다시 뽑기", detail: "드래프트에서 카드를 새로 뽑는다" },
-  { atLevel: 3, presetIds: [], cardIds: ["echo", "bat_ear"], label: "초음파", detail: "눈 대신 귀로 사방을 더듬는다" },
-  { atLevel: 4, presetIds: ["preset_sea"], cardIds: ["webbed"], label: "바다 개척자", detail: "바다에서 시작하는 갈래" },
-  { atLevel: 6, presetIds: [], cardIds: ["wings", "strong_wings"], label: "하늘", detail: "산과 바다를 날아 넘는다" },
+  { atLevel: 3, presetIds: [], cardIds: ["ky_echo"], label: "초음파", detail: "눈 대신 귀로 사방을 더듬는다" },
+  { atLevel: 4, presetIds: ["preset_sea"], cardIds: [], label: "바다 개척자", detail: "바다에서 시작하는 갈래" },
+  { atLevel: 6, presetIds: [], cardIds: ["ky_wing"], label: "하늘", detail: "산과 바다를 날아 넘는다" },
   { atLevel: 7, presetIds: ["preset_sky"], cardIds: [], label: "하늘 개척자", detail: "하늘에서 시작하는 갈래" },
-  { atLevel: 9, presetIds: [], cardIds: ["long_horn", "spit"], label: "원거리", detail: "다가서지 않고 멀리서 쏜다" },
+  { atLevel: 9, presetIds: [], cardIds: ["ky_barb"], label: "원거리", detail: "다가서지 않고 멀리서 쏜다" },
   { atLevel: 10, presetIds: ["preset_ranged"], cardIds: [], label: "원거리 사냥꾼", detail: "원거리로 시작하는 갈래" },
-  { atLevel: 12, presetIds: [], cardIds: ["venom_fang", "venom_gland"], label: "독 살갗", detail: "삼킨 포식자를 중독시킨다" },
+  { atLevel: 12, presetIds: [], cardIds: ["ky_venom"], label: "독 살갗", detail: "삼킨 포식자를 중독시킨다" },
   { atLevel: 13, presetIds: ["preset_venom"], cardIds: [], label: "독 개척자", detail: "독으로 시작하는 갈래" },
 ];
 

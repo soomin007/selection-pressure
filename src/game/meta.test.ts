@@ -15,6 +15,7 @@ import {
   loadMeta,
   UNLOCK_TIERS,
 } from "@/game/meta";
+import { cardPoolFor, PRESET_CARDS } from "@/game/cards";
 
 describe("메타 언락(플레이어 레벨 기반)", () => {
   it("기본 프리셋·카드는 레벨 1(첫 플레이)부터 항상 열려 있다", () => {
@@ -27,20 +28,26 @@ describe("메타 언락(플레이어 레벨 기반)", () => {
   });
 
   it("특수 갈래·특화 카드는 메타 레벨에서 열린다", () => {
+    // ⚠ 여기 쓰는 id 는 **실제 카드 풀의 id** 여야 한다. 2026-08-08 까지 이 테스트가 옛 이름
+    //    (`echo`·`wings`·`venom_fang`)을 검사하고 있었고, 그 이름들은 어떤 카드도 안 가리켰다.
+    //    잠금 후보에 없는 id 는 `isCardUnlocked` 가 항상 true 로 답하는데, 그때는 표도 같이 죽어
+    //    있어서 false 가 나왔다 · **테스트와 표가 같은 방향으로 틀려 서로를 가려 줬다.**
+    //    아래 describe 의 「해금표가 실제 카드를 가리키는가」가 그 짝을 막는다.
     // 초음파 카드(레벨 3)
-    expect(isCardUnlocked("echo", 2)).toBe(false);
-    expect(isCardUnlocked("echo", 3)).toBe(true);
-    // 바다 갈래(레벨 4) — 카드보다 갈래가 늦게 열린다
+    expect(isCardUnlocked("ky_echo", 2)).toBe(false);
+    expect(isCardUnlocked("ky_echo", 3)).toBe(true);
+    // 바다 갈래(레벨 4) · 지느러미 카드는 처음부터 열려 있다(첫 판에도 전설을 볼 수 있게)
+    expect(isCardUnlocked("ky_fin", 1)).toBe(true);
     expect(isPresetUnlocked("preset_sea", 3)).toBe(false);
     expect(isPresetUnlocked("preset_sea", 4)).toBe(true);
     // 하늘 카드(레벨 6) → 갈래(레벨 7)
-    expect(isCardUnlocked("wings", 5)).toBe(false);
-    expect(isCardUnlocked("wings", 6)).toBe(true);
+    expect(isCardUnlocked("ky_wing", 5)).toBe(false);
+    expect(isCardUnlocked("ky_wing", 6)).toBe(true);
     expect(isPresetUnlocked("preset_sky", 6)).toBe(false);
     expect(isPresetUnlocked("preset_sky", 7)).toBe(true);
     // 독 살갗 카드(레벨 12) → 갈래(레벨 13)
-    expect(isCardUnlocked("venom_fang", 11)).toBe(false);
-    expect(isCardUnlocked("venom_fang", 12)).toBe(true);
+    expect(isCardUnlocked("ky_venom", 11)).toBe(false);
+    expect(isCardUnlocked("ky_venom", 12)).toBe(true);
     expect(isPresetUnlocked("preset_venom", 12)).toBe(false);
     expect(isPresetUnlocked("preset_venom", 13)).toBe(true);
   });
@@ -183,5 +190,39 @@ describe("recordRunComplete / debug — 인메모리 저장소", () => {
     } finally {
       gl.localStorage = prev;
     }
+  });
+});
+
+describe("해금표가 실제 카드·갈래를 가리키는가 (2026-08-08 · 통째로 죽어 있던 자리)", () => {
+  // 왜 이 테스트가 있나: `UNLOCK_TIERS.cardIds` 가 게놈 v8 이전 이름(`echo`·`wings`·`venom_fang` …)인 채로
+  // 남아 지금 풀의 어떤 카드와도 안 맞았다. 그러면 `isCardUnlocked` 가 전부 통과시켜 **전설 일곱이
+  // 첫 판부터 전부 열린다.** 잠긴 것이 없어도 게임은 멀쩡히 돌아가므로 아무도 눈치채지 못했다.
+  // 카드 id 를 바꿀 때 이 표를 같이 안 고치면 여기서 빨간불이 난다.
+  it("해금표의 카드 id 가 전부 실제 카드 풀에 있다", () => {
+    const ids = new Set(cardPoolFor().map((c) => c.id));
+    for (const t of UNLOCK_TIERS) {
+      for (const id of t.cardIds) {
+        expect(ids.has(id), `해금표 「${t.label}」의 카드 id 「${id}」가 카드 풀에 없다`).toBe(true);
+      }
+    }
+  });
+
+  it("해금표의 갈래 id 가 전부 실제 프리셋에 있다", () => {
+    const ids = new Set(PRESET_CARDS.map((c) => c.id));
+    for (const t of UNLOCK_TIERS) {
+      for (const id of t.presetIds) {
+        expect(ids.has(id), `해금표 「${t.label}」의 갈래 id 「${id}」가 프리셋에 없다`).toBe(true);
+      }
+    }
+  });
+
+  it("잠글 수 있는 전설이 실제로 잠겨 있다(첫 판에 전설이 전부 열려 있지 않다)", () => {
+    const legendary = cardPoolFor().filter((c) => c.rarity === "legendary");
+    expect(legendary.length).toBeGreaterThan(0);
+    const openAtFirst = legendary.filter((c) => isCardUnlocked(c.id, 1));
+    // 첫 판에도 전설이 **하나는** 열려 있어야 한다(금빛 연출을 볼 길이 있어야 하므로 · 위 주석 참고).
+    expect(openAtFirst.length).toBeGreaterThan(0);
+    // 그러나 전부 열려 있으면 해금 사다리가 죽은 것이다.
+    expect(openAtFirst.length).toBeLessThan(legendary.length);
   });
 });

@@ -123,9 +123,11 @@ describe("카드 문지기", () => {
     expect(cardAvailable("lp_hide2", 1)).toBe(true);
   });
 
-  it("두 문지기를 모두 통과해야 한다 — 레벨로 잠긴 카드는 과제와 무관하게 닫혀 있다", () => {
-    expect(cardAvailable("venom_fang", 1)).toBe(false); // 레벨 12 해금
-    expect(cardAvailable("venom_fang", 12)).toBe(true);
+  it("두 문지기를 모두 통과해야 한다 · 레벨로 잠긴 카드는 과제와 무관하게 닫혀 있다", () => {
+    // ⚠ 실제 카드 풀의 id 여야 한다. 2026-08-08 까지 옛 이름(`venom_fang`)을 검사했는데 그 이름은
+    //    어떤 카드도 안 가리켰고, 그때는 해금표도 같이 죽어 있어서 기대값이 우연히 맞았다.
+    expect(cardAvailable("ky_venom", 1)).toBe(false); // 레벨 12 해금
+    expect(cardAvailable("ky_venom", 12)).toBe(true);
   });
 
   it("과제 카드가 아닌 카드는 이 문지기를 그냥 통과한다", () => {
