@@ -325,7 +325,8 @@ async function boot(): Promise<void> {
       if (brief) moment.era(brief.title, brief.lines, go);
       else go();
     },
-    () => reportScreen.show(game.runHistory), // "이 혈통의 기록 보기"
+    // "이 혈통의 기록 보기" — 판 분석 코드도 여기서 함께 만든다(그 화면에서 복사한다).
+    () => reportScreen.show(game.runHistory, game.runCode()),
     applyCosmetics, // 결과 화면에서 꾸밈을 바꾸면 즉시 반영(다음 런에 그대로 적용)
     () => unlockLadder.show(), // 해금 사다리 열기
   );
@@ -655,6 +656,13 @@ async function boot(): Promise<void> {
      * 구입 성공 줄을 영영 안 재게 된다(화면의 절반만 검사하는 셈).
      */
     genes: (n: number) => void;
+    /**
+     * 런 보고서(이 혈통의 기록)를 지금 연다 · **판 분석 코드 상자와 복사 버튼이 거기 있다.**
+     * 이 화면은 원래 런을 끝까지 굴려야 나와서 검사기가 "수동 확인 대상"으로 미뤄 뒀던 자리다 —
+     * 미뤄 둔 자리에 UI 를 넣었으니 문을 열어 재게 한다(적어 둔 한계는 방지책이 아니다).
+     * 기록·코드는 **게임이 만든 진짜 값**이다(가짜 문자열 금지).
+     */
+    report: () => void;
   }
   if (new URLSearchParams(window.location.search).has("ovhook")) {
     const hooks: OverlapHooks = {
@@ -675,6 +683,7 @@ async function boot(): Promise<void> {
         if (b) moment.era(b.title, b.lines, () => {});
       },
       genes: (n) => game.debugGrantGenes(n),
+      report: () => reportScreen.show(game.runHistory, game.runCode()),
     };
     (window as unknown as { __ov: OverlapHooks }).__ov = hooks;
   }

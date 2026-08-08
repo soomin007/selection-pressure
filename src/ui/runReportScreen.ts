@@ -9,7 +9,8 @@ import { ensurePanelStyles } from "@/ui/panelStyles";
 import { registerKeyLayer, keyChip } from "@/ui/keys";
 
 export interface RunReportScreen {
-  show: (history: RunHistory) => void;
+  /** `code` = 판 분석 코드(`game.runCode()`). 이 판을 통째로 담은 한 줄이라 복사해 보낼 수 있다. */
+  show: (history: RunHistory, code: string) => void;
   hide: () => void;
 }
 
@@ -39,6 +40,10 @@ const EVENT_COLOR: Record<RunEventKind, string> = {
 export function createRunReportScreen(onClose: () => void): RunReportScreen {
   ensurePanelStyles(); // :root 토큰 보장
   const overlay = document.createElement("div");
+  // 이 오버레이가 스크롤 상자다(내용이 화면보다 길다) · 겹침 검사기가 끝까지 내려 「코드 복사」 버튼이
+  // 화면 안에 있는지 재려면 잡을 손잡이가 필요하다. 인라인 style 로는 못 잡는다(브라우저가 문자열을
+  // 정규화해 `z-index: 41` 로 바꾼다) → 클래스 이름을 준다.
+  overlay.className = "run-report-root";
   overlay.style.cssText =
     "position:fixed; inset:0; z-index:41; display:none; overflow-y:auto;" +
     "background:var(--bg-report); font-family:var(--font-body);" +
@@ -50,8 +55,12 @@ export function createRunReportScreen(onClose: () => void): RunReportScreen {
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
 
-  const show = (history: RunHistory): void => {
+  /** 지금 화면에 떠 있는 코드 상자(키 입력이 여기 있을 때는 스크롤 키를 가로채지 않는다). */
+  let codeBox: HTMLTextAreaElement | null = null;
+
+  const show = (history: RunHistory, code: string): void => {
     panel.replaceChildren();
+    codeBox = null;
 
     // 헤더 — 제목 + 닫기(결과 화면으로 돌아간다).
     const head = document.createElement("div");
@@ -87,6 +96,18 @@ export function createRunReportScreen(onClose: () => void): RunReportScreen {
     panel.appendChild(sectionTitle("연대기"));
     panel.appendChild(chronicle(history.events));
 
+    // 판 분석 코드 — 이 판을 통째로 담은 한 줄. 붙여 넣으면 무엇을 골랐고 무엇이 안 떴는지까지 다 나온다.
+    panel.appendChild(sectionTitle("판 분석 코드"));
+    panel.appendChild(
+      caption(
+        "이 판에서 무엇이 후보로 떴고 무엇을 골랐는지, 시험과 위협이 어떻게 됐는지가 다 들어 있습니다. " +
+          "복사해서 보내면 이 판을 그대로 들여다볼 수 있습니다.",
+      ),
+    );
+    const codeUi = codeSection(code);
+    codeBox = codeUi.box;
+    panel.appendChild(codeUi.el);
+
     overlay.scrollTop = 0;
     overlay.style.display = "block";
   };
@@ -100,6 +121,9 @@ export function createRunReportScreen(onClose: () => void): RunReportScreen {
     41,
     () => overlay.style.display === "block",
     (e) => {
+      // 코드 상자에 손이 가 있으면(전체 선택·복사 중) 스크롤·닫기 키를 가로채지 않는다. Esc 만 예외.
+      const inCode = codeBox !== null && document.activeElement === codeBox;
+      if (inCode && e.code !== "Escape") return false;
       switch (e.code) {
         case "Escape":
         case "Enter":
@@ -141,6 +165,68 @@ function caption(text: string): HTMLElement {
   c.textContent = text;
   c.style.cssText = "margin:-2px 0 8px; color:var(--faint); font-size:12px; line-height:1.55; word-break:keep-all;";
   return c;
+}
+
+/**
+ * 판 분석 코드 상자 + 복사 버튼.
+ *
+ * ⚠ **버튼 하나로 끝내지 않는다.** 클립보드 API 는 안전하지 않은 연결(http)·사생활 모드·구형
+ * 브라우저에서 막힌다. 그러면 복사할 길이 통째로 사라지므로, 코드를 **손으로 고를 수 있는 상자**에
+ * 늘 함께 띄운다(길게 눌러 전체 선택 → 복사). 버튼이 실패하면 그 사실을 말하고 상자를 대신 골라 준다.
+ */
+function codeSection(code: string): { el: HTMLElement; box: HTMLTextAreaElement } {
+  const wrap = document.createElement("div");
+
+  const box = document.createElement("textarea");
+  box.value = code;
+  box.readOnly = true;
+  box.rows = 3;
+  box.spellcheck = false;
+  box.setAttribute("aria-label", "판 분석 코드");
+  box.style.cssText =
+    "display:block; width:100%; box-sizing:border-box; resize:vertical; margin-top:2px;" +
+    "padding:9px 10px; background:var(--panelSolid); border:1px solid var(--line);" +
+    "border-radius:var(--r-card); color:var(--sub); font-family:var(--font-mono);" +
+    "font-size:11px; line-height:1.5; word-break:break-all; -webkit-user-select:all; user-select:all;";
+  // 탭하면 전체가 잡힌다 — 폰에서 "길게 눌러 전체 선택"이 은근히 어렵다.
+  box.addEventListener("focus", () => box.select());
+  box.addEventListener("click", () => box.select());
+
+  const row = document.createElement("div");
+  row.style.cssText = "display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:10px;";
+
+  const btn = document.createElement("button");
+  btn.textContent = "코드 복사";
+  btn.style.cssText =
+    "flex:none; padding:9px 18px; border:1px solid var(--line); border-radius:999px;" +
+    "background:rgba(255,255,255,0.06); color:var(--ink);" +
+    "font-family:var(--font-body); font-size:14px; cursor:pointer;";
+
+  const status = document.createElement("span");
+  status.style.cssText = "flex:1 1 100%; color:var(--faint); font-size:12px; line-height:1.5; word-break:keep-all;";
+  status.textContent = `${code.length}자 · 폰에서는 상자를 탭하면 전체가 선택됩니다.`;
+
+  btn.addEventListener("click", () => {
+    void (async (): Promise<void> => {
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(code);
+          status.textContent = "복사했습니다.";
+          return;
+        }
+        throw new Error("no clipboard");
+      } catch {
+        // 막힌 환경 — 상자를 골라 주고 사람이 직접 복사하게 안내한다(막다른 길로 두지 않는다).
+        box.focus();
+        box.select();
+        status.textContent = "자동 복사가 막혀 있습니다. 선택해 두었으니 직접 복사해 주세요.";
+      }
+    })();
+  });
+
+  row.append(btn, status);
+  wrap.append(box, row);
+  return { el: wrap, box };
 }
 
 function graphFrame(): HTMLElement {
@@ -249,7 +335,9 @@ function traitGraph(samples: RunSample[]): HTMLElement {
   const x = (t: number): number => PADX + (t / tMax) * (W - 2 * PADX);
   const y = (v: number): number => PADT + (1 - (v - lo) / (hi - lo)) * (H - PADT - PADB);
 
-  // 시작값 50 기준선(범위 안일 때만).
+  // 시작값 50 기준선(범위 안일 때만). ⚠ 눈금 **글씨는 선들보다 뒤에 붙인다** — 형질 선이 기준선
+  // 언저리를 지나면 「50」 위를 그대로 덮어 안 읽힌다(겹침 검사기 ②「그림이 글씨를 덮는다」에 걸린 자리).
+  let baseLabel: SVGTextElement | null = null;
   if (lo <= 50 && hi >= 50) {
     const base = document.createElementNS(SVG_NS, "line");
     base.setAttribute("x1", String(x(0)));
@@ -260,13 +348,18 @@ function traitGraph(samples: RunSample[]): HTMLElement {
     base.setAttribute("stroke-width", "1");
     base.setAttribute("stroke-dasharray", "3 3");
     svg.appendChild(base);
-    svg.appendChild(svgText(PADX, y(50) - 3, "50", "#8C7C68", "start"));
+    baseLabel = svgText(PADX, y(50) - 3, "50", "#8C7C68", "start");
+    // 글자 뒤에 판 배경색 테두리를 둘러 선이 글자 획을 가로질러도 읽힌다(색만 바꾸면 겹칠 때 못 읽는다).
+    baseLabel.setAttribute("stroke", "#141210");
+    baseLabel.setAttribute("stroke-width", "2.6");
+    baseLabel.setAttribute("paint-order", "stroke");
   }
 
   for (const k of MUTABLE_TRAITS) {
     const line = pts.map((s) => `${x(s.t).toFixed(1)},${y(s.traits[k]).toFixed(1)}`).join(" ");
     svg.appendChild(polyline(line, TRAIT_COLOR[k], 1.8));
   }
+  if (baseLabel) svg.appendChild(baseLabel); // 선 위에 얹는다(위 주석)
   box.appendChild(svg);
   return box;
 }

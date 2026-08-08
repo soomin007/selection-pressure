@@ -32,7 +32,9 @@
 // - 캔버스 UI 중 검사되는 것은 ⑤로 좌표를 내보내는 위젯(하이라이트·위협 예고)과 배치 공식을 여기
 //   베껴 둔 미니맵뿐이다. 보스 격퇴 체력 바(worldView 가 보스 몸 위에 그린다)는 월드 좌표라 안 잡히므로,
 //   그쪽을 옮겼다면 스크린샷을 눈으로도 봐야 한다.
-// - 결과·보고서 화면은 런을 끝까지 굴려야 나와서 여기서 안 잰다(수동 확인 대상으로 남긴다).
+// - 런 보고서(이 혈통의 기록)는 이제 잰다 · `?ovhook` 의 report 문으로 연다(2026-08-08 · 판 분석 코드
+//   상자를 거기 넣으면서 열었다. 열자마자 형질 그래프의 「50」 눈금이 선에 덮여 있던 것이 잡혔다 —
+//   "수동 확인 대상"은 실제로는 확인 안 되는 대상이었다). 결과 화면 자체는 아직 안 잰다.
 
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -332,6 +334,43 @@ const SCREENS = {
       await page.waitForTimeout(3400); // 경험치 애니메이션(최대 2.6초) + 해금 등장이 끝난 뒤에 잰다
     },
   },
+  // ── 런 보고서(이 혈통의 기록) + 판 분석 코드 ────────────────────────────────────
+  // 이 화면은 오래 "런을 끝까지 굴려야 나와서 안 잰다"로 미뤄져 있었는데, 판 분석 코드 상자와
+  // 복사 버튼이 여기 들어왔다. `?ovhook` 의 report 문이 **게임이 만든 진짜 기록·진짜 코드**로 연다.
+  runReport: {
+    label: "런 보고서 + 판 분석 코드(복사)",
+    async go(page) {
+      await toWatch(page); // 잠시 굴려 개체 수·형질 그래프와 연대기에 실제로 점이 찍히게 한다
+      await page.evaluate(() => window.__ov.report());
+      await page.waitForTimeout(500);
+      // 코드 상자가 실제로 떴는지 확인 · 안 떴으면 이 장면은 아무것도 안 재고 있는 것이다.
+      const code = await page.locator('textarea[aria-label="판 분석 코드"]').first().inputValue();
+      if (!/^SP\d+-/.test(code)) throw new Error(`판 분석 코드가 안 떴다: ${code.slice(0, 24)}`);
+    },
+  },
+  // 코드 상자는 화면 맨 아래에 있다 → 스크롤을 끝까지 내린 상태도 따로 잰다(버튼·안내 줄이 그때 보인다).
+  runReportBottom: {
+    label: "런 보고서 맨 아래(코드 상자 · 복사 버튼)",
+    async go(page) {
+      await toWatch(page);
+      await page.evaluate(() => window.__ov.report());
+      await page.waitForTimeout(500);
+      // 오버레이 자체를 끝까지 내린다(코드 상자는 맨 아래다). scrollIntoView 는 상자만 맞춰 놓고
+      // 그 아래 버튼을 화면 밖에 남길 수 있다.
+      await page.evaluate(() => {
+        const ov = document.querySelector(".run-report-root");
+        if (ov) ov.scrollTop = ov.scrollHeight;
+      });
+      await page.waitForTimeout(400);
+      // **화면 안에 있는가**를 좌표로 잰다 · isVisible() 은 스크롤 밖에 있어도 참이라 아무것도 안 잰다
+      // (이 저장소의 "닫기 버튼이 화면 밖으로 밀린" 사고가 정확히 그 자리였다).
+      const box = await page.getByRole("button", { name: "코드 복사" }).first().boundingBox();
+      const vh = page.viewportSize()?.height ?? 0;
+      if (!box || box.y < 0 || box.y + box.height > vh + 1) {
+        throw new Error(`복사 버튼이 화면 밖이다: ${JSON.stringify(box)} · 화면 높이 ${vh}`);
+      }
+    },
+  },
 };
 
 // 무엇을 어느 폭에서 볼 것인가. 폰이 기본이고, 데스크톱은 확대 배율(CSS zoom) 때문에 따로 본다.
@@ -384,6 +423,12 @@ const SCENES = [
   { screen: "genePanelRich", viewport: PHONE_NARROW, query: "?ovhook" },
   { screen: "genePanelRich", viewport: PHONE_SHORT, query: "?ovhook" },
   { screen: "genePanelRich", viewport: DESKTOP, query: "?ovhook" },
+  // 런 보고서 + 판 분석 코드 · 세로로 자라는 전체화면 오버레이라 짧은 폰이 최악이고,
+  // 좁은 폰은 복사 버튼과 안내 줄이 한 줄에서 부딪히는 폭이다.
+  { screen: "runReport", viewport: PHONE_NARROW, query: "?ovhook" },
+  { screen: "runReport", viewport: PHONE_SHORT, query: "?ovhook" },
+  { screen: "runReportBottom", viewport: PHONE_NARROW, query: "?ovhook" },
+  { screen: "runReportBottom", viewport: DESKTOP, query: "?ovhook" },
 ];
 
 mkdirSync(OUT, { recursive: true });

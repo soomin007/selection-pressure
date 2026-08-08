@@ -24,3 +24,11 @@
 | `ui/` | HTML 오버레이 UI (드래프트·결과·도감 등) | |
 
 진입점: `src/main.ts`. 전역 상수: `src/config.ts`.
+
+## 도구 (`scripts/`)
+- `balance-probe.mjs` — 밸런스 실측(`npm run probe -- <모드>`). 밸런스를 만졌을 때만 수동으로.
+- `overlap-check.mjs` — UI 겹침 점검(`npm run overlap`). **UI 를 넣거나 옮길 때마다.**
+- `decode-run.mjs` — **판 분석 코드를 사람이 읽는 표로 푼다**(`node scripts/decode-run.mjs SP1-...`).
+  코드를 만드는 쪽은 `src/game/runCode.ts`(형식의 단일 진실)이고, 기록을 모으는 곳은 `src/game/game.ts`,
+  복사 버튼은 런 보고서 화면(`src/ui/runReportScreen.ts`)에 있다.
+- `smoke.mjs` · `screenshots.mjs` · `boss-preview.mjs` · `gene-preview.mjs` — 스모크·촬영·미리보기.

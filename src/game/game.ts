@@ -19,6 +19,7 @@ import {
 import {
   CATEGORIES,
   CATEGORY_LABELS,
+  KEY_NAMES,
   TIER_ROMAN,
   nearestTierGoal,
   pipsToNext,
@@ -98,6 +99,20 @@ import { createBoss, bossPreview, bossName, bossCounter, bossTypeRaidable, isPre
 import { pickMapType, mapKind, FIRST_ERA_MAP, type MapKind, type MapType } from "@/sim/mapType";
 import { TILE } from "@/sim/terrain";
 import { buildRunReport } from "@/game/runReport";
+import {
+  currentCodeStamp,
+  encodeRunCode,
+  baseCardId,
+  isBossThreat,
+  DRAFT_NONE,
+  DRAFT_REROLLED,
+  DRAFT_SKIPPED,
+  type DraftKind,
+  type EndReason,
+  type RunCodeData,
+  type RunLogEntry,
+  type TrialRecord,
+} from "@/game/runCode";
 
 export type Phase = "lobby" | "draft" | "watch" | "result";
 export type RunResult = "win" | "lose";
@@ -384,6 +399,25 @@ export class Game {
   private runEvents: RunEvent[] = [];
   private runSteps = 0; // 런 전체 누적 스텝(시대 넘어가도 이어짐) → 경과 초 = runSteps / stepsPerSecond
 
+  /**
+   * **판 분석 코드가 읽는 기계용 기록**(`runCode.ts`). 연대기(`runEvents`)와 **겹치지 않는 것만** 담는다:
+   * 드래프트 후보 **전부** · 리롤로 버린 후보 · 시험 판정의 수치 · 구입 비용. 연대기는 사람이 읽는
+   * 한 줄이라 문구가 언제든 바뀌고, 그걸 되파싱해서는 위 것들을 복원할 수 없다(애초에 안 적혀 있다).
+   *
+   * 반대로 **관측 쪽은 새로 세지 않는다** — 개체 수 곡선은 `runSamples`, 사망 원인은 `world.deaths`,
+   * 최종 티어·열쇠는 `genome` 을 그대로 읽는다(`runCodeData`). 같은 것을 두 곳에서 세면 조용히 갈라진다.
+   *
+   * ⚠ 전부 정수·배열 기록뿐이다 · rng 를 한 번도 안 쓴다(밸런스 불변).
+   */
+  private runLog: RunLogEntry[] = [];
+  /** 이 런에서 **주운** 방울 누계(수입). 지갑(geneBankValue)은 쓴 뒤의 잔액이라 수지가 안 보인다. */
+  private geneEarnedTotal = 0;
+  /** 이 런에서 티어를 사는 데 **쓴** 방울 누계(지출). */
+  private geneSpentTotal = 0;
+  /** 지금 단계에 걸린 위협 · 분석 기록이 "무엇과 싸웠나"를 적는 데 쓴다(`clearStageState` 가 world.boss 를
+   *  지운 뒤에도 남아야 해서 따로 들고 있는다). 채집 라운드면 null. */
+  private stageThreat: BossType | ExtinctionType | null = null;
+
   /** 디버그용 고정 시드(URL ?seed=). null 이면 런마다 랜덤(맵·카드·보스가 매번 다름). */
   fixedSeed: string | null = null;
   /** 이번 런/로비의 시드. 맵·드래프트·보스가 모두 여기서 파생 → 같은 시드면 완전 재현. */
@@ -491,6 +525,9 @@ export class Game {
   pickCard(index: number): void {
     if (this.phase !== "draft") return;
     const card = this.draftCards[index];
+    // 분석 기록 — **고르기 전에** 적는다. 아래에서 eraReward·firstChoice 가 꺼지므로 이 자리가 지나면
+    // 이 드래프트가 어떤 자리에서 열린 것이었는지 알 길이 없어진다.
+    this.recordDraft(card ? index : DRAFT_NONE);
     // **티어가 오르는 순간**을 잡으려면 적용 전 티어를 떠 둬야 한다. 티어 승급은 수치가 커지는 게 아니라
     // 규칙이 통째로 켜지는 사건이라, 그 자리에서 알려 주지 않으면 화면에서 영영 안 읽힌다.
     // ⚠ 시작 프리셋(firstChoice)은 큐에 **안 넣는다** — 시작 상태는 승급 사건이 아니다. 게다가 프리셋
@@ -583,6 +620,7 @@ export class Game {
    * 시작 프리셋 선택(firstChoice)은 스킵 불가(반드시 한 종으로 시작). */
   skipDraft(): void {
     if (this.phase !== "draft" || this.firstChoice) return;
+    this.recordDraft(DRAFT_SKIPPED); // 안 고른 것도 선택이다 · 후보 세 장과 함께 남긴다
     this.world.spawnPlayerBrood(SIM.draftSkipBrood);
     this.skipBroodTotal += SIM.draftSkipBrood; // pop 시험 진행도에서 빼는 계수(스킵이 곧 합격이 되지 않게)
     this.pickedCardNames.push("건너뜀");
@@ -858,6 +896,8 @@ export class Game {
    */
   reroll(): void {
     if (this.phase !== "draft" || this.firstChoice || this.rerollsLeft <= 0) return;
+    // 버리는 후보도 기록에 남긴다 — "무엇이 싫어서 다시 뽑았나"가 분석의 절반이다.
+    this.recordDraft(DRAFT_REROLLED);
     this.rerollsLeft -= 1;
     this.rerollsUsed += 1;
     const drawn = this.drawDraft();
@@ -946,6 +986,27 @@ export class Game {
     return { cats, weight: Math.min(ASSIST_MAX_WEIGHT, w) };
   }
 
+  /**
+   * 분석 기록 · 드래프트 하나(**후보 전부 + 결말**)를 남긴다. 결말은 고른 자리이거나
+   * 건너뜀·다시 뽑기다. 부르는 자리 셋(`pickCard`·`skipDraft`·`reroll`)은 전부 **화면에 떠 있는
+   * 후보를 아직 안 갈아치운 시점**이라야 한다 · rng 미사용.
+   */
+  private recordDraft(outcome: number): void {
+    const kind: DraftKind = this.firstChoice ? "preset" : this.eraReward ? "era" : "level";
+    // 강화 배수는 `beginEraRewardDraft`·`reroll` 이 실제로 쓰는 것과 **같은 함수·같은 반올림**이다
+    // (boostCard 가 Math.max(1, Math.round(boost)) 로 접는다).
+    const boost = this.eraReward ? Math.max(1, Math.round(eraRewardBoostAt(this.era))) : 1;
+    this.runLog.push({
+      t: "draft",
+      kind,
+      boost,
+      level: this.level,
+      // 강화 꼬리(`_x2`)는 떼고 원래 카드 id 로 적는다 · 배수는 바로 위 `boost` 가 들고 있다.
+      cards: this.draftCards.map((c) => baseCardId(c.id)),
+      outcome,
+    });
+  }
+
   /** 지금까지 고른 카드의 id→횟수 — drawCards 소프트 디듑에 넘겨 이미 고른 카드를 뜸하게 뽑는다. */
   private pickedCounts(): Map<string, number> {
     const m = new Map<string, number>();
@@ -983,12 +1044,14 @@ export class Game {
     const diff = eraDifficulty(this.era);
     if (isBoss) {
       const bt = kind as BossType;
+      this.stageThreat = bt; // 소환도 진짜 단계와 같은 상태를 만든다(분석 기록도 같은 값을 본다)
       this.world.boss = createBoss(bt, this.world.width, this.world.height, this.world.terrain, diff, true); // 레이드 첫 시대부터
       this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협. ${bossPreview(bt)}`;
       this.threatText = `지금 위협 「${bossName(bt)}」 · ${bossCounter(bt)}`;
     } else {
       const et = kind as ExtinctionType;
+      this.stageThreat = et;
       applyExtinction(this.world, et, diff);
       this.stageLabel = `대멸종 · ${extinctionName(et)}`;
       this.preview = `대멸종. ${extinctionPreview(et)}`;
@@ -1127,6 +1190,10 @@ export class Game {
     this.runSamples = [];
     this.runEvents = [];
     this.runSteps = 0;
+    this.runLog = []; // 판 분석 코드의 기록도 새 혈통과 함께 처음부터
+    this.geneEarnedTotal = 0;
+    this.geneSpentTotal = 0;
+    this.stageThreat = null;
     this.stageIndex = 0;
     this.result = null;
     this.embers = GAME.emberStart; // 새 혈통 = 불씨 가득
@@ -1239,6 +1306,7 @@ export class Game {
     if (!this.canBuyTier(cat)) return false;
     const cost = this.tierCost(cat);
     this.geneBankValue -= cost;
+    this.geneSpentTotal += cost; // 분석 기록의 수지(번 것 · 쓴 것 · 남은 것)
     this.genome.pips[cat] += cost; // 정확히 다음 문턱 (cost = pipsToNext)
     refreshDerived(this.genome); // 종 기준선의 파생 능치 갱신 (applyCard 와 같은 마무리)
     // 무리 전체에 같은 도장. 도장은 정수라 개체마다 갈릴 여지가 없다(티어는 종 단위 성취다).
@@ -1250,6 +1318,8 @@ export class Game {
     this.syncCommandReach(); // 무리 도장이 올랐으면 목소리가 더 멀리 간다 · 즉시 반영
     this.newTiers.push({ cat, tier: tiersOf(this.genome.pips)[cat] });
     this.logEvent("card", `방울 · ${CATEGORY_LABELS[cat]} ${TIER_ROMAN[tiersOf(this.genome.pips)[cat]]}`);
+    // 분석 기록 — 연대기 줄은 「이빨 II」라고만 말한다. 든 값(방울)과 순서는 여기에만 남는다.
+    this.runLog.push({ t: "buy", cat, cost, tier: tiersOf(this.genome.pips)[cat] });
     return true;
   }
 
@@ -1295,6 +1365,7 @@ export class Game {
     const got = this.world.geneCollected;
     if (got > this.lastGeneCollected) {
       this.geneBankValue += got - this.lastGeneCollected;
+      this.geneEarnedTotal += got - this.lastGeneCollected; // 수입 누계(지갑은 쓰고 남은 잔액이라 따로 센다)
       this.lastGeneCollected = got;
     }
   }
@@ -1562,8 +1633,10 @@ export class Game {
     this.acc = 0;
     const kind = this.currentKind();
     const diff = eraDifficulty(this.era); // 시대별 위협 강도 배율(era 0 = 1.0)
+    this.stageThreat = null; // 분석 기록용 · 아래에서 위협이 정해지면 채운다
     if (kind === "boss") {
       const bt = this.takeBossType();
+      this.stageThreat = bt;
       // 레이드는 첫 시대(era 0)부터 켠다 — 격퇴 체력바·직접 잡기는 핵심 메커니즘이라 첫 판부터 보여야 한다
       // (era 1+ 로 미뤘더니 한 판 이겨 다음 시대로 가기 전엔 아예 안 보였다 — 사용자: "레이드 체력바가 안 보인다").
       // ⚠ 보스는 world 의 치수로 태어난다 · Game 기준 치수를 쓰면 시대별 맵 크기가 켜지는 순간
@@ -1579,6 +1652,7 @@ export class Game {
     } else if (kind === "extinction") {
       // 예고와 실제가 일치하도록 미리 정해 둔 큐에서 꺼낸다(peek 로 예고한 종류 == 여기서 shift 되는 종류).
       const et = this.extinctionQueue.shift() ?? this.extRng.pick(EXTINCTION_TYPES);
+      this.stageThreat = et;
       applyExtinction(this.world, et, diff);
       this.stageLabel = `대멸종 · ${extinctionName(et)}`;
       this.preview = `대멸종. ${extinctionPreview(et)}${survivalLine(extinctionPassNeeded(this.era))}`;
@@ -1613,9 +1687,29 @@ export class Game {
 
   private finishStage(survivedTimer: boolean, bossDefeated = false): void {
     const kind = this.currentKind();
+    const threat = this.stageThreat;
     this.clearStageState();
 
+    /**
+     * 분석 기록 · 이 단계가 어떻게 끝났나를 **나가는 갈래마다** 한 번씩 적는다.
+     * 아래 return 이 넷이라 마지막에 몰아 적을 수가 없다 · 빠뜨리면 그 단계가 코드에서 통째로 사라진다.
+     */
+    const recordStage = (passedFlag: boolean, trialRec: TrialRecord | null): void => {
+      this.runLog.push({
+        t: "stage",
+        kind,
+        era: this.era,
+        boss: threat !== null && isBossThreat(threat) ? threat : null,
+        extinction: threat !== null && !isBossThreat(threat) ? threat : null,
+        passed: passedFlag,
+        defeated: bossDefeated,
+        pop: this.world.playerPopulation,
+        trial: trialRec,
+      });
+    };
+
     if (!survivedTimer) {
+      recordStage(false, null);
       this.endRun("lose");
       return;
     }
@@ -1629,6 +1723,7 @@ export class Game {
     else if (kind === "extinction") passed = this.world.playerPopulation >= extinctionPassNeeded(this.era);
 
     if (!passed) {
+      recordStage(false, null);
       this.endRun("lose");
       return;
     }
@@ -1663,11 +1758,20 @@ export class Game {
       };
       this.lastVerdictValue = verdict; // 곧 열릴 카드창이 제목 자리에 싣는다(플래시는 그 창에 가린다)
       this.onTrialVerdict?.(verdict);
+      recordStage(true, {
+        kind: trial.kind,
+        target: trial.target,
+        progress: prog,
+        passed: trialPassed,
+        overachieved,
+      });
       if (this.embers <= 0) {
         this.loseReason = "embers";
         this.endRun("lose");
         return;
       }
+    } else {
+      recordStage(true, null);
     }
 
     // 보고서: 위협을 넘긴 순간(연대기). stageLabel 은 "보스 · 약탈자" · "대멸종 · 혹독한 추위" 형태.
@@ -1738,6 +1842,18 @@ export class Game {
     // 런이 진짜 끝났을 때만(멸종 또는 정복) 메타 경험치 적립 + 해금. 중간 시대 승리는 "다음 시대로"
     // 이어지므로 적립하지 않는다(그때는 endRun 이 canContinue=true 로 뜨지만 런은 계속된다 → progress=null).
     const conquered = result === "win" && this.isFinalEra;
+    // 분석 기록 · 이 시대가 어떻게 닫혔나. 이어가는 승리도 여기서 한 줄 남으므로 **시대별 결과**가 다 보인다.
+    const endReason: EndReason =
+      result === "win"
+        ? conquered
+          ? "conquer"
+          : "eraWin"
+        : this.loseReason === "embers"
+          ? "embers"
+          : this.world.playerPopulation === 0
+            ? "extinct"
+            : "gate";
+    this.runLog.push({ t: "end", win: result === "win", reason: endReason, era: this.era, level: this.level });
     const runOver = result === "lose" || conquered;
     // 성적(도달 레벨·시대·정복)만큼 메타 경험치가 쌓여 플레이어 레벨이 오른다 → 종료 화면에서 애니메이션.
     const progress: RunProgress | null = runOver ? recordRunComplete(this.level, this.era, conquered) : null;
@@ -1824,6 +1940,7 @@ export class Game {
     this.embers = Math.min(GAME.emberMax, this.embers + 1); // 시대를 넘긴 보상: 불씨 하나 회복
     this.currentTrial = null;
     this.logEvent("era", `시대 ${this.era + 1} 진입`);
+    this.runLog.push({ t: "era", era: this.era });
     this.paused = false;
     this.result = null;
     this.stageIndex = 0;
@@ -1949,6 +2066,60 @@ export class Game {
   /** 현재 경과 시간(초, 런 전체 누적 — 시대를 넘어도 이어짐). */
   private get runElapsedSec(): number {
     return this.runSteps / SIM.stepsPerSecond;
+  }
+
+  /**
+   * **판 분석 코드의 알맹이** — 재현용(시드·선택 이력)과 관측용(그래서 어떻게 됐나)을 한 덩이로.
+   *
+   * 관측 쪽은 **새로 세지 않는다**: 개체 수 곡선은 `runSamples`, 사망 원인은 `world.deaths`,
+   * 최종 도장·열쇠는 `genome` 을 그대로 읽는다. 같은 것을 두 곳에서 세면 반드시 조용히 갈라진다.
+   *
+   * ⚠ 챔피언(예전의 나)의 **게놈은 안 담는다** · 수만 담는다. 게놈 여덟 벌은 코드를 몇 배로 불려
+   *   폰에서 복사할 수 없게 만든다. 그래서 챔피언이 도는 세계(진도 3)는 **완전 재현이 아니다** ·
+   *   그 사실이 코드에 적혀 있어(champions 수) 디코더가 그렇게 말한다.
+   */
+  runCodeData(): RunCodeData {
+    const live = this.runSamples.filter((s) => s.population > 0);
+    const pops = this.runSamples.map((s) => s.population);
+    const last = this.runSamples[this.runSamples.length - 1];
+    const keys = KEY_NAMES.filter((k) => this.genome.keys[k]);
+    return {
+      ...currentCodeStamp(),
+      header: {
+        seed: this.baseSeed,
+        mapType: this.currentMapType,
+        metaLevel: this.metaLvl,
+        runsDone: this.runsDone,
+        champions: this.champions.length,
+        everConquered: this.everConquered,
+        rerollUnlocked: this.metaRerollUnlocked,
+        leadEnabled: this.leadEnabled,
+        assistEnabled: this.assistEnabled,
+      },
+      entries: this.runLog.slice(),
+      summary: {
+        durationSec: Math.round(this.runElapsedSec),
+        popMax: pops.length > 0 ? Math.max(...pops) : 0,
+        // **살아 있던 가장 적은 수.** 0 은 멸종이라 곡선의 정보가 아니다(끝값이 이미 말한다).
+        popMin: live.length > 0 ? Math.min(...live.map((s) => s.population)) : 0,
+        popEnd: last ? last.population : this.world.playerPopulation,
+        popPeak: this.peakPopulation,
+        era: this.era,
+        level: this.level,
+        rerollsUsed: this.rerollsUsed,
+        pips: { ...this.genome.pips },
+        keys: [...keys],
+        deaths: { ...this.world.deaths },
+        geneEarned: this.geneEarnedTotal,
+        geneSpent: this.geneSpentTotal,
+        geneLeft: this.geneBankValue,
+      },
+    };
+  }
+
+  /** 판 분석 코드 문자열(`SP1-...`). 런 보고서 화면이 복사 버튼에 싣는다. */
+  runCode(): string {
+    return encodeRunCode(this.runCodeData());
   }
 
   /** 보고서에 사건 하나 기록(현재 경과 시각으로). */
