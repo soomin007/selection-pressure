@@ -22,6 +22,7 @@
 //   npm run probe                 (= order)
 //   npm run probe -- order        지시 순종·도착·시험 계수 (지시를 안 준 대조군과 함께)
 //   npm run probe -- raid         프리셋 8종 x 떼 보스 5종 격퇴 (최소 체력 비율)
+//   npm run probe -- poison       독 안개(전역 흡수) · 기준선/안 몲/수풀로 몲 셋을 나란히
 //   npm run probe -- sweep        공격력 스윕 x 약탈자
 //   npm run probe -- era0         첫 시대 한 판 전체(실제 일정) · 단계별 개체 수 + 사망 원인 전 항목
 //   npm run probe -- encounter    내 종과 가장 가까운 포식자의 초기 거리 · 첫 감지 시각
@@ -83,6 +84,9 @@ const {
   eraRewardBoostAt, bossPassNeeded, extinctionPassNeeded, onboardingStep, stepUsesDrawnMap, stepWorldOptions,
 } = await server.ssrLoadModule("/src/game/config.ts");
 const { createBoss, bossRaidable } = await server.ssrLoadModule("/src/sim/boss.ts");
+// 몰기(무리 지시)를 흉내 내려면 게임과 **같은 함수**로 목소리 반경·지휘 공백을 넣어야 한다.
+// 프로브가 임의의 숫자를 넣으면 "몰면 산다"를 게임과 다른 조건에서 재게 된다.
+const { voiceRadius, vacuumTicks } = await server.ssrLoadModule("/src/sim/herdOrder.ts");
 const { defaultGenome, refreshDerived, TRAIT_KEYS, TRAIT_LABELS } = await server.ssrLoadModule("/src/sim/genome.ts");
 // v8 — 성장은 형질 숫자가 아니라 **도장과 티어**로 잰다. 이 모듈이 그 단일 진실이다.
 const {
@@ -124,7 +128,7 @@ function mapTypeForStep(step) {
  * 평평한 초원 · 챔피언 없음)이고 그 뒤로는 뽑힌 맵 종류다. 프로브가 존재하지 않는 세계를 재던
  * 2026-08-04 사고의 재발 방지선이 여기다.
  */
-function buildWorld(seed, genome, mapTypeOverride, step = STEP, scale = SCALE) {
+function buildWorld(seed, genome, mapTypeOverride, step = STEP, scale = SCALE, era = ERA) {
   return new World(
     seed,
     Math.round(MOBILE.width * scale),
@@ -133,9 +137,9 @@ function buildWorld(seed, genome, mapTypeOverride, step = STEP, scale = SCALE) {
     scale * scale,
     [], // 챔피언 — 마지막 진도 전에는 없음이 정상. 그 뒤는 저장본에 달려 프로브에선 재현 불가 → 늘 없음.
     mapTypeOverride ?? mapTypeForStep(step),
-    eraScarcity(ERA),
+    eraScarcity(era),
     // game.makeWorld 와 같은 형태 — 시대별 포식 압력도 함께 넘긴다(안 넘기면 --era=3 세계가 실제보다 순하다).
-    { ...stepWorldOptions(step), predatorPressure: eraPredatorPressure(ERA) },
+    { ...stepWorldOptions(step), predatorPressure: eraPredatorPressure(era) },
   );
 }
 
@@ -265,6 +269,14 @@ async function runOrder() {
       // (1) 지시를 준 세계
       const w = buildWorld(seed, p.genome);
       for (let i = 0; i < WARMUP; i++) w.step();
+      // ⚠ **알파와 목소리 반경을 반드시 세운다.** 이게 없으면 `behavior` 의 지시 블록이 통째로 안 돈다
+      //   (`world.voiceR > 0` 게이트). 실제로 이 모드는 오랫동안 순종률을 0.0/0.0/0.0 으로 찍고 있었고,
+      //   지시를 준 판의 시험 계수가 **대조군과 소수점까지 같았다**(70.2/1.6/14.4 vs 70.2/1.6/14.4) ·
+      //   "명령을 준 세계"를 잰다면서 명령이 한 번도 안 걸린 세계를 재고 있었던 것이다.
+      //   game.ts 가 매 단계 하는 것과 같은 함수를 부른다(숫자를 여기 손으로 적으면 또 갈린다).
+      w.armLead();
+      w.voiceR = voiceRadius(p.genome.pips, p.genome.keys);
+      w.vacuumOnLeadDeath = vacuumTicks(p.genome.pips);
       const c0 = centroid(mine(w));
       if (c0 === null) continue;
       const t = p.genome.traits;
@@ -416,6 +428,173 @@ async function runRaid() {
           `${fmt(rows.reduce((a, r) => a + r.melee, 0) / rows.length, 1)}/${fmt(rows.reduce((a, r) => a + r.ranged, 0) / rows.length, 1)}`,
           cell(rows.map((r) => r.bossDeaths), 1),
           cell(rows.map((r) => r.pop), 1),
+        ].join("\t"),
+      );
+    }
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// poison 모드 · "독 안개를 살아서 넘을 길이 있는가"
+// ────────────────────────────────────────────────────────────────────────────
+//
+// 왜 따로 있나: `raid` 모드는 BOSS_HORDES(떼 보스 5종)만 돌아서 **독 안개는 한 번도 프로브에 잡힌 적이
+// 없었다.** 그사이 독 안개는 시대 2 부터 전 시드·전 갈래를 탈락시키고 있었다(2026-08-08 실측).
+// 격퇴 체력이 0 인 보스라 raid 의 지표(최소 체력 비율)로는 애초에 잴 수도 없다 · 여기 지표는
+// **끝 개체 수 · 탈락률 · 완전 멸종률**이다.
+//
+// 세 갈래를 **같은 시드로 나란히** 찍는다. 기준선 없이 재면 "이 갈래가 원래 못 사는 것"과 "안개가
+// 죽인 것"이 구별되지 않는다(known_issues: 카운터를 절대 개체수로 재면 오독한다).
+//   기준선 = 위협이 아예 없는 같은 판 · 안몲 = 안개만 얹고 손 안 댐 · 몲 = 무리를 가장 가까운 수풀로 지시
+//
+// 옵션: --seeds=24 --eras=0,2,4 --presets=omni,herd --drain=0.3 --shelter=0
+//   --drain    프리셋의 globalDrain 을 덮어써 값을 쓸어 본다(안 주면 프리셋 값 그대로).
+//   --shelter=0 수풀 피난처를 꺼서 **피난처 전/후**를 같은 자에 나란히 잰다.
+
+/**
+ * (x,y) 에서 가장 가까운 **넓은** 수풀의 한복판. 수풀이 한 칸도 없으면 null. rng 미사용 → 결정론.
+ *
+ * ⚠ 그냥 "가장 가까운 수풀 타일"을 찍으면 안 된다. 타일은 20px 인데 지시 해제 반경(ORDER.releaseRadius)이
+ *   64px 라, 한 칸짜리 수풀을 찍으면 무리가 도착하는 순간 전원이 해제 반경 안이 되어 도로 흩어진다
+ *   (실측: 수풀 체류율이 맵의 수풀 비율 24% 와 똑같았다 = 몬 효과가 0). 사람이 폰에서 실제로 하는 것도
+ *   "눈에 보이는 수풀 덩어리 한복판을 탭"이지 한 칸 찍기가 아니다.
+ */
+function grassShelterSpot(terr, x, y) {
+  const cols = terr.cols;
+  const rows = terr.rows;
+  const isG = (cx, cy) =>
+    cx >= 0 && cy >= 0 && cx < cols && cy < rows && terr.tiles[cy * cols + cx] === TILE.grass;
+  const R = 3; // 7x7 창 = 반경 60px ≈ 해제 반경(64px). 이 안이 수풀이면 흩어져도 수풀 위다.
+  const win = (2 * R + 1) * (2 * R + 1);
+  for (const minFrac of [0.75, 0.5, 0]) {
+    let best = null;
+    let bestD2 = Infinity;
+    for (let cy = 0; cy < rows; cy++) {
+      for (let cx = 0; cx < cols; cx++) {
+        if (!isG(cx, cy)) continue;
+        if (minFrac > 0) {
+          let n = 0;
+          for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) if (isG(cx + dx, cy + dy)) n += 1;
+          if (n / win < minFrac) continue;
+        }
+        const gx = (cx + 0.5) * terr.cellSize;
+        const gy = (cy + 0.5) * terr.cellSize;
+        const d2 = (gx - x) ** 2 + (gy - y) ** 2;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          best = { x: gx, y: gy };
+        }
+      }
+    }
+    if (best !== null) return best;
+  }
+  return null;
+}
+
+/**
+ * 독 안개 한 판. mode: "base"(위협 없음) | "still"(안 몲) | "drive"(수풀로 몲).
+ * 세 갈래 모두 같은 자리에서 알파를 세운다 · `armLead` 는 rng 를 안 쓰고, 명령을 한 번도 안 주면
+ * 세계가 기존과 부동소수점까지 같다(world.ts 의 followTicks·commanded 주석). 그래야 세 갈래의
+ * 차이가 **오직 지시 유무**가 된다.
+ */
+function poisonRound(genome, seed, era, mode, drainOverride, shelterOn) {
+  const step = onboardingStep(0, era);
+  const scale = mapScale(step);
+  const w = Math.round(MOBILE.width * scale);
+  const h = Math.round(MOBILE.height * scale);
+  const world = buildWorld(seed, genome, undefined, step, scale, era);
+  for (let i = 0; i < WARMUP; i++) world.step();
+  world.armLead();
+  world.voiceR = voiceRadius(genome.pips, genome.keys);
+  world.vacuumOnLeadDeath = vacuumTicks(genome.pips);
+
+  const diffMul = eraDifficulty(era);
+  if (mode !== "base") {
+    world.boss = createBoss("poison", w, h, world.terrain, diffMul, true);
+    if (drainOverride !== null) world.boss.globalDrain = drainOverride * diffMul;
+    if (!shelterOn) world.boss.drainShelter = false;
+  }
+  let spot = null;
+  if (mode === "drive") {
+    const c = centroid(mine(world));
+    if (c !== null) spot = grassShelterSpot(world.terrain, c.x, c.y);
+  }
+
+  const ticks = GAME.bossSeconds * SIM.stepsPerSecond;
+  let grassSamples = 0;
+  let grassHits = 0;
+  for (let i = 1; i <= ticks; i++) {
+    // 「가라」는 무기한 명령이라 사람은 한 번만 탭한다. 다만 알파가 쓰러지면 sim 이 명령을 지우므로
+    // (지휘 공백) 매 틱 다시 얹어 "그 사람은 여전히 그 자리를 가리키고 있다"를 흉내 낸다.
+    if (spot !== null) world.herdOrder = spot;
+    world.step();
+    if (i % 10 === 0) {
+      for (const e of mine(world)) {
+        grassSamples += 1;
+        if (world.terrain.isGrass(e.x, e.y)) grassHits += 1;
+      }
+    }
+  }
+  return {
+    pop: world.playerPopulation,
+    grass: grassSamples === 0 ? 0 : grassHits / grassSamples,
+    hasGrass: spot !== null || mode !== "drive",
+  };
+}
+
+async function runPoison() {
+  const presets = pickPresets();
+  const eras = opt("eras", "0,2,4").split(",").map(Number);
+  const drainOverride = opt("drain", "") === "" ? null : Number(opt("drain", ""));
+  const shelterOn = opt("shelter", "1") !== "0";
+
+  console.log(
+    `# poison · 시대 ${eras.join("·")} · 시드 ${SEEDS.length} · 프리셋 ${presets.length} · ` +
+      `${GAME.bossSeconds}초 관문 · 워밍업 ${WARMUP}틱 · 피난처 ${shelterOn ? "켬" : "끔"} · ` +
+      `흡수 ${drainOverride === null ? "프리셋 값" : drainOverride}`,
+  );
+  console.log(
+    "# 기준선 = 같은 시드·같은 판에서 위협을 아예 안 얹은 것. 안몲 = 안개만 얹고 손 안 댐. " +
+      "몲 = 무리를 가장 가까운 수풀로 지시(한 번 탭한 뒤 그대로).",
+  );
+  console.log("# 탈락 = 끝 개체 수 < 통과기준 · 멸종 = 0마리 · 수풀% = 내 종이 수풀 위에 있던 개체틱 비율(몲).");
+  console.log(
+    [
+      "시대", "프리셋".padEnd(18), "통과",
+      "기준선", "기준탈락", "기준멸종",
+      "안몲", "안몲탈락", "안몲멸종",
+      "몲", "몲탈락", "몲멸종", "수풀%",
+    ].join("\t"),
+  );
+
+  for (const era of eras) {
+    const need = bossPassNeeded(era);
+    for (const p of presets) {
+      const base = [];
+      const still = [];
+      const drive = [];
+      for (const seed of SEEDS) {
+        base.push(poisonRound(p.genome, seed, era, "base", drainOverride, shelterOn));
+        still.push(poisonRound(p.genome, seed, era, "still", drainOverride, shelterOn));
+        drive.push(poisonRound(p.genome, seed, era, "drive", drainOverride, shelterOn));
+      }
+      const fail = (rows) => rows.filter((r) => r.pop < need).length;
+      const gone = (rows) => rows.filter((r) => r.pop === 0).length;
+      console.log(
+        [
+          String(era),
+          p.name.padEnd(18),
+          String(need),
+          cell(base.map((r) => r.pop), 1),
+          `${fail(base)}/${base.length}`,
+          `${gone(base)}/${base.length}`,
+          cell(still.map((r) => r.pop), 1),
+          `${fail(still)}/${still.length}`,
+          `${gone(still)}/${still.length}`,
+          cell(drive.map((r) => r.pop), 1),
+          `${fail(drive)}/${drive.length}`,
+          `${gone(drive)}/${drive.length}`,
+          cell(drive.map((r) => r.grass * 100), 0),
         ].join("\t"),
       );
     }
@@ -1455,6 +1634,7 @@ const t0 = Date.now();
 try {
   if (MODE === "order") await runOrder();
   else if (MODE === "raid") await runRaid();
+  else if (MODE === "poison") await runPoison();
   else if (MODE === "sweep") await runSweep();
   else if (MODE === "era0") await runEra0();
   else if (MODE === "encounter") await runEncounter();
@@ -1467,7 +1647,7 @@ try {
   else if (MODE === "sens") await runSens();
   else {
     console.error(
-      `알 수 없는 모드: ${MODE} (order | raid | sweep | era0 | encounter | steps | growth | apex | scale | sens)`,
+      `알 수 없는 모드: ${MODE} (order | raid | poison | sweep | era0 | encounter | steps | growth | apex | scale | sens)`,
     );
     process.exitCode = 1;
   }

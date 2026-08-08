@@ -13,7 +13,7 @@ import type { Boss, BossType, Layer } from "@/sim/boss";
 //   (world.entities 는 매 스텝 끝에 산 개체만 남게 걸러지므로 sim 쪽 alive 검사와도 결과가 같다.)
 //   비용: 내 종 개체(수십 마리)에 프레임당 한 번이라 폰에서도 무시할 수준이다.
 import { bossRaidable, isRaidFighter } from "@/sim/boss";
-import { TILE, type TileKind } from "@/sim/terrain";
+import { TILE, type Terrain, type TileKind } from "@/sim/terrain";
 import type { Biome } from "@/sim/environment";
 import { TRAIT_KEYS, TRAIT_MAX, type Genome } from "@/sim/genome";
 import { SIM } from "@/sim/params";
@@ -84,6 +84,17 @@ export class WorldView {
    */
   hudSafeLogical = 0;
   private readonly overlayG = new Graphics();
+  /**
+   * **피난처가 있는 전역 안개**(독 안개) 전용 레이어 · 안개를 화면 전체가 아니라 **흡수가 실제로
+   * 걸리는 자리에만** 칠한다. 수풀 위는 비워 두므로 "저기는 안전하다"가 눈으로 읽힌다
+   * (전달 규칙 1순위: 그 자체로 보이는 것).
+   *
+   * 왜 별도 레이어인가: 지형은 런/단계마다 한 번만 바뀌므로 도형을 그때 한 번만 짓고(drawEnvironment),
+   * 매 프레임에는 `alpha`(맥동)와 `tint`(보스 색)만 바꾼다. 매 프레임 수천 개 타일을 다시 그리면
+   * 폰 프레임이 죽는다. 흰색으로 짓고 tint 로 색을 입히는 이유는 색의 단일 진실이 TRIAL_VISUALS 이기
+   * 때문이다(여기에 색을 복제하면 둘이 갈린다).
+   */
+  private readonly fogG = new Graphics();
   // 격퇴 바 옆 남은 체력 숫자. 밤·대멸종 틴트(overlayG) **위**에 둔다 · 이 숫자는 어떤 조명에서도
   // 읽혀야 한다(바 1픽셀이 6HP 라 숫자가 유일하게 정직한 눈금이다).
   private readonly raidTextC = new Container();
@@ -140,6 +151,7 @@ export class WorldView {
     this.container.addChild(this.geneLayer.mainG);
     this.container.addChild(this.bossG);
     this.container.addChild(this.overlayG);
+    this.container.addChild(this.fogG); // 밤 틴트 위 · 안개는 밤보다 앞이다(밤이 안개를 지우면 안 된다)
     this.container.addChild(this.raidTextC); // 밤 틴트 위 · 남은 체력 숫자만은 늘 또렷하게
     this.container.addChild(this.geneLayer.textC); // 같은 이유로 밤 틴트 위(「보스 격퇴 +3」·「+3」)
   }
@@ -322,6 +334,29 @@ export class WorldView {
         this.envG
           .rect(cx * cs, cy * cs, cs, cs)
           .fill({ color: terrainColor(kind, elev, s.biome, s.coldness, s.fertility), alpha: 1 });
+      }
+    }
+    this.buildFog(terr);
+  }
+
+  /**
+   * 피난처 안개의 도형을 **지형이 바뀔 때 한 번만** 짓는다 · 수풀이 아닌 칸만 덮는다.
+   * sim 의 흡수 예외(`boss.drainShelter` + `terrain.isGrass`)와 **같은 판정**이라 화면에서 비어 있는
+   * 자리가 곧 안 빨리는 자리다(시각=로직 1:1). 흰색으로 지어 두고 색은 매 프레임 tint 로 입힌다.
+   * 한 줄씩 가로로 이어 붙여(run-length) 사각형 수를 수천에서 수백으로 줄인다.
+   */
+  private buildFog(terr: Terrain): void {
+    this.fogG.clear();
+    const cs = terr.cellSize;
+    for (let cy = 0; cy < terr.rows; cy++) {
+      let runStart = -1;
+      for (let cx = 0; cx <= terr.cols; cx++) {
+        const foggy = cx < terr.cols && terr.tiles[cy * terr.cols + cx] !== TILE.grass;
+        if (foggy && runStart < 0) runStart = cx;
+        else if (!foggy && runStart >= 0) {
+          this.fogG.rect(runStart * cs, cy * cs, (cx - runStart) * cs, cs).fill({ color: 0xffffff, alpha: 1 });
+          runStart = -1;
+        }
       }
     }
   }
@@ -812,6 +847,7 @@ export class WorldView {
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: NIGHT_COLOR, alpha: night });
     let tint = 0;
     let tintAlpha = 0;
+    let fogAlpha = 0; // 피난처 안개(수풀만 비운다) · 화면 전체 틴트(tintAlpha)와 배타적으로 쓴다
     if (world.globalCold > 0) {
       tint = 0x3a6cff;
       tintAlpha = 0.16;
@@ -830,12 +866,23 @@ export class WorldView {
       // 개체로 실재화돼 killRadius>0 이라 여기 안 오고 위의 점+오라로 그려진다.
       const v = TRIAL_VISUALS[boss.type];
       if (v) {
-        tint = v.color;
-        tintAlpha = v.baseAlpha + v.pulseAmp * Math.sin(this.frame * v.pulseSpeed);
+        const a = v.baseAlpha + v.pulseAmp * Math.sin(this.frame * v.pulseSpeed);
+        if (boss.drainShelter) {
+          // **피난처가 있는 안개** · 화면을 통째로 덮지 않는다. 수풀 위는 비워, 어디로 몰아야 하는지가
+          // 문구가 아니라 그림으로 보인다. 색의 단일 진실은 TRIAL_VISUALS 하나(여기선 tint 로만 입힌다).
+          this.fogG.tint = v.color;
+          fogAlpha = a;
+        } else {
+          tint = v.color;
+          tintAlpha = a;
+        }
       }
     }
     if (tintAlpha > 0)
       this.overlayG.rect(0, 0, world.width, world.height).fill({ color: tint, alpha: tintAlpha });
+    // 매 프레임 여기 한 자리에서만 켜고 끈다 · 보스가 사라진 프레임에 옛 안개가 남지 않게.
+    this.fogG.visible = fogAlpha > 0;
+    this.fogG.alpha = fogAlpha;
   }
 
   /**
@@ -1485,8 +1532,11 @@ interface TrialVisual {
   pulseSpeed: number;
 }
 const TRIAL_VISUALS: Partial<Record<BossType, TrialVisual>> = {
-  // 독 안개 — 온 땅의 에너지를 빨아들인다. 진한 녹황을 느리게 맥동(살아 움직이는 독).
-  poison: { color: 0x5f8f36, baseAlpha: 0.22, pulseAmp: 0.07, pulseSpeed: 0.06 },
+  // 독 안개 · 온 땅의 에너지를 빨아들인다. 느리게 맥동하는 탁한 독빛(살아 움직이는 독).
+  // ⚠ 화면 전체 틴트이던 시절의 값(0x5f8f36 · 0.22)에서 **어둡고 짙게** 바꿨다. 안개가 이제 수풀을
+  //   비우고 칠하므로, 옅으면 「비운 자리」가 안 읽힌다 · 초록 땅 위의 초록 틴트는 눈에 안 걸린다.
+  //   어둡게 깔면 수풀만 원래 밝기로 남아 "밝은 데가 안전한 데"가 설명 없이 보인다.
+  poison: { color: 0x2e3d16, baseAlpha: 0.5, pulseAmp: 0.07, pulseSpeed: 0.06 },
 };
 
 // 개체형 떼 시련의 색 — 종류마다 확연히 달리해 "무엇이 덮치는지" 구분한다(점·오라·물기 반경 공용).
