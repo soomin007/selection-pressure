@@ -191,7 +191,7 @@ async function boot(): Promise<void> {
   const playTierUps = (): number => {
     const ups = game.takeNewTiers();
     ups.forEach((up, k) => {
-      const line = tierLine(up.cat, up.tier);
+      const line = tierLine(up.cat, up.tier, game.genome.keys);
       const title = `${CATEGORY_LABELS[up.cat]} ${TIER_ROMAN[up.tier]}`;
       if (k === 0) moment.apex(title, up.tier, line.gain);
       else window.setTimeout(() => moment.apex(title, up.tier, line.gain), k * 2300);

@@ -26,6 +26,7 @@ import {
   CATEGORIES,
   CATEGORY_DESC,
   CATEGORY_LABELS,
+  KEY_NAMES,
   SIZE_MEANING,
   TIER_ROMAN,
   derivedSize,
@@ -293,9 +294,13 @@ export function createGenePanel(shop: GeneShop): GenePanel {
 
   // ── 그리기 ────────────────────────────────────────────────────────────────
   // 매 프레임 DOM 에 쓰면 폰에서 레이아웃 비용이 된다 → 상태 지문이 바뀔 때만 다시 그린다.
+  // ⚠ 지문에 **열쇠도 넣는다.** 열쇠가 열리면 같은 도장·같은 잔액이어도 문구가 바뀐다
+  //   (초음파를 얻는 순간 눈 줄에 「듣는 거리」가 함께 붙는다) · 안 넣으면 열어 둔 채 열쇠가
+  //   열렸을 때 화면만 옛말을 계속한다.
   const stateSig = (): string => {
     const p = shop.genome.pips;
-    return `${shop.geneBank}|${CATEGORIES.map((c) => p[c]).join(",")}`;
+    const k = shop.genome.keys;
+    return `${shop.geneBank}|${CATEGORIES.map((c) => p[c]).join(",")}|${KEY_NAMES.filter((n) => k[n]).join(",")}`;
   };
 
   const setText = (el: HTMLElement, s: string): void => {
@@ -347,7 +352,10 @@ export function createGenePanel(shop: GeneShop): GenePanel {
         // 나란히 보여 준다. 0단에서 I단을 살 때만 우연히 두 해석이 같아서 더 안 들킨다.
         const next = t + 1;
         const roman = TIER_ROMAN[next] ?? "";
-        const line = tierLine(cat, next);
+        // 열쇠까지 넘긴다 · 같은 눈 II 라도 초음파를 가진 종은 보는 거리와 **듣는 거리가 함께**
+        // 늘어난다(초음파 세기가 눈 티어를 따라 오른다 · tiers.EYE_ECHO). 그 말이 없으면
+        // 「초음파를 얻었으니 눈은 이제 살 이유가 없다」로 읽힌다.
+        const line = tierLine(cat, next, shop.genome.keys);
         setText(r.gain, `${roman}단 · ${line.gain}`);
         setText(r.cost, line.cost === "" ? "" : `${roman}단 대가 · ${line.cost}`);
         // 몸집은 **실값 전후**로 적는다 · 20~100 으로 잘리는 파생값이라 상수표(「+8」)를 그대로 찍으면

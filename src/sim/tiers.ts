@@ -246,6 +246,28 @@ export const EYE_VISION = [60, 72, 84, 96, 118] as const;
  * 대신 다른 축(밤·수풀·은신)에서 규칙 밖으로 나간다. 사각을 메우고 싶으면 듀오 「파수꾼」을 켜야 한다.
  */
 export const EYE_FOV_COS = [0.17, 0.26, 0.36, 0.47, 0.57] as const;
+/**
+ * 눈 → **초음파 세기**(열쇠 `echo` 를 가진 종만 · 없으면 0). 초음파는 눈 범주의 열쇠라 세기가 눈
+ * 티어를 그대로 따라 오른다 · **눈을 키우면 초음파가 함께 세진다**는 뜻이고, 화면이 그 사실을
+ * 안 말하면 「초음파를 얻었으니 눈은 이제 쓸모없다」는 오해가 생긴다(`tierLine` 이 열쇠를 받는 이유).
+ *
+ * ⚠ **감지 범위는 `max(시야, 초음파)` 다**(`behavior.chooseGoal`) · 둘 중 어느 쪽이 이기는지는
+ * 티어가 아니라 **때와 자리**가 정한다. 실측(`visionRadius` · 실제 World · px):
+ *
+ * | 눈단 | 시야(낮·트임) | 시야(밤) | 초음파 | 낮 | 밤 |
+ * |---|---|---|---|---|---|
+ * | 0 | 120 | 88.8 | 110.2 | 시야 | 초음파 |
+ * | 1 | 144 | 113.5 | 134.9 | 시야 | 초음파 |
+ * | 2 | 168 | 140.4 | 159.6 | 시야 | 초음파 |
+ * | 3 | 192 | 169.7 | 184.3 | 시야 | 초음파 |
+ * | 4 | 236 | 236 | 209.0 | 시야 | 시야 |
+ *
+ * 즉 **낮에는 눈이, 밤·수풀에서는 귀가** 감지를 맡고, 4단은 밤·수풀 면제(`isApex`)라 눈이 언제나
+ * 이긴다. 초음파는 그때도 전방위라 부채꼴 뒤를 메운다.
+ * (시야 반경은 `SIM.visionBase(200) × 값/100` 이라 **표의 값이 곧 px 이 아니다** · 초음파는
+ *  `SIM.echoBase(190) × 세기/100`. 두 축을 비교할 땐 반드시 각자의 base 를 곱해서 볼 것.)
+ */
+export const EYE_ECHO = [58, 71, 84, 97, 110] as const;
 
 /** 가죽 → 버티는 힘(무는 쪽이 아니라 물리는 쪽). 104 에서 **규칙 면제**(대멸종 환경 피해 면제). */
 export const HIDE_DEFENSE = [56, 68, 80, 92, 110] as const;
@@ -484,7 +506,7 @@ export function deriveTraits(pips: Pips, keys: Keys): Traits {
   // 열쇠 세기 = 모 범주의 티어. 안 가진 열쇠는 0(= 그 능력이 세계에 존재하지 않는 것과 같다).
   const swimming = keys.fin ? 68 + 4 * t.leg : 40;
   const wings = keys.wing ? 66 + 8 * t.leg : 0;
-  const echo = keys.echo ? 58 + 13 * t.eye : 0;
+  const echo = keys.echo ? at(EYE_ECHO, t.eye) : 0;
   const camouflage = keys.camo ? 42 + 14 * t.eye : 0;
   const venom = keys.venom ? 40 + 15 * t.fang : 0;
   const ranged = keys.barb ? 58 + 11 * t.fang : 0;
@@ -569,8 +591,17 @@ export function nearestTierGoal(pips: Pips): { cat: Category; tier: number; need
  *
  * ⚠ **모든 줄은 자립형이다.** 「×0.5」처럼 앞줄에 기대는 축약을 쓰지 않는다 — 이 문구는 카드 각주 ·
  *   도감 · 승급 연출에 **단독으로** 뜨므로, 무엇의 ×0.5 인지가 그 줄 안에 있어야 한다.
+ *
+ * ⚠ **열쇠를 함께 넘겨라.** 같은 티어라도 열쇠를 가진 종에게는 **다른 일이 일어난다**(지금은 눈 ×
+ *   초음파 한 자리). 안 넘기면 열쇠 없는 종의 문구가 나오므로 기존 호출부는 그대로 통과하지만,
+ *   종의 게놈이 손에 있는 자리(구입 화면·카드 각주·승급 연출)에서는 **반드시 넘겨야** 화면이
+ *   그 종에게 참인 말을 한다.
  */
-export function tierLine(cat: Category, tier: number): { gain: string; cost: string; size: number } {
+export function tierLine(
+  cat: Category,
+  tier: number,
+  keys?: Keys,
+): { gain: string; cost: string; size: number } {
   const i = Math.max(0, Math.min(MAX_TIER, tier));
   if (i === 0) return { gain: "", cost: "", size: 0 };
   /** 0단 대비 배수 — 표를 직접 읽어 계산한다. */
@@ -676,6 +707,28 @@ export function tierLine(cat: Category, tier: number): { gain: string; cost: str
       `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)} · 한 번 돌면 무리가 휩쓸립니다`,
     ],
   };
+  // ── 초음파를 가진 종의 눈 사다리 · **눈 하나로 두 감각이 함께 자란다** ──────────────────
+  // 초음파는 눈 범주의 열쇠라 세기가 눈 티어를 그대로 따라 오른다(`EYE_ECHO`). 그런데 지금까지
+  // 이 줄은 「보는 거리」만 말해서, 초음파를 얻은 사람에게는 **눈을 더 파야 할 이유가 화면에서
+  // 사라져 있었다**(사용자 질문: "초음파를 얻은 다음에는 눈 강화는 의미 없는 거 아니야?").
+  // 그래서 **듣는 거리도 같은 줄에 적는다** · 답이 그 자리에 있게.
+  //
+  // 밤·수풀 특전을 여기서 빼는 이유(2·3단): 그 둘은 **초음파가 이미 하고 있는 일**이다. 밤에는
+  // 감지가 초음파 반경으로 정해지므로(0~3단 실측: 밤 시야 88.8~169.7 < 초음파 110.2~184.3),
+  // 눈의 밤 보정이 올라가도 그 종이 실제로 아는 범위는 1px 도 안 넓어진다. 이미 켜져 있는 것을
+  // 새로 준다고 말하는 것은 이 저장소가 금지한 거짓말이다. 4단은 다르다 · 거기서는 밤·수풀 면제로
+  // 시야(236)가 초음파(209)를 **밤에도** 넘으므로, 그 줄만 특전을 그대로 남긴다.
+  //
+  // ⚠ 대가(부채꼴)는 **손대지 않는다.** 초음파가 전방위라도 시야가 이기는 낮에는 초음파 반경 밖의
+  //   초승달(예: 낮 4단 209~236px)이 부채꼴 안에서만 보이므로, 좁아지는 것이 이 종에게도 진짜 손해다.
+  if (cat === "eye" && keys?.echo === true) {
+    const both = `보는 거리 ${rel(EYE_VISION)} · 듣는 거리 ${rel(EYE_ECHO)}`;
+    return {
+      gain: i === MAX_TIER ? `${both} · 밤도 수풀도 눈을 못 가립니다` : both,
+      cost: cost[cat][i] as string,
+      size: SIZE_PER_TIER.eye * i,
+    };
+  }
   return { gain: gain[cat][i] as string, cost: cost[cat][i] as string, size: SIZE_PER_TIER[cat] * i };
 }
 

@@ -768,11 +768,17 @@ export function createDraftPanel(
       if (raidChip) chips.appendChild(plainChipEl(raidChip, GAIN_COLOR));
       body.append(desc, chips);
 
+      // **이 카드를 고른 뒤의 게놈** · 각주도 몸집도 여기서 읽는다. 「고르면 무엇이 일어나는가」를
+      // 묻는 자리라 열쇠도 **고른 뒤 기준**이어야 한다: 전설 「박쥐의 귀」는 초음파를 열면서 눈에
+      // 도장 2 를 함께 찍으므로, 고르기 전 열쇠로 각주를 만들면 그 한 장이 자기 효과를 잘못 말한다.
+      const after = cloneGenome(nextCtx.genome);
+      applyCard(after, card);
+
       // 각주: 문턱을 넘으면 무엇이 켜지고(gain) 무엇을 잃는지(cost)를 tierLine 문구 **그대로** 두 줄로.
       // 수치를 여기서 다시 쓰지 않는다 · tiers.tierLine 이 단일 진실이다.
       const firstUp = crossingMoves(card, nextCtx.genome.pips)[0];
       if (firstUp) {
-        const tl = tierLine(firstUp.cat, firstUp.to);
+        const tl = tierLine(firstUp.cat, firstUp.to, after.keys);
         if (tl.gain) {
           const note = el("span", "draft-note gain");
           note.textContent = `${CATEGORY_LABELS[firstUp.cat]} ${TIER_ROMAN[firstUp.to]} · ${tl.gain}`;
@@ -787,7 +793,7 @@ export function createDraftPanel(
       // 강등이면 무엇을 잃는지도 그 자리에서. 잃는 것 = 내려간 티어가 주던 것(tierLine 의 gain).
       const firstDown = demotingMoves(card, nextCtx.genome.pips)[0];
       if (firstDown) {
-        const lost = tierLine(firstDown.cat, firstDown.from);
+        const lost = tierLine(firstDown.cat, firstDown.from, after.keys);
         const note = el("span", "draft-note cost");
         note.textContent =
           `${CATEGORY_LABELS[firstDown.cat]} ${TIER_ROMAN[firstDown.from]} 효과를 잃습니다` +
@@ -798,8 +804,6 @@ export function createDraftPanel(
       // 어느 쪽에도 못 넣는다(넣으면 그 자체가 거짓말이다 · tiers.ts SIZE_MEANING 주석).
       // 무엇을 뜻하는지는 툴팁 한 줄이 맡고, **무엇보다 히어로 미리보기의 생물이 실제로 커지거나 작아진다.**
       {
-        const after = cloneGenome(nextCtx.genome);
-        applyCard(after, card);
         const from = Math.round(nextCtx.genome.traits.size);
         const to = Math.round(after.traits.size);
         if (to !== from) {
