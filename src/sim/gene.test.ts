@@ -26,7 +26,9 @@ import {
 } from "@/sim/gene";
 
 describe("개체 수 문턱 사다리", () => {
-  it("확정된 일곱 눈금 그대로다 (마지막에 한 번만 반올림)", () => {
+  // 눈금을 일곱으로 둔 것은 내 판단이다(사용자가 준 것은 「배수로 벌어진다」는 방향과 다섯 눈금
+  // 예시 · gene.ts 의 POP_MILESTONES 주석 참고). 값을 바꾸려면 이 테스트도 함께 고친다.
+  it("지금의 일곱 눈금 그대로다 (마지막에 한 번만 반올림)", () => {
     expect(POP_MILESTONES).toEqual([20, 30, 45, 68, 101, 152, 228]);
   });
 
@@ -65,6 +67,31 @@ describe("위기 회복", () => {
     expect(stepCrisisWatch(w, 40)).toBe(false);
   });
 
+  it("**정확히 절반**은 아직 가라앉은 것이 아니다(`<` 이지 `<=` 가 아니다)", () => {
+    // 최고 20 · 절반은 딱 10. 이 한 칸에서 게임(`<`)과 프로브(`<=`)의 답이 갈렸던 자리다 ·
+    // 부등호가 어긋나면 같은 판을 놓고 「위기 1회」와 「0회」가 동시에 참이 된다.
+    const w = createCrisisWatch();
+    stepCrisisWatch(w, 20);
+    expect(stepCrisisWatch(w, 10)).toBe(false);
+    expect(w.sunk).toBe(false);
+    // 그래서 18(최고의 90%)로 돌아와도 줄 것이 없다 · 애초에 가라앉은 적이 없다.
+    expect(stepCrisisWatch(w, 18)).toBe(false);
+    // 한 마리만 더 줄면 그때 가라앉고, 그 뒤 18 에서 회복이 성립한다.
+    expect(stepCrisisWatch(w, 9)).toBe(false);
+    expect(w.sunk).toBe(true);
+    expect(stepCrisisWatch(w, 18)).toBe(true);
+  });
+
+  it("선을 인자로 옮길 수 있다(프로브의 문턱 스윕 · 안 넘기면 기본 상수)", () => {
+    // 프로브가 --crisis= --recover= 로 선을 옮겨 재는 길. 이 인자가 없으면 프로브가 상태 기계를
+    // 다시 짜게 되고, 그 순간 규칙이 두 곳에 산다.
+    const w = createCrisisWatch();
+    stepCrisisWatch(w, 100, 0.8, 0.95);
+    expect(stepCrisisWatch(w, 79, 0.8, 0.95)).toBe(false);
+    expect(w.sunk).toBe(true); // 기본 선(0.5)이었다면 79 는 아직 위기가 아니다
+    expect(stepCrisisWatch(w, 95, 0.8, 0.95)).toBe(true);
+  });
+
   it("절반 아래로 안 내려가면 아무리 오르내려도 안 준다", () => {
     const w = createCrisisWatch();
     stepCrisisWatch(w, 40);
@@ -84,19 +111,23 @@ describe("위기 회복", () => {
 });
 
 describe("방울 값", () => {
-  it("econ 프로브 실측대로 판당 약 30개다", () => {
-    // 실측 발생 횟수(손 놓은 판 · 2026-08-07 econ 프로브).
+  it("econ 프로브 실측대로 판당 26개 안팎이다", () => {
+    // 실측 발생 횟수(손 놓은 판) · `node scripts/balance-probe.mjs econ` 을 **인자 없이**
+    // (= 정책 best · 시드 8 · 갈래 5종) 돌린 2026-08-08 값. 인자를 적어 두지 않으면 다음 사람이
+    // 같은 숫자를 다시 못 만든다(시드 수만 바꿔도 움직인다).
+    // ⚠ recovery 가 0.75 에서 0.20 으로 내려온 것은 밸런스 변경이 아니라 **가짜 발화를 고친 결과**다
+    //   (시대 전환마다 위기 없이 터지던 것 · gene.ts 의 GENE_AWARD 주석과 known_issues 참고).
     const perRun: Record<GeneReason, number> = {
-      boss: 3.63,
-      extinction: 1.51,
-      milestone: 2.76,
-      recovery: 0.86,
-      trialExceed: 1.79,
+      boss: 3.33,
+      extinction: 1.48,
+      milestone: 2.75,
+      recovery: 0.2,
+      trialExceed: 1.75,
     };
     let total = 0;
     for (const k of Object.keys(perRun) as GeneReason[]) total += GENE_AWARD[k] * perRun[k];
-    expect(total).toBeGreaterThan(28);
-    expect(total).toBeLessThan(33);
+    expect(total).toBeGreaterThan(24);
+    expect(total).toBeLessThan(29);
   });
 
   it("판당 공급이 한 범주를 0에서 4단까지 올리고도 남는다", () => {

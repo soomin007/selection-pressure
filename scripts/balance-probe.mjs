@@ -93,6 +93,10 @@ const {
   cardCrossesThreshold, cardPoolFor, PRESET_LINEAGE, boostCard,
 } = await server.ssrLoadModule("/src/game/cards.ts");
 const { cardAvailable } = await server.ssrLoadModule("/src/game/achievements.ts");
+// 방울(유전자 점수)의 「위기 회복」 판정 · **게임과 같은 상태 기계를 그대로 부른다.** 프로브가 규칙을
+// 다시 적으면 두 곳이 조용히 어긋나고, 그때 재는 난이도는 사람이 겪는 난이도가 아니게 된다.
+const { CRISIS_BACK, CRISIS_LOW, createCrisisWatch, stepCrisisWatch } =
+  await server.ssrLoadModule("/src/sim/gene.ts");
 // 정점 보상의 크기를 재는 데만 쓴다 — 화면·sim 과 **같은 함수**여야 표가 거짓말을 안 한다.
 const { nightVisionFactor } = await server.ssrLoadModule("/src/sim/behavior.ts");
 const { Rng } = await server.ssrLoadModule("/src/sim/rng.ts");
@@ -167,10 +171,16 @@ if (SEEDS_WANT > SEEDS_ALL.length) {
 }
 // --- 「위기 회복」의 정의 (econ 모드 · 방울 출처 하나) ---------------------------------------
 // 개체 수가 최고 기록의 CRISIS_FRAC 아래로 떨어졌다가 RECOVER_FRAC 위로 돌아오면 한 번으로 센다.
-// 값은 **아직 근거 없는 첫 모델**이다 — 여기서 나온 분포를 보고 정한다. 플래그로 바꿔 가며 재라.
-const CRISIS_FRAC = Number(opt("crisis", "0.5")); // 최고의 이 비율 아래로 떨어지면 위기
-const RECOVER_FRAC = Number(opt("recover", "0.9")); // 위기 시점 최고의 이 비율 위로 돌아오면 회복
-const CRISIS_MIN_PEAK = Number(opt("crisismin", "20")); // 최고가 이만큼은 돼야 위기를 센다(초반 출렁임 제외)
+//
+// ⚠ **판정 자체는 여기 없다.** 게임과 같은 `sim/gene.ts` 의 `stepCrisisWatch` 를 그대로 부른다
+//   (위 import). 예전엔 이 파일이 상태 기계를 따로 짰고, 그래서 「정확히 절반」에서 게임은 위기가
+//   아니라 하고 프로브는 위기라고 세는 어긋남이 이미 나 있었다(프로브 `<=` · 게임 `<`).
+//   아래 셋은 **그 판정에 넣을 선의 값**일 뿐이다 · 규칙이 아니라 눈금이다.
+const CRISIS_FRAC = Number(opt("crisis", String(CRISIS_LOW))); // 최고의 이 비율 아래로 떨어지면 위기
+const RECOVER_FRAC = Number(opt("recover", String(CRISIS_BACK))); // 최고의 이 비율 위로 돌아오면 회복
+// 최고가 이만큼은 돼야 위기를 센다(판 시작 직후의 출렁임 제외). 기본값도 게임이 쓰는 값에서 읽는다 ·
+// 여기에 20 을 손으로 적어 두면 게임 쪽 문턱을 바꿨을 때 프로브만 옛 문턱으로 재게 된다.
+const CRISIS_MIN_PEAK = Number(opt("crisismin", String(GAME.geneCrisisMinPeak)));
 
 const BOSS_HORDES = ["swarm", "raider", "isolation", "stalker", "hornet"];
 const WARMUP = 600; // 틱. 무리가 자리를 잡고 흩어진 뒤 (라운드 중반과 비슷한 상태)
@@ -827,9 +837,13 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
   // --- 방울(유전자 점수) 경제의 재료 · econ 모드가 읽는다 -------------------------------------
   // 방울은 **양이 아니라 사건**에 붙이기로 했다([사용자 2026-08-07]). 여기서 그 사건들의 실제
   // 발생 횟수를 센다. 아직 게임에 방울은 없다 — 이미 있는 사건을 세어 **가격표의 재료**를 만든다.
-  let maxPop = 0; // 한 판 최고 개체 수(개체 수 문턱 방울의 개수 = 이 값 아래 눈금의 수)
-  let inCrisis = false;
-  let crisisPeak = 0;
+  // ⚠ **감시자는 시대마다 새로 만든다** · 게임이 그렇게 한다(`Game.continueToNextEra`). 런 내내
+  // 이어서 재면 옛 시대의 큰 최고 기록 때문에 새 세계의 시작 무리가 늘 「가라앉은 상태」로 출발해,
+  // 무너진 적이 없는데도 다시 자라기만 하면 위기 회복이 잡힌다(2026-08-08 감사 · 판당 0.55회가
+  // 그 가짜였다). 프로브가 게임과 다른 규칙으로 세면 **재는 난이도가 사람이 겪는 난이도가 아니다.**
+  // 개체 수 문턱 방울이 읽는 최고 기록은 이것과 다른 값이다(런 전체를 관통해야 한다) ·
+  // 그건 게임이 이미 `game.peakPopulation` 으로 들고 있으므로 아래 econ 에서 그것을 그대로 읽는다.
+  let crisisWatch = createCrisisWatch();
   let crises = 0; // 위기 회복 횟수(바닥을 쳤다가 돌아온 횟수)
   let overachieves = 0; // 시험 초과 달성
   game.onTrialVerdict = (v) => {
@@ -919,6 +933,7 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
       r.duos = activeDuos(game.pipsNow).length;
       if (game.result === "win" && !game.isFinalEra) {
         game.continueToNextEra();
+        crisisWatch = createCrisisWatch(); // 게임과 같은 자리에서 같은 함수로(위 감시자 주석 참고)
         continue;
       }
       break;
@@ -944,17 +959,14 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
     const r = eraRow(game.era);
     const pop = game.world.playerPopulation;
     if (pop < r.minPop) r.minPop = pop;
-    // 최고 기록과 위기 회복. 최고가 CRISIS_MIN_PEAK 에 닿기 전에는 안 센다 — 판 시작 직후의
-    // 자연스러운 출렁임을 "위기"로 세면 숫자가 부풀어 가격표가 통째로 어긋난다.
-    if (pop > maxPop) maxPop = pop;
-    if (!inCrisis) {
-      if (maxPop >= CRISIS_MIN_PEAK && pop <= maxPop * CRISIS_FRAC) {
-        inCrisis = true;
-        crisisPeak = maxPop;
-      }
-    } else if (pop >= crisisPeak * RECOVER_FRAC) {
+    // 최고 기록과 위기 회복. **game.ts 와 같은 줄이다**(같은 함수 · 같은 문턱 검사 자리).
+    // 최고가 CRISIS_MIN_PEAK 에 닿기 전에는 안 센다 · 판 시작 직후의 자연스러운 출렁임을 "위기"로
+    // 세면 숫자가 부풀어 가격표가 통째로 어긋난다.
+    if (
+      stepCrisisWatch(crisisWatch, pop, CRISIS_FRAC, RECOVER_FRAC) &&
+      crisisWatch.peak >= CRISIS_MIN_PEAK
+    ) {
       crises += 1;
-      inCrisis = false;
     }
   }
 
@@ -962,7 +974,9 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
   // 보스 처치/버팀·대멸종 견딤은 런 연대기에 남는다(game.runEvents · logEvent 가 적는다).
   const evs = game.runEvents ?? [];
   const econ = {
-    maxPop,
+    // **게임이 든 값을 그대로 읽는다.** 위기 감시자의 peak 은 이제 시대마다 0 으로 돌아가므로
+    // 런 전체의 최고가 아니다 · 개체 수 문턱 방울은 런을 관통하는 이 값으로만 세야 맞다.
+    maxPop: game.peakPopulation,
     crises,
     overachieves,
     bossKilled: evs.filter((e) => e.kind === "boss" && e.label.includes("처치")).length,
@@ -1269,7 +1283,8 @@ async function runEcon() {
   console.log(`# 갈래 ${presets.length}종(첫 판에 열려 있는 것만 · 잠긴 갈래를 태우면 같은 판이 중복된다)`);
   console.log(
     `# 위기 회복 정의: 최고의 ${CRISIS_FRAC} 아래로 떨어졌다가 그 최고의 ${RECOVER_FRAC} 위로 복귀 ` +
-      `(최고 ${CRISIS_MIN_PEAK} 이상일 때만 셈 · --crisis= --recover= --crismin= 로 바꿈)`,
+      `(최고 ${CRISIS_MIN_PEAK} 이상일 때만 셈 · --crisis= --recover= --crisismin= 로 바꿈 · ` +
+      `판정은 sim/gene.ts 의 stepCrisisWatch = 게임과 같은 규칙)`,
   );
 
   const all = [];

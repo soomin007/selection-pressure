@@ -41,7 +41,7 @@ import {
   tierOf,
   type Category,
 } from "@/sim/tiers";
-import { GENE_AWARD, milestonesCrossed, type GeneReason } from "@/sim/gene";
+import { GENE_AWARD, milestonesCrossed, type CrisisWatch, type GeneReason } from "@/sim/gene";
 import { SIM } from "@/sim/params";
 import { biteOutcome } from "@/sim/behavior";
 import { debugSetMetaLevel } from "@/game/meta";
@@ -1161,6 +1161,8 @@ describe("방울(유전자 점수) · 사건에서 나와 티어로 바뀐다", 
     finishStage(a: boolean, b?: boolean): void;
     geneBankValue: number;
     awardGenes(reason: GeneReason, times?: number): void;
+    /** 위기 회복의 상태 기계 · 「가라앉았는가 · 최고가 얼마인가」를 테스트가 직접 확인한다. */
+    crisisWatch: CrisisWatch;
   };
 
   /** 지갑에 방울 n 개를 넣는다(필드에 떨어뜨렸다 밟는 과정을 생략한 것 · 구매 계약만 재는 자리). */
@@ -1274,6 +1276,81 @@ describe("방울(유전자 점수) · 사건에서 나와 티어로 바뀐다", 
     // 돌아온 뒤에 계속 돌려도 다시 주지 않는다(한 번 무너져야 한 번 회복이다).
     for (let i = 0; i < 5; i++) g.update(34);
     expect(dropsOf(g, "recovery")).toHaveLength(1);
+  });
+
+  // ⚠ 위 테스트는 **한 세계 안에서만** 잰다. 시대를 넘으면 세계가 통째로 새로 만들어지고 무리는
+  //   시작 수(18마리)로 돌아가는데, 위기 회복의 최고 기록이 옛 시대 것으로 남아 있으면 그 순간
+  //   「절반 아래로 가라앉았다」가 서고, 새 세계에서 자라기만 해도 회복 방울이 나온다. 무리는 한 번도
+  //   무너진 적이 없고 예정된 세계 교체를 지났을 뿐이다.
+  it("시대를 넘어 새 세계에서 자란 것은 위기 회복이 아니다", () => {
+    const g = startRun("gene-recovery-era");
+    const priv = g as unknown as GenePriv;
+    g.world.spawnPlayerBrood(30); // 이 시대에 무리를 크게 키운다 → 최고 기록이 높아진다
+    g.update(34);
+    const peak = priv.crisisWatch.peak;
+    expect(peak).toBeGreaterThan(GAME.geneCrisisMinPeak * 1.8); // 새 시작 무리(18)의 절반 위로 충분히 높다
+    expect(dropsOf(g, "recovery")).toHaveLength(0); // 이 시대에는 무너진 적이 없다
+
+    // 예정된 세계 교체. 새 세계의 시작 무리는 옛 최고의 절반보다 작다.
+    g.result = "win";
+    g.continueToNextEra();
+    let guard = 0;
+    while (g.phase === "draft" && guard++ < 12) g.pickCard(0);
+    g.update(34);
+    expect(priv.crisisWatch.sunk, "새 세계의 시작 무리를 「가라앉았다」고 봤다").toBe(false);
+
+    // 새 세계에서 옛 최고의 90% 언저리까지 자란다(위기를 겪은 적이 없다).
+    g.world.spawnPlayerBrood(Math.max(1, Math.ceil(peak * 0.95) - g.world.playerPopulation));
+    g.update(34);
+    expect(
+      dropsOf(g, "recovery"),
+      "무너진 적이 없는데 세계 교체만으로 회복 방울이 나왔다",
+    ).toHaveLength(0);
+  });
+
+  // ⚠ 위의 「위기 회복」 테스트는 무리를 30마리로 부풀려 시작하므로 **문턱(geneCrisisMinPeak) 위 경로만**
+  //   지난다. 그래서 문턱을 0 으로 바꿔도 그 테스트는 그대로 통과한다 = 문턱을 아무도 안 지키고 있었다.
+  //   판이 막 시작한 서너 마리 무리는 한 마리가 죽고 사는 것만으로 「절반 아래 → 90% 복귀」가 몇 초마다
+  //   성립하므로, 문턱이 없으면 회복 방울이 판당 수십 개가 되어 가격표가 통째로 어긋난다.
+  it("최고 기록이 문턱 아래인 작은 무리는 회복해도 방울이 안 나온다", () => {
+    const g = startRun("gene-recovery-gate");
+    const priv = g as unknown as GenePriv;
+    // 첫 update 전에 무리를 문턱 아래로 줄인다 · 최고 기록은 update 에서만 오르므로 여기서 정한 수가
+    // 그대로 이 런의 최고가 된다(부풀리지 않는 것이 이 테스트의 핵심이다).
+    const small = Math.max(6, GAME.geneCrisisMinPeak - 6);
+    let kept = 0;
+    for (const e of g.world.entities) {
+      if (!e.species.isPlayer) continue;
+      kept += 1;
+      if (kept > small) e.alive = false;
+    }
+    g.update(34);
+    const peak = priv.crisisWatch.peak;
+    expect(peak).toBeGreaterThan(0); // 무리가 통째로 죽었으면 아래 회복 자체가 성립하지 않는다
+
+    // 절반 아래로 무너진다.
+    kept = 0;
+    const keep = Math.floor(peak * 0.4);
+    for (const e of g.world.entities) {
+      if (!e.species.isPlayer || !e.alive) continue;
+      kept += 1;
+      if (kept > keep) e.alive = false;
+    }
+    g.update(34);
+    expect(priv.crisisWatch.sunk, "가라앉지도 않았다면 이 테스트는 문턱을 재는 것이 아니다").toBe(
+      true,
+    );
+
+    // 최고의 90% 위로 돌아온다 · 상태 기계로는 회복이 성립하지만, 문턱 아래라 방울은 안 나온다.
+    g.world.spawnPlayerBrood(Math.max(1, peak - g.world.playerPopulation));
+    g.update(34);
+    expect(priv.crisisWatch.sunk, "회복 자체가 성립하지 않았다면 문턱을 안 잰 것이다").toBe(false);
+    expect(
+      dropsOf(g, "recovery"),
+      "최고 기록이 문턱 아래인데 회복 방울이 나왔다(문턱이 안 걸린다)",
+    ).toHaveLength(0);
+    // 이 테스트가 재는 것을 마지막에 한 줄로 못박는다 · 위의 무리는 문턱 아래였다.
+    expect(peak).toBeLessThan(GAME.geneCrisisMinPeak);
   });
 
   it("시대를 넘겨도 지갑이 깎이지 않는다 (오늘 터진 사냥 누계 버그의 형제)", () => {

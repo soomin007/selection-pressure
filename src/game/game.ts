@@ -107,6 +107,15 @@ export type ExtinctionType = "cold" | "famine" | "heat" | "plague";
 /** 라운드 시험의 종류. */
 export type TrialKind = "hunt" | "feed" | "birth" | "pop" | "hold" | "mark";
 
+/**
+ * **초과 달성 보상에서 빠지는 시험 종류.** 「무리」 시험은 "지켜라"라 목표가 지금 무리보다 작게 잡히고
+ * (붕괴 방지), 그래서 아무것도 안 해도 1.8배를 넘기기 쉽다 = 공짜 보상이 된다.
+ *
+ * 판정하는 자리(`finishStage`)와 그 조건을 화면에 적는 자리(방울 안내)가 **같은 이 상수를 읽는다.**
+ * 한쪽에 조건을 옮겨 적으면 반드시 조용히 갈라지고, 그 순간 화면이 거짓말을 한다.
+ */
+export const TRIAL_EXCEED_EXCLUDED: readonly TrialKind[] = ["pop"];
+
 /** 이번 채집 단계의 시험 · UI 는 label 로 문구를 조립한다(숫자 포함, 표시=실물). */
 export interface Trial {
   kind: TrialKind;
@@ -361,9 +370,11 @@ export class Game {
    * 「위기 회복」 판정의 상태(가라앉았는가 · 지금까지의 최고). 규칙은 `sim/gene.ts` 의
    * `stepCrisisWatch` 하나가 정하고 여기서는 상태만 들고 있는다.
    *
-   * ⚠ **시대를 넘어도 안 비운다.** 최고 기록은 런 전체를 관통하는 값이고(`peakPopulation` 과 같은 결),
-   *   2026-08-07 econ 프로브도 런 내내 이어서 쟀다 · 판당 0.86회라는 값이 그 조건에서 나왔다.
-   *   시대마다 비우면 새 시대의 작은 시작 무리가 매번 「최고」가 되어 위기 자체가 성립하지 않는다.
+   * ⚠ **시대를 넘을 때마다 새로 만든다**(`continueToNextEra`). 개체 수 문턱 사다리가 읽는
+   *   `peakPopulation` 과는 결이 다르다: 그쪽은 「한 눈금은 런에 한 번만」이라 런 전체를 관통해야 하고,
+   *   이쪽은 「무리가 무너졌다 돌아왔는가」라 **세계가 바뀌면 다시 재야 한다.** 이어서 재면 옛 시대의
+   *   큰 최고 기록 때문에 새 세계의 시작 무리가 늘 「가라앉은 상태」로 출발해, 무너진 적이 없는데도
+   *   다시 자라기만 하면 「위기 회복」이 성립한다(2026-08-08 감사에서 실제 발화를 확인하고 고쳤다).
    */
   private crisisWatch: CrisisWatch = createCrisisWatch();
 
@@ -1623,10 +1634,12 @@ export class Game {
       // **초과 달성 보상** — **[사용자 2026-08-06]** 목표를 크게 넘겨 합격하면 불씨가 하나 돌아온다.
       // 지금 회복은 보스 격퇴·시대 진입 둘뿐인데 둘 다 큰 사건이라 **위기의 순간과 어긋난다.**
       // 초과 달성은 매 시험마다 있어, 잘하는 판이 애초에 불씨 하나까지 몰리지 않게 한다.
-      // ⚠ 「무리」 시험은 제외한다 — 그건 "지켜라"라 목표가 지금 무리보다 작게 잡히고(붕괴 방지),
-      //   그래서 아무것도 안 해도 1.8배를 넘기기 쉽다(공짜 불씨가 된다).
+      // ⚠ 「무리」 시험은 제외한다 · 제외 목록은 `TRIAL_EXCEED_EXCLUDED` 한 곳에 있고(이유도 거기),
+      //   화면에 그 조건을 적는 자리가 같은 상수를 읽는다.
       const overachieved =
-        trialPassed && trial.kind !== "pop" && prog >= Math.ceil(trial.target * GAME.trialOverachieveMul);
+        trialPassed &&
+        !TRIAL_EXCEED_EXCLUDED.includes(trial.kind) &&
+        prog >= Math.ceil(trial.target * GAME.trialOverachieveMul);
       if (overachieved) {
         this.embers = Math.min(GAME.emberMax, this.embers + 1);
         // 방울도 같은 자리에서 떨어진다. 불씨는 상한에 걸려 사라질 수 있지만(가득 차 있으면 +1 이
@@ -1834,6 +1847,13 @@ export class Game {
     //   직전값을 안 지우면 다음 delta 가 음수가 되어 지갑이 영영 안 는다(위 사냥 누계와 같은 함정).
     //   ⚠ 지갑(`geneBankValue`)은 **안 비운다** · 시대가 바뀌는 것과 모은 것이 사라지는 것은 다르다.
     this.lastGeneCollected = 0;
+    // ⚠ **위기 회복의 최고 기록도 새 세계와 함께 처음부터** 잰다. 이 한 줄이 없으면, 45마리까지 컸던
+    //   시대를 넘어 시작 무리 18마리로 새 세계를 열자마자 「최고의 절반 아래」가 서고(18 < 45×0.5),
+    //   자라서 41마리에 닿는 순간 위기 회복 방울이 나온다. 무리는 한 번도 무너진 적이 없고 **예정된
+    //   세계 교체 뒤에 다시 자랐을 뿐**이라, 그건 회복이 아니다("위기 회복"이라는 이름이 거짓이 된다).
+    //   최고가 37마리를 넘긴 시대라면 시대마다 반복된다 = 시대 수만큼 공짜 방울.
+    //   지갑(geneBankValue)은 그대로 둔다 · 모은 것이 사라지는 것과 새 세계를 처음부터 재는 것은 다르다.
+    this.crisisWatch = createCrisisWatch();
     this.stageXp = 0;
     // 성장한 종의 색·형질을 새 초기 무리에 반영(프리셋 선택 때와 같은 처리).
     if (this.playerColor !== undefined) this.world.playerSpecies.color = this.playerColor;
