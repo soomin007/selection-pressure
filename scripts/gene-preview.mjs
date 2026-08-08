@@ -8,7 +8,10 @@
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 
-const PORT = 5177;
+// 검증 도구마다 **포트가 달라야** 한다. 같은 포트를 두 스크립트가 쓰면 병렬 세션에서 서로의 dev
+// 서버를 물어(먼저 뜬 쪽이 이긴다) 엉뚱한 화면을 찍고, 그걸 자기 결과로 믿는다.
+// 쓰는 자리: 4199 smoke · 5176 boss-preview · 5177 screenshots · 5178 overlap-check · 5179 여기.
+const PORT = 5179;
 const URL = `http://localhost:${PORT}/gene-preview.html`;
 const OUT_A = process.argv[2] ?? "gene-preview-a.png"; // 나타나는 중 + 값 2~5 + 화면 밖 쐐기
 const OUT_B = process.argv[3] ?? "gene-preview-b.png"; // 줍는 순간
