@@ -291,6 +291,68 @@ export class Terrain {
   }
 
   /**
+   * (x0,y0)→(x1,y1) 를 **직진으로 걸어갈 수 있나.** `lineOfSight` 와 같은 Bresenham 이지만, 한 걸음에
+   * x·y 가 함께 움직이는 칸(대각)에서는 **끼고 도는 두 칸이 모두 통행 가능**해야 통과로 본다.
+   *
+   * 왜 따로 두는가: 개체의 이동은 **축 분리**(x 따로 · y 따로 막힌다 · behavior 의 위치 갱신)라
+   * 사실상 4연결이고, `findPath` 도 4연결이다. 그런데 `lineOfSight` 는 8연결이라 물 모서리를 대각으로
+   * 뚫고 지나간다 · **"직선으로 보이는데 직진으로는 못 가는 자리"** 가 생긴다.
+   * 실측(2026-08-08): 만 어귀의 물 모서리(타일 네 칸이 만나는 점) 위에서 `lineOfSight` 가 개체의
+   * 소수점 이동마다 참/거짓을 오갔고, 그 때문에 「가라」 해제 게이트가 매 틱 뒤집혀 무리가 목표
+   * 58px 앞에서 275틱 동안 제자리걸음을 했다.
+   *
+   * ⚠ `lineOfSight` 자체는 손대지 않는다. 그건 먹이 길찾기(`navTo`)·무리 뭉침·보스 길찾기가 함께 보는
+   *   판정이라, 판정이 바뀌면 배회 분기 진입 여부가 달라져 `world.rng` 소비 횟수가 밀린다
+   *   = 야생 스폰·진화·보스 밸런스가 통째로 이동한다.
+   * rng 미사용 → 결정론.
+   */
+  walkableLine(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    canSwim: boolean,
+    canLand = true,
+    canFly = false,
+  ): boolean {
+    if (canFly) return true;
+    let cx = clampIndex(Math.floor(x0 / this.cellSize), this.cols);
+    let cy = clampIndex(Math.floor(y0 / this.cellSize), this.rows);
+    const ex = clampIndex(Math.floor(x1 / this.cellSize), this.cols);
+    const ey = clampIndex(Math.floor(y1 / this.cellSize), this.rows);
+    const dx = Math.abs(ex - cx);
+    const dy = Math.abs(ey - cy);
+    const sx = cx < ex ? 1 : -1;
+    const sy = cy < ey ? 1 : -1;
+    let err = dx - dy;
+    for (let guard = 0; guard <= dx + dy + 1; guard++) {
+      if (!this.passableIndex(cy * this.cols + cx, canSwim, canLand, false)) return false;
+      if (cx === ex && cy === ey) return true;
+      const e2 = 2 * err;
+      const stepX = e2 > -dy;
+      const stepY = e2 < dx;
+      if (stepX && stepY) {
+        // 대각 한 걸음 · 축 분리 이동은 반드시 둘 중 한 칸을 거쳐 간다. 하나라도 막혀 있으면
+        // 그 모서리에서 벽에 눌려 미끄러지므로 "직진으로 갈 수 있다"고 말하면 안 된다.
+        // (격자 밖은 판정하지 않는다 · 경계 밖 인덱스는 옆 줄로 감겨 엉뚱한 칸을 읽는다.)
+        const nx2 = cx + sx;
+        const ny2 = cy + sy;
+        if (nx2 >= 0 && nx2 < this.cols && !this.passableTile(nx2, cy, canSwim, canLand, false)) return false;
+        if (ny2 >= 0 && ny2 < this.rows && !this.passableTile(cx, ny2, canSwim, canLand, false)) return false;
+      }
+      if (stepX) {
+        err -= dy;
+        cx += sx;
+      }
+      if (stepY) {
+        err += dx;
+        cy += sy;
+      }
+    }
+    return true;
+  }
+
+  /**
    * start 타일 → goal 타일까지 통행 가능한 4방향 최단 경로(BFS)를 타일 인덱스 배열로 돌려준다
    * (start 다음 칸부터 goal 까지). 경로가 없으면 빈 배열. rng 미사용 → 결정론(이웃 순회 순서 고정).
    * 직선이 막혔을 때만 호출되고 목표 타일이 바뀔 때만 재계산되므로(behavior 가 캐시) 빈도가 낮다.

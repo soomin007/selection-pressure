@@ -10,7 +10,8 @@
 // 아니라 "game 이 아직 목소리를 안 넣어 줬다"는 뜻이다 · game 은 매 단계 무리 티어에서 계산해 넣는다.
 import { describe, it, expect } from "vitest";
 import { World } from "@/sim/world";
-import { ORDER } from "@/sim/params";
+import { ORDER, SIM } from "@/sim/params";
+import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { genomeFromPips, genomeFromTraits, type Genome, type Traits } from "@/sim/genome";
 import { vacuumTicks, voiceRadius } from "@/sim/herdOrder";
 import { HERD_VOICE, TIER_STEPS, emptyKeys, emptyPips, tierOf } from "@/sim/tiers";
@@ -320,5 +321,156 @@ describe("지휘 공백 — 알파가 쓰러지면 잠시 명령이 안 통한�
     w.step();
     expect(w.leadVacuum).toBe(vacuumTicks(emptyPips()));
     expect(w.lead.leaderId).not.toBe(alphaId); // 다음 개체가 지휘봉을 이어받았다
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 오목한 만 · **물 건너 코앞에서 지시를 놓지 않는다** (2026-08-08 사용자 제보)
+//
+// 원문: "호수 등으로 오목하게 둘러싸여 있는 곳은 「가라」 명령을 내려도 개체들이 들어가질 못한다."
+// 그리고 그때 화면은 「무리 도착」이라고 말한다.
+//
+// 무엇이 문제였나: 해제 게이트가 **직선거리**만 쟀다. 목표를 감싼 물 팔이 해제 반경(64px)보다
+// 얇으면, 무리가 맞은편 물가에 닿는 순간 이미 반경 안이라 지시 블록이 통째로 스킵되고 우회
+// 길찾기(navTo)가 호출조차 안 된다. orderPending 이 0 이 되니 화면은 「무리 도착」이라 말한다.
+// → 게이트를 **지형 인지형**으로 바꿨다(`walkableLine`). 지형이 사이를 막고 있으면 아직 못 닿은 것이다.
+//
+// ⚠ `lineOfSight`(8연결)가 아니라 `walkableLine`(대각 모서리를 안 뚫음)을 써야 한다 · 실측으로
+//   물 모서리 위에서 lineOfSight 가 소수점 이동마다 뒤집혀 무리가 275틱 동안 굳었다.
+// ---------------------------------------------------------------------------
+
+const CS = SIM.terrainCellSize;
+const COLS = Math.ceil(W / CS);
+const ROWS = Math.ceil(H / CS);
+/** 만의 안쪽 육지 주머니(목표가 있는 곳) 중심 타일과 반경. */
+const BAY_TX = 13;
+const BAY_TY = 30;
+const BAY_R = 1;
+
+/**
+ * 전부 육지인 판에, 목표 타일 둘레 BAY_R 만큼을 육지 주머니로 남기고 **폭 arm 타일의 물 U** 를
+ * 두른다(위·왼·오른쪽이 물 · 아래가 열린 만). 생성기에 기대지 않는다 · 시드마다 지형이 달라지면
+ * 재현이 안 된다. 아래가 열려 있으므로 **길은 반드시 있다**(돌아 들어가면 된다).
+ */
+function bayTerrain(arm: number): Terrain {
+  const tiles: TileKind[] = new Array<TileKind>(COLS * ROWS).fill(TILE.land);
+  const elev: number[] = new Array<number>(COLS * ROWS).fill(0.5);
+  const water = (x: number, y: number): void => {
+    if (x >= 0 && x < COLS && y >= 0 && y < ROWS) tiles[y * COLS + x] = TILE.water;
+  };
+  for (let x = BAY_TX - BAY_R - arm; x <= BAY_TX + BAY_R + arm; x++)
+    for (let y = BAY_TY - BAY_R - arm; y <= BAY_TY - BAY_R - 1; y++) water(x, y);
+  for (let y = BAY_TY - BAY_R - arm; y <= BAY_TY + BAY_R; y++)
+    for (let x = BAY_TX - BAY_R - arm; x <= BAY_TX - BAY_R - 1; x++) water(x, y);
+  for (let y = BAY_TY - BAY_R - arm; y <= BAY_TY + BAY_R; y++)
+    for (let x = BAY_TX + BAY_R + 1; x <= BAY_TX + BAY_R + arm; x++) water(x, y);
+  return new Terrain(COLS, ROWS, CS, elev, tiles);
+}
+
+/** 온 판이 육지인 대조군(같은 치수 · 같은 좌표계). */
+function flatTerrain(): Terrain {
+  return new Terrain(COLS, ROWS, CS, new Array<number>(COLS * ROWS).fill(0.5), new Array<TileKind>(COLS * ROWS).fill(TILE.land));
+}
+
+/**
+ * 지형을 갈아 끼운 세계. 먹이는 새 지형에 맞춰 정리한다 · 진짜 게임에서 뭍 먹이는 물 타일에 절대
+ * 안 놓이므로(world 의 spawnFoodOnTiles), 안 맞추면 "물 건너 먹이에 머리를 박는" 인공 결함이 계측을 덮는다.
+ */
+function worldOn(terrain: Terrain, seed: string): World {
+  const w = new World(seed, W, H, tune({ herding: 40 }));
+  (w as unknown as { terrain: Terrain }).terrain = terrain;
+  for (let i = w.food.length - 1; i >= 0; i--) {
+    const f = w.food[i];
+    if (f === undefined) continue;
+    if (f.aquatic !== (terrain.kindAt(f.x, f.y) === TILE.water)) w.food.splice(i, 1);
+  }
+  w.foodGrid.build(w.food);
+  w.voiceR = 4000; // 목소리가 막는 것이 아님을 분명히 한다
+  return w;
+}
+
+describe("오목한 만 · 지형에 막힌 코앞은 「도착」이 아니다", () => {
+  const target = { x: (BAY_TX + 0.5) * CS, y: (BAY_TY + 0.5) * CS };
+
+  /** 개체 하나를 (tx,ty) 타일 중심에 세우고 한 틱 굴린 뒤 지시 집계를 돌려준다. */
+  function oneStep(terrain: Terrain, tx: number, ty: number): { pending: number; followers: number; dist: number } {
+    const w = worldOn(terrain, "bay-gate");
+    let kept = false;
+    for (let i = w.entities.length - 1; i >= 0; i--) {
+      const e = w.entities[i];
+      if (e === undefined) continue;
+      if (e.species.isPlayer && !kept) {
+        kept = true;
+        e.x = (tx + 0.5) * CS;
+        e.y = (ty + 0.5) * CS;
+        e.prevX = e.x;
+        e.prevY = e.y;
+        e.vx = 0;
+        e.vy = 0;
+        continue;
+      }
+      w.entities.splice(i, 1); // 한 마리만 남긴다 · 뭉침·도망이 게이트 판정을 흐리지 않게
+    }
+    w.armLead();
+    w.herdOrder = target;
+    const e0 = w.entities[0];
+    const dist = e0 === undefined ? Infinity : Math.hypot(e0.x - target.x, e0.y - target.y);
+    w.step();
+    return { pending: w.orderPending, followers: w.orderFollowers, dist };
+  }
+
+  it("물 팔 하나(20px) 건너 50px 앞에 선 개체는 여전히 「따라야 할」 수에 든다", () => {
+    // 만의 닫힌 끝 바로 위 = 목표에서 직선으로 50px(해제 반경 64보다 가깝다) · 그런데 사이가 물이다.
+    const r = oneStep(bayTerrain(1), BAY_TX, BAY_TY - BAY_R - 2);
+    expect(r.dist).toBeLessThan(ORDER.releaseRadius); // 전제: 직선거리로는 이미 "코앞"이다
+    expect(r.pending).toBe(1); // 그래도 아직 못 닿았다 → 화면은 「무리 도착」이라 말하지 않는다
+    expect(r.followers).toBe(1); // 그리고 실제로 돌아가려 움직인다(navTo 가 걸린다)
+  });
+
+  it("같은 거리라도 길이 트여 있으면 예전 그대로 놓아 준다(해제 반경은 살아 있다)", () => {
+    // 물만 없앤 같은 좌표 · 이 케이스가 깨지면 "가까이 가면 자율로 산다"는 계약이 무너진 것이다.
+    const r = oneStep(flatTerrain(), BAY_TX, BAY_TY - BAY_R - 2);
+    expect(r.dist).toBeLessThan(ORDER.releaseRadius);
+    expect(r.pending).toBe(0);
+    expect(r.followers).toBe(0);
+  });
+
+  it("무리가 만 안으로 실제로 들어간다(여러 시드)", () => {
+    // 물 팔이 해제 반경보다 얇은(20px) 만 = 예전에 무리가 통째로 갇히던 모양.
+    // 실측(고치기 전): 이 네 시드 전부 목표 57~60px 앞에서 300틱 내내 멈춰 있었다(주머니 진입 0).
+    for (const seed of ["bay-c", "bay-d", "bay-e", "bay-f"]) {
+      const terrain = bayTerrain(1);
+      const w = worldOn(terrain, seed);
+      // 무리를 만의 **닫힌 끝 바깥**(물 건너)에 세운다 · 돌아 들어가야만 닿는 자리.
+      const startY = (BAY_TY - BAY_R - 2 + 0.5) * CS;
+      let i = 0;
+      for (const e of w.entities) {
+        if (!e.species.isPlayer) {
+          e.x = 20; // 야생은 멀리 · 도망이 계측을 흐리지 않게
+          e.y = H - 20;
+          continue;
+        }
+        e.x = (BAY_TX + 0.5) * CS + ((i % 5) - 2) * 12;
+        e.y = startY - Math.floor(i / 5) * 12;
+        e.prevX = e.x;
+        e.prevY = e.y;
+        e.vx = 0;
+        e.vy = 0;
+        i += 1;
+      }
+      let best = Infinity;
+      for (let s = 0; s < 300; s++) {
+        w.armLead();
+        w.herdOrder = target; // 사람이 그 점을 계속 찍고 있는 상태(알파가 죽으면 명령이 풀리므로)
+        w.step();
+        for (const e of w.entities) {
+          if (!e.alive || !e.species.isPlayer) continue;
+          best = Math.min(best, Math.hypot(e.x - target.x, e.y - target.y));
+        }
+      }
+      // 40px = 만 어귀(물 건너 50~60px)와 주머니 안쪽을 가르는 선. 고치기 전에는 이 네 시드가
+      // 전부 57~60 에서 멈췄고, 고친 뒤에는 1~24 까지 들어간다.
+      expect(best, `시드 ${seed}`).toBeLessThan(40);
+    }
   });
 });

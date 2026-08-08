@@ -937,8 +937,14 @@ async function boot(): Promise<void> {
     const terrain = game.world.terrain;
     if (!terrain.isPassable(gx, gy, caps.canSwim, caps.canLand, caps.canFly)) return false;
     const from = game.world.playerFocus(camX, camY); // 지금 주 무리가 있는 자리
-    if (terrain.lineOfSight(from.x, from.y, gx, gy, caps.canSwim, caps.canLand, caps.canFly)) return true;
     if (terrain.tileIndex(from.x, from.y) === terrain.tileIndex(gx, gy)) return true;
+    // **직선(lineOfSight) 단축을 쓰지 않는다.** 직선 판정은 Bresenham 이라 한 걸음에 x·y 가 함께
+    // 움직여 **대각 모서리를 뚫고 지나간다**(8연결). 그런데 실제 이동과 findPath 는 4연결이라, 두
+    // 육지가 모서리로만 맞닿은 자리는 "직선으로 보이지만 갈 수는 없는 곳"이 된다(2026-08-08 실측:
+    // lineOfSight=true · findPath=경로 0 · 무리는 400틱 내내 42px 앞에서 못 건넜다).
+    // 그때 이 게이트가 통과시키면 게임이 **못 지킬 약속**을 한다 · 「가라」 핑이 뜨고, 무리는 물가에
+    // 서 있고, 화면은 「무리 도착」이라 말한다. 갈 수 있는지를 묻는 자리이니 **실제로 걸어갈 길
+    // (findPath)에게만** 묻는다. 탭은 몇 초에 한 번이고 격자는 27x48 이라 BFS 값이 싸다.
     return terrain.findPath(from.x, from.y, gx, gy, caps.canSwim, caps.canLand, caps.canFly).length > 0;
   }
 

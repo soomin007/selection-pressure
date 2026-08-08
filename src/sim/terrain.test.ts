@@ -141,3 +141,60 @@ describe("길찾기(lineOfSight / findPath)", () => {
     expect(onlyPond.tileIndex(fb.x, fb.y)).toBeLessThanOrEqual(1); // 물칸(0~1)로 폴백
   });
 });
+
+// ---------------------------------------------------------------------------
+// walkableLine · **직선으로 보이는 것과 직진으로 갈 수 있는 것은 다르다**
+//
+// 개체의 이동은 축 분리(x 따로 · y 따로 막힘)라 사실상 4연결이고 findPath 도 4연결인데,
+// lineOfSight 는 Bresenham 8연결이라 대각 모서리를 뚫고 지나간다. 그 어긋남 위에서 「가라」
+// 해제 게이트가 매 틱 뒤집혀 무리가 목표 코앞에서 굳었다(2026-08-08).
+// walkableLine 은 그 어긋남을 없앤 판정이다 · lineOfSight 는 손대지 않는다(먹이 길찾기·뭉침·
+// 보스가 함께 보는 판정이라 바꾸면 rng 소비 분기가 밀린다).
+// ---------------------------------------------------------------------------
+describe("walkableLine · 대각 모서리를 안 뚫는다", () => {
+  /** 두 육지 덩어리가 **모서리로만** 맞닿은 4x4 판. 나머지는 물. */
+  function cornerOnly(): Terrain {
+    const Wt = TILE.water;
+    const L = TILE.land;
+    // (0,0)(1,0) 육지 / (2,1)(3,1) 육지 · (1,0) 과 (2,1) 이 대각으로만 맞닿는다.
+    const tiles: TileKind[] = [L, L, Wt, Wt, Wt, Wt, L, L];
+    return new Terrain(4, 2, 20, new Array<number>(8).fill(0.5), tiles);
+  }
+
+  it("모서리로만 이어진 두 땅: 직선은 뚫리는데 걸어서는 못 간다(4연결과 같은 답)", () => {
+    const t = cornerOnly();
+    const from = { x: 30, y: 10 }; // 타일 (1,0)
+    const to = { x: 50, y: 30 }; // 타일 (2,1)
+    expect(t.lineOfSight(from.x, from.y, to.x, to.y, false)).toBe(true); // 8연결이라 뚫린다
+    expect(t.walkableLine(from.x, from.y, to.x, to.y, false)).toBe(false); // 걸어서는 못 간다
+    expect(t.findPath(from.x, from.y, to.x, to.y, false).length).toBe(0); // 실제 길도 없다
+  });
+
+  it("트인 땅에서는 lineOfSight 와 같은 답을 준다(멀쩡한 길을 막지 않는다)", () => {
+    const t = new Terrain(4, 2, 20, new Array<number>(8).fill(0.5), new Array<TileKind>(8).fill(TILE.land));
+    expect(t.walkableLine(10, 10, 70, 30, false)).toBe(true);
+    expect(t.walkableLine(70, 30, 10, 10, false)).toBe(true);
+    expect(t.walkableLine(10, 10, 10, 10, false)).toBe(true); // 제자리
+  });
+
+  it("대각 한 걸음이라도 끼고 도는 칸 하나가 트여 있으면 통과로 본다면 안 된다(양쪽 다 봐야 한다)", () => {
+    // (1,0) → (2,1) 로 갈 때 끼고 도는 칸은 (2,0) 과 (1,1). 하나만 트여 있어도 **직진으로는**
+    // 모서리에 눌려 미끄러지므로 walkableLine 은 거짓이어야 한다(그게 이 판정의 존재 이유다).
+    const Wt = TILE.water;
+    const L = TILE.land;
+    const tiles: TileKind[] = [L, L, L, Wt, Wt, Wt, L, L]; // (2,0) 만 육지
+    const t = new Terrain(4, 2, 20, new Array<number>(8).fill(0.5), tiles);
+    expect(t.walkableLine(30, 10, 50, 30, false)).toBe(false);
+    expect(t.findPath(30, 10, 50, 30, false).length).toBeGreaterThan(0); // 돌아가는 길은 있다
+  });
+
+  it("물을 건널 수 있는 종(canSwim)에게는 물이 벽이 아니다", () => {
+    const t = cornerOnly();
+    expect(t.walkableLine(30, 10, 50, 30, true)).toBe(true);
+  });
+
+  it("나는 종은 어디든 직진한다", () => {
+    const t = cornerOnly();
+    expect(t.walkableLine(30, 10, 50, 30, false, true, true)).toBe(true);
+  });
+});
