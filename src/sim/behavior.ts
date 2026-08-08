@@ -691,38 +691,67 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   //   맛이 된다 — **같은 게임에서 조작 감각이 둘로 갈린다.**
   //   ⚠ 반경이 0 이하면(알파 없음·지휘 공백) 이 블록이 통째로 안 돈다 = 명령이 아예 안 통한다.
   const order = world.herdOrder;
-  const inVoice =
-    world.leadVacuum <= 0 &&
-    world.voiceR > 0 &&
-    (world.lead.x - e.x) ** 2 + (world.lead.y - e.y) ** 2 <= world.voiceR * world.voiceR;
+  const inVoice = world.hearsOrder(e.x, e.y);
   if (order !== null && e.species.isPlayer && inVoice) {
     const odx = order.x - e.x;
     const ody = order.y - e.y;
     const od2 = odx * odx + ody * ody;
-    // **해제는 거리가 아니라 "닿았는가"로 판정한다.** 직선거리만 재면 물 건너 코앞에서 놓인다:
-    // 호수가 U자로 감싼 자리(오목한 만)에 목표가 있으면, 무리가 맞은편 물가에 닿는 순간 이미 해제
-    // 반경 안이라 이 블록이 통째로 스킵되고 우회 길찾기(navTo)가 호출조차 안 된다. 그 자리에서
-    // orderPending 이 0 이 되니 화면은 「무리 도착」이라 말하고, 사람 눈에는 "명령은 먹혔다는데
-    // 안 들어간다"로 보인다(2026-08-08 사용자 제보).
-    // 실측(폭별 스윕 · 목표를 감싼 물 팔의 두께): 1타일(20px) 만에서 개체틱의 48%가 "막힌 채 해제"
-    // 였고 400틱 내내 아무도 주머니에 못 들어갔다(최근접 50px에서 얼어붙음). 2타일(40px) 이상이면
-    // 맞은편 물가가 해제 반경 밖이라 지시가 유지돼 저절로 돌아 들어갔다 · 즉 **해제 반경보다 얇은
-    // 물이 곧 함정**이다.
-    // 지형이 사이를 막고 있으면 아직 못 닿은 것이다 → 지시를 유지해 navTo 가 돌아가게 둔다.
-    //
-    // ⚠ 여기서 쓰는 것은 `lineOfSight` 가 아니라 **`walkableLine`**(대각 모서리를 안 뚫는 판정)이다.
-    //   lineOfSight 는 8연결이라 물 모서리 위에서 개체의 소수점 이동마다 참/거짓이 뒤집힌다. 그러면
-    //   이 게이트가 매 틱 "놓았다/잡았다"를 오가고, 개체는 놓인 틱엔 옆의 먹이로, 잡힌 틱엔 목표로
-    //   끌려 **서로 상쇄돼 제자리에 굳는다**(실측: 만 어귀 58px 앞에서 275틱 정지 · 속도 0.1~0.4px).
-    //   걷는 판정으로 물으면 그 자리에서 답이 한결같아 지시가 끊기지 않고 무리가 물가를 돌아 들어간다.
-    // 둘 다 순수 기하다(rng 미사용) · 지시가 없으면 이 블록 자체가 안 도므로 스트림 불변.
-    const nearOrder = od2 <= ORDER.releaseRadius * ORDER.releaseRadius;
-    if (!nearOrder || !world.terrain.walkableLine(e.x, e.y, order.x, order.y, canSwim, canLand, canFly)) {
-      // 해제 반경 밖(또는 지형에 막혀 못 닿은 자리) = **아직 목표에 못 닿은** 개체. 화면의 "따르는 중 N/M" 분모가 이 수다.
-      // 도망 중이라 이번 틱 이동을 지시에 못 준 개체도 여기 센다(그래서 N < M 이 정상 상태다) ·
-      // 분모를 살아 있는 내 종 전부로 잡으면 이미 도착한 개체까지 불복종처럼 읽힌다(2026-08-05).
-      // 순수 기하 + 정수 합산뿐이라 rng 를 안 쓴다(지시가 없으면 이 블록이 통째로 안 돎 · 스트림 불변).
+    if (order.kind === "evade") {
+      // ── 「피해라」(더블탭) · **탭한 자리의 반대 방향으로 달아난다** ────────────────────────
+      // 2026-08-09 이전에는 이 칸이 **정반대로 작동했다.** 휠에는 "반대 방향으로 흩어져 달아납니다"
+      // 라고 써 놓고, sim 에는 `order.kind` 를 읽는 분기가 **한 줄도 없어서** 「가라」와 똑같이
+      // **탭한 자리로 무리를 보냈다**(같은 시드에서 두 명령의 개체 좌표가 비트 단위로 같았다).
+      // 위험을 보고 더블탭하면 무리가 그리로 갔다 · 기본 조작이 정반대였다.
+      //
+      // 방향 계산은 **도망과 같은 함수**(clearFleeDir)를 쓴다. 새 회피 로직을 지어내면 "포식자에게서
+      // 달아나는 것"과 "시켜서 달아나는 것"이 다른 물리를 갖게 되고, 무엇보다 저 함수만이 막다른
+      // 반도·만으로 달아나는 것을 미리 피한다(probe 로 앞을 내다본다). 속도도 maxSpeed 그대로라
+      // 다리 형질이 그대로 손끝에 읽힌다.
+      //
+      // **누가 듣는가 = 누가 기력을 내는가.** 이 블록에 드는 개체 집합은 game 의 기력 소모가 무는
+      // 집합과 **같은 함수**(world.hearsOrder)로 정해진다 · 둘이 갈리면 "기력만 내고 안 움직인
+      // 개체"가 생긴다(2026-08-09 이전이 정확히 그랬다).
+      //
+      // 진짜 위험(도망)은 여전히 위다 · 포식자에게 쫓기는 개체를 탭 방향 기준으로 다시 틀면
+      // 포식자 쪽으로 밀어 넣을 수 있다. 우선순위는 문서 그대로 **도망 > 지시**다.
       world.orderPending += 1;
+      if (!fleeing && od2 > 1e-12) {
+        const away = clearFleeDir(e, world, -odx, -ody, maxSpeed, canSwim, canLand, canFly);
+        desired = {
+          x: desired.x * (1 - ORDER.pull) + away.x * ORDER.pull,
+          y: desired.y * (1 - ORDER.pull) + away.y * ORDER.pull,
+        };
+        world.orderFollowers += 1;
+      }
+      // 「피해라」는 여기서 끝난다 · 아래 「가라」의 도착·먹이 예외는 뜻이 정반대라 안 밟는다.
+    } else {
+      // **해제는 거리가 아니라 "닿았는가"로 판정한다.** 직선거리만 재면 물 건너 코앞에서 놓인다:
+      // 호수가 U자로 감싼 자리(오목한 만)에 목표가 있으면, 무리가 맞은편 물가에 닿는 순간 이미 해제
+      // 반경 안이라 이 블록이 통째로 스킵되고 우회 길찾기(navTo)가 호출조차 안 된다. 그 자리에서
+      // orderPending 이 0 이 되니 화면은 「무리 도착」이라 말하고, 사람 눈에는 "명령은 먹혔다는데
+      // 안 들어간다"로 보인다(2026-08-08 사용자 제보).
+      // 실측(폭별 스윕 · 목표를 감싼 물 팔의 두께): 1타일(20px) 만에서 개체틱의 48%가 "막힌 채 해제"
+      // 였고 400틱 내내 아무도 주머니에 못 들어갔다(최근접 50px에서 얼어붙음). 2타일(40px) 이상이면
+      // 맞은편 물가가 해제 반경 밖이라 지시가 유지돼 저절로 돌아 들어갔다 · 즉 **해제 반경보다 얇은
+      // 물이 곧 함정**이다.
+      // 지형이 사이를 막고 있으면 아직 못 닿은 것이다 → 지시를 유지해 navTo 가 돌아가게 둔다.
+      //
+      // ⚠ 여기서 쓰는 것은 `lineOfSight` 가 아니라 **`walkableLine`**(대각 모서리를 안 뚫는 판정)이다.
+      //   lineOfSight 는 8연결이라 물 모서리 위에서 개체의 소수점 이동마다 참/거짓이 뒤집힌다. 그러면
+      //   이 게이트가 매 틱 "놓았다/잡았다"를 오가고, 개체는 놓인 틱엔 옆의 먹이로, 잡힌 틱엔 목표로
+      //   끌려 **서로 상쇄돼 제자리에 굳는다**(실측: 만 어귀 58px 앞에서 275틱 정지 · 속도 0.1~0.4px).
+      //   걷는 판정으로 물으면 그 자리에서 답이 한결같아 지시가 끊기지 않고 무리가 물가를 돌아 들어간다.
+      // 둘 다 순수 기하다(rng 미사용) · 지시가 없으면 이 블록 자체가 안 도므로 스트림 불변.
+      const nearOrder = od2 <= ORDER.releaseRadius * ORDER.releaseRadius;
+      const reached =
+        nearOrder && world.terrain.walkableLine(e.x, e.y, order.x, order.y, canSwim, canLand, canFly);
+      if (!reached) {
+        // 해제 반경 밖(또는 지형에 막혀 못 닿은 자리) = **아직 목표에 못 닿은** 개체. 화면의 "따르는 중 N/M" 분모가 이 수다.
+        // 도망 중이라 이번 틱 이동을 지시에 못 준 개체도 여기 센다(그래서 N < M 이 정상 상태다) ·
+        // 분모를 살아 있는 내 종 전부로 잡으면 이미 도착한 개체까지 불복종처럼 읽힌다(2026-08-05).
+        // 순수 기하 + 정수 합산뿐이라 rng 를 안 쓴다(지시가 없으면 이 블록이 통째로 안 돎 · 스트림 불변).
+        world.orderPending += 1;
+      }
       if (!fleeing) {
         // 물고 있는 사냥감은 **지시보다 위다**(예전 우선순위 그대로). 사냥은 라운드에 5~10번뿐인 드물고
         // 값진 사건이고 표적이 달아나므로, 한 번 중단되면 그 사냥은 통째로 사라진다. 실측: 사냥감까지
@@ -731,33 +760,57 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         // 먹이(풀)는 다르다 · 한 라운드에 100번 넘게 일어나는 기본 행동이라 이걸 안 덮으면 지시가
         // 사실상 아무 일도 안 한다(그게 이번 결함의 원인이었다: 개체틱의 72.1%가 먹이 추적).
         const hunting = e.targetPrey !== null;
-        // 쫓던 먹이가 "가는 길"에 있나 · 있으면 그것부터 먹고 간다(배고픈 개체는 지나치지 못한다).
-        // 가는 길 = 지시 쪽(내적 ≥ 0)이고 지시점보다 가깝다. 여기에 **코앞(grabRadius)** 을 더한다 ·
-        // 방향 조건만 두면 등 뒤의 먹이가 매 틱 버려져 행군 중엔 거의 못 먹는다.
-        const food = e.targetFood;
-        let onTheWay = false;
-        if (!hunting && food !== null) {
-          const gdx = food.x - e.x;
-          const gdy = food.y - e.y;
-          const gd2 = gdx * gdx + gdy * gdy;
-          onTheWay = gd2 <= ORDER.grabRadius * ORDER.grabRadius || (gd2 < od2 && gdx * odx + gdy * ody >= 0);
-        }
-        if (!hunting && !onTheWay) {
-          // 격자 길찾기를 태운다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러지기만 한다
-          // (known_issues "반응형 벽 회피는 진동을 만든다 · 격자 BFS 가 정답").
-          // 도착 감속도 해제 반경 기준이다 · 게이트가 200 이던 시절엔 min(1, d/200)=1 이 항상 참이라
-          // 죽은 코드였고, 게이트를 64 로 줄이면서 처음 살아났다(문턱 근처에서 지나침·진동 방지).
-          const nav = navTo(e, world, { x: order.x, y: order.y }, canSwim, canLand, canFly);
-          const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? ORDER.releaseRadius : 0);
+        // ── **방울 우선** · **[사용자 2026-08-09]** "가라 명령 때 방울을 우선시해서 알아서 먹는다" ──
+        // 방울(유전자 점수)은 밟으면 주워지는데(반경 16px) **아무도 그것을 목표로 삼지 않아** 판마다
+        // 필드에 남았다. 지시를 따르는 개체가 근처(ORDER.geneRadius)의 아직 안 주운 방울을 만나면
+        // 그쪽을 먼저 들른다 · 주워지면(taken) 다음 틱에 저절로 지시로 돌아간다(상태를 안 들고 있다).
+        //
+        // 우선순위에서의 자리: 도망 > 사냥감 > **방울** > 가는 길의 먹이 > 지시 > 배회.
+        //  · 사냥감보다 아래인 이유: 사냥은 판에 5~10번뿐이라 끊으면 통째로 사라진다(위 문단의 실측).
+        //  · 먹이보다 위인 이유: 방울은 판당 스무 개 남짓이고 사람이 이미 **번 것**이라, 풀 한 포기와
+        //    같은 무게로 두면 영영 안 주워진다. 수가 적어 채집을 잡아먹을 여지도 없다.
+        // ⚠ **지시가 걸린 동안에만** 작동한다(이 블록 안이다) · 지시 없는 세계는 1비트도 안 바뀐다.
+        // ⚠ 도착(reached) 뒤에도 작동한다 · 그래야 목표 근방에 떨어진 방울을 무리가 알아서 줍는다.
+        //   대신 이 개체는 **순종(orderFollowers)에 안 센다** · 지시가 아니라 방울이 몰고 있는 것이라,
+        //   세면 화면의 "따르는 중 N/M" 이 부풀어 거짓말이 된다(가는 길 먹이와 같은 처리).
+        const drop = hunting ? null : nearestFreeDrop(world, e.x, e.y);
+        if (drop !== null) {
+          // 길찾기를 태우는 이유는 지시와 같다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다.
+          const nav = navTo(e, world, drop, canSwim, canLand, canFly);
+          const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, 0);
           desired = {
             x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
             y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
           };
-          // 순종의 질을 화면에 보여 주는 숫자는 **여기서**, 규칙이 판정된 그 자리에서 센다.
-          // 밖에서 조건을 다시 유도하면 화면과 실제가 갈린다(known_issues).
-          // 세는 것은 **지시가 이번 틱 이동을 가져간 개체**뿐이다 · 가는 길의 먹이로 잠깐 새는 개체는
-          // 안 센다(그건 지시가 아니라 천성이 모는 것이라, 세면 순종이 부풀어 화면이 거짓말한다).
-          world.orderFollowers += 1;
+        } else if (!reached) {
+          // 쫓던 먹이가 "가는 길"에 있나 · 있으면 그것부터 먹고 간다(배고픈 개체는 지나치지 못한다).
+          // 가는 길 = 지시 쪽(내적 ≥ 0)이고 지시점보다 가깝다. 여기에 **코앞(grabRadius)** 을 더한다 ·
+          // 방향 조건만 두면 등 뒤의 먹이가 매 틱 버려져 행군 중엔 거의 못 먹는다.
+          const food = e.targetFood;
+          let onTheWay = false;
+          if (!hunting && food !== null) {
+            const gdx = food.x - e.x;
+            const gdy = food.y - e.y;
+            const gd2 = gdx * gdx + gdy * gdy;
+            onTheWay = gd2 <= ORDER.grabRadius * ORDER.grabRadius || (gd2 < od2 && gdx * odx + gdy * ody >= 0);
+          }
+          if (!hunting && !onTheWay) {
+            // 격자 길찾기를 태운다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러지기만 한다
+            // (known_issues "반응형 벽 회피는 진동을 만든다 · 격자 BFS 가 정답").
+            // 도착 감속도 해제 반경 기준이다 · 게이트가 200 이던 시절엔 min(1, d/200)=1 이 항상 참이라
+            // 죽은 코드였고, 게이트를 64 로 줄이면서 처음 살아났다(문턱 근처에서 지나침·진동 방지).
+            const nav = navTo(e, world, { x: order.x, y: order.y }, canSwim, canLand, canFly);
+            const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? ORDER.releaseRadius : 0);
+            desired = {
+              x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
+              y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
+            };
+            // 순종의 질을 화면에 보여 주는 숫자는 **여기서**, 규칙이 판정된 그 자리에서 센다.
+            // 밖에서 조건을 다시 유도하면 화면과 실제가 갈린다(known_issues).
+            // 세는 것은 **지시가 이번 틱 이동을 가져간 개체**뿐이다 · 가는 길의 먹이로 잠깐 새는 개체는
+            // 안 센다(그건 지시가 아니라 천성이 모는 것이라, 세면 순종이 부풀어 화면이 거짓말한다).
+            world.orderFollowers += 1;
+          }
         }
       }
     }
@@ -1325,6 +1378,34 @@ function nearestFood(
     }
     return canSense(f.x, f.y); // 시야(전방 부채꼴) 또는 초음파(전방위)로 감지되는 먹이만
   });
+}
+
+/**
+ * **가장 가까운 아직 안 주운 방울**(ORDER.geneRadius 안). 없으면 null.
+ *
+ * **[사용자 2026-08-09]** "가라 명령 때 방울을 우선시해서 알아서 먹는다거나 하는 건 있었으면 좋겠어."
+ * 부르는 곳은 behavior 의 **지시 블록 한 자리뿐**이다 — 지시가 없는 세계에서는 한 번도 안 불린다
+ * (그것이 「지시 없는 세계 1비트 불변」을 지키는 방식이다).
+ *
+ * · 야생은 방울을 못 줍는다(`world.collectGeneDrops` 의 `isPlayer`) · 이 함수를 야생 경로에서 부르면
+ *   그 계약이 조용히 깨지므로, 부르는 자리가 내 종 전용 블록 안이라는 것이 곧 계약의 이행이다.
+ * · rng 미사용 · 동률이면 배열에서 먼저 나온 것(= 먼저 떨어진 것)을 고르는 전순서라 답이 하나뿐이다.
+ * · 방울은 한 시대에 스무 개 남짓이고 주운 것도 배열에 남으므로(taken) 선형 훑기로 충분하다.
+ */
+function nearestFreeDrop(world: World, x: number, y: number): Vec | null {
+  let best: Vec | null = null;
+  let bestD2 = ORDER.geneRadius * ORDER.geneRadius;
+  for (const d of world.geneDrops) {
+    if (d.taken) continue;
+    const dx = d.x - x;
+    const dy = d.y - y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      best = { x: d.x, y: d.y };
+    }
+  }
+  return best;
 }
 
 /**

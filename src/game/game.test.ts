@@ -1633,19 +1633,26 @@ describe("방울(유전자 점수) · 사건에서 나와 티어로 바뀐다", 
       for (let i = 0; i < 30; i++) g.update(34); // 무리가 자리를 잡는다
 
       const before = g.world.geneCollected;
+      const bankBefore = g.geneBank;
       expect(g.world.spawnGeneDropNear(3, "boss"), `${seed}: 방울을 아예 못 놨다`).toBe(true);
       const drop = g.world.geneDrops[g.world.geneDrops.length - 1];
       expect(drop).toBeDefined();
       if (drop === undefined) return;
       expect(g.setHerdOrder(drop.x, drop.y, "move"), `${seed}: 그 자리로 보내는 명령이 거부됐다`).toBe(true);
 
+      // **보낸 그 방울**이 주워지는지를 본다 · 예전엔 "geneCollected 가 움직였는가"로 물었는데,
+      // 2026-08-09 「방울 우선」 이후로 무리가 가는 길의 **다른** 사건 방울도 알아서 주워서 그
+      // 조건이 먼저 참이 될 수 있다(그러면 정작 보낸 곳은 안 재게 된다).
       let t = 0;
-      while (g.world.geneCollected === before && t < 900) {
+      while (!drop.taken && t < 900) {
         g.update(34);
         t++;
       }
       expect(t, `${seed}: 보냈는데 30초 안에 아무도 못 주웠다`).toBeLessThan(900);
-      expect(g.geneBank).toBe(3); // 주운 만큼 정확히 지갑으로
+      // 지갑은 **그사이 sim 이 센 만큼** 정확히 는다(상수 3 을 못 박지 않는다 · 위와 같은 이유로
+      // 다른 방울이 함께 주워질 수 있다). 못 박을 것은 숫자가 아니라 sim ↔ 지갑의 이음매다.
+      expect(g.geneBank - bankBefore).toBe(g.world.geneCollected - before);
+      expect(g.geneBank - bankBefore).toBeGreaterThanOrEqual(3);
     }
   }, 60000);
 
@@ -1669,5 +1676,126 @@ describe("방울(유전자 점수) · 사건에서 나와 티어로 바뀐다", 
       const walk = sameTile || seen || terr.findPath(c.x, c.y, d.x, d.y, canSwim, canLand, canFly).length > 0;
       expect(walk, "걸어서 닿을 수 없는 자리에 떨어졌다").toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 구입 화면이 열린 동안에는 시간이 멈춘다
+//
+// **[사용자 2026-08-09]** "방울 업그레이드 고르는 중에는 시간이 안 멈추나? 그거 보다보니
+// 멸종해버렸는데". 카드 드래프트는 phase 를 바꿔 멈추는데 구입 화면은 화면만 띄우고 있었다.
+//
+// ⚠ 이 저장소에는 「유령 드래프트 멈춤」 전력이 있다(2026-08-07) — 멈추는 것보다 **정확히 돌아오는
+//   것**이 어렵다. 그래서 여기서는 단계 넷(채집·시험·보스·대멸종)에서 저마다 열고 닫아 본다.
+// ---------------------------------------------------------------------------
+describe("방울 구입 화면 · 열려 있는 동안 시간이 멈춘다", () => {
+  /** 이 세계의 지문 · 결정론 비교용(herdOrder.test.ts 의 snapshot 과 같은 형태). */
+  function fingerprint(g: Game): string {
+    const ents = g.world.entities.map(
+      (e) => `${e.id}:${e.x.toFixed(3)},${e.y.toFixed(3)},${e.energy.toFixed(3)}`,
+    );
+    return `t${g.world.tick}|p${g.world.population}|${ents.join(";")}`;
+  }
+
+  /** 지금 단계에서 열고 닫아 본다 — 멈췄나 · 정확히 돌아왔나 · 다시 흐르나. */
+  function openCloseHere(g: Game, label: string): void {
+    expect(g.phase, `${label}: 전제가 관전이 아니다`).toBe("watch");
+    const before = {
+      tick: g.world.tick,
+      seconds: g.secondsLeft,
+      pop: g.world.playerPopulation,
+      boss: g.world.boss?.name ?? null,
+      stage: g.stageNumber,
+      trial: g.trial?.label ?? null,
+      fp: fingerprint(g),
+    };
+    expect(g.openGeneShop(), `${label}: 화면이 안 열렸다`).toBe(true);
+    expect(g.phase).toBe("shop");
+    // 멈춘 동안 프레임은 계속 들어온다(렌더는 돈다) · 그래도 세계는 1비트도 안 움직여야 한다.
+    for (let i = 0; i < 90; i++) g.update(34);
+    expect(fingerprint(g), `${label}: 멈춘 동안 세계가 움직였다`).toBe(before.fp);
+    expect(g.world.tick, `${label}: 멈춘 동안 틱이 돌았다`).toBe(before.tick);
+    expect(g.secondsLeft, `${label}: 멈춘 동안 남은 시간이 줄었다`).toBe(before.seconds);
+    g.closeGeneShop();
+    // **정확히 그 단계로** 돌아온다 — 타이머·보스·시험·단계 번호가 그대로다.
+    expect(g.phase, `${label}: 닫았는데 관전으로 안 돌아왔다`).toBe("watch");
+    expect(g.secondsLeft, `${label}: 남은 시간이 어긋났다`).toBe(before.seconds);
+    expect(g.world.boss?.name ?? null, `${label}: 보스가 사라졌다`).toBe(before.boss);
+    expect(g.stageNumber, `${label}: 단계가 넘어갔다`).toBe(before.stage);
+    expect(g.trial?.label ?? null, `${label}: 시험이 바뀌었다`).toBe(before.trial);
+    expect(g.world.playerPopulation, `${label}: 무리가 줄었다`).toBe(before.pop);
+    // 다시 흐른다.
+    g.update(34);
+    expect(g.world.tick, `${label}: 닫았는데 시간이 안 흐른다`).toBeGreaterThan(before.tick);
+  }
+
+  it("채집 라운드 도중에 열고 닫아도 그 라운드가 그대로 이어진다", () => {
+    const g = startRun("shop-forage");
+    for (let i = 0; i < 60; i++) g.update(34);
+    openCloseHere(g, "채집");
+  });
+
+  it("시험이 걸린 라운드에서도 마찬가지다(진행도·기한이 안 어긋난다)", () => {
+    // ⚠ 시험은 **진도 1 부터** 붙는다(`stepHasTrial`) · 저장본이 없는 테스트에서는 진도 = 시대라
+    //   era 0 에서 찾으면 영영 못 찾고 테스트가 **조용히 아무것도 안 재게** 된다. 그래서 둘째
+    //   시대까지 밀어 놓고, 시험이 실제로 걸렸는지를 먼저 못 박는다.
+    let g: Game | null = null;
+    for (let k = 0; k < 12 && g === null; k++) {
+      const t = startRun(`shop-trial-${k}`);
+      t.result = "win";
+      t.continueToNextEra(); // era 1 = 진도 1 = 시험 등장
+      let guard = 0;
+      while (t.phase === "draft" && guard++ < 8) t.pickCard(0);
+      for (let i = 0; i < 60 && t.phase === "watch"; i++) t.update(34);
+      if (t.phase === "watch" && t.trial !== null) g = t;
+    }
+    expect(g, "시험이 걸린 라운드를 못 만들었다(이 테스트가 아무것도 안 재고 있다)").not.toBeNull();
+    if (g === null) return;
+    const progressBefore = g.trialProgress;
+    openCloseHere(g, "시험");
+    expect(g.trialProgress, "멈춘 사이 시험 진행도가 움직였다").toBe(progressBefore);
+  });
+
+  it("보스 관문 도중에 열고 닫아도 그 보스가 그대로 서 있다", () => {
+    const g = startRun("shop-boss");
+    for (let i = 0; i < 30; i++) g.update(34);
+    g.debugSummon("raider"); // 진짜 상태 전이를 밟는 문(known_issues: 디버그 문이 가짜 상태를 만들면 안 된다)
+    expect(g.world.boss, "보스 소환이 안 됐다").not.toBeNull();
+    openCloseHere(g, "보스");
+  });
+
+  it("대멸종 도중에 열고 닫아도 그 관문이 그대로다", () => {
+    const g = startRun("shop-ext");
+    for (let i = 0; i < 30; i++) g.update(34);
+    g.debugSummon("cold");
+    openCloseHere(g, "대멸종");
+  });
+
+  it("열었다 닫은 판은 **한 번도 안 연 판과 지문까지 같다**(멈춤은 상태를 안 바꾼다)", () => {
+    // 멈춤은 「틱을 진행하지 않는 것」이지 상태를 바꾸는 것이 아니다. 그러니 진행한 프레임 수가
+    // 같으면 결과도 같아야 한다 — 다르면 그 자체가 결함이다(같은 시드 · 같은 update 열).
+    const plain = startRun("shop-det");
+    for (let i = 0; i < 200; i++) plain.update(34);
+
+    const paused = startRun("shop-det");
+    for (let i = 0; i < 90; i++) paused.update(34);
+    expect(paused.openGeneShop()).toBe(true);
+    for (let i = 0; i < 300; i++) paused.update(34); // 화면을 오래 들여다본다
+    paused.closeGeneShop();
+    for (let i = 0; i < 110; i++) paused.update(34);
+
+    expect(fingerprint(paused)).toBe(fingerprint(plain));
+  });
+
+  it("관전 중이 아니면 아예 안 열린다(드래프트·로비의 복귀 자리를 헝클지 않는다)", () => {
+    const g = new Game(240, 400, 1);
+    g.fixedSeed = "shop-gate";
+    g.beginRun(); // 프리셋 선택 드래프트
+    expect(g.phase).toBe("draft");
+    expect(g.openGeneShop()).toBe(false);
+    expect(g.phase).toBe("draft");
+    // 닫기도 안전하다 — 열려 있지 않은데 닫아도 남의 단계를 덮어쓰지 않는다.
+    g.closeGeneShop();
+    expect(g.phase).toBe("draft");
   });
 });

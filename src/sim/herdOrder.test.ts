@@ -13,7 +13,7 @@ import { World } from "@/sim/world";
 import { ORDER, SIM } from "@/sim/params";
 import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { genomeFromPips, genomeFromTraits, type Genome, type Traits } from "@/sim/genome";
-import { vacuumTicks, voiceRadius } from "@/sim/herdOrder";
+import { ORDER_SPECS, orderUnlocked, vacuumTicks, voiceRadius, type HerdOrder } from "@/sim/herdOrder";
 import { HERD_VOICE, TIER_STEPS, emptyKeys, emptyPips, tierOf } from "@/sim/tiers";
 
 const W = 540;
@@ -40,7 +40,7 @@ function voiceOf(genome: Genome): number {
   return voiceRadius(genome.pips, genome.keys);
 }
 
-function run(seed: string, genome: Genome, steps: number, order: { x: number; y: number } | null): World {
+function run(seed: string, genome: Genome, steps: number, order: HerdOrder | null): World {
   const w = new World(seed, W, H, genome);
   w.voiceR = voiceOf(genome);
   for (let i = 0; i < steps; i++) {
@@ -86,6 +86,178 @@ describe("무리 지시 — 결정론 (뜻을 안 내리면 기존과 동일)", 
     const none = run("order-det-3", tune({}), 300, null);
     const some = run("order-det-3", tune({}), 300, { x: 60, y: 900 });
     expect(snapshot(some)).not.toBe(snapshot(none));
+  });
+});
+
+/** 내 종 개체들이 한 점에서 평균 얼마나 떨어져 있나. 흩어지는 명령은 무게중심이 안 움직여도 이게 는다. */
+function meanDistTo(w: World, p: { x: number; y: number }): number {
+  let sum = 0;
+  let n = 0;
+  for (const e of w.entities) {
+    if (!e.alive || !e.species.isPlayer) continue;
+    sum += Math.hypot(e.x - p.x, e.y - p.y);
+    n += 1;
+  }
+  return n > 0 ? sum / n : 0;
+}
+
+// ---------------------------------------------------------------------------
+// 「피해라」 — 2026-08-09 이전에는 **정반대로 작동했다**
+//
+// 휠에는 "반대 방향으로 흩어져 달아납니다"라 써 놓고, sim 에는 `order.kind` 를 읽는 분기가 한 줄도
+// 없어서 「가라」와 완전히 같은 코드를 밟았다(같은 시드에서 두 명령의 개체 좌표가 비트 단위로 같았다).
+// 더블탭은 기본 조작이라, 위험을 보고 누르면 무리가 **그리로** 갔다.
+// 아래 둘은 그 회귀의 감지기다 — 빨간불이면 kind 분기가 다시 사라진 것이다.
+// ---------------------------------------------------------------------------
+describe("「피해라」 — 탭한 자리에서 멀어진다", () => {
+  const at = (kind: "move" | "evade", spot: { x: number; y: number }, steps: number): World =>
+    run("order-evade", tune({ herding: 40 }), steps, { x: spot.x, y: spot.y, kind });
+
+  it("「가라」는 그 자리로 모으고, 「피해라」는 그 자리에서 멀어진다", () => {
+    // 탭 지점을 무리 한복판으로 잡는다 — 무게중심은 흩어져도 잘 안 움직이므로 **평균 거리**로 잰다.
+    const c0 = playerCentroid(run("order-evade", tune({ herding: 40 }), 1, null));
+    const spot = { x: c0.x, y: c0.y };
+    const idle = meanDistTo(run("order-evade", tune({ herding: 40 }), 200, null), spot);
+    const moved = meanDistTo(at("move", spot, 200), spot);
+    const fled = meanDistTo(at("evade", spot, 200), spot);
+    expect(fled).toBeGreaterThan(idle); // 지시 없는 세계보다 멀어졌다
+    expect(fled).toBeGreaterThan(moved); // 그리고 「가라」와 정반대 방향이다
+  });
+
+  it("「가라」와 「피해라」는 같은 시드에서 다른 세계를 만든다(옛 결함의 직접 감지기)", () => {
+    const spot = { x: 270, y: 480 };
+    expect(snapshot(at("evade", spot, 120))).not.toBe(snapshot(at("move", spot, 120)));
+  });
+
+  it("「피해라」도 목소리 밖에는 안 간다 · 집계는 들은 개체만 센다", () => {
+    const w = new World("order-evade-voice", W, H, tune({ herding: 40 }));
+    w.voiceR = 0; // game 이 목소리를 안 넣어 준 상태
+    for (let i = 0; i < 60; i++) {
+      w.armLead();
+      w.herdOrder = { x: 270, y: 480, kind: "evade" };
+      w.step();
+    }
+    expect(w.orderPending).toBe(0);
+    expect(w.orderFollowers).toBe(0);
+  });
+});
+
+describe("명령 휠 — 구현 안 된 칸은 화면에서 약속하지 않는다", () => {
+  it("`ready: false` 인 칸은 어떤 도장으로도 안 열린다(게이트가 하나뿐이다)", () => {
+    const maxed = {
+      fang: TIER_STEPS[3] as number,
+      eye: TIER_STEPS[3] as number,
+      leg: TIER_STEPS[3] as number,
+      hide: TIER_STEPS[3] as number,
+      herd: TIER_STEPS[3] as number,
+    };
+    for (const s of ORDER_SPECS) {
+      if (!s.ready) expect(orderUnlocked(s, maxed), s.label).toBe(false);
+    }
+  });
+
+  it("구현 안 된 칸은 「무엇을 한다」고 말하지 않는다(잠긴 이유와 설명이 같은 한 줄)", () => {
+    // 2026-08-09 이전엔 여섯 칸이 "둥글게 서서 안쪽을 지킵니다" 같은 약속을 하면서 실제로는
+    // 「가라」와 똑같이 굴었고, 그 위에 쿨타임·기력까지 물렸다(= 벌칙만 붙은 「가라」).
+    for (const s of ORDER_SPECS) {
+      if (s.ready) continue;
+      expect(s.desc, s.label).toBe(s.hint);
+      expect(s.desc.length, s.label).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 방울 우선 — **[사용자 2026-08-09]** "가라 명령 때 방울을 우선시해서 알아서 먹는다"
+// ---------------------------------------------------------------------------
+describe("방울 우선 — 지시가 걸린 동안에만 새어 줍는다", () => {
+  /** 개체 하나만 남긴 세계 · 방울을 (dx,dy) 만큼 옆에 놓고 지시는 정반대(동쪽 끝)로 준다. */
+  function oneWithDrop(seed: string, order: HerdOrder | null, steps: number): { taken: boolean; snap: string } {
+    const w = new World(seed, W, H, tune({ herding: 40 }));
+    w.voiceR = 4000;
+    let kept = false;
+    for (let i = w.entities.length - 1; i >= 0; i--) {
+      const e = w.entities[i];
+      if (e === undefined) continue;
+      if (e.species.isPlayer && !kept) {
+        kept = true;
+        e.x = 100;
+        e.y = 480;
+        e.prevX = e.x;
+        e.prevY = e.y;
+        e.vx = 0;
+        e.vy = 0;
+        continue;
+      }
+      w.entities.splice(i, 1); // 야생·나머지 무리는 뺀다 · 도망·뭉침이 계측을 흐리지 않게
+    }
+    // 지시는 **북쪽**(멀리) · 방울은 **남쪽 130px**(반경 160 안이지만 지시 방향과 반대).
+    w.spawnGeneDrop(100, 610, 3, "boss");
+    for (let i = 0; i < steps; i++) {
+      w.armLead();
+      w.herdOrder = order;
+      w.step();
+    }
+    return { taken: w.geneDrops[0]?.taken === true, snap: snapshot(w) };
+  }
+
+  it("지시를 따르는 개체는 가는 길과 반대쪽 방울도 들러서 줍는다", () => {
+    const r = oneWithDrop("gene-order", { x: 100, y: 60, kind: "move" }, 260);
+    expect(r.taken).toBe(true);
+  });
+
+  it("지시가 없으면 아무도 방울을 목표로 삼지 않는다(예전 그대로)", () => {
+    const r = oneWithDrop("gene-order", null, 260);
+    expect(r.taken).toBe(false);
+  });
+
+  it("방울이 필드에 있어도 지시가 없으면 세계는 1비트도 안 바뀐다", () => {
+    // 방울은 sim 의 이동에 **지시 블록 안에서만** 닿는다 · 그 밖에서는 존재조차 안 읽힌다.
+    // 이 단언이 깨지면 방울 우선이 지시 블록 밖으로 새어 나간 것이다(= 밸런스 기준선 이동).
+    const withDrop = oneWithDrop("gene-idle", null, 200).snap;
+    const w = new World("gene-idle", W, H, tune({ herding: 40 }));
+    w.voiceR = 4000;
+    let kept = false;
+    for (let i = w.entities.length - 1; i >= 0; i--) {
+      const e = w.entities[i];
+      if (e === undefined) continue;
+      if (e.species.isPlayer && !kept) {
+        kept = true;
+        e.x = 100;
+        e.y = 480;
+        e.prevX = e.x;
+        e.prevY = e.y;
+        e.vx = 0;
+        e.vy = 0;
+        continue;
+      }
+      w.entities.splice(i, 1);
+    }
+    for (let i = 0; i < 200; i++) {
+      w.armLead();
+      w.step();
+    }
+    expect(withDrop).toBe(snapshot(w));
+  });
+
+  it("야생은 방울을 못 줍는다(내 종 전용 계약을 지시가 깨지 않는다)", () => {
+    const w = new World("gene-wild", W, H, tune({ herding: 40 }));
+    w.voiceR = 4000;
+    // 내 종을 전부 없애고 야생만 남긴 뒤, 야생 한 마리 발밑에 방울을 놓는다.
+    for (let i = w.entities.length - 1; i >= 0; i--) {
+      const e = w.entities[i];
+      if (e !== undefined && e.species.isPlayer) w.entities.splice(i, 1);
+    }
+    const wild = w.entities[0];
+    expect(wild).toBeDefined();
+    if (wild === undefined) return;
+    w.spawnGeneDrop(wild.x, wild.y, 3, "boss");
+    for (let i = 0; i < 30; i++) {
+      w.herdOrder = { x: wild.x, y: wild.y, kind: "move" };
+      w.step();
+    }
+    expect(w.geneDrops[0]?.taken).toBe(false);
+    expect(w.geneCollected).toBe(0);
   });
 });
 

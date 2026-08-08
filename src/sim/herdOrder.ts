@@ -15,7 +15,11 @@
 // 이 넷은 새로 만든 규칙이 아니라 **이미 있는 행동 우선순위가 그대로 드러난 것**이다.
 //
 // **실제 우선순위(behavior.ts 의 지시 블록과 1:1로 대조할 것):**
-//   도망 > 사냥감 추적 > (가는 길·코앞의) 먹이 > 지시 > 배회.
+//   도망 > 사냥감 추적 > **방울** > (가는 길·코앞의) 먹이 > 지시 > 배회.
+//   · 방울(유전자 점수)은 **[사용자 2026-08-09]** 로 들어왔다 ▸ "가라 명령 때 방울을 우선시해서
+//     알아서 먹는다거나 하는 건 있었으면 좋겠어." 지시가 걸린 동안, 근처(ORDER.geneRadius)에 아직
+//     안 주운 방울이 있으면 그쪽을 먼저 들른다 · 주우면 저절로 지시로 돌아간다.
+//     ⚠ 이 개체는 순종(orderFollowers)에 **안 센다** · 지시가 아니라 방울이 몰고 있는 것이다.
 //   · 해제 반경(ORDER.releaseRadius 64px · **개체 단위**) **안**이면 지시가 아예 안 걸린다 = 예전
 //     그대로 자율이다(도착 = 명령 종료가 아니라 그 근방에서 자율).
 //     ⚠ ORDER.arriveRadius(200px)는 **무리 단위 화면 표시**("무리 도착" · main 의 herdArrived) 전용이다.
@@ -60,11 +64,25 @@ export interface OrderSpec {
   /** 무엇을 하는 명령인가(휠에 뜨는 설명 한 줄). */
   desc: string;
   /**
+   * **이 명령이 실제로 그 일을 하는가.** false 면 휠에서 고를 수 없고(회색), 힌트가 준비 중임을 말한다.
+   *
+   * ⚠ 왜 이 필드가 있나(2026-08-09). 여덟 칸 중 **일곱이 코드상 「가라」와 완전히 같았다** —
+   *   `order.kind` 를 읽는 분기가 sim 어디에도 없어서, 같은 시드에서 「가라」와 「잡아라」의 개체
+   *   좌표가 비트 단위로 같았다. 그런데 화면은 "표시한 것을 함께 쫓습니다"·"둥글게 서서 안쪽을
+   *   지킵니다"라고 말하고, 그 위에 쿨타임과 기력 소모까지 물렸다. 즉 **「가라」에 벌칙만 얹은
+   *   칸**이었다(엄격히 나쁜 선택지). 「피해라」는 이제 진짜가 됐고, 나머지 여섯은 **잠근다** —
+   *   이 저장소의 규칙("수치가 화면 표시와 다르면 그건 거짓말이다")에는 잠그는 쪽이 맞다.
+   *   구현하는 세션이 이 값을 true 로 되돌리고 hint 를 티어 문구로 되돌리면 된다.
+   */
+  ready: boolean;
+  /**
    * 쿨타임(틱). **[사용자 2026-08-06]** 특수 명령에만 건다 — 「가라」에는 안 건다.
    * 기본 조작이 막히면 조종 감각 자체가 죽는다.
+   * ⚠ `ready: false` 인 칸의 값은 **한 번도 안 걸린다**(애초에 명령이 안 나간다) · 구현될 때를 위한
+   *   설계값으로 남겨 둔 것이지, 지금 무는 대가가 아니다.
    */
   cooldown: number;
-  /** 이 명령이 개체의 기력을 이만큼 쓴다(회피처럼 몸을 쥐어짜는 것). */
+  /** 이 명령이 개체의 기력을 이만큼 쓴다(회피처럼 몸을 쥐어짜는 것). 무는 대상은 **목소리가 닿는 개체뿐**. */
   energy: number;
 }
 
@@ -73,38 +91,40 @@ export interface OrderSpec {
  * ⚠ 여기 티어 조건과 `sim/tiers.ts` 의 파생표는 한 쌍이다. 한쪽만 만지면 「이 티어에서 열린다」가
  *   화면과 실제로 갈라진다.
  */
+/** 아직 구현 안 된 칸의 힌트·설명 한 줄(여섯 칸이 같은 문구를 쓴다 · 한 곳에서만 고친다). */
+const WIP_HINT = "아직 준비 중입니다";
 export const ORDER_SPECS: readonly OrderSpec[] = [
   {
-    kind: "move", label: "가라", cat: null, tier: 0,
+    kind: "move", label: "가라", cat: null, tier: 0, ready: true,
     hint: "", desc: "그 자리로 무리를 보냅니다.", cooldown: 0, energy: 0,
   },
   {
-    kind: "hunt", label: "잡아라", cat: "fang", tier: 1,
-    hint: "이빨 1단이 되면 열립니다", desc: "표시한 것을 함께 쫓습니다.", cooldown: 60, energy: 0,
+    kind: "hunt", label: "잡아라", cat: "fang", tier: 1, ready: false,
+    hint: WIP_HINT, desc: WIP_HINT, cooldown: 60, energy: 0,
   },
   {
-    kind: "evade", label: "피해라", cat: "leg", tier: 1,
-    hint: "다리 1단이 되면 열립니다", desc: "반대 방향으로 흩어져 달아납니다.", cooldown: 90, energy: 8,
+    kind: "evade", label: "피해라", cat: "leg", tier: 1, ready: true,
+    hint: "다리 1단이 되면 열립니다", desc: "탭한 자리에서 반대쪽으로 흩어져 달아납니다.", cooldown: 90, energy: 8,
   },
   {
-    kind: "gather", label: "모여라", cat: "herd", tier: 1,
-    hint: "무리 1단이 되면 열립니다", desc: "알파 곁으로 바짝 모입니다.", cooldown: 60, energy: 0,
+    kind: "gather", label: "모여라", cat: "herd", tier: 1, ready: false,
+    hint: WIP_HINT, desc: WIP_HINT, cooldown: 60, energy: 0,
   },
   {
-    kind: "scan", label: "살펴라", cat: "eye", tier: 2,
-    hint: "눈 2단이 되면 열립니다", desc: "잠시 멈춰 사방을 살핍니다.", cooldown: 120, energy: 0,
+    kind: "scan", label: "살펴라", cat: "eye", tier: 2, ready: false,
+    hint: WIP_HINT, desc: WIP_HINT, cooldown: 120, energy: 0,
   },
   {
-    kind: "brace", label: "버텨라", cat: "hide", tier: 3,
-    hint: "가죽 3단이 되면 열립니다", desc: "그 자리에 버티고 서서 물러서지 않습니다.", cooldown: 180, energy: 4,
+    kind: "brace", label: "버텨라", cat: "hide", tier: 3, ready: false,
+    hint: WIP_HINT, desc: WIP_HINT, cooldown: 180, energy: 4,
   },
   {
-    kind: "ring", label: "원진", cat: "herd", tier: 3,
-    hint: "무리 3단이 되면 열립니다", desc: "둥글게 서서 안쪽을 지킵니다.", cooldown: 180, energy: 0,
+    kind: "ring", label: "원진", cat: "herd", tier: 3, ready: false,
+    hint: WIP_HINT, desc: WIP_HINT, cooldown: 180, energy: 0,
   },
   {
-    kind: "drive", label: "몰아라", cat: null, tier: 0,
-    hint: "듀오 「늑대의 법」이 켜지면 열립니다", desc: "먹잇감을 한쪽으로 몹니다.", cooldown: 150, energy: 0,
+    kind: "drive", label: "몰아라", cat: null, tier: 0, ready: false,
+    hint: WIP_HINT, desc: WIP_HINT, cooldown: 150, energy: 0,
   },
 ];
 
@@ -112,8 +132,16 @@ export const ORDER_SPEC_BY_KIND: ReadonlyMap<OrderKind, OrderSpec> = new Map(
   ORDER_SPECS.map((s) => [s.kind, s]),
 );
 
-/** 이 명령 칸이 지금 열려 있는가. 「몰아라」만 듀오 조건이라 따로 본다. */
+/**
+ * 이 명령 칸이 지금 열려 있는가 — **게이트는 여기 하나뿐**이다(휠의 회색 표시도, game 의 명령 접수도
+ * 이 함수만 본다). 「몰아라」만 듀오 조건이라 따로 본다.
+ *
+ * ⚠ 구현 안 된 칸(`ready: false`)은 티어와 무관하게 잠긴다. 게이트를 둘로 쪼개면(티어 게이트 +
+ *   구현 게이트) 반드시 한쪽만 보는 호출부가 생겨, 화면은 회색인데 명령은 나가는(또는 그 반대의)
+ *   어긋남이 난다 — 이 저장소가 이미 여러 번 겪은 「같은 규칙을 두 곳에 적었다」 함정이다.
+ */
 export function orderUnlocked(spec: OrderSpec, pips: Pips): boolean {
+  if (!spec.ready) return false;
   if (spec.kind === "drive") return tierOf(pips.fang) >= 3 && tierOf(pips.herd) >= 3;
   if (spec.cat === null) return true;
   return tierOf(pips[spec.cat]) >= spec.tier;

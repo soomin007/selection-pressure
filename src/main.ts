@@ -232,6 +232,11 @@ async function boot(): Promise<void> {
       // 이후 태어난 개체가 새 게놈 서명으로 생성된다 · 카드를 골랐을 때와 같다).
       return true;
     },
+    // **고르는 동안 시간이 멈춘다** (**[사용자 2026-08-09]**: "방울 업그레이드 고르는 중에는 시간이
+    // 안 멈추나? 그거 보다보니 멸종해버렸는데"). 멈추는 장치는 카드 드래프트와 **같다**(game 의 phase) ·
+    // 여기서 새 정지 플래그를 만들면 그 순간 「한쪽만 안 멈춤」이 다시 생긴다.
+    freeze: (): boolean => game.openGeneShop(),
+    thaw: (): void => game.closeGeneShop(),
   };
   const genePanel = createGenePanel(geneShop);
 
@@ -858,11 +863,19 @@ async function boot(): Promise<void> {
       Math.hypot(e.global.x - lastTap.x, e.global.y - lastTap.y) < DOUBLE_TAP_PX;
     lastTap = { t: now, x: e.global.x, y: e.global.y };
     if (isDouble) {
-      // 다리 1단이 없으면 회피가 잠겨 있다 — 조용히 무시하지 않고 왜 안 되는지 그 자리에서 말한다
-      // (없다는 것으로 가르치는 건 가장 약한 가르침이다).
+      // 회피가 안 나갔으면 **왜** 안 나갔는지 그 자리에서 말한다(없다는 것으로 가르치는 건 가장
+      // 약한 가르침이다). ⚠ 예전엔 이유를 안 가리고 늘 "다리 1단이 되면…"이라 말했는데, 다리를
+      // 이미 판 사람이 쿨타임 중에 더블탭하면 그건 **거짓말**이었다. 근거는 game 이 판정한 그 값
+      // (orderWheel 의 unlocked·cdLeft)을 그대로 읽는다 · 조건을 여기서 다시 유도하지 않는다.
       if (!issueOrder(p.x, p.y, "evade")) {
         effects.spawnPing(p.x, p.y, "deny");
-        highlights.flash("다리 1단이 되면 「피해라」를 쓸 수 있습니다", 0xd0b050);
+        const slot = game.orderWheel().find((s) => s.spec.kind === "evade");
+        highlights.flash(
+          slot && !slot.unlocked
+            ? "다리 1단이 되면 「피해라」를 쓸 수 있습니다"
+            : "「피해라」는 아직 숨을 고르는 중입니다",
+          0xd0b050,
+        );
       }
       return;
     }
@@ -932,6 +945,9 @@ async function boot(): Promise<void> {
   function herdArrived(): boolean {
     const o = game.world.herdOrder;
     if (o === null) return false;
+    // 「피해라」는 **멀어지라**는 뜻이라 도착이라는 개념 자체가 없다 · 여기서 true 가 나면 화면이
+    // 「무리 도착」이라 말하고 "아무도 안 따른다" 안내까지 막힌다(둘 다 이 함수를 근거로 쓴다).
+    if ((o.kind ?? "move") === "evade") return false;
     const c = game.world.playerCentroid();
     return Math.hypot(c.x - o.x, c.y - o.y) <= ORDER.arriveRadius + ORDER_ARRIVED_PAD;
   }
@@ -1038,8 +1054,13 @@ async function boot(): Promise<void> {
   app.ticker.add((ticker) => {
     game.update(ticker.deltaMS);
     view.sync(game.world, game.interpAlpha, ticker.deltaMS);
-    // 뜻 표식(깃발) · 지시가 없으면 null 로 지운다. 단계가 바뀌면 game 이 뜻을 거두므로 저절로 사라진다.
-    view.setMoveTarget(game.herdOrder);
+    // 뜻 표식 · 지시가 없으면 null 로 지운다. 단계가 바뀌면 game 이 뜻을 거두므로 저절로 사라진다.
+    // ⚠ 「피해라」에는 **깃발을 세우지 않는다.** 깃발은 "여기로 가라"는 뜻이라, 피하라고 찍은 자리에
+    //   그것이 서면 화면이 정반대를 말한다 · 대신 붉은 반발 고리로 "이 자리에서 멀어져라"를 그린다.
+    {
+      const o = game.herdOrder;
+      view.setMoveTarget(o, (o?.kind ?? "move") === "evade");
+    }
     // **현재 명령 한 줄** — 철회하려면 먼저 무엇이 걸려 있는지 보여야 한다(**[사용자 2026-08-06]**).
     // 드래프트·결과 화면에서는 감춘다(그때 탭은 카드 화면 몫이라 철회할 것도 없다).
     {
@@ -1114,12 +1135,20 @@ async function boot(): Promise<void> {
       // 눈앞의 먹이·사냥에 붙들려 있다(그 사정은 0명 배너가 말한다 · 칩은 숫자만).
       // "무리 도착"은 무리 단위 판정(herdArrived)이 먼저다 · 개체 몇이 근방을 들락여도(orderPending 이
       // 0 과 소수를 오간다) 무리가 목표에 살면 도착이 맞다. orderPending === 0 은 그 안전망이다.
+      // 「피해라」에는 **도착이 없다** · 뜻이 "그 자리에서 멀어져라"이므로 「무리 도착」은 정반대 말이다.
+      // 대신 같은 두 숫자를 「흩어지는 중 N/M」으로 읽는다(분모 = 목소리를 들은 수 · 분자 = 실제로
+      // 달아나는 수). 두 문구가 같은 값을 보므로 화면과 sim 이 갈릴 수 없다.
+      const evading = (gw.herdOrder?.kind ?? "move") === "evade";
       const follow =
         gw.herdOrder === null || mineCount === 0
           ? ""
-          : herdArrived() || gw.orderPending === 0
-            ? "무리 도착"
-            : `따르는 중 ${gw.orderFollowers}/${gw.orderPending}`;
+          : evading
+            ? gw.orderPending === 0
+              ? ""
+              : `흩어지는 중 ${gw.orderFollowers}/${gw.orderPending}`
+            : herdArrived() || gw.orderPending === 0
+              ? "무리 도착"
+              : `따르는 중 ${gw.orderFollowers}/${gw.orderPending}`;
       // **관문 동안에는 이 칩 자리를 생존 수가 가져간다.** 순종보다 판정이 급하다 — 이 라운드가 끝날 때
       // 기준 아래면 런이 끝난다. 기준(game.survivorsNeeded)은 판정과 같은 값이라 화면이 거짓말할 수 없다.
       const gate = survivalChip(mineCount, game.survivorsNeeded);

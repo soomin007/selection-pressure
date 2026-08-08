@@ -114,7 +114,17 @@ import {
   type TrialRecord,
 } from "@/game/runCode";
 
-export type Phase = "lobby" | "draft" | "watch" | "result";
+/**
+ * 게임이 지금 무엇을 하고 있는가. **시간이 흐르는 단계는 `watch`(와 배경만 도는 `lobby`)뿐이다** —
+ * `update()` 가 그 밖의 값에서는 곧장 되돌아간다.
+ *
+ * `shop`(방울 구입 화면)이 여기 있는 이유: **[사용자 2026-08-09]** "방울 업그레이드 고르는 중에는
+ * 시간이 안 멈추나? 그거 보다보니 멸종해버렸는데". 카드 드래프트는 `draft` 로 바뀌어 멈추는데,
+ * 구입 화면은 화면만 띄우고 세계는 계속 굴러가고 있었다 — **같은 「고르는 화면」인데 하나만 멈췄다.**
+ * 새 정지 경로(별도 플래그)를 만들지 않고 드래프트와 **같은 장치**를 쓴다 · 정지가 두 갈래면
+ * 반드시 한쪽만 안 멈추는 화면이 다시 생긴다.
+ */
+export type Phase = "lobby" | "draft" | "watch" | "result" | "shop";
 export type RunResult = "win" | "lose";
 
 export type ExtinctionType = "cold" | "famine" | "heat" | "plague";
@@ -664,9 +674,15 @@ export class Game {
     if ((this.orderCd.get(kind) ?? 0) > 0) return false;
     if (spec.cooldown > 0) this.orderCd.set(kind, spec.cooldown);
     if (spec.energy > 0) {
-      // 회피처럼 몸을 쥐어짜는 명령은 무리의 기력을 쓴다(목소리가 닿는 개체만).
+      // 회피처럼 몸을 쥐어짜는 명령은 무리의 기력을 쓴다 — **목소리가 닿는 개체만**.
+      // ⚠ 2026-08-09 까지 이 주석은 "목소리가 닿는 개체만"이라 적혀 있었는데 **코드에 그 조건이
+      //   없었다** · 「피해라」 한 번에 살아 있는 내 종 **전부**가 기력 −8 을 물었다(목소리 밖에서
+      //   명령을 듣지도 못한 개체까지). 판정을 sim 과 **같은 함수**(world.hearsOrder)로 옮겨,
+      //   「기력을 내는 개체」와 「실제로 달아나는 개체」가 정의상 같은 집합이 되게 한다.
       for (const e of this.world.entities) {
-        if (e.species.isPlayer && e.alive) e.energy = Math.max(1, e.energy - spec.energy);
+        if (!e.species.isPlayer || !e.alive) continue;
+        if (!this.world.hearsOrder(e.x, e.y)) continue;
+        e.energy = Math.max(1, e.energy - spec.energy);
       }
     }
     const ticks = spec.kind === "move" ? 0 : Math.round(SIM.stepsPerSecond * 4);
@@ -677,6 +693,43 @@ export class Game {
   /** 내려 둔 뜻을 거둔다(무리는 그 자리에서 자율로 산다). 화면의 「현재 명령 한 줄」을 탭하면 여기로 온다. */
   clearHerdOrder(): void {
     this.world.herdOrder = null;
+  }
+
+  /**
+   * **방울 구입 화면을 연다 = 시간이 멈춘다.**
+   *
+   * **[사용자 2026-08-09]** "방울 업그레이드 고르는 중에는 시간이 안 멈추나? 그거 보다보니
+   * 멸종해버렸는데". 무엇을 살지 읽는 동안 무리가 죽고 있었다.
+   *
+   * 멈추는 장치는 **드래프트가 쓰는 것과 같다**(`phase`) · `update()` 가 `watch` 가 아니면 곧장
+   * 되돌아가므로, 여기서 단계를 바꾸는 것만으로 틱·타이머·보스·시험이 전부 그 자리에 선다.
+   * 새 플래그를 따로 두면 "저기서도 봐야 하는데 안 봤다"가 생겨 한쪽만 안 멈추는 화면이 다시 난다.
+   *
+   * 관전 중일 때만 열린다(드래프트·결과·로비에서 열리면 그 화면들의 복귀 자리가 헝클어진다).
+   */
+  openGeneShop(): boolean {
+    if (this.phase !== "watch") return false;
+    this.phase = "shop";
+    return true;
+  }
+
+  /**
+   * 구입 화면을 닫는다 — **진행 중이던 단계로 정확히 돌아간다.**
+   *
+   * ⚠ 여기서 `beginStage`·타이머 초기화 같은 것을 하지 않는다. 단계 상태(`stageTicksLeft`·보스·
+   *   시험·`stageIndex`)는 멈춰 있는 동안 아무도 안 건드렸으므로 그대로가 곧 정답이다
+   *   (2026-08-07 「유령 드래프트 멈춤」과 같은 자리라, 복귀를 새로 계산하면 그 사고가 재현된다).
+   *
+   * ⚠ **`acc`(프레임 잔여 시간)를 0 으로 밀지 않는다.** 멈춘 동안 `update()` 가 곧장 되돌아가
+   *   `acc` 에 아무것도 안 쌓였으므로 밀 것이 없고, 밀면 열기 전의 잔여 몫이 사라져 **틱 하나가
+   *   어긋난다** — 그러면 "열었다 닫은 판"과 "안 연 판"의 지문이 달라진다(결정론 위반).
+   *
+   * 단계가 `shop` 이 아니면 아무 일도 안 한다 · 런 종료·시대 전환처럼 게임이 단계를 이미 바꾼
+   * 자리에서 화면이 뒤늦게 닫혀도 그 단계를 덮어쓰지 않게 한다.
+   */
+  closeGeneShop(): void {
+    if (this.phase !== "shop") return;
+    this.phase = "watch";
   }
 
   /** 지금 내려져 있는 뜻(화면에 표식을 그리는 데 쓴다). */

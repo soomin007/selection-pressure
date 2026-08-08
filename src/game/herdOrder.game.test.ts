@@ -7,6 +7,8 @@
 import { describe, it, expect } from "vitest";
 import { Game } from "@/game/game";
 import { GAME } from "@/game/config";
+import { ORDER_SPECS } from "@/sim/herdOrder";
+import { TIER_STEPS } from "@/sim/tiers";
 
 /** 한 런을 시작해 첫 프리셋을 고른 상태(watch)로 만든다(game.test.ts 의 startRun 과 같은 절차). */
 function startRun(seed: string, commandEnabled: boolean): Game {
@@ -107,6 +109,50 @@ describe("무리 지시 — game 층 배선", () => {
     // 목소리가 닿는 거리와 지휘 공백 길이도 game 이 매 단계 넣어 준다(sim 은 티어를 모른다).
     expect(g.world.voiceR).toBeGreaterThan(0);
     expect(g.world.vacuumOnLeadDeath).toBeGreaterThan(0);
+  });
+
+  // ── 2026-08-09 · 명령 휠이 화면에서 거짓말하지 않게 만든 두 가지 ────────────────────────────
+  it("아직 준비 안 된 칸은 잠겨 있고, 내려도 안 나가며, 대가도 안 문다", () => {
+    const g = startRun("order-game-wip", true);
+    for (const slot of g.orderWheel()) {
+      if (!slot.spec.ready) expect(slot.unlocked, slot.spec.label).toBe(false);
+    }
+    // 「버텨라」는 기력 4 · 쿨타임 180 이 적힌 칸이다 — 잠긴 칸이 그 대가만 물면 그건 벌칙일 뿐이다.
+    const brace = ORDER_SPECS.find((s) => s.kind === "brace");
+    expect(brace?.energy).toBeGreaterThan(0); // 전제: 이 칸에는 물릴 대가가 적혀 있다
+    expect(brace?.cooldown).toBeGreaterThan(0);
+    const before = g.world.entities.filter((e) => e.species.isPlayer).map((e) => e.energy);
+    expect(g.setHerdOrder(120, 200, "brace")).toBe(false);
+    expect(g.world.herdOrder).toBeNull();
+    expect(g.world.entities.filter((e) => e.species.isPlayer).map((e) => e.energy)).toEqual(before);
+    // 거부된 명령이 쿨타임을 물지도 않는다(다음에 다시 못 누르게 되면 그것도 대가다).
+    expect(g.orderWheel().find((s) => s.spec.kind === "brace")?.cdLeft ?? 0).toBe(0);
+  });
+
+  it("「피해라」의 기력은 **목소리가 닿는 개체에게만** 걸린다", () => {
+    // 2026-08-09 이전: 주석은 "목소리가 닿는 개체만"인데 코드에 그 조건이 없어, 명령을 듣지도
+    // 못한 개체까지 살아 있는 내 종 **전부**가 기력 −8 을 물었다.
+    const g = startRun("order-game-energy", true);
+    for (let i = 0; i < 30; i++) g.update(34); // 알파가 서고 무리가 자리를 잡는다
+    g.genome.pips.leg = TIER_STEPS[0] as number; // 다리 1단 = 「피해라」 해금
+    g.world.voiceR = 40; // 목소리를 바짝 좁혀 안/밖을 분명히 가른다
+    const mineList = g.world.entities.filter((e) => e.species.isPlayer && e.alive);
+    expect(mineList.length).toBeGreaterThan(1);
+    const far = mineList[mineList.length - 1];
+    expect(far).toBeDefined();
+    if (far === undefined) return;
+    far.x = Math.min(g.world.width - 2, g.world.lead.x + 300);
+    far.y = Math.min(g.world.height - 2, g.world.lead.y + 300);
+    const heard = mineList.filter((e) => g.world.hearsOrder(e.x, e.y));
+    expect(heard.length).toBeGreaterThan(0); // 전제: 듣는 개체가 실제로 있다
+    expect(g.world.hearsOrder(far.x, far.y)).toBe(false); // 그리고 이 개체는 못 듣는다
+    const farBefore = far.energy;
+    const heardBefore = heard.map((e) => e.energy);
+    expect(g.setHerdOrder(120, 200, "evade")).toBe(true);
+    expect(far.energy, "목소리 밖 개체가 기력을 물었다").toBe(farBefore);
+    for (let i = 0; i < heard.length; i++) {
+      expect(heard[i]?.energy).toBeLessThan(heardBefore[i] as number);
+    }
   });
 
   it("지시 모드면 한 단계에 쌓이는 경험치가 leadStageXpCap 을 못 넘는다", () => {

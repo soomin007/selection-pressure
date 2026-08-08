@@ -111,6 +111,20 @@ export interface GeneShop {
    *   비우고 승급 연출까지 내보내는 **감싼 객체**를 넘긴다. 이 화면은 그 사정을 몰라도 된다.
    */
   buyTier(cat: Category): boolean;
+  /**
+   * **이 화면이 열린다 = 시간을 멈춘다.** 열 수 있으면 true, 지금은 열면 안 되면(관전 중이 아니면)
+   * false — false 면 화면이 아예 안 열린다.
+   *
+   * **[사용자 2026-08-09]** "방울 업그레이드 고르는 중에는 시간이 안 멈추나? 그거 보다보니
+   * 멸종해버렸는데". 예전에는 이 화면이 그냥 떴고 세계는 계속 굴러갔다.
+   *
+   * ⚠ 선택 인자·기본값으로 두지 않는다(필수 메서드다). 이 저장소는 "핵심 플래그를 기본값 인자로
+   *   뒀더니 호출부가 안 넘겨도 컴파일이 통과해 기능이 통째로 죽어 있던" 사고를 이미 겪었다.
+   */
+  freeze(): boolean;
+  /** 화면이 닫혔다 = 시간이 다시 흐른다. `close()` 로 가는 **모든** 길(닫기·Esc·바깥 탭·구입 직후 ·
+   *  바깥에서 강제로 닫는 것)이 이 한 곳을 지난다. */
+  thaw(): void;
 }
 
 export interface GenePanel {
@@ -191,6 +205,13 @@ export function createGenePanel(shop: GeneShop): GenePanel {
   closeBtn.addEventListener("click", () => close());
   head.append(title, closeBtn);
 
+  // **멈췄다고 말한다.** 화면이 멈춰 있는데 말이 없으면 "왜 안 움직이지"가 된다(카드 드래프트는
+  // 전체 화면이라 저절로 읽히지만, 이 화면은 뒤로 세계가 그대로 비쳐서 더 그렇다).
+  // **[사용자 2026-08-09]** 제보의 반대편이다 ▸ 예전에는 말없이 **안** 멈춰 있었다.
+  const frozen = document.createElement("div");
+  frozen.className = "gene-frozen";
+  frozen.textContent = "고르는 동안 시간이 멈춰 있습니다";
+
   const bankRow = document.createElement("div");
   bankRow.className = "gene-bank";
   const bankDot = createGeneOrb(true);
@@ -226,7 +247,7 @@ export function createGenePanel(shop: GeneShop): GenePanel {
   const list = document.createElement("div");
   list.className = "gene-list";
 
-  panel.append(head, bankRow, lead, sources, list);
+  panel.append(head, frozen, bankRow, lead, sources, list);
   document.body.appendChild(root);
 
   // ── 범주 다섯 줄 · 한 줄이 통째로 버튼이다(폰에서 손가락이 크다) ────────────
@@ -383,8 +404,9 @@ export function createGenePanel(shop: GeneShop): GenePanel {
     sig = ""; // 다음 프레임에 반드시 다시 그린다(닫히지 않고 열려 있는 경우)
   }
 
-  // 열려 있는 동안만 도는 갱신 루프. 방울은 세계가 굴러가는 중에도 계속 들어오므로, 열어 둔 채
-  // 기다리면 잔액이 저절로 는다 · 그때 「이제 살 수 있다」가 배선 없이 즉시 켜져야 한다.
+  // 열려 있는 동안만 도는 갱신 루프. 산 직후처럼 값이 바뀌는 순간을 배선 없이 따라잡는다.
+  // (2026-08-09 이후로 **열려 있는 동안 세계는 멈춰 있으므로** 잔액이 저절로 늘지는 않는다 ·
+  //  예전 이 주석은 "기다리면 잔액이 는다"였는데 그건 곧 사용자가 무리를 잃고 있었다는 뜻이었다.)
   function loop(): void {
     if (!open_) return;
     const s = stateSig();
@@ -395,8 +417,17 @@ export function createGenePanel(shop: GeneShop): GenePanel {
     raf = requestAnimationFrame(loop);
   }
 
+  /**
+   * 여닫기의 **단일 통로**. 시간을 멈추고 다시 흐르게 하는 것도 여기 한 자리에서만 한다 —
+   * 닫는 길이 넷(닫기 버튼 · Esc · 바깥 탭 · 산 직후 자동 닫힘)이고 바깥에서 강제로 닫는 자리도
+   * 셋(드래프트가 열림 · 런 종료 · 새 세계)이라, 각자 풀어 주게 두면 하나는 반드시 안 푼다.
+   *
+   * 열 수 없는 때(관전 중이 아님)면 `freeze()` 가 false 를 내고 **화면 자체가 안 열린다** ·
+   * 「멈추지도 않았는데 떠 있는 화면」을 만들지 않는다.
+   */
   function setOpen(next: boolean): void {
     if (open_ === next) return;
+    if (next && !shop.freeze()) return;
     open_ = next;
     root.classList.toggle("open", next);
     if (next) {
@@ -406,6 +437,7 @@ export function createGenePanel(shop: GeneShop): GenePanel {
     } else {
       if (raf !== 0) cancelAnimationFrame(raf);
       raf = 0;
+      shop.thaw();
     }
   }
   const close = (): void => setOpen(false);
@@ -469,6 +501,12 @@ function ensureGeneStyles(): void {
   .gene-close { flex: none; font: inherit; font-size: 12px; color: var(--ink); background: none;
     border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
   .gene-close:active { background: rgba(255,255,255,0.06); }
+  /* 「시간이 멈췄다」 한 줄 · 제목 바로 아래. 값이 아니라 **상태**를 말하는 줄이라 잔액(금빛)과
+     색을 섞지 않는다(보조 본문색 + 옅은 테두리). 한 줄이 넘지 않게 짧게 유지할 것. */
+  .gene-frozen { margin-top: 10px; padding: 5px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: rgba(255,255,255,0.03);
+    font-size: 11px; color: var(--sub); align-self: flex-start; display: inline-block;
+    word-break: keep-all; }
   /* 잔액 · 이 화면에서 가장 큰 숫자다. 얼마 있는지가 먼저 읽혀야 무엇을 살지 정할 수 있다. */
   .gene-bank { display: flex; align-items: baseline; gap: 8px; margin-top: 12px; }
   .gene-bank-num { font-family: var(--font-mono); font-size: 26px; line-height: 1;

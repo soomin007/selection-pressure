@@ -101,6 +101,7 @@ export class WorldView {
   private raidText: Text | null = null;
   private leadId: number | null = null; // 사람이 앞장세운 개체(알파). null 이면 표식을 아예 안 그린다
   private moveTarget: { x: number; y: number } | null = null; // 이동 명령 목표(월드 좌표). null = 명령 없음
+  private moveTargetAvoid = false; // true = 「피해라」의 자리(가라는 깃발이 아니라 붉은 반발 고리를 그린다)
   // ── 격퇴 바를 "사건"으로 그리기 위한 렌더 전용 상태 ─────────────────────────────────────────
   // 값은 오직 sim 의 boss.hp 에서 읽는다. "언제 깎였나"도 **바가 가리키는 그 값이 줄어든 것**으로만
   // 안다 · 판정을 렌더에서 새로 만들지 않았으므로 번쩍임·잔상이 숫자와 어긋날 수 없다.
@@ -170,8 +171,9 @@ export class WorldView {
    * null 로 지운다 — 렌더는 상태를 판단하지 않고 "지금 유효한 명령"을 그대로 그릴 뿐이다(단일 진실 = main
    * 의 명령 상태). 깃발은 카메라와 함께 움직이고, 서 있는 동안 부드럽게 맥동한다.
    */
-  setMoveTarget(p: { x: number; y: number } | null): void {
+  setMoveTarget(p: { x: number; y: number } | null, avoid = false): void {
     this.moveTarget = p;
+    this.moveTargetAvoid = avoid;
   }
 
   /** 개체의 렌더 표시 위치(저역통과된 부드러운 좌표). 카메라가 이 위치를 따라가면 떨림 없이 추적된다. */
@@ -238,6 +240,7 @@ export class WorldView {
     this.dispPos.clear();
     // 이전 런의 이동 명령 깃발이 새 월드에 남는 걸 막는 안전망(명령 상태 자체는 main 이 지운다).
     this.moveTarget = null;
+    this.moveTargetAvoid = false;
     this.moveTargetG.clear();
     // 시험 표식도 같은 이유로 지운다 — 새 월드의 첫 프레임에 지난 라운드의 자리·표식이 남으면
     // 플레이어가 그리로 무리를 몰다 시간을 버린다.
@@ -970,6 +973,27 @@ export class WorldView {
     const p = this.moveTarget;
     if (!p) return;
     const pulse = 0.5 + 0.5 * Math.sin(((this.frame % 66) / 66) * Math.PI * 2);
+    // 「피해라」의 자리 — **깃발을 세우지 않는다.** 깃발은 "여기로 가라"는 뜻이라 정반대를 말하게 된다.
+    // 대신 붉은 고리 + 바깥으로 뻗는 짧은 화살표 넷 = "이 자리에서 멀어져라". 색은 위협(붉은)
+    // 계열이라 라임(가라)과 한눈에 갈린다 · 명령이 사는 몇 초 동안 맥동해 유효함이 읽힌다.
+    if (this.moveTargetAvoid) {
+      const ar = 9 + 3 * pulse;
+      this.moveTargetG.circle(p.x, p.y, ar + 1).stroke({ color: LEAD_OUTLINE, width: 3.4, alpha: 0.3 });
+      this.moveTargetG.circle(p.x, p.y, ar).stroke({ color: AVOID_COLOR, width: 1.8, alpha: 0.6 + 0.3 * pulse });
+      this.moveTargetG.circle(p.x, p.y, 1.6).fill({ color: AVOID_LIGHT, alpha: 0.9 });
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        const c = Math.cos(a);
+        const s = Math.sin(a);
+        const x0 = p.x + c * (ar + 2.5);
+        const y0 = p.y + s * (ar + 2.5);
+        const x1 = p.x + c * (ar + 8);
+        const y1 = p.y + s * (ar + 8);
+        this.moveTargetG.moveTo(x0, y0).lineTo(x1, y1).stroke({ color: LEAD_OUTLINE, width: 3.2, alpha: 0.3 });
+        this.moveTargetG.moveTo(x0, y0).lineTo(x1, y1).stroke({ color: AVOID_LIGHT, width: 1.5, alpha: 0.9 });
+      }
+      return;
+    }
     // 바닥 링 — 지면에 눕는 타원(깃발이 "이 지점 땅"에 꽂혔음을 보인다). 어두운 밑선 → 라임 순서로
     // 두 번 — 밝은 지형(사막·눈) 위에서 표식이 사라지는 걸 막는다(LEAD_OUTLINE 과 같은 이유).
     const rr = 5.5 + 1.5 * pulse;
@@ -1606,6 +1630,10 @@ const FLAG_COLOR = 0xbcf24e;
 /** 시험 표식의 금빛 · 먹잇감 호박빛과 같은 계열이라 "저건 노릴 것"이 색만으로 읽힌다. */
 const TRIAL_MARK_COLOR = 0xffd24a;
 const FLAG_LIGHT = 0xe4ffb0; // 깃대·중심점(밝은 라임 — 어두운 지형 위 가독)
+// 「피해라」 표식의 붉은빛 — 위협(보스 떼 0xff5535)과 같은 계열이라 "저기서 멀어져라"가 색만으로 읽힌다.
+// 라임(가라)과 정반대 색이라 두 명령이 한눈에 갈린다.
+const AVOID_COLOR = 0xff6a4a;
+const AVOID_LIGHT = 0xffc8b4;
 
 // ── 격퇴 체력 바 ────────────────────────────────────────────────────────────────────────
 // 폭 44 → 72 월드px. 다만 폭을 키우는 것만으로는 절대 안 된다 · 근접 반격 한 번(최대 1.2HP)이 200HP

@@ -29,6 +29,8 @@
 //   npm run probe -- steps        온보딩 진도 0~3 의 세계를 나란히(종 수·지형 비율·맵 치수·개체 수)
 //   npm run probe -- growth       한 런 전체(시대 0~4 · 정복까지) · 카드 장 수 · 정점 도달 시점 · 시대별 위험
 //   npm run probe -- econ         방울(유전자 점수) 출처 실측 — 티어 가격표의 재료(수입 쪽)
+//                                 + 방울 회수율(표3). `--drive` 로 지시가 걸린 판을,
+//                                 `--generadius=0,80,160` 으로 방울 우선 반경을 나란히 잰다.
 //   npm run probe -- apex         정점 4개를 찍은 게놈의 드래프트 후보 구성(죽은 카드·몸집만 바꾸는 카드 비율)
 //   npm run probe -- scale        0~100 스케일의 산수만(시뮬 없음): 감쇠·정점 보상·형질 1의 실제 크기
 //   옵션: --seeds=6 --presets=omni,herd --boss=raider --era=0 --step=2 --cards=first|skip
@@ -109,6 +111,11 @@ const server = await createServer({
 
 const { World } = await server.ssrLoadModule("/src/sim/world.ts");
 const { SIM, ORDER } = await server.ssrLoadModule("/src/sim/params.ts");
+// **방울 우선 반경**(ORDER.geneRadius)을 실측으로 정하기 위한 손잡이. 안 주면 게임 값 그대로다.
+// 값 하나면 여기서 전역으로 덮어쓰고, 쉼표 목록이면 econ 모드가 값마다 한 번씩 돌린다.
+// ⚠ `as const` 는 타입에만 걸리므로 런타임 객체는 그냥 바뀐다 — 프로브에서만 쓰는 문이다.
+const GENE_RADIUS_ARG = opt("generadius", "");
+if (GENE_RADIUS_ARG !== "" && !GENE_RADIUS_ARG.includes(",")) ORDER.geneRadius = Number(GENE_RADIUS_ARG);
 const {
   GAME, SCHEDULE, mapScale, eraScarcity, eraDifficulty, eraPredatorPressure,
   eraRewardBoostAt, bossPassNeeded, extinctionPassNeeded, onboardingStep, stepUsesDrawnMap, stepWorldOptions,
@@ -345,15 +352,22 @@ async function runOrder() {
   const ORDER_TICKS = 480; // 16초 = 채집 라운드 한 판(GAME.roundSeconds)
   const MARKS = [30, 150, 480]; // 1초 · 5초 · 16초
   const ORDER_DIST = Number(opt("dist", "600")); // 지시점까지의 거리(px)
+  // **방울 우선의 값과 대가를 한 판에서 같이 재는 자리** (**[사용자 2026-08-09]**).
+  // `--genedrops=N` 이면 지시를 내리기 직전에 방울 N 개를 **게임과 같은 길**(spawnGeneDropNear ·
+  // 전용 geneRng · 무리 곁의 고리)로 놓는다. 그러면 같은 시드·같은 세계에서 반경만 바꿔 가며
+  // 「회수율은 얼마나 오르고 순종·도착은 얼마나 깎이는가」를 나란히 볼 수 있다.
+  // 0(기본)이면 spawnGeneDropNear 를 한 번도 안 불러 예전과 완전히 같은 판이다.
+  const GENE_DROPS = Number(opt("genedrops", "0"));
 
   console.log(`# order · era ${ERA} · 진도 ${STEP} · 세계 ${W}x${H}(배율 ${SCALE}) · areaScale ${AREA_SCALE} · 시드 ${SEEDS.length} · 워밍업 ${WARMUP}틱 → 지시 ${ORDER_TICKS}틱`);
-  console.log(`# ORDER.pull=${ORDER.pull} arriveRadius=${ORDER.arriveRadius}`);
+  console.log(`# ORDER.pull=${ORDER.pull} arriveRadius=${ORDER.arriveRadius} geneRadius=${ORDER.geneRadius} · 방울 ${GENE_DROPS}개`);
   console.log(
     [
       "프리셋".padEnd(18),
       "순종1s", "순종5s", "순종16s", // orderFollowers / 내 종 수 (지시를 향해 실제로 당겨진 개체)
       "도착16s", // 도착 반경 안 비율
       "절반도달", // 무게중심이 처음 거리의 절반까지 온 시드 수
+      "방울회수%", // 놓은 방울 중 16초 안에 주워진 비율(--genedrops 를 줬을 때만)
       "먹이", "사냥", "새끼", // 지시를 준 480틱 동안의 시험 계수
       "대조먹이", "대조사냥", "대조새끼", // 지시를 안 준 같은 세계의 같은 구간
     ].join("\t"),
@@ -365,6 +379,7 @@ async function runOrder() {
     let halfReached = 0;
     const counts = { feeds: [], hunts: [], births: [] };
     const ctrl = { feeds: [], hunts: [], births: [] };
+    const geneRate = [];
 
     for (const seed of SEEDS) {
       // (1) 지시를 준 세계
@@ -400,6 +415,8 @@ async function runOrder() {
       const d0 = Math.hypot(c0.x - target.x, c0.y - target.y);
 
       w.resetRoundCounts();
+      // 방울은 **지시 직전에** 놓는다 · 게임에서도 사건이 나면 무리 곁에 떨어지고 그 뒤에 사람이 탭한다.
+      for (let k = 0; k < GENE_DROPS; k++) w.spawnGeneDropNear(3, "boss");
       w.herdOrder = target;
       let mark = 0;
       let half = false;
@@ -424,6 +441,9 @@ async function runOrder() {
       counts.feeds.push(w.roundCounts.feeds);
       counts.hunts.push(w.roundCounts.hunts);
       counts.births.push(w.roundCounts.births);
+      if (w.geneDrops.length > 0) {
+        geneRate.push((100 * w.geneDrops.filter((d) => d.taken).length) / w.geneDrops.length);
+      }
 
       // (2) 대조군 · 같은 시드·같은 게놈, 지시만 안 준다
       const c2 = buildWorld(seed, p.genome);
@@ -443,6 +463,7 @@ async function runOrder() {
         cell(obey[2].map((v) => v * 100), 1),
         cell(arrived.map((v) => v * 100), 1),
         `${halfReached}/${SEEDS.length}`,
+        geneRate.length === 0 ? "-" : cell(geneRate, 1),
         cell(counts.feeds), cell(counts.hunts), cell(counts.births),
         cell(ctrl.feeds), cell(ctrl.hunts), cell(ctrl.births),
       ].join("\t"),
@@ -1134,6 +1155,28 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
     if (v.overachieved) overachieves += 1;
   };
 
+  // --- 방울 회수율의 재료 --------------------------------------------------------------------
+  // **[사용자 2026-08-09]** "가라 명령 때 방울을 우선시해서 알아서 먹는다" 의 효과를 재는 자리.
+  //
+  // 세는 법: World 는 시대마다 새로 만들어지고, **못 주운 방울은 다음 세계로 옮겨진다**
+  // (`game.continueToNextEra` 의 carriedDrops). 그래서
+  //   주운 개수 = Σ(시대마다 taken 인 방울 수)   ·   못 주운 개수 = **런 끝 세계**에 남은 taken 아닌 수
+  //   발행 개수(중복 없이) = 주운 개수 + 못 주운 개수
+  // 옮겨진 방울은 새 세계에서 다시 놓이지만 「주웠다」로는 한 번만 세이므로 이 셈은 이중계산이 없다.
+  let dropsTaken = 0;
+  let dropsTakenValue = 0;
+  /** 세계를 갈아 끼우기 **직전에** 그 세계의 결산을 뜬다(새 World 를 만들면 옛 배열은 사라진다). */
+  const closeWorldDrops = () => {
+    for (const d of game.world.geneDrops) {
+      if (!d.taken) continue;
+      dropsTaken += 1;
+      dropsTakenValue += d.amount;
+    }
+  };
+  // 손이 붙은 판에서 「목표에 실제로 닿았는가」 — 방울 우선의 대가(지시가 무의미해지는가)를 재는 축.
+  let ordersIssued = 0;
+  let ordersArrived = 0;
+
   const picks = []; // 고른 카드마다 { n, era, level, name, apexHit }
   const offers = []; // 열린 드래프트의 후보 카드마다 { era, n, postApex, kind, key }
   const apexAt = {}; // 형질 → 몇 번째 카드에서 100 에 닿았나 { card, era }
@@ -1219,6 +1262,7 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
       r.pips = { ...game.pipsNow };
       r.duos = activeDuos(game.pipsNow).length;
       if (game.result === "win" && !game.isFinalEra) {
+        closeWorldDrops(); // ⚠ 세계를 갈아 끼우기 **전에** 이 시대의 방울 결산을 뜬다
         game.continueToNextEra();
         crisisWatch = createCrisisWatch(); // 게임과 같은 자리에서 같은 함수로(위 감시자 주석 참고)
         continue;
@@ -1233,6 +1277,12 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
       const arrived =
         c !== null && driveTarget !== null && Math.hypot(c.x - driveTarget.x, c.y - driveTarget.y) <= 120;
       if (driveTarget === null || arrived || ticks - driveAt >= 150) {
+        // 「지금까지 찍었던 목표에 실제로 닿았나」를 새 목표를 찍기 직전에 결산한다.
+        // 방울 우선을 세게 걸면 무리가 방울만 쫓아 지시가 무의미해진다 — 그 대가가 이 비율이다.
+        if (driveTarget !== null) {
+          ordersIssued += 1;
+          if (arrived) ordersArrived += 1;
+        }
         const o = driveOrder(game.world);
         if (o !== null) {
           driveTarget = o;
@@ -1257,6 +1307,17 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
     }
   }
 
+  // 런이 끝난 세계의 결산 · 여기 남은 taken 아닌 방울이 곧 **끝내 못 주운 것**이다
+  // (못 주운 방울은 시대마다 옮겨 오므로 마지막 세계에 전부 모여 있다).
+  closeWorldDrops();
+  let dropsLeft = 0;
+  let dropsLeftValue = 0;
+  for (const d of game.world.geneDrops) {
+    if (d.taken) continue;
+    dropsLeft += 1;
+    dropsLeftValue += d.amount;
+  }
+
   const conquered = game.result === "win" && game.isFinalEra;
   // 보스 처치/버팀·대멸종 견딤은 런 연대기에 남는다(game.runEvents · logEvent 가 적는다).
   const evs = game.runEvents ?? [];
@@ -1270,10 +1331,20 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
     bossHeld: evs.filter((e) => e.kind === "boss" && e.label.includes("버팀")).length,
     extinctions: evs.filter((e) => e.kind === "extinction").length,
   };
+  const drops = {
+    taken: dropsTaken,
+    left: dropsLeft,
+    made: dropsTaken + dropsLeft,
+    takenValue: dropsTakenValue,
+    leftValue: dropsLeftValue,
+    ordersIssued,
+    ordersArrived,
+  };
   return {
     preset: preset.key,
     seed,
     econ,
+    drops,
     conquered,
     lost: game.result === "lose",
     lostByEmbers: game.lostByEmbers,
@@ -1591,6 +1662,11 @@ async function runTiers() {
  */
 async function runEcon() {
   const policy = opt("policy", "best");
+  const drive = args.includes("--drive"); // 손이 붙은 판(무리를 먹이·보스로 몬다) = 지시가 걸린 판
+  // 방울 우선 반경 스윕 · `--generadius=0,80,160` 처럼 주면 값마다 한 번씩 돌려 나란히 찍는다.
+  // ⚠ `ORDER` 는 런타임에는 평범한 객체라 여기서 덮어쓸 수 있다(`as const` 는 타입에만 건다).
+  //   0 을 주면 「방울 우선」이 통째로 꺼진 예전 세계다 = 고치기 전과 견주는 기준선.
+  const radii = opt("generadius", "") === "" ? [null] : opt("generadius", "").split(",").map(Number);
   // ⚠ **첫 판에 실제로 고를 수 있는 갈래만** 태운다(runGrowth 와 같은 처리). 잠긴 갈래를 넣으면
   //   playFullRun 의 `want >= 0 ? want : 0` 이 첫 카드로 떨어져 **전부 같은 판을 돌린다** — 처음엔
   //   이 걸르개가 없어서 네 갈래가 소수점까지 똑같은 수치로 나왔고, 그게 평균을 오염시켰다.
@@ -1601,7 +1677,8 @@ async function runEcon() {
   const openIds = new Set(unlockProbe.draftCards.map((c) => c.id));
   const presets = pickPresets().filter((p) => openIds.has(`preset_${p.key}`));
   console.log(
-    `# econ · 방울 출처 실측 · 카드 정책 ${policy} · 시드 ${SEEDS.length} · 지시 없음(손 놓음 = 수입 하한선)`,
+    `# econ · 방울 출처 실측 · 카드 정책 ${policy} · 시드 ${SEEDS.length} · ` +
+      `${drive ? "손이 붙은 판(--drive · 지시를 준다)" : "지시 없음(손 놓음 = 수입 하한선)"}`,
   );
   console.log(`# 갈래 ${presets.length}종(이 메타 레벨에 열려 있는 것만 · 잠긴 갈래를 태우면 같은 판이 중복된다)`);
   console.log(
@@ -1611,7 +1688,21 @@ async function runEcon() {
   );
 
   const all = [];
-  for (const p of presets) for (const seed of SEEDS) all.push(playFullRun(p, seed, policy, RUNS_DONE, METAXP, false));
+  const byRadius = [];
+  for (const r of radii) {
+    if (r !== null) ORDER.geneRadius = r;
+    const rows = [];
+    for (const p of presets) for (const seed of SEEDS) rows.push(playFullRun(p, seed, policy, RUNS_DONE, METAXP, drive));
+    byRadius.push({ radius: r === null ? ORDER.geneRadius : r, rows });
+    if (radii.length === 1) all.push(...rows);
+  }
+  if (radii.length > 1) {
+    all.push(...(byRadius[byRadius.length - 1]?.rows ?? []));
+    console.log(
+      `# ⚠ 반경 스윕 중이다(${radii.join("·")}) · 아래 **표1·표2 는 마지막 반경(${radii[radii.length - 1]})** 의 판만 담는다.` +
+        ` 비교는 표3 으로 볼 것.`,
+    );
+  }
 
   const avg = (rs, f) => rs.reduce((a, r) => a + f(r), 0) / Math.max(1, rs.length);
   console.log(`\n# 표1 · 판당 사건 횟수 (프리셋별 평균)`);
@@ -1664,6 +1755,34 @@ async function runEcon() {
         String(Math.min(...ns)),
         String(Math.max(...ns)),
         rungList.length ? rungList.join("·") : "-",
+      ].join("\t"),
+    );
+  }
+
+  // 표3 · **방울 회수율** — 떨어뜨린 것 중 몇 개나 무리가 실제로 밟아 주웠나.
+  // **[사용자 2026-08-09]** "가라 명령 때 방울을 우선시해서 알아서 먹는다"의 효과가 여기서 읽힌다.
+  // 반경 0 = 방울 우선이 꺼진 예전 세계. 「도착률」은 그 대가다(무리가 지시 대신 방울만 쫓으면 떨어진다).
+  console.log(`\n# 표3 · 방울 회수율 · ${drive ? "지시 있음(--drive)" : "지시 없음"}`);
+  console.log(
+    ["방울우선반경".padEnd(12), "발행(개)", "주움", "남음", "회수율%", "값회수율%", "목표도착률%"].join("\t"),
+  );
+  for (const g of byRadius) {
+    const made = avg(g.rows, (r) => r.drops.made);
+    const taken = avg(g.rows, (r) => r.drops.taken);
+    const left = avg(g.rows, (r) => r.drops.left);
+    const tv = g.rows.reduce((a, r) => a + r.drops.takenValue, 0);
+    const lv = g.rows.reduce((a, r) => a + r.drops.leftValue, 0);
+    const iss = g.rows.reduce((a, r) => a + r.drops.ordersIssued, 0);
+    const arr = g.rows.reduce((a, r) => a + r.drops.ordersArrived, 0);
+    console.log(
+      [
+        String(g.radius).padEnd(12),
+        fmt(made, 2),
+        fmt(taken, 2),
+        fmt(left, 2),
+        fmt(made > 0 ? (100 * taken) / made : 0, 1),
+        fmt(tv + lv > 0 ? (100 * tv) / (tv + lv) : 0, 1),
+        iss > 0 ? fmt((100 * arr) / iss, 1) : "-(지시 없음)",
       ].join("\t"),
     );
   }
