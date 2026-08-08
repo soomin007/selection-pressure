@@ -122,7 +122,7 @@ export function cardAccent(card: Card): string {
 export const PIP_BAR_MAX = (TIER_STEPS[TIER_STEPS.length - 1] as number) + 3;
 
 /**
- * 문턱 3·8·14·21 자리에 세로 눈금을 그리는 CSS background-image.
+ * 문턱 3·8·14·20 자리에 세로 눈금을 그리는 CSS background-image.
  * 눈금 간격이 곧 "다음 계단이 더 멀다"를 말한다(요구 도장이 늘어나는 것이 화면에서 읽힌다).
  * 최고 문턱(IV)만 금빛: 거기가 이 사다리의 끝이다.
  */

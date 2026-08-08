@@ -52,7 +52,7 @@ export function createBuildPanel(): BuildPanel {
   headline.style.cssText =
     "color:var(--lime); font-family:var(--font-title); font-size:12.5px; margin-bottom:7px; word-break:keep-all;";
 
-  // 범주 5 티어 · 막대의 눈금(3·8·14·21)이 다음 문턱까지의 거리를 그대로 보여준다.
+  // 범주 5 티어 · 막대의 눈금(3·8·14·20)이 다음 문턱까지의 거리를 그대로 보여준다.
   const tiersLabel = document.createElement("div");
   tiersLabel.textContent = "범주 티어";
   tiersLabel.style.cssText =

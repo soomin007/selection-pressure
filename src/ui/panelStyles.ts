@@ -388,7 +388,7 @@ export function ensurePanelStyles(): void {
   .draft-stats { display: flex; flex-direction: column; gap: 9px; margin-top: 18px; }
   .draft-stat { display: flex; align-items: center; gap: 9px; }
   .draft-stat-label { font-size: 11px; color: var(--sub); width: 58px; flex: none; }
-  /* 도장 막대 · 문턱 3·8·14·21 자리의 세로 눈금은 traitDisplay.tierTrackBackground 가
+  /* 도장 막대 · 문턱 3·8·14·20 자리의 세로 눈금은 traitDisplay.tierTrackBackground 가
      background-image 로 계산해 넣는다(TIER_STEPS 단일 진실). 눈금 간격이 넓어지는 것이
      곧 "다음 계단이 더 멀다"다. 옛 정점선(.draft-stat-apexline)의 역할을 이 눈금이 잇는다. */
   .draft-stat-track { flex: 1; height: 7px; background-color: rgba(255,255,255,0.10); border-radius: 4px;
