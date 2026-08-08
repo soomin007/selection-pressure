@@ -36,9 +36,14 @@
 
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
-const PORT = 5178;
+// 포트는 **환경변수/인자로 바꿀 수 있다** · 동시 세션이 5178 을 이미 쓰고 있을 때를 위해서다:
+//   OVERLAP_PORT=5180 node scripts/overlap-check.mjs   (또는 node scripts/overlap-check.mjs 5180)
+// ⚠ 아래 spawn 에 `--strictPort` 가 붙어 있는 것이 이 옵션의 절반이다. 없으면 포트가 물렸을 때
+//   vite 가 조용히 다음 포트로 비켜 서고, 검사기는 **다른 세션의 서버**를 재게 된다(빈 초록불).
+const PORT = Number(process.env.OVERLAP_PORT ?? process.argv[2] ?? 5178);
 const BASE = `http://localhost:${PORT}/`;
 const OUT = "screenshots/overlap";
 
@@ -774,7 +779,12 @@ async function checkScene(browser, scene) {
   return problems.length + errs.length;
 }
 
-const dev = spawn("npx", ["vite", "--port", String(PORT)], { stdio: "ignore", shell: true });
+// ⚠ `npx vite` 로 띄우지 않는다 · 이 저장소는 `node_modules/.bin` 이 없는 체크아웃이 있고(npm 설치
+//    방식에 따라), 거기서는 `npx vite` 가 "인식할 수 없는 명령"으로 죽는다. 그러면 검사기는 25초를
+//    기다리다 "dev 서버 대기 시간 초과"로 끝나서, **UI 를 못 재고도 실패 이유가 UI 처럼 안 보인다.**
+//    vite 의 진입 스크립트를 node 로 직접 부르면 PATH·심링크와 무관하게 늘 뜬다.
+const viteBin = fileURLToPath(new URL("../node_modules/vite/bin/vite.js", import.meta.url));
+const dev = spawn(process.execPath, [viteBin, "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 let bad = 0;
 try {
   await waitFor(BASE, 25000);

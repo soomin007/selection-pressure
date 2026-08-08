@@ -29,9 +29,11 @@ import {
   TIER_ROMAN,
   TIER_STEPS,
   UPKEEP_PER_TIER,
+  emptyKeys,
   pipsForTier,
   tierLine,
   type Category,
+  type Keys,
 } from "@/sim/tiers";
 import { loadMeta, metaLevel, UNLOCK_TIERS } from "@/game/meta";
 import {
@@ -165,20 +167,36 @@ const categorySvg: Record<Category, string> = {
   herd: SVG.herding,
 };
 
+/**
+ * 대백과는 **열쇠 없는 종**을 기준으로 사다리를 적는다(여긴 특정 종의 화면이 아니라 규칙표다).
+ * 다만 눈은 그 기준이 통째로 갈리는 자리라, 초음파를 가진 종의 줄을 note 한 줄로 함께 보인다 ·
+ * 그 문장의 수치도 `tierLine` 에서 뽑아 온다(여기 다시 적으면 두 곳에 진실이 생긴다).
+ */
+const ECHO_KEYS: Keys = { ...emptyKeys(), echo: true };
+
 /** 범주 하나의 도감 항목 · 티어 사다리(무엇이 켜지나)와 대가(무엇이 커지나)를 tierLine 에서 만든다. */
 function categoryEntry(cat: Category): Entry {
   const rows: Row[] = [];
   for (let t = 1; t <= MAX_TIER; t += 1) {
     rows.push({ k: `${TIER_ROMAN[t]} (도장 ${pipsForTier(t)})`, v: tierLine(cat, t).gain, bar: t / MAX_TIER });
   }
+  const costNote =
+    `대가도 함께 커집니다. ${TIER_ROMAN[1]}에서 「${tierLine(cat, 1).cost}」, ` +
+    `${TIER_ROMAN[MAX_TIER]}에서는 「${tierLine(cat, MAX_TIER).cost}」.`;
+  // 초음파는 눈 범주의 열쇠라 세기가 눈 티어를 그대로 따라 오른다 · 눈을 키우면 초음파도 함께
+  // 세진다는 뜻이고, 그 말이 없으면 「초음파를 얻었으니 눈은 이제 필요 없다」로 읽힌다.
+  const echoNote =
+    cat === "eye"
+      ? ` 초음파(열쇠)를 가진 종은 이 사다리가 눈과 귀를 함께 키웁니다. ` +
+        `${TIER_ROMAN[MAX_TIER]}에서 「${tierLine("eye", MAX_TIER, ECHO_KEYS).gain}」입니다. ` +
+        `밤과 수풀에서는 초음파가 더 멀리 닿아 감지를 맡고, 낮에는 눈이 더 멀리 봅니다.`
+      : "";
   return {
     term: CATEGORY_LABELS[cat],
     svg: categorySvg[cat],
     desc: CATEGORY_DESC[cat],
     rows,
-    note:
-      `대가도 함께 커집니다. ${TIER_ROMAN[1]}에서 「${tierLine(cat, 1).cost}」, ` +
-      `${TIER_ROMAN[MAX_TIER]}에서는 「${tierLine(cat, MAX_TIER).cost}」.`,
+    note: costNote + echoNote,
   };
 }
 
@@ -482,7 +500,7 @@ const SECTIONS: readonly Section[] = [
       { term: "하늘의 사냥꾼 (하늘)", svg: SVG.raptor, desc: "큰 새가 하늘을 돌다 내리꽂혀 낚아챕니다. 땅에서는 수풀에 숨으면 하늘에서 안 보입니다. 물속만은 못 건드립니다.", weak: "시야 (그리고 땅에서는 수풀 엄폐)" },
       { term: "성난 말벌 떼 (하늘)", svg: SVG.hornet, desc: "말벌 떼가 하늘에서 몰려와 쏘아댑니다. 맞서 싸울 수 없어 빠르게 벗어나야 합니다.", weak: "속도" },
       { term: "굶주린 상어 (물)", svg: SVG.shark, desc: "물속을 도는 상어가 헤엄치는 개체를 삼킵니다. 뭍은 건드리지 못해, 물 밖으로 나가면 안전합니다.", weak: "시야 (일찍 보고 뭍으로 달아남)" },
-      { term: "독 안개 (전역)", svg: SVG.poison, desc: "사방의 공기에 독이 퍼져 에너지를 빨아갑니다. 하늘로도 물로도 피할 수 없습니다.", weak: "낮은 대사" },
+      { term: "독 안개 (전역)", svg: SVG.poison, desc: "사방의 공기에 독이 퍼져 에너지를 빨아갑니다. 하늘로도 물로도 피할 수 없습니다. 수풀 아래만은 안개가 안 내려앉아, 잎에 가린 개체는 안 빨립니다.", weak: "수풀 아래로 피하기" },
       { term: "혹독한 추위", svg: SVG.cold, desc: "혹독한 추위가 닥쳐 얼어 죽습니다.", weak: "높은 대사 (뜨거운 피)" },
       { term: "폭염", svg: SVG.heat, desc: "불볕더위에 타 죽습니다.", weak: "낮은 대사" },
       { term: "대가뭄", svg: SVG.famine, desc: "먹이가 다시 자라지 않습니다.", weak: "낮은 대사와 많은 수" },
