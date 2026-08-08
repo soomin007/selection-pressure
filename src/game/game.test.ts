@@ -22,9 +22,20 @@ import {
 } from "@/game/config";
 import { MAP_SCALE, MOBILE } from "@/config";
 import { createBoss } from "@/sim/boss";
-import { CARD_POOL, cardCategories, cardPips, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
+import {
+  CARD_POOL,
+  PRESET_CARDS,
+  applyCard,
+  boostCard,
+  cardCategories,
+  cardPips,
+  cardPrereqMet,
+  cardRedundant,
+  drawCards,
+  type Card,
+} from "@/game/cards";
 import { Rng } from "@/sim/rng";
-import { MUTABLE_TRAITS, genomeFromPips, refreshDerived } from "@/sim/genome";
+import { MUTABLE_TRAITS, defaultGenome, genomeFromPips, refreshDerived } from "@/sim/genome";
 import {
   CATEGORIES,
   CATEGORY_LABELS,
@@ -40,6 +51,7 @@ import {
   pipsToNext,
   tierOf,
   type Category,
+  type Pips,
 } from "@/sim/tiers";
 import { GENE_AWARD, milestonesCrossed, type CrisisWatch, type GeneReason } from "@/sim/gene";
 import { SIM } from "@/sim/params";
@@ -1061,19 +1073,113 @@ describe("지수 난이도 (성장 곡선과 난이도 곡선의 경주)", () =>
     expect(bossPassNeeded(0)).toBe(1);
   });
 
-  it("최고 티어는 한 런에 「닿을 만한」 목표다 — 반드시 찍히지도, 영영 못 찍지도 않는다", () => {
-    // 예전엔 정점 넷이 런 끝에 **반드시** 다 찍혔다(그래서 성장이 끝나 있었다). 사다리는 그 정확한
-    // 반대를 노린다: 한 범주만 파면 잘한 판에서 4단이 열리고, 다섯을 고루 뿌리면 어디에도 못 닿는다.
-    // 카드 한 장의 기대 도장이 약 1.09 개(3장 중 최댓값)이고 한 런의 카드 예산은 12~22 장이다.
-    const perCard = 1.09;
-    const oneWell = (cards: number): number => cards * perCard;
-    expect(oneWell(12)).toBeLessThan(TIER_STEPS[3]); // 손 놓은 판은 4단에 못 닿는다
-    expect(oneWell(22)).toBeGreaterThan(TIER_STEPS[3]); // 아주 잘한 판은 닿는다
-    // 다섯을 고루 뿌리면 잘한 판에서도 2단이 한계다(정책 없는 성장은 보상이 없다).
-    const spread = (22 * perCard) / 5;
-    expect(tierOf(Math.round(spread))).toBeLessThan(3);
+  it("최고 티어는 한 런에 「닿을 만한」 목표다 — 파면 열리고, 뿌리면 안 열린다", () => {
+    // **무엇을 못박는 테스트인가:** 4단은 ① 실재하는 목표이고(파면 열린다) ② 공짜가 아니며
+    // (손 놓은 판에서는 파도 절반 이하) ③ **정책이 연다**(다섯에 고루 뿌리면 사실상 못 닿는다).
+    //
+    // ⚠ 예전 이 테스트는 「카드 한 장 = 1.09 도장」이라는 **손으로 박은 상수**로
+    //   `12 × 1.09 = 13.1 < 20` 을 계산해 "손 놓은 판은 4단에 못 닿는다"를 통과시켰다. 그 식에는
+    //   프리셋 시작 도장(주 4 + 부 3)도, 시대 보상 드래프트(3장 전부 ×2.0~4.9 강화)도 없었다.
+    //   실제 경로로 굴리면 한 우물 12장도 4단에 **약 30%** 닿는다 — 즉 그 초록불은 거짓이었다.
+    //   그래서 이제 상수를 지우고 **진짜 뽑기 경로**(runLadder)의 결과로 판정한다.
+    const focus12 = tierReachRate(12, "focus", MAX_TIER);
+    const focus17 = tierReachRate(17, "focus", MAX_TIER);
+    const focus22 = tierReachRate(22, "focus", MAX_TIER);
+    const random12 = tierReachRate(12, "random", MAX_TIER);
+
+    // ① 목표가 실재한다 — 한 우물을 판 잘한 판(22장)은 거의 반드시 4단을 연다.
+    expect(focus22).toBeGreaterThan(0.9);
+    // ② 정책이 값을 한다 — 다섯에 고루 뿌린 손 놓은 판은 사실상 못 연다.
+    expect(random12).toBeLessThan(0.1);
+    // ③ 공짜가 아니다 — 파더라도 손 놓은 판(12장)이면 절반도 못 닿는다.
+    expect(focus12).toBeLessThan(0.5);
+    // ④ 성장이 예산에 반응한다(단조) — 잘 굴릴수록 확실히 가까워진다.
+    expect(focus17).toBeGreaterThan(focus12);
+    expect(focus22).toBeGreaterThan(focus17);
+    // ⑤ 같은 예산이면 파는 쪽이 뿌리는 쪽을 뚜렷이 앞선다(뿌리는 성장에는 보상이 없다).
+    expect(focus12).toBeGreaterThan(random12 + 0.15);
   });
 });
+
+// ─────────────────── 사다리 검산에 쓰는 「진짜 뽑기 경로」 (위 테스트가 쓴다) ───────────────────
+//
+// **왜 모델을 새로 안 만들고 실제 함수를 태우는가:** 이 저장소는 "판정을 축약하면 규칙이 늘 때마다
+// 판정만 뒤처진다"를 이미 겪었다(known_issues 의 무의미 카드 필터). 사다리도 똑같다 — 「카드 한 장이
+// 몇 도장」이라는 축약본은 프리셋 시작 도장과 시대 보상이 생긴 순간 조용히 거짓이 됐다.
+//
+// ⚠ **이 모델에 없는 것 셋**(전부 실제 게임에는 있고, 전부 성장을 **더 빠르게** 한다):
+//   ① 은근한 보정(`Game.draftBias` · 내가 판 범주가 최대 1.9배 자주 뜬다)
+//   ② 다시 뽑기(메타 레벨 2 부터)
+//   ③ 방울로 사는 티어(`Game.buyTier`)
+//   그래서 여기서 나오는 도달률은 **하한**이다. 「닿는다」 단언은 안전하고(실제는 더 잘 닿는다),
+//   「못 닿는다」 단언은 하한에서만 참이라 **정책**(고루 뿌리기)으로만 걸었다.
+// ⚠ 시대 보상 횟수만 추정이다 — 카드 예산에서 넘긴 시대 수를 뽑는 식이 프로브(`tiers` 모드)와 같다.
+//   실제 위치·횟수까지 재려면 `npm run probe -- growth` 로 런을 통째로 태워야 한다(테스트엔 너무 느리다).
+
+/** 한 런의 카드 예산에서 시대 보상 드래프트가 몇 번 도는가(프로브 tiers 모드와 같은 추정식). */
+function eraRewardCount(cards: number): number {
+  return Math.max(0, Math.min(4, Math.round((cards - 7) / 5)));
+}
+
+/**
+ * 시작 프리셋 하나에서 출발해 카드를 `cards` 장 고른 뒤의 도장. 뽑기·필터·강화가 전부 게임과 같은 함수다.
+ * policy: focus = 지금 가장 많이 판 범주에 가장 크게 들어가는 장 · random = 아무거나.
+ */
+function runLadder(tag: string, cards: number, policy: "focus" | "random", presetIdx: number): Pips {
+  const rng = new Rng(tag);
+  const g = defaultGenome();
+  const preset = PRESET_CARDS[presetIdx % PRESET_CARDS.length];
+  if (preset === undefined) throw new Error("프리셋 풀이 비어 있다 — 사다리를 잴 출발점이 없다");
+  applyCard(g, preset);
+  const eras = eraRewardCount(cards);
+  const rewardAt = new Map<number, number>();
+  for (let k = 1; k <= eras; k++) rewardAt.set(Math.round((k * cards) / (eras + 1)), k);
+  const picked = new Map<string, number>();
+  for (let i = 0; i < cards; i++) {
+    const level = 1 + Math.floor((i / cards) * 12); // 레벨이 오를수록 높은 등급이 자주 뜬다
+    let cs = drawCards(
+      rng,
+      3,
+      (c) => cardPrereqMet(c, g) && !cardRedundant(c, g),
+      level,
+      picked,
+      undefined, // 은근한 보정 없음(위 ⚠ 참조 — 이 값이 하한인 이유)
+      g.pips,
+    );
+    if (cs.length === 0) break;
+    const rk = rewardAt.get(i);
+    if (rk !== undefined) cs = cs.map((c) => boostCard(c, eraRewardBoostAt(rk)));
+    let idx = 0;
+    if (policy === "focus") {
+      const target = [...CATEGORIES].sort((a, b) => g.pips[b] - g.pips[a])[0] as Category;
+      let best = -1;
+      for (let k = 0; k < cs.length; k++) {
+        const v = cardPips(cs[k] as Card, target);
+        if (v > best) {
+          best = v;
+          idx = k;
+        }
+      }
+    } else {
+      idx = rng.int(0, cs.length - 1);
+    }
+    const chosen = cs[idx] as Card;
+    picked.set(chosen.id, (picked.get(chosen.id) ?? 0) + 1);
+    applyCard(g, chosen);
+  }
+  return g.pips;
+}
+
+/** 이 예산·정책으로 굴린 런 중 **어느 범주든** 그 티어에 닿은 비율. 시드가 고정이라 결정론이다. */
+function tierReachRate(cards: number, policy: "focus" | "random", tier: number): number {
+  const RUNS = 200; // 이 정도면 도달률이 소수점 첫째 자리에서 안정된다(±3%p 이내로 확인)
+  let hit = 0;
+  for (let r = 0; r < RUNS; r++) {
+    const pips = runLadder(`ladder-${policy}-${cards}-${r}`, cards, policy, r);
+    if (CATEGORIES.some((c) => tierOf(pips[c]) >= tier)) hit += 1;
+  }
+  return hit / RUNS;
+}
 
 /**
  * 2단계 — **성장과 난이도가 화면에서 읽히는가**의 계약.

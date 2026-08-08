@@ -32,7 +32,24 @@
 //   npm run probe -- apex         정점 4개를 찍은 게놈의 드래프트 후보 구성(죽은 카드·몸집만 바꾸는 카드 비율)
 //   npm run probe -- scale        0~100 스케일의 산수만(시뮬 없음): 감쇠·정점 보상·형질 1의 실제 크기
 //   옵션: --seeds=6 --presets=omni,herd --boss=raider --era=0 --step=2 --cards=first|skip
-//   growth 전용: --policy=first|best|random --veteran(끝낸 런 3 = 늘 진도 3) --metaxp=<수>
+//   growth 전용: --policy=first|best|random --veteran(끝낸 런 3 = 늘 진도 3)
+//
+// ⚠ **「누구의 판을 재는가」 축 넷** (era0 · growth · econ · tiers 에 걸린다 · 머리글에 늘 찍힌다):
+//   --assist          은근한 보정을 **켠다**. 기본은 **끔**이다.
+//   --metaxp=<수>     저장본의 누적 메타 경험치(플레이어 레벨의 원천). 기본 0 = 첫 판.
+//   --reroll          드래프트에서 「다시 뽑기」를 쓴다(메타 레벨이 낮으면 아직 안 열려 있다 ·
+//                     못 열린 채로 주면 머리글과 경고가 그 사실을 찍고 필요한 --metaxp 를 알려 준다).
+//                     기준은 「내가 파는 범주가 하나도 안 뜬 드래프트」 = 게임이 dryDrafts 로 세는 자리.
+//   --veteran         끝낸 런 3 = 늘 진도 3(숙련자의 세계).
+//
+//   왜 보정이 기본 끔인가: CLAUDE.md 「은근한 보정」의 기술 제약이다 ▸ "프로브에서는 보정을 끌 수
+//   있어야 한다. 보정을 켠 채 밸런스를 재면 **측정한 난이도가 실제 난이도가 아니다.**"
+//   2026-08-08 감사에서 드러났듯, 스위치가 game.ts 에 있었는데도 **어떤 프로브도 끄지 않고 있었다**
+//   (기본값 true) — 그래서 지금까지의 모든 성장 수치가 「도움을 받은 판」이었다.
+//
+//   왜 나머지 축인가: 상설 프로브가 전부 `runsCompleted 0 · metaXp 0 · 리롤 없음` 으로만 돌아
+//   **첫 판 플레이어 한 명**만 재고 있었다. 제보자는 첫 판 플레이어가 아니다. 이 축 하나로
+//   「시대 2 에 4단」이 23% → 76% 로 뛴다(2026-08-08 실측).
 //
 // ⚠ **온보딩 진도(step)를 반드시 의식하라.** 진도마다 세계가 다르다: 맵 크기(mapScale)·종 구성
 //   (진도 0 은 셋)·세계 종류(진도 0~1 은 초원)·챔피언 유무. 척박도만 시대(era)를 따른다.
@@ -49,6 +66,19 @@ const opt = (name, dflt) => {
   const hit = args.find((a) => a.startsWith(`--${name}=`));
   return hit === undefined ? dflt : hit.slice(name.length + 3);
 };
+
+// --- 「누구의 판을 재는가」 축 ---------------------------------------------------------------
+// 이 넷은 **머리글에 반드시 찍힌다**(`axisLine`). 숨은 가정이 곧 다음 사고다 — 이 저장소는 잘못된
+// 자로 잰 값 때문에 이미 세 번 헛짚었다(시드 절단 · 시대 보상 모델 누락 · 위기 감시자 수명).
+/** 은근한 보정(draftBias). **기본은 끔** — 켠 채로 재면 측정한 난이도가 실제 난이도가 아니다. */
+const ASSIST = args.includes("--assist");
+/** 저장본의 누적 메타 경험치 = 플레이어 레벨의 원천(열린 카드·갈래·리롤을 정한다). 기본 0 = 첫 판. */
+const METAXP = Number(opt("metaxp", "0"));
+/** 드래프트에서 「다시 뽑기」를 실제로 쓰는가(열려 있을 때만). 기본 안 씀. */
+const USE_REROLL = args.includes("--reroll");
+/** 저장본의 「끝낸 런 수」 — 온보딩 진도(min(3, 끝낸 런 + 시대))와 보정 감쇠의 재료.
+ *  ⚠ 인자 이름이 `--runsdone=` 인 이유: tiers 모드가 `--runs=`(몬테카를로 횟수)를 이미 쓴다. */
+const RUNS_DONE = args.includes("--veteran") ? 3 : Number(opt("runsdone", "0"));
 
 // --- 저장본(localStorage) 흉내 ---------------------------------------------------------------
 // **왜 필요한가.** 온보딩 진도 = min(3, 끝낸 런 수 + 시대)이고 "끝낸 런 수"는 저장본에서 온다.
@@ -107,6 +137,12 @@ const { Rng } = await server.ssrLoadModule("/src/sim/rng.ts");
 const { FIRST_ERA_MAP } = await server.ssrLoadModule("/src/sim/mapType.ts");
 const { TILE } = await server.ssrLoadModule("/src/sim/terrain.ts");
 const { Game } = await server.ssrLoadModule("/src/game/game.ts");
+// 메타 레벨·리롤 해금은 **게임과 같은 함수**로 읽는다. 프로브가 "레벨 2 면 리롤" 같은 숫자를 손으로
+// 적으면 해금 사다리(meta.ts UNLOCK_TIERS)를 바꿨을 때 프로브만 옛 사다리로 재게 된다.
+const { metaLevel, isRerollUnlockedAtLevel, xpForLevelStart, UNLOCK_TIERS } =
+  await server.ssrLoadModule("/src/game/meta.ts");
+/** 리롤이 열리는 메타 경험치 — 해금 사다리에서 직접 읽는다(숫자를 손으로 적으면 사다리와 갈린다). */
+const REROLL_XP = xpForLevelStart(UNLOCK_TIERS.find((t) => t.reroll)?.atLevel ?? 999);
 
 // --- 실제 플레이 세계 치수 · 단일 근원 src/config.ts + mapScale(진도) 에서 읽는다(main.ts 와 같은 길) ---
 const { MOBILE } = await server.ssrLoadModule("/src/config.ts");
@@ -140,6 +176,71 @@ function buildWorld(seed, genome, mapTypeOverride, step = STEP, scale = SCALE, e
     eraScarcity(era),
     // game.makeWorld 와 같은 형태 — 시대별 포식 압력도 함께 넘긴다(안 넘기면 --era=3 세계가 실제보다 순하다).
     { ...stepWorldOptions(step), predatorPressure: eraPredatorPressure(era) },
+  );
+}
+
+// --- 「누구의 판인가」를 게임에 실제로 심는 자리 -----------------------------------------------
+//
+// **프로브가 `new Game(...)` 을 직접 부르지 않는다.** 여기 하나를 거친다 — 그래야 새 축(보정 같은)이
+// 생겼을 때 "여기서도 꺼야 하는데 안 껐다"가 원리적으로 안 생긴다. (2026-08-08 감사에서 드러난 것이
+// 정확히 그것이다: `assistEnabled` 스위치는 있었는데 다섯 군데의 `new Game` 중 어디도 안 껐다.)
+/** 프로브가 쓰는 Game — 은근한 보정은 기본 끔(`--assist` 로만 켠다). */
+function newGame(fixedMapScale) {
+  const g = new Game(MOBILE.width, MOBILE.height, fixedMapScale);
+  g.assistEnabled = ASSIST;
+  return g;
+}
+
+/** 리롤이 이 메타 경험치에서 실제로 열려 있는가 — 게임과 같은 함수(meta.ts)로 묻는다. */
+function rerollUnlocked() {
+  return isRerollUnlockedAtLevel(metaLevel(METAXP));
+}
+
+/**
+ * 리롤 정책 — `--reroll` 일 때만. **「내가 파는 범주가 하나도 안 뜬 드래프트」일 때** 한 번 다시 뽑는다.
+ *
+ * 왜 이 기준인가: 무조건 다시 뽑으면 좋은 3장까지 버려 사람이 하는 짓과 멀어진다. 그렇다고
+ * 「문턱을 하나도 못 넘기는 3장」으로 잡으면 거의 안 걸린다 — 게임이 이미 **3장 중 최소 한 장은
+ * 어느 문턱이든 넘긴다**를 보장하기 때문이다(실측: 판당 0.25회로 축이 사실상 죽는다). 사람이 실제로
+ * 리롤을 누르는 자리는 「내 길이 하나도 없을 때」이고, 그건 게임 자신이 `dryDrafts` 로 세는 자리와 같다.
+ *
+ * 결정론: 뽑기는 game.draftRng 로만 도므로 같은 시드 + 같은 정책 = 같은 결과.
+ */
+function maybeReroll(game) {
+  if (!USE_REROLL || !game.canReroll) return false;
+  const pips = game.pipsNow;
+  const ranked = [...CATEGORIES].sort((a, b) => pips[b] - pips[a]);
+  const dig = ranked[0];
+  // 내가 파는 범주에 도장을 주는 장이 하나라도 있으면 그대로 고른다.
+  // (`cardCrossesThreshold` 를 여기 OR 로 얹으면 안 된다 — 게임의 「3장 중 한 장은 문턱을 넘긴다」
+  //  보장 때문에 그 조건이 거의 늘 참이라 리롤이 영영 안 걸린다.)
+  if (game.draftCards.some((c) => cardPips(c, dig) > 0)) return false;
+  game.reroll();
+  return true;
+}
+
+/** Game 을 태우는 모드 — 아래 축이 실제로 결과를 바꾸는 모드들. */
+const GAME_MODES = new Set(["era0", "growth", "econ"]);
+
+/**
+ * **무엇을 잰 것인가** 한 줄. 모든 모드의 맨 위에 찍는다.
+ * 이 줄이 없으면 「첫 판 플레이어 · 보정 켬」으로 잰 값이 「이 게임의 난이도」로 보고된다.
+ */
+function axisLine() {
+  const lvl = metaLevel(METAXP);
+  const reroll = USE_REROLL
+    ? rerollUnlocked()
+      ? "씀(내가 파는 범주가 하나도 안 뜬 드래프트에서 한 번)"
+      : `쓰려 했으나 **잠김**(레벨 ${lvl}) · --metaxp=${REROLL_XP} 이상 필요`
+    : "안 씀";
+  const tail = GAME_MODES.has(MODE)
+    ? ""
+    : MODE === "tiers"
+      ? " · (tiers 는 Game 을 안 태운다 · 보정만 반영 · 메타/리롤은 모델 없음)"
+      : " · (이 모드는 Game 을 안 태운다 · 위 축은 결과에 안 닿는다)";
+  return (
+    `# 축 · 은근한 보정 ${ASSIST ? "켬(--assist)" : "끔(기본)"} · ` +
+    `메타 경험치 ${METAXP}(플레이어 레벨 ${lvl}) · 끝낸 런 ${RUNS_DONE} · 리롤 ${reroll}${tail}`
   );
 }
 
@@ -675,10 +776,10 @@ function playEra0(preset, seed, policy, forcedScale) {
   // ⚠ 저장본을 **판마다 되돌린다.** 이 프로브에는 메모리 localStorage 가 얹혀 있어(파일 머리),
   //   런이 끝날 때 game 이 "끝낸 런 수"를 1 늘려 쓴다 → 안 되돌리면 두 번째 시드부터 온보딩 진도가
   //   올라가 **세계가 달라진다**(시드마다 다른 세계를 재는 사고).
-  setSavedProgress(0, 0);
+  setSavedProgress(RUNS_DONE, METAXP);
   // 3번째 인자(fixedMapScale)는 원래 테스트 훅이다 · 여기서는 "옛 첫 시대(배율 2.0)와 지금(1.0)을
   // 같은 시드로 나란히 재기" 위해 쓴다(`--scale=2`). 안 주면 실제 게임과 똑같이 mapScale(era).
-  const game = new Game(MOBILE.width, MOBILE.height, forcedScale);
+  const game = newGame(forcedScale);
   game.fixedSeed = seed;
   game.leadEnabled = true; // 실제 배포와 같은 설정(단계별 경험치 상한이 걸린다). 지시는 안 준다.
   game.beginRun();
@@ -703,7 +804,10 @@ function playEra0(preset, seed, policy, forcedScale) {
     guard += 1;
     if (game.phase === "draft") {
       if (policy === "skip") game.skipDraft();
-      else game.pickCard(0);
+      else {
+        maybeReroll(game); // --reroll 일 때만 · 내가 파는 범주가 하나도 안 뜬 드래프트면 한 번 다시 뽑는다
+        game.pickCard(0);
+      }
       continue;
     }
     game.update(stepMs);
@@ -728,17 +832,18 @@ const CAUSES = ["starve", "cold", "heat", "age", "boss", "predation", "plague", 
 
 async function runEra0() {
   const policy = opt("cards", "first");
-  // 첫 판에 **실제로 고를 수 있는** 시작 종만 잰다 — 메타 레벨 1(첫 플레이)에서 열려 있는 갈래.
-  // 잠긴 갈래를 억지로 태우면 신규 플레이어가 겪지 않는 세계를 재게 된다.
+  // **이 메타 레벨에서 실제로 고를 수 있는** 시작 종만 잰다(기본은 메타 경험치 0 = 첫 플레이).
+  // 잠긴 갈래를 억지로 태우면 그 사람이 겪지 않는 세계를 재게 된다.
   const forced = opt("scale", "") === "" ? undefined : Number(opt("scale", ""));
   const scale = forced ?? mapScale(0);
-  const probeGame = new Game(MOBILE.width, MOBILE.height);
+  setSavedProgress(RUNS_DONE, METAXP);
+  const probeGame = newGame();
   probeGame.fixedSeed = "unlock-probe";
   probeGame.beginRun();
   const openIds = new Set(probeGame.draftCards.map((c) => c.id));
   const presets = pickPresets().filter((p) => openIds.has(`preset_${p.key}`));
   const locked = pickPresets().filter((p) => !openIds.has(`preset_${p.key}`));
-  if (locked.length > 0) console.log(`# 잠긴 갈래(첫 플레이에선 못 고름): ${locked.map((p) => p.name).join(", ")}`);
+  if (locked.length > 0) console.log(`# 잠긴 갈래(이 메타 레벨에선 못 고름): ${locked.map((p) => p.name).join(", ")}`);
   const stageNames = ["채집1", "채집2", "보스1", "채집3", "보스2", "대멸종"];
   console.log(`# era0 · 첫 시대 한 판 전체 · 세계 ${Math.round(MOBILE.width * scale)}x${Math.round(MOBILE.height * scale)}(배율 ${scale}${forced === undefined ? "" : " · 강제"}) · 시드 ${SEEDS.length} · 카드 ${policy} · 지시 없음`);
   console.log(`# 일정: ${SCHEDULE.join(" → ")} · 첫 시대는 시험(불씨) 없음 → 패배는 오직 개체 0`);
@@ -1003,7 +1108,7 @@ function driveOrder(world) {
 
 function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
   setSavedProgress(veteranRuns, metaXp);
-  const game = new Game(MOBILE.width, MOBILE.height);
+  const game = newGame();
   game.fixedSeed = seed;
   game.leadEnabled = true; // 실제 배포와 같은 설정(단계별 경험치 상한). 지시는 안 준다 = 손 놓은 하한선.
   game.beginRun();
@@ -1062,6 +1167,9 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
     guard += 1;
     if (game.phase === "draft") {
       const postApex = APEX_KEYS.every((k) => apexAt[k] !== undefined);
+      // 리롤을 **후보를 적기 전에** 쓴다 — 사람이 실제로 고르는 3장이 다시 뽑은 쪽이기 때문이다.
+      // (`--reroll` 없으면 아무 일도 안 일어난다 = 지금까지와 완전히 같은 판.)
+      maybeReroll(game);
       const pips = game.pipsNow;
       const cs = game.draftCards;
       for (const c of cs) {
@@ -1172,6 +1280,7 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
     finalEra: game.era,
     level: game.level,
     cards: picks.length,
+    rerolls: game.rerollsUsed, // --reroll 축이 실제로 몇 번 걸렸나(0 이면 축이 안 걸린 것)
     apexAt,
     apexAllAt,
     offers,
@@ -1182,13 +1291,14 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
 
 async function runGrowth() {
   const policy = opt("policy", opt("cards", "best"));
-  const veteran = args.includes("--veteran");
   const drive = args.includes("--drive"); // 손이 붙은 판(무리를 먹이·보스로 몬다)
-  const runsDone = veteran ? 3 : 0;
-  const metaXp = Number(opt("metaxp", "0"));
-  // 첫 판에 실제로 고를 수 있는 갈래만(잠긴 갈래를 억지로 태우면 없는 세계를 재게 된다).
+  // 「누구의 판인가」 축은 전부 전역이다(`--veteran`·`--metaxp=`·`--reroll`·`--assist`) ·
+  // 머리글(axisLine)이 그 값을 그대로 찍는다. 여기서 다시 파싱하면 두 곳이 갈린다.
+  const runsDone = RUNS_DONE;
+  const metaXp = METAXP;
+  // 이 메타 레벨에서 실제로 고를 수 있는 갈래만(잠긴 갈래를 억지로 태우면 없는 세계를 재게 된다).
   setSavedProgress(runsDone, metaXp);
-  const probeGame = new Game(MOBILE.width, MOBILE.height);
+  const probeGame = newGame();
   probeGame.fixedSeed = "unlock-probe";
   probeGame.beginRun();
   const openIds = new Set(probeGame.draftCards.map((c) => c.id));
@@ -1196,7 +1306,7 @@ async function runGrowth() {
 
   console.log(
     `# growth · 한 런 전체(시대 0~${GAME.eraCap - 1} · 정복까지) · 카드 정책 ${policy} · ` +
-      `${veteran ? "숙련자(끝낸 런 3 = 늘 진도 3)" : "첫 런(진도 0→3)"} · 메타 경험치 ${metaXp} · 시드 ${SEEDS.length} · ${drive ? "손이 붙은 판(1초마다 지시)" : "지시 없음(손 놓음)"}`,
+      `${runsDone >= 3 ? `숙련자(끝낸 런 ${runsDone} = 늘 진도 3)` : `첫 런(진도 0→3)`} · 시드 ${SEEDS.length} · ${drive ? "손이 붙은 판(1초마다 지시)" : "지시 없음(손 놓음)"}`,
   );
   console.log(
     `# 일정 ${SCHEDULE.join("→")} × ${GAME.eraCap} 시대 · 패배 = 개체 0 · 불씨 0 · 관문 생존 기준 미달
@@ -1234,6 +1344,14 @@ async function runGrowth() {
             `${fmt(done.reduce((a, r) => a + r.apexAllAt.era + 1, 0) / done.length, 1)} (${done.length}/${rs.length})`,
         fmt(apexN.reduce((a, b) => a + b, 0) / apexN.length, 1),
       ].join("\t"),
+    );
+  }
+  // 리롤 축이 **실제로 걸렸는지**를 숫자로 남긴다 — 「켰다」와 「걸렸다」는 다르다(메타 레벨이
+  // 낮으면 열려 있지 않아 한 번도 안 돈다). 0 인데 켰다고 적으면 그게 다음 사고의 씨앗이다.
+  if (USE_REROLL) {
+    console.log(
+      `# 리롤 · 판당 평균 ${fmt(all.reduce((a, r) => a + r.rerolls, 0) / all.length, 2)}회 ` +
+        `(한 번이라도 쓴 판 ${all.filter((r) => r.rerolls > 0).length}/${all.length})`,
     );
   }
 
@@ -1307,7 +1425,9 @@ async function runGrowth() {
     const top = [...byKey.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
-      .map(([k, n]) => `${TRAIT_LABELS[k]} ${fmt((100 * n) / os.length, 0)}%`)
+      // ⚠ classifyCard 가 돌려주는 key 는 **범주**(fang·leg…)다. 예전엔 여기서 형질 이름표를
+      //   찾아 전부 `undefined 10%` 로 찍혔다(표가 아무 말도 안 하고 있었다).
+      .map(([k, n]) => `${CATEGORY_LABELS[k] ?? k} ${fmt((100 * n) / os.length, 0)}%`)
       .join(" · ");
     console.log(
       [
@@ -1366,6 +1486,24 @@ function eraRewardCount(cards) {
   return Math.max(0, Math.min(4, n));
 }
 
+/**
+ * 이 모드가 `drawCards` 에 넘길 보정(bias). 게임은 늘 `draftBias()` 를 넘기고, 그 함수는
+ * **보정이 꺼져 있으면 `undefined`** 를 돌려준다(game.ts). 여기도 스위치에 그대로 맞춘다 —
+ * 예전엔 스위치와 무관하게 늘 `undefined` 였다(= 게임과 다른 뽑기로 사다리를 쟀다).
+ *
+ * ⚠ **이건 `Game.draftBias()` 를 눈으로 옮겨 적은 근사다**(그 함수는 private 이고 이 모드는 Game 을
+ *   안 태운다). 런 이력 축 하나(연속으로 내 방향이 안 뜬 드래프트 = `dryDrafts`)가 이 모델에 없으므로
+ *   **여기 값은 실제 보정의 하한**이다. game.ts 의 그 함수를 고치면 이 자리도 함께 고쳐야 한다.
+ */
+function tiersBias(pips) {
+  if (!ASSIST) return undefined; // 게임에서 assistEnabled=false 일 때와 같은 값
+  const ranked = CATEGORIES.filter((c) => pips[c] > 0).sort((a, b) => pips[b] - pips[a]);
+  if (ranked.length === 0) return undefined;
+  // 1.35 = "조금 더 자주" + 한 번도 정복 못 한 사람 보정(런을 거듭할수록 준다) · 상한 1.9.
+  const w = 1.35 + Math.max(0, 0.3 - RUNS_DONE * 0.05);
+  return { cats: ranked.slice(0, 2), weight: Math.min(1.9, w) };
+}
+
 async function runTiers() {
   const N = Number(opt("runs", "4000"));
   const budgets = [12, 17, 22];
@@ -1378,6 +1516,12 @@ async function runTiers() {
       " · 배수 " +
       [1, 2, 3, 4].map((k) => eraRewardBoostAt(k).toFixed(1)).join("·") +
       (ERAS_OPT === "" ? " (--eras=N 으로 덮어씀)" : " (--eras 지정됨)"),
+  );
+  console.log(
+    "# 뽑기 보정 " +
+      (ASSIST
+        ? `켬 · 내가 판 두 범주 ×${(1.35 + Math.max(0, 0.3 - RUNS_DONE * 0.05)).toFixed(2)} (game.draftBias 의 근사 · 연속 헛방 가중은 모델 없음 = 하한)`
+        : "끔(기본) · 게임의 assistEnabled=false 와 같은 값"),
   );
   console.log(["정책", "카드", "최고범주", "2위", "T4", "T3이상", "듀오", "저축픽%"].join("	"));
   for (const policy of policies) {
@@ -1395,7 +1539,7 @@ async function runTiers() {
         const picked = new Map();
         for (let i = 0; i < cards; i++) {
           const level = 1 + Math.floor((i / cards) * 12);
-          let cs = drawCards(rng, 3, (c) => cardPrereqMet(c, g) && !cardRedundant(c, g), level, picked, undefined, g.pips);
+          let cs = drawCards(rng, 3, (c) => cardPrereqMet(c, g) && !cardRedundant(c, g), level, picked, tiersBias(g.pips), g.pips);
           if (cs.length === 0) break;
           // 시대 보상이면 **3장 전부** 강화된 사본으로 바꾼다(game.ts 와 같은 처리).
           const rk = rewardAt.get(i);
@@ -1450,8 +1594,8 @@ async function runEcon() {
   // ⚠ **첫 판에 실제로 고를 수 있는 갈래만** 태운다(runGrowth 와 같은 처리). 잠긴 갈래를 넣으면
   //   playFullRun 의 `want >= 0 ? want : 0` 이 첫 카드로 떨어져 **전부 같은 판을 돌린다** — 처음엔
   //   이 걸르개가 없어서 네 갈래가 소수점까지 똑같은 수치로 나왔고, 그게 평균을 오염시켰다.
-  setSavedProgress(0, 0);
-  const unlockProbe = new Game(MOBILE.width, MOBILE.height);
+  setSavedProgress(RUNS_DONE, METAXP);
+  const unlockProbe = newGame();
   unlockProbe.fixedSeed = "unlock-probe";
   unlockProbe.beginRun();
   const openIds = new Set(unlockProbe.draftCards.map((c) => c.id));
@@ -1459,7 +1603,7 @@ async function runEcon() {
   console.log(
     `# econ · 방울 출처 실측 · 카드 정책 ${policy} · 시드 ${SEEDS.length} · 지시 없음(손 놓음 = 수입 하한선)`,
   );
-  console.log(`# 갈래 ${presets.length}종(첫 판에 열려 있는 것만 · 잠긴 갈래를 태우면 같은 판이 중복된다)`);
+  console.log(`# 갈래 ${presets.length}종(이 메타 레벨에 열려 있는 것만 · 잠긴 갈래를 태우면 같은 판이 중복된다)`);
   console.log(
     `# 위기 회복 정의: 최고의 ${CRISIS_FRAC} 아래로 떨어졌다가 그 최고의 ${RECOVER_FRAC} 위로 복귀 ` +
       `(최고 ${CRISIS_MIN_PEAK} 이상일 때만 셈 · --crisis= --recover= --crisismin= 로 바꿈 · ` +
@@ -1467,7 +1611,7 @@ async function runEcon() {
   );
 
   const all = [];
-  for (const p of presets) for (const seed of SEEDS) all.push(playFullRun(p, seed, policy, 0, 0, false));
+  for (const p of presets) for (const seed of SEEDS) all.push(playFullRun(p, seed, policy, RUNS_DONE, METAXP, false));
 
   const avg = (rs, f) => rs.reduce((a, r) => a + f(r), 0) / Math.max(1, rs.length);
   console.log(`\n# 표1 · 판당 사건 횟수 (프리셋별 평균)`);
@@ -1632,6 +1776,15 @@ async function runEncounter() {
 
 const t0 = Date.now();
 try {
+  // **무엇을 잰 것인가를 맨 위에 못박는다.** 모드 머리글보다 먼저 찍어, 출력을 어디에 붙여 넣어도
+  // 축이 같이 따라가게 한다(이 저장소가 네 번 겪은 「잘못된 자로 잰 값」 사고의 재발 방지선).
+  console.log(axisLine());
+  if (USE_REROLL && !rerollUnlocked()) {
+    console.error(
+      `\n⚠ --reroll 을 줬지만 메타 경험치 ${METAXP}(레벨 ${metaLevel(METAXP)}) 에서는 리롤이 아직 안 열린다.\n` +
+        `  --metaxp=${REROLL_XP} 이상을 함께 줘라. 지금 표는 리롤 없는 판이다.\n`,
+    );
+  }
   if (MODE === "order") await runOrder();
   else if (MODE === "raid") await runRaid();
   else if (MODE === "poison") await runPoison();
