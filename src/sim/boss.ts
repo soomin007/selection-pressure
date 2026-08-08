@@ -652,6 +652,22 @@ export function bossRaidable(boss: Boss): boolean {
   return boss.maxHp > 0 && boss.hp > 0;
 }
 
+/**
+ * **이 종류의 보스를 애초에 때려서 격퇴할 수 있는가** · 보스가 아직 없는 시점(예고)에서 묻는 판정.
+ *
+ * `bossRaidable` 은 살아 있는 Boss 객체를 받으므로 예고에서는 못 쓴다. 그런데 예고는 보스가 나타나기
+ * **전에** 무엇을 하라고 말해야 하므로, 타입만으로 답할 수 있어야 한다.
+ * 근거는 `raidCounter` 하나다 · 그것이 null 이면 `createBoss` 가 `maxHp` 를 0 으로 두고,
+ * 그러면 전사 태깅·원거리 사격·격퇴 체력 바가 전부 꺼진다(같은 파일의 raid 경로들).
+ *
+ * 왜 필요했나: 예고가 **없는 격퇴를 약속하고 있었다.** 독 안개(전역 재난)에도
+ * 「공격력이나 원거리가 높으면 어떤 보스든 맞서 잡습니다」가 무조건 붙어, 공격력을 키운 사람이
+ * 때릴 대상 없는 안개 앞에서 그대로 굶어 죽었다(2026-08-08 실측 · 원거리 갈래 시대 2 탈락 24/24).
+ */
+export function bossTypeRaidable(type: BossType): boolean {
+  return PRESETS[type].raidCounter !== null;
+}
+
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }

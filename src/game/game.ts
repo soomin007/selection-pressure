@@ -94,7 +94,7 @@ const TRIAL_HOLD_MAX_DIST = 420;
 const TRIAL_HOLD_RADIUS = 130;
 /** 표식을 목표보다 이만큼 더 찍는다 — 표식이 찍힌 것이 다른 이유로 죽어도 시험이 불가능해지지 않게. */
 const TRIAL_MARK_SPARE = 3;
-import { createBoss, bossPreview, bossName, bossCounter, isPredatorBoss, bossEligible, BOSS_TYPES, type BossType } from "@/sim/boss";
+import { createBoss, bossPreview, bossName, bossCounter, bossTypeRaidable, isPredatorBoss, bossEligible, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { pickMapType, mapKind, FIRST_ERA_MAP, type MapKind, type MapType } from "@/sim/mapType";
 import { TILE } from "@/sim/terrain";
 import { buildRunReport } from "@/game/runReport";
@@ -1022,8 +1022,16 @@ export class Game {
       // 예고가 거짓말이 될 수 없다. 모르고 지면 "허무하게 졌다"가 되지만, 알고도 못 지킨 것은 허무하지 않다.
       // 때릴 수 있는 보스(개체형)는 물리치기만 해도 통과한다 · 전역 시련은 생존만이 길이다.
       const hold = survivalLine(bossPassNeeded(this.era), bt ? isPredatorBoss(bt) : false);
-      // 카운터 힌트 + 만능 수단 안내: 공격력·원거리가 높으면 어떤 보스든 맞서 잡는다(원거리로 시작해도 보스전 가능).
-      if (bt) return { title: `곧 ${bossName(bt)}!`, sub: `${bossCounter(bt)} 공격력이나 원거리가 높으면 어떤 보스든 맞서 잡습니다.${hold}` };
+      // 카운터 힌트 + 만능 수단 안내: 공격력·원거리가 높으면 **때릴 수 있는** 보스는 맞서 잡는다.
+      // ⚠ 「어떤 보스든」이 아니다. 독 안개 같은 전역 재난은 `raidCounter` 가 없어 격퇴 체력 자체가
+      //   0 이고, 공격력·원거리가 **정확히 아무 일도 안 한다**. 그런데 이 문장이 종류를 안 가리고
+      //   붙어서, 공격을 키운 사람이 때릴 대상 없는 안개 앞에 무기를 들고 서 있었다
+      //   (2026-08-08 실측 · 원거리 갈래가 시대 2 에서 24/24 탈락). 바로 아래 `nextKillableBoss` 의
+      //   주석이 이미 「없는 격퇴를 예고하면 그게 거짓말이다」라고 적고 있던 자리다.
+      if (bt) {
+        const fightable = bossTypeRaidable(bt) ? " 공격력이나 원거리가 높으면 맞서 잡습니다." : "";
+        return { title: `곧 ${bossName(bt)}!`, sub: `${bossCounter(bt)}${fightable}${hold}` };
+      }
       return { title: "곧 위협이 닥칩니다", sub: hold.trim() };
     }
     if (next === "extinction") {
