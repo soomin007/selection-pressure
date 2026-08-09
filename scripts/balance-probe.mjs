@@ -30,7 +30,10 @@
 //   npm run probe -- growth       한 런 전체(시대 0~4 · 정복까지) · 카드 장 수 · 정점 도달 시점 · 시대별 위험
 //   npm run probe -- econ         방울(유전자 점수) 출처 실측 — 티어 가격표의 재료(수입 쪽)
 //                                 + 방울 회수율(표3). `--drive` 로 지시가 걸린 판을,
-//                                 `--generadius=0,80,160` 으로 방울 우선 반경을 나란히 잰다.
+//                                 `--generadius=<값>` 으로 방울 우선 반경을 잰다.
+//                                 ⚠ 반경을 여럿 비교할 땐 **반경마다 따로 실행**한다. 쉼표 스윕
+//                                 (`--generadius=0,80,160`)은 앞 묶음의 업적 해금이 뒤 묶음에 새어
+//                                 값을 오염시킨다(runEcon 의 경고 주석 참조).
 //   npm run probe -- apex         정점 4개를 찍은 게놈의 드래프트 후보 구성(죽은 카드·몸집만 바꾸는 카드 비율)
 //   npm run probe -- scale        0~100 스케일의 산수만(시뮬 없음): 감쇠·정점 보상·형질 1의 실제 크기
 //   옵션: --seeds=6 --presets=omni,herd --boss=raider --era=0 --step=2 --cards=first|skip
@@ -113,7 +116,8 @@ const { World } = await server.ssrLoadModule("/src/sim/world.ts");
 const { SIM, ORDER } = await server.ssrLoadModule("/src/sim/params.ts");
 // **방울 우선 반경**(ORDER.geneRadius)을 실측으로 정하기 위한 손잡이. 안 주면 게임 값 그대로다.
 // 값 하나면 여기서 전역으로 덮어쓰고, 쉼표 목록이면 econ 모드가 값마다 한 번씩 돌린다.
-// ⚠ `as const` 는 타입에만 걸리므로 런타임 객체는 그냥 바뀐다 — 프로브에서만 쓰는 문이다.
+// ⚠ 반경 비교는 **반경마다 별도 프로세스**로 하라 · 쉼표 목록이 내는 값은 오염된다(runEcon 의 경고).
+// ⚠ `as const` 는 타입에만 걸리므로 런타임 객체는 그냥 바뀐다. 프로브에서만 쓰는 문이다.
 const GENE_RADIUS_ARG = opt("generadius", "");
 if (GENE_RADIUS_ARG !== "" && !GENE_RADIUS_ARG.includes(",")) ORDER.geneRadius = Number(GENE_RADIUS_ARG);
 const {
@@ -1173,7 +1177,7 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
       dropsTakenValue += d.amount;
     }
   };
-  // 손이 붙은 판에서 「목표에 실제로 닿았는가」 — 방울 우선의 대가(지시가 무의미해지는가)를 재는 축.
+  // 손이 붙은 판에서 「목표에 실제로 닿았는가」: 방울 우선의 대가(지시가 무의미해지는가)를 재는 축.
   let ordersIssued = 0;
   let ordersArrived = 0;
 
@@ -1278,7 +1282,7 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
         c !== null && driveTarget !== null && Math.hypot(c.x - driveTarget.x, c.y - driveTarget.y) <= 120;
       if (driveTarget === null || arrived || ticks - driveAt >= 150) {
         // 「지금까지 찍었던 목표에 실제로 닿았나」를 새 목표를 찍기 직전에 결산한다.
-        // 방울 우선을 세게 걸면 무리가 방울만 쫓아 지시가 무의미해진다 — 그 대가가 이 비율이다.
+        // 방울 우선을 세게 걸면 무리가 방울만 쫓아 지시가 무의미해진다. 그 대가가 이 비율이다.
         if (driveTarget !== null) {
           ordersIssued += 1;
           if (arrived) ordersArrived += 1;
@@ -1666,6 +1670,23 @@ async function runEcon() {
   // 방울 우선 반경 스윕 · `--generadius=0,80,160` 처럼 주면 값마다 한 번씩 돌려 나란히 찍는다.
   // ⚠ `ORDER` 는 런타임에는 평범한 객체라 여기서 덮어쓸 수 있다(`as const` 는 타입에만 건다).
   //   0 을 주면 「방울 우선」이 통째로 꺼진 예전 세계다 = 고치기 전과 견주는 기준선.
+  //
+  // ⚠⚠ **이 쉼표 스윕이 내는 값을 밸런스 근거로 쓰지 마라 · 반경마다 별도 프로세스로 돌려라.**
+  //   (2026-08-09 실측으로 잡았다 · `sim/params.ts` 의 ORDER.geneRadius 주석에 전말이 있다.)
+  //   두 번째 묶음부터는 앞 묶음이 **프로세스에 남긴 상태**를 물려받는다: `game/achievements.ts` 의
+  //   모듈 수준 `unlockedCache` 가 `readUnlocked()` 에서 localStorage 보다 우선하는 진실인데,
+  //   아래 `setSavedProgress()` 는 가짜 localStorage 만 비우고 그 캐시는 못 지운다. 그래서 앞 묶음에서
+  //   업적(`titan_born` 등)이 열리면 **뒤 묶음이 해금 카드가 열린 풀에서 드래프트한다** = 판 자체가
+  //   세진다. 실측(`--seeds=8 --drive`): 같은 반경 160 인데 `0,160` 스윕의 표1 「균형 잡식」이 단독
+  //   대비 최고개체 36.6 → 41.1 · 보스처치 3.13 → 4.00 · 도달시대 2.3 → 2.9 로 뛰고, 표3 의 160 행도
+  //   남음 0.38 → 0.33 · 회수율 93.3% → 94.8% 로 어긋난다.
+  //   교차 확인: `--generadius=80,80` 은 두 행이 서로도 단독과도 완전히 같다(= 스윕이라서 틀리는 게
+  //   아니라, 앞 묶음이 **업적을 열었을 때만** 틀린다). 실제로 이 스윕은 표3 의 10셀 중 8셀을 거짓으로
+  //   만들었고, 그 값이 한동안 `ORDER.geneRadius` 주석에 실려 있었다(2026-08-09 에 걷어냈다).
+  //   ⚠ 표1·표2 도 같은 오염을 탄다(스윕이면 마지막 반경의 판만 담기는데, 그 판이 이미 오염돼 있다).
+  //
+  //   그래도 스윕을 안 지우는 이유: 이 오염을 재현하는 유일한 경로가 이것이고, 고침(캐시를 지우는
+  //   것은 `achievements.ts` 쪽 일이라 별건이다)이 들어왔는지 확인하려면 다시 돌려 봐야 한다.
   const radii = opt("generadius", "") === "" ? [null] : opt("generadius", "").split(",").map(Number);
   // ⚠ **첫 판에 실제로 고를 수 있는 갈래만** 태운다(runGrowth 와 같은 처리). 잠긴 갈래를 넣으면
   //   playFullRun 의 `want >= 0 ? want : 0` 이 첫 카드로 떨어져 **전부 같은 판을 돌린다** — 처음엔
@@ -1759,7 +1780,7 @@ async function runEcon() {
     );
   }
 
-  // 표3 · **방울 회수율** — 떨어뜨린 것 중 몇 개나 무리가 실제로 밟아 주웠나.
+  // 표3 · **방울 회수율**: 떨어뜨린 것 중 몇 개나 무리가 실제로 밟아 주웠나.
   // **[사용자 2026-08-09]** "가라 명령 때 방울을 우선시해서 알아서 먹는다"의 효과가 여기서 읽힌다.
   // 반경 0 = 방울 우선이 꺼진 예전 세계. 「도착률」은 그 대가다(무리가 지시 대신 방울만 쫓으면 떨어진다).
   console.log(`\n# 표3 · 방울 회수율 · ${drive ? "지시 있음(--drive)" : "지시 없음"}`);
