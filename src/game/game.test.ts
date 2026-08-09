@@ -1685,7 +1685,7 @@ describe("방울(유전자 점수) · 사건에서 나와 티어로 바뀐다", 
 // **[사용자 2026-08-09]** "방울 업그레이드 고르는 중에는 시간이 안 멈추나? 그거 보다보니
 // 멸종해버렸는데". 카드 드래프트는 phase 를 바꿔 멈추는데 구입 화면은 화면만 띄우고 있었다.
 //
-// ⚠ 이 저장소에는 「유령 드래프트 멈춤」 전력이 있다(2026-08-07) — 멈추는 것보다 **정확히 돌아오는
+// ⚠ 이 저장소에는 「유령 드래프트 멈춤」 전력이 있다(2026-08-07). 멈추는 것보다 **정확히 돌아오는
 //   것**이 어렵다. 그래서 여기서는 단계 넷(채집·시험·보스·대멸종)에서 저마다 열고 닫아 본다.
 // ---------------------------------------------------------------------------
 describe("방울 구입 화면 · 열려 있는 동안 시간이 멈춘다", () => {
@@ -1697,7 +1697,7 @@ describe("방울 구입 화면 · 열려 있는 동안 시간이 멈춘다", () 
     return `t${g.world.tick}|p${g.world.population}|${ents.join(";")}`;
   }
 
-  /** 지금 단계에서 열고 닫아 본다 — 멈췄나 · 정확히 돌아왔나 · 다시 흐르나. */
+  /** 지금 단계에서 열고 닫아 본다: 멈췄나 · 정확히 돌아왔나 · 다시 흐르나. */
   function openCloseHere(g: Game, label: string): void {
     expect(g.phase, `${label}: 전제가 관전이 아니다`).toBe("watch");
     const before = {
@@ -1717,7 +1717,7 @@ describe("방울 구입 화면 · 열려 있는 동안 시간이 멈춘다", () 
     expect(g.world.tick, `${label}: 멈춘 동안 틱이 돌았다`).toBe(before.tick);
     expect(g.secondsLeft, `${label}: 멈춘 동안 남은 시간이 줄었다`).toBe(before.seconds);
     g.closeGeneShop();
-    // **정확히 그 단계로** 돌아온다 — 타이머·보스·시험·단계 번호가 그대로다.
+    // **정확히 그 단계로** 돌아온다. 타이머·보스·시험·단계 번호가 그대로다.
     expect(g.phase, `${label}: 닫았는데 관전으로 안 돌아왔다`).toBe("watch");
     expect(g.secondsLeft, `${label}: 남은 시간이 어긋났다`).toBe(before.seconds);
     expect(g.world.boss?.name ?? null, `${label}: 보스가 사라졌다`).toBe(before.boss);
@@ -1773,7 +1773,7 @@ describe("방울 구입 화면 · 열려 있는 동안 시간이 멈춘다", () 
 
   it("열었다 닫은 판은 **한 번도 안 연 판과 지문까지 같다**(멈춤은 상태를 안 바꾼다)", () => {
     // 멈춤은 「틱을 진행하지 않는 것」이지 상태를 바꾸는 것이 아니다. 그러니 진행한 프레임 수가
-    // 같으면 결과도 같아야 한다 — 다르면 그 자체가 결함이다(같은 시드 · 같은 update 열).
+    // 같으면 결과도 같아야 한다. 다르면 그 자체가 결함이다(같은 시드 · 같은 update 열).
     const plain = startRun("shop-det");
     for (let i = 0; i < 200; i++) plain.update(34);
 
@@ -1794,7 +1794,7 @@ describe("방울 구입 화면 · 열려 있는 동안 시간이 멈춘다", () 
     expect(g.phase).toBe("draft");
     expect(g.openGeneShop()).toBe(false);
     expect(g.phase).toBe("draft");
-    // 닫기도 안전하다 — 열려 있지 않은데 닫아도 남의 단계를 덮어쓰지 않는다.
+    // 닫기도 안전하다. 열려 있지 않은데 닫아도 남의 단계를 덮어쓰지 않는다.
     g.closeGeneShop();
     expect(g.phase).toBe("draft");
   });

@@ -973,7 +973,7 @@ export class WorldView {
     const p = this.moveTarget;
     if (!p) return;
     const pulse = 0.5 + 0.5 * Math.sin(((this.frame % 66) / 66) * Math.PI * 2);
-    // 「피해라」의 자리 — **깃발을 세우지 않는다.** 깃발은 "여기로 가라"는 뜻이라 정반대를 말하게 된다.
+    // 「피해라」의 자리: **깃발을 세우지 않는다.** 깃발은 "여기로 가라"는 뜻이라 정반대를 말하게 된다.
     // 대신 붉은 고리 + 바깥으로 뻗는 짧은 화살표 넷 = "이 자리에서 멀어져라". 색은 위협(붉은)
     // 계열이라 라임(가라)과 한눈에 갈린다 · 명령이 사는 몇 초 동안 맥동해 유효함이 읽힌다.
     if (this.moveTargetAvoid) {
@@ -1630,7 +1630,7 @@ const FLAG_COLOR = 0xbcf24e;
 /** 시험 표식의 금빛 · 먹잇감 호박빛과 같은 계열이라 "저건 노릴 것"이 색만으로 읽힌다. */
 const TRIAL_MARK_COLOR = 0xffd24a;
 const FLAG_LIGHT = 0xe4ffb0; // 깃대·중심점(밝은 라임 — 어두운 지형 위 가독)
-// 「피해라」 표식의 붉은빛 — 위협(보스 떼 0xff5535)과 같은 계열이라 "저기서 멀어져라"가 색만으로 읽힌다.
+// 「피해라」 표식의 붉은빛 · 위협(보스 떼 0xff5535)과 같은 계열이라 "저기서 멀어져라"가 색만으로 읽힌다.
 // 라임(가라)과 정반대 색이라 두 명령이 한눈에 갈린다.
 const AVOID_COLOR = 0xff6a4a;
 const AVOID_LIGHT = 0xffc8b4;

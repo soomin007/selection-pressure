@@ -117,7 +117,7 @@ describe("무리 지시 — game 층 배선", () => {
     for (const slot of g.orderWheel()) {
       if (!slot.spec.ready) expect(slot.unlocked, slot.spec.label).toBe(false);
     }
-    // 「버텨라」는 기력 4 · 쿨타임 180 이 적힌 칸이다 — 잠긴 칸이 그 대가만 물면 그건 벌칙일 뿐이다.
+    // 「버텨라」는 기력 4 · 쿨타임 180 이 적힌 칸이다. 잠긴 칸이 그 대가만 물면 그건 벌칙일 뿐이다.
     const brace = ORDER_SPECS.find((s) => s.kind === "brace");
     expect(brace?.energy).toBeGreaterThan(0); // 전제: 이 칸에는 물릴 대가가 적혀 있다
     expect(brace?.cooldown).toBeGreaterThan(0);
