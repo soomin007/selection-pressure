@@ -1236,6 +1236,19 @@ export class Game {
     if (pressure > eraPredatorPressure(this.era)) {
       lines.push(`나를 사냥하는 짐승이 ${pressure.toFixed(1)}배로 늘어납니다.`);
     }
+    // ①-b **세계 자체가 바뀌는가** — 이 줄이 없어서 사고가 났다(2026-08-09 [사용자] 제보:
+    //   "대륙 맵으로 시작했다가 갑자기 군도 맵으로 변해버리면 지느러미가 없을 때 바로 죽어버리는데
+    //   이게 의도한 경험이 맞아?"). 진도가 2에 닿는 시대에 초원에서 **이 런에 뽑힌 세계**로 갈아타는데
+    //   (`stepUsesDrawnMap`), 그 사실을 화면이 한 번도 말하지 않았다. 시작 화면의 「이번 세계」 요약은
+    //   **지금 월드**(초원)를 말하므로 런 내내 아무도 군도가 온다는 걸 모른다.
+    //   빌드를 하드카운터하는 지형이 예고 없이 오는 것은 「왜 졌는지 모르는데 졌다」다(기획서 §4.2).
+    //   ⚠ 지형을 안 바꾸는 것이 아니라 **말해 주는 것**이 답이다 · 대비할 수 있으면 그건 시험이다.
+    const stepNow = onboardingStep(this.runsDone, this.era);
+    const stepNext = onboardingStep(this.runsDone, next);
+    if (!stepUsesDrawnMap(stepNow) && stepUsesDrawnMap(stepNext)) {
+      const k = mapKind(this.currentMapType);
+      lines.push(`세계가 ${k.name}(으)로 바뀝니다. ${k.desc}`);
+    }
     // ② 무엇을 지켜야 하나 — 관문 판정 그 값.
     const need = bossPassNeeded(next);
     if (need > 1) lines.push(`관문마다 ${need}마리가 살아남아야 합니다.`);
@@ -1280,7 +1293,14 @@ export class Game {
   /** 시작 종을 고르기 전에 보여줄 이번 세계 요약 — "군도 · 바다 57% · 잘게 쪼개진 섬…". */
   worldBriefing(): { name: string; sea: number; desc: string } {
     const k = this.mapKindNow;
-    return { name: k.name, sea: this.seaPercent, desc: k.desc };
+    // **곧 다른 세계로 갈아탄다면 그것도 지금 말한다.** 이 화면은 사람이 **빌드를 정하는 자리**라,
+    // 여기서 안 알리면 대비할 방법이 없다(2026-08-09 [사용자] 제보: 군도로 바뀌자 지느러미가 없어
+    // 바로 죽었다). 진도가 2에 닿는 시대에 초원에서 이 런에 뽑힌 세계로 바뀐다(`stepUsesDrawnMap`).
+    // ⚠ 「지금 세계」와 「곧 올 세계」를 한 문장에 담아, 고르는 사람이 둘 다 보고 정하게 한다.
+    const drawn = mapKind(this.currentMapType);
+    const laterDiffers = !stepUsesDrawnMap(this.onboarding) && drawn.name !== k.name;
+    const desc = laterDiffers ? `${k.desc} 시대가 지나면 ${drawn.name}(으)로 바뀝니다 · ${drawn.desc}` : k.desc;
+    return { name: k.name, sea: this.seaPercent, desc };
   }
 
   private setupRun(): void {

@@ -40,6 +40,7 @@ import {
   pipsToNext,
   tierLine,
   tierOf,
+  tiersOf,
   type Category,
 } from "@/sim/tiers";
 import type { Genome } from "@/sim/genome";
@@ -1323,6 +1324,9 @@ async function boot(): Promise<void> {
       const gate = survivalChip(mineCount, game.survivorsNeeded);
       const followText = gate ? gate.text : follow;
       const followTone = gate ? gate.tone : "plain";
+      // 상시 도장 눈금이 읽는 값 · 티어 판정은 sim 한 곳(tiersOf)이 하고 화면은 읽기만 한다.
+      const tnow = tiersOf(game.pipsNow);
+      const goalTiers = CATEGORIES.map((c) => tnow[c]);
       goalBar.update({
         visible: game.phase === "watch",
         text: goalText,
@@ -1330,6 +1334,8 @@ async function boot(): Promise<void> {
         stage: `${game.eraLabel ? `${game.eraLabel} · ` : ""}${game.stageLabel}`,
         level: game.level,
         xp01: game.xpProgress,
+        // 상시 도장 눈금 · 티어 판정은 sim 한 곳(tiersOf)이 하고 화면은 읽기만 한다.
+        tiers: goalTiers,
         mine: mineCount,
         wild: wildCount,
         // 순종의 질 · 지금 뜻을 향해 움직이는 수. sim 이 규칙을 판정한 그 자리에서 센 값을 그대로 읽는다.

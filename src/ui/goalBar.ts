@@ -45,6 +45,8 @@ export interface GoalData {
   stage: string; // "1시대 · 채집" 등
   level: number;
   xp01: number; // 다음 카드까지 진행(0~1)
+  /** 범주 다섯의 지금 티어(0~4). 상시 눈금이 읽는 유일한 값 · 순서는 CATEGORIES 와 같다. */
+  tiers: readonly number[];
   mine: number;
   wild: number;
   followers: number; // 지금 뜻을 향해 움직이는 수(뜻이 없으면 -1 → 상세 패널 줄 숨김)
@@ -160,7 +162,35 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
   const caret = document.createElement("span");
   caret.className = "goal-caret hint";
   caret.setAttribute("aria-hidden", "true");
-  pill.append(pillBody, caret);
+  // 경험치 밑선 — 숫자도 글자도 없이 알약 아래를 달린다(높이 2px · 줄이 안 늘어난다).
+  const xpLine = document.createElement("div");
+  xpLine.className = "goal-xpline";
+  xpLine.setAttribute("aria-hidden", "true"); // 상세 패널이 같은 값을 글로 말한다
+  const xpLineFill = document.createElement("div");
+  xpLineFill.className = "goal-xpline-fill";
+  xpLine.appendChild(xpLineFill);
+  pill.append(pillBody, caret, xpLine);
+
+  // 도장 눈금 다섯 · 알약 **옆** 제 칸(세로 압박 0). 승급 띠와 같은 문법이라 두 화면이 이어진다.
+  const pipsBox = document.createElement("div");
+  pipsBox.className = "goal-pips";
+  pipsBox.setAttribute("aria-hidden", "true"); // 상세 패널·형질 패널이 같은 값을 글로 말한다
+  const pipDots: HTMLDivElement[][] = [];
+  for (let c = 0; c < 5; c += 1) {
+    const rowEl = document.createElement("div");
+    rowEl.className = "goal-pip-row";
+    const dots: HTMLDivElement[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const d = document.createElement("div");
+      d.className = "goal-pip";
+      rowEl.appendChild(d);
+      dots.push(d);
+    }
+    pipDots.push(dots);
+    pipsBox.appendChild(rowEl);
+  }
+  /** 직전에 그린 티어 — 오른 칸만 튀게 하려고 기억한다(매 프레임 애니메이션을 다시 걸면 계속 떤다). */
+  const lastTiers = [-1, -1, -1, -1, -1];
 
   // 방울 카운터 · **상시 HUD 에 늘 떠 있는 자리.** 알약 첫 줄에 넣지 않은 이유: 그 줄은 할 일
   // 문구와 순종/생존 칩이 이미 나눠 쓰고 있고, 관문 동안에는 "생존 21/8마리"가 그 줄을 거의 다
@@ -190,7 +220,7 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
   pauseBtn.title = "멈춤/이어하기 (Space)";
   pauseBtn.addEventListener("click", cb.onPauseToggle);
 
-  head.append(pill, geneBtn, pauseBtn);
+  head.append(pill, pipsBox, geneBtn, pauseBtn);
 
   // 상세 패널 · 옛 상태 바·칩이 담던 정보의 새 집. 필요할 때만 연다.
   const panel = document.createElement("div");
@@ -327,6 +357,22 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
         setDisplay(geneRow, cb.onGeneOpen !== undefined ? "block" : "none");
         setText(geneRow, `방울 ${d.genes}개 · 티어 올리기 ›`);
       }
+      // ── 상시 성장 계기 둘 · **펼침 여부와 무관하게** 갱신한다(이게 이 둘의 존재 이유다).
+      xpLineFill.style.width = `${Math.round(d.xp01 * 100)}%`;
+      for (let c = 0; c < pipDots.length; c += 1) {
+        const t = Math.max(0, Math.min(4, d.tiers[c] ?? 0));
+        const dots = pipDots[c];
+        if (dots === undefined) continue;
+        const was = lastTiers[c] ?? -1;
+        const rose = was >= 0 && t > was;
+        for (let i = 0; i < dots.length; i += 1) {
+          const dot = dots[i];
+          if (dot === undefined) continue;
+          const on = i < t;
+          dot.className = `goal-pip${on ? " on" : ""}${rose && i === t - 1 ? " bump" : ""}`;
+        }
+        lastTiers[c] = t;
+      }
       if (!open) return; // 패널이 닫혀 있으면 상세 갱신도 생략(비용 0)
       setText(stageRow, d.stage);
       setText(levelRow, `레벨 ${d.level} · 다음 카드까지 ${Math.round(d.xp01 * 100)}%`);
@@ -382,6 +428,7 @@ function ensureGoalStyles(): void {
     zoom: var(--ui-zoom, 1); }
   .goal-head { display: flex; gap: 6px; align-items: stretch; }
   .goal-pill { pointer-events: auto; flex: 1; min-width: 0; text-align: left; cursor: pointer;
+    position: relative; /* 경험치 밑선(goal-xpline)의 기준 상자 */
     display: flex; align-items: center; gap: 9px;
     background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 7px 12px;
     color: var(--ink); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
@@ -391,6 +438,28 @@ function ensureGoalStyles(): void {
   /* 펼쳐진 동안엔 테두리를 한 단계 밝혀, 아래 유리 패널이 이 알약에서 나온 것임을 잇는다. */
   .goal-pill.open { border-color: rgba(245, 235, 220, 0.30); }
   .goal-pill-body { flex: 1; min-width: 0; }
+  /* ── 상시 성장 계기 둘 (2026-08-09 [사용자] 지시) ─────────────────────────────────────
+     "경험치 바가 숨겨져 있어서 실시간으로 성장하는 재미를 즐기기 어렵다. 성장이라는 느낌이
+      게임을 플레이하게 하는 가장 큰 원동력이자 핵심 요소다."
+     둘 다 **줄을 안 늘린다** — 상시 HUD 는 목표 한 줄만이라는 2026-08-02 A안을 최대한 지키려고,
+     눈금은 알약 **옆 세로 칸**에, 경험치는 알약 **밑선**에 얹었다(높이 0). */
+  /* 도장 눈금 다섯 · 승급 띠와 **같은 문법**(네 칸 중 몇 칸이 찼는가)을 아주 작게. 다섯 범주가
+     세로로 서서 "무엇을 얼마나 팠나"가 한눈에 · 한 칸 오르면 그 줄이 톡 튄다. */
+  .goal-pips { pointer-events: none; flex: none; display: flex; flex-direction: column;
+    justify-content: center; gap: 2px; padding: 0 1px; }
+  .goal-pip-row { display: flex; gap: 2px; }
+  .goal-pip { width: 4px; height: 4px; border-radius: 1px; background: rgba(255,255,255,0.13); }
+  .goal-pip.on { background: var(--ink); opacity: 0.62; }
+  @keyframes goal-pip-bump { 0%{transform:scale(0.3);opacity:0} 55%{transform:scale(1.5)} 100%{transform:scale(1);opacity:1} }
+  .goal-pip.bump { animation: goal-pip-bump 460ms ease-out; }
+  /* 경험치 · 알약 **아래 테두리 위**를 달리는 실선. 숫자도 글자도 없이 "다음 카드가 가까워진다"만
+     곁눈으로 읽히게 한다(높이 2px · 세로 압박 0). */
+  /* ⚠ 이름이 「.goal-xp」 가 아니다 — 상세 패널의 경험치 바가 그 이름을 이미 쓴다(아래 497행 근처).
+     같은 이름을 두 곳에 두면 나중 규칙이 이겨 둘 중 하나가 조용히 망가진다. */
+  .goal-xpline { position: absolute; left: 10px; right: 10px; bottom: 2px; height: 2px;
+    border-radius: 1px; background: rgba(255,255,255,0.10); overflow: hidden; }
+  .goal-xpline-fill { height: 100%; width: 0%; border-radius: 1px; background: var(--amber);
+    opacity: 0.75; transition: width 0.25s ease; }
   /* 펼침 화살표 · 글씨가 아니라 CSS 로 그린 꺾쇠(∨). 접힘 ∨ / 펼침 ∧ 로 뒤집혀 지금 상태까지 말한다. */
   .goal-caret { flex: none; width: 9px; height: 9px; margin-right: 2px; opacity: 0.6;
     border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
