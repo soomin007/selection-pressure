@@ -1578,14 +1578,21 @@ export class Game {
   private pickTrial(): Trial {
     const t = this.genome.traits;
     const candidates: Trial[] = [];
+    // 무리가 커지면 시험 목표도 따라 오른다(근거·상한은 GAME.trialRefPop 주석). 1배가 하한이라
+    // 작은 무리는 예전 값 그대로다. 「무리」·「표시된 자리」는 원래부터 개체 수를 보고 있었다.
+    const scale = Math.min(
+      GAME.trialScaleCap,
+      Math.max(1, this.world.playerPopulation / GAME.trialRefPop),
+    );
+    const goal = (base: number): number => Math.max(base, Math.round(base * scale));
     // ⚠ **이빨 0단(초식)에게는 「사냥」 시험이 구조적으로 불가능하다.** 사냥 효율이 정확히 0 이라
     //   한 마리도 못 잡는데 불씨는 다섯뿐이다 — 못 하는 시험을 내는 것은 판정이 아니라 사형 선고다.
     //   **[사용자 2026-08-06]** 「초식 거인 경로는 반드시 만든다」가 이 한 줄에 걸려 있다.
     if (t.hunt > 0)
-      candidates.push({ kind: "hunt", target: GAME.trialHuntN, label: `사냥 ${GAME.trialHuntN}회` });
+      candidates.push({ kind: "hunt", target: goal(GAME.trialHuntN), label: `사냥 ${goal(GAME.trialHuntN)}회` });
     if (t.graze > SIM.grazeMinEff)
-      candidates.push({ kind: "feed", target: GAME.trialFeedN, label: `먹이 ${GAME.trialFeedN}회` });
-    candidates.push({ kind: "birth", target: GAME.trialBirthN, label: `새끼 ${GAME.trialBirthN}마리` });
+      candidates.push({ kind: "feed", target: goal(GAME.trialFeedN), label: `먹이 ${goal(GAME.trialFeedN)}회` });
+    candidates.push({ kind: "birth", target: goal(GAME.trialBirthN), label: `새끼 ${goal(GAME.trialBirthN)}마리` });
     // 「무리」는 붕괴를 잡는 시험이라 목표가 **지금 무리보다 클 수 없다.** 하한(8)만 걸면 2마리로 들어온
     // 라운드에서 목표가 8 이 되어 "지키기"가 "4배로 불리기"로 뒤집힌다(못 하는 시험을 내면 안 된다).
     const pop = this.world.playerPopulation;
@@ -1604,7 +1611,7 @@ export class Game {
     if (pop >= 4) candidates.push({ kind: "hold", target: holdTarget, label: `표시된 자리에 ${holdTarget}마리` });
     // 표식 사냥은 이빨 0단이면 못 한다(사냥 자체가 불가) · 위 「사냥」과 같은 게이트.
     if (t.hunt > 0) {
-      candidates.push({ kind: "mark", target: GAME.trialMarkN, label: `표시된 것 ${GAME.trialMarkN}마리 사냥` });
+      candidates.push({ kind: "mark", target: goal(GAME.trialMarkN), label: `표시된 것 ${goal(GAME.trialMarkN)}마리 사냥` });
     }
 
     const idx = new Rng(`${this.currentSeed}-trial-s${this.stageIndex}`).int(0, candidates.length - 1);
