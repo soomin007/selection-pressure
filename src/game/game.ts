@@ -973,17 +973,39 @@ export class Game {
    * 한 라운드에 두 번 오른 경우에도 한 장씩 차례로 고르게 한다.
    */
   private openPendingDraft(): boolean {
-    if (this.pendingLevels <= 0) return false;
-    this.pendingLevels -= 1;
-    this.boundaryDraft = true;
-    this.phase = "draft";
-    // 메타 언락: 열린 카드만 드래프트 풀에(잠긴 특화 카드는 런을 거듭해 해금).
-    // 언락된 카드 중, 이 종에 이미 무의미한 카드(예: 이미 나는데 날개 카드)는 뺀다 · "손해 카드" 방지(폰 피드백).
-    this.draftCards = this.drawDraft();
-    this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
-    this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (무리 전체에 퍼지고, 새끼는 부모를 닮아 조금씩 달라집니다)`;
-    this.onDraft?.(this.draftCards, this.preview);
-    return true;
+    // 밀린 레벨을 하나씩 꺼내되, **줄 게 없는 레벨은 조용히 소진한다**(아래 가드) · 한 번에 하나만
+    // 버리면 밀린 레벨이 계속 남아 단계마다 빈 드래프트를 다시 시도한다.
+    while (this.pendingLevels > 0) {
+      this.pendingLevels -= 1;
+      this.boundaryDraft = true;
+      this.phase = "draft";
+      // 메타 언락: 열린 카드만 드래프트 풀에(잠긴 특화 카드는 런을 거듭해 해금).
+      // 언락된 카드 중, 이 종에 이미 무의미한 카드(예: 이미 나는데 날개 카드)는 뺀다 · "손해 카드" 방지(폰 피드백).
+      this.draftCards = this.drawDraft();
+      // **줄 게 하나도 없으면 열지 않는다** (2026-08-09 [사용자] 제보: "모든 범주 만렙을 찍었더니
+      // 업그레이드 드래프트 화면이 고장나버렸고, 건너뛰어 새끼 치기만 겨우 클릭이 가능했다").
+      //
+      // 화면이 깨진 게 아니라 **게임에 남은 내용이 없었던 것**이다. 카드는 도장만 주는데
+      // (`cardRedundant`), 범주 다섯이 전부 4단이고 열쇠도 MAX_KEYS 를 채우면 카드 100장이 전부
+      // 죽은 카드가 된다. 그러면 후보가 0장인 드래프트가 그냥 열려 "고장난 화면"으로 보인다.
+      //
+      // ⚠ 이건 **증상 방어**일 뿐이다. 근본은 「카드가 도장 말고는 줄 게 없다」이고, 그 답은 이미
+      //   합의된 카드 재설계다(**[사용자 2026-08-08]** · docs/design/card_redesign_proposal.md).
+      //   재설계 뒤에도 이 가드는 남겨 둔다 — 어떤 이유로든 후보가 빌 수 있고, 그때 빈 화면을
+      //   띄우는 것보다 조용히 넘기는 편이 언제나 낫다.
+      if (this.draftCards.length === 0) {
+        this.recordDraft(DRAFT_NONE); // 판 분석 코드에 "이 레벨업은 고를 게 없었다"가 남는다
+        continue;
+      }
+      this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
+      this.preview = `레벨 ${this.level}! 새 형질을 하나 고르세요. (무리 전체에 퍼지고, 새끼는 부모를 닮아 조금씩 달라집니다)`;
+      this.onDraft?.(this.draftCards, this.preview);
+      return true;
+    }
+    // 밀린 레벨을 다 소진했는데 하나도 못 열었다 = 지금 이 종에게 줄 카드가 없다.
+    this.phase = "watch";
+    this.boundaryDraft = false;
+    return false;
   }
 
   /**
