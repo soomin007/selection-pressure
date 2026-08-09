@@ -766,7 +766,8 @@ export class Game {
     }));
   }
 
-  /** 지휘 공백이 남아 있는 초(화면이 「무리가 흩어집니다」를 띄우는 데 쓴다). 0 이면 정상. */
+  /** 지휘 공백이 남아 있는 초 — 이 동안은 아무도 명령을 안 듣는다(화면이 그 사실과 되돌리는 법을
+   *  알린다 · main 의 issueOrder). 0 이면 정상. */
   get leadVacuumSeconds(): number {
     return this.world.leadVacuum / SIM.stepsPerSecond;
   }
