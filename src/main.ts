@@ -43,7 +43,7 @@ import {
   type Category,
 } from "@/sim/tiers";
 import type { Genome } from "@/sim/genome";
-import { ORDER_SPEC_BY_KIND, type OrderKind } from "@/sim/herdOrder";
+import { ORDER_SPEC_BY_KIND, type HerdOrder, type OrderKind } from "@/sim/herdOrder";
 import { CommandWheel, OrderLine } from "@/ui/commandWheel";
 import { isPredatorBoss, bossRaidable } from "@/sim/boss";
 import { ORDER } from "@/sim/params";
@@ -59,6 +59,128 @@ const LEAD_BANNER_DELAY_MS = 3000; // "아무도 안 따라옵니다" 안내까�
 const PEEK_RETURN_MS = 1500; // 훔쳐보기(드래그·미니맵·2손가락 팬) 입력이 끝나고 무리로 복귀까지의 시간
 const ORDER_DENY_MS = 1800; // 갈 수 없는 곳을 탭했을 때 목표 줄에 그 사실을 남겨 두는 시간
 const ORDER_ARRIVED_PAD = 60; // 무리 도착 표시 여유(무리는 한 점에 겹치지 않는다) · 기준 반경(무리 단위 arriveRadius)은 sim 상수 공유
+
+// --- 탭 제스처의 계약 (**[사용자 2026-08-06]** 조작 다양화: 길게 누르기 = 명령 휠 · 더블탭 = 회피) ---
+//
+// 오작동을 어떻게 가르나:
+//  · **단일 탭은 즉시 실행하고, 더블탭이 오면 덮어쓴다.** 탭을 잡아 두고 더블탭을 기다리면 기본
+//    조작에 지연이 생기는데, 「가라」에는 쿨타임조차 안 걸 만큼(**[사용자 2026-08-06]** "기본 조작이
+//    막히면 조종 감각 자체가 죽는다") 즉시성이 중요하다. 대신 **덮어쓴 것을 되돌릴 수 있어야 한다**
+//    ▸ 아래 `undoneOrder` · boot 안의 `tapUndo`.
+//  · **길게 누르기는 손가락이 안 움직인 채 0.25초.** 움직이면 그건 훔쳐보기(팬)다.
+//
+// 이 아래 세 함수는 **순수하다**(Pixi·DOM·게임 상태를 안 본다). 입력 층의 판정이 화면 없이도
+// 검증되게 하려고 일부러 밖으로 뺐다 ▸ `src/main.tapOrder.test.ts`.
+const LONG_PRESS_MS = 250;
+const DOUBLE_TAP_MS = 300;
+const DOUBLE_TAP_PX = 44; // 손끝 굵기. 이보다 멀면 "다른 곳을 또 탭한 것"이다.
+
+/** 직전 탭의 시각(performance.now 기준 ms)과 화면 좌표. */
+interface TapMark {
+  readonly t: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * 이 탭이 **직전 탭과 한 쌍인가**(= 더블탭). 시간과 거리를 함께 본다: 빠르기만 하고 멀면 그건
+ * "다른 곳을 또 탭한 것"이지 같은 자리를 두 번 두드린 게 아니다.
+ */
+export function isDoubleTap(prev: TapMark, now: number, x: number, y: number): boolean {
+  return now - prev.t < DOUBLE_TAP_MS && Math.hypot(x - prev.x, y - prev.y) < DOUBLE_TAP_PX;
+}
+
+/** 명령 휠 한 칸의 상태 중 **거절 이유를 고르는 데 필요한 것만**(`game.orderWheel()` 원소가 그대로 맞는다). */
+export interface OrderSlotState {
+  readonly spec: { readonly label: string; readonly hint: string };
+  readonly unlocked: boolean;
+  readonly cdLeft: number;
+}
+
+/**
+ * 거절된 명령의 **참인 이유 한 줄**. 이유를 모르면 `null` 을 내고 **아무 말도 안 한다.**
+ *
+ * ⚠ 2026-08-09 까지 이 자리는 잠김이 아니면 무조건 "아직 숨을 고르는 중입니다"로 떨어졌다. 그런데
+ *   지휘 공백(알파가 막 쓰러졌다)으로 거절될 때도 여기까지 내려왔고, 그때 칸은 `unlocked=true` ·
+ *   `cdLeft=0` 이라 **쿨타임도 아닌데 쿨타임이라고 말했다**(실측: 자연 판 6시드 중 셋에서 프레임의
+ *   31~41%가 지휘 공백이었다). 게다가 이미 뜬 진짜 이유("무리가 잠시 흩어집니다")를 덮어썼다.
+ *   이 저장소의 규칙("수치가 화면 표시와 다르면 그건 거짓말이다")에 맞추면, 모르는 이유를 지어내는
+ *   것보다 **입을 다무는 쪽**이 맞다. 진짜 이유는 그것을 아는 자리(`issueOrder`)가 이미 말했다.
+ *
+ * 잠김 문구를 여기서 새로 쓰지 않고 **칸의 hint 를 그대로 쓴다** · 티어 조건은 `ORDER_SPECS` 한 곳에만
+ * 적혀 있어야 한다("다리 1단"을 여기 또 적으면 조건이 바뀌는 날 화면이 조용히 거짓말한다).
+ * 조사(은/는·을/를)가 이름에 따라 갈리므로 "「이름」 명령은" 꼴로 묶어 어느 칸에나 맞게 한다.
+ */
+export function orderDenyLine(slot: OrderSlotState | undefined): string | null {
+  if (slot === undefined) return null;
+  if (!slot.unlocked) {
+    return slot.spec.hint === "" ? null : `「${slot.spec.label}」 명령은 ${slot.spec.hint}`;
+  }
+  if (slot.cdLeft > 0) return `「${slot.spec.label}」 명령은 아직 숨을 고르는 중입니다`;
+  return null;
+}
+
+/**
+ * 덮여 있던 앞 명령을 **덮여 있던 시간만큼 흘려서** 되돌린다.
+ *
+ * 왜 그냥 되돌리지 않나: 「피해라」처럼 수명(ticks)이 있는 명령은 덮여 있는 동안 `tickOrders` 가
+ * 안 깎는다. 그대로 꽂아 주면 덮였던 시간(최대 더블탭 창 0.3초)만큼 **공짜로 더 사는** 명령이 되고,
+ * 그건 화면이 말한 4초와 다른 값이다. 수명이 그 사이에 다했으면 되살리지 않고 걷는다(null).
+ * 「가라」는 무기한(ticks 0)이라 흘릴 시간이 없다.
+ */
+export function rewoundOrder(prev: HerdOrder | null, elapsedTicks: number): HerdOrder | null {
+  if (prev === null) return null;
+  const t = prev.ticks;
+  if (t === undefined || t <= 0) return prev;
+  const left = t - Math.max(0, elapsedTicks);
+  if (left <= 0) return null;
+  return { ...prev, ticks: left };
+}
+
+/** 첫 탭이 밀어 넣은 「가라」와, 그것이 덮어쓴 앞 명령. 더블탭이 거절되면 이 기록으로 되돌린다. */
+export interface TapUndo {
+  /** 첫 탭이 실제로 꽂아 넣은 그 객체(동일성 비교용). */
+  readonly installed: HerdOrder;
+  /** 첫 탭 직전에 걸려 있던 뜻. 없었으면 null. */
+  readonly prev: HerdOrder | null;
+  /** 첫 탭 시점의 `world.tick`. */
+  readonly tick: number;
+}
+
+/**
+ * 거절된 더블탭 뒤에 **무엇을 되돌려 놓아야 하는가.**
+ * `undefined` = 손대지 않는다 · `HerdOrder | null` = 그 값으로 되돌린다.
+ *
+ * ⚠ 결함 D(2026-08-09 실측): 탭 처리는 단일 탭을 먼저 실행하므로, 더블탭의 첫 탭이 이미
+ *   `setHerdOrder(x, y, "move")` 를 성공시킨다. 두 번째 탭의 「피해라」가 거절되면(다리 0단 ·
+ *   쿨타임 · 지휘 공백) **아무도 그 「가라」를 걷지 않아서**, 포식자 위를 두 번 두드린 사람은
+ *   "다리 1단이 되면…"이라는 안내를 보면서 무리가 그 포식자 쪽으로 걸어가는 것을 본다.
+ *   기본 프리셋은 다리 0단이라 이것이 **기본 상태**였다.
+ *
+ * ⚠ 동일성(`current !== undo.installed`)을 왜 보나: 그 0.3초 사이에 **다른 것이 명령을 바꿨을 수
+ *   있다.** 특히 알파가 죽으면 sim 이 `world.herdOrder = null` 로 걷어 간다(world.ts) · 그때 옛
+ *   명령을 되살리면 지휘 공백인 무리에게 없던 뜻이 생긴다. 되돌리기는 **내가 방금 놓은 것이 그대로
+ *   있을 때만** 한다. 「가라」는 ticks 0 이라 `tickOrders` 가 객체를 안 갈아 끼워, 이 비교가 성립한다.
+ */
+export function undoneOrder(
+  undo: TapUndo | null,
+  current: HerdOrder | null,
+  tick: number,
+): HerdOrder | null | undefined {
+  if (undo === null || current !== undo.installed) return undefined;
+  return rewoundOrder(undo.prev, tick - undo.tick);
+}
+
+/**
+ * 명령 접수의 결과. `ok` 만으로는 부족해서 `told` 를 함께 낸다. 거절 이유를 **아는 자리가 이미
+ * 말했는지**를 부르는 쪽이 알아야, 같은 자리에 두 번 말하거나(핑 두 번) 참인 이유를 거짓 이유로
+ * 덮어쓰는 일이 없다(`highlights.flash` 는 priority=false 면 앞 문구를 즉시 덮는다).
+ */
+interface OrderResult {
+  readonly ok: boolean;
+  /** 왜 안 됐는지 화면에 **이미 말했다**(핑·문구). 부르는 쪽은 아무 말도 더 하지 않는다. */
+  readonly told: boolean;
+}
 
 async function boot(): Promise<void> {
   const layout = chooseLayout();
@@ -723,19 +845,17 @@ async function boot(): Promise<void> {
     minimap.container.visible && minimap.containsScreenPoint(x, y);
 
   // --- 조작 확장 (**[사용자 2026-08-06]**): 길게 누르기 = 명령 휠 · 더블탭 = 회피 · 명령 줄 = 철회 ---
-  //
-  // 오작동을 어떻게 가르나:
-  //  · **단일 탭은 즉시 실행하고, 더블탭이 오면 덮어쓴다.** 탭을 잡아 두고 더블탭을 기다리면 기본
-  //    조작에 지연이 생기는데, 이동은 취소해도 손해가 없으니 먼저 가고 나중에 고치는 쪽이 낫다.
-  //  · **길게 누르기는 손가락이 안 움직인 채 0.25초.** 움직이면 그건 훔쳐보기(팬)다.
-  const LONG_PRESS_MS = 250;
-  const DOUBLE_TAP_MS = 300;
-  const DOUBLE_TAP_PX = 44; // 손끝 굵기. 이보다 멀면 "다른 곳을 또 탭한 것"이다.
+  // 제스처의 상수와 판정은 모듈 위쪽(순수 함수)에 있다. 여기 있는 것은 그 판정이 쓰는 **상태**뿐이다.
   let pressTimer = 0;
-  let lastTap = { t: 0, x: 0, y: 0 };
+  let lastTap: TapMark = { t: 0, x: 0, y: 0 };
+  // 되돌리기 한 칸: 방금 단일 탭이 밀어 넣은 「가라」와 그것이 덮어쓴 앞 명령(`undoneOrder` 주석의 결함 D).
+  let tapUndo: TapUndo | null = null;
   const wheel = new CommandWheel(document.body, {
     onPick: (kind, wx, wy) => {
-      if (!issueOrder(wx, wy, kind)) effects.spawnPing(wx, wy, "deny");
+      // 이유를 아는 자리가 이미 말했으면(`told`) 여기서 핑을 또 울리지 않는다 · 같은 자리에 두 번
+      // 울리는 거부 핑은 "두 번 거절당했다"로 읽힌다.
+      const r = issueOrder(wx, wy, kind);
+      if (!r.ok && !r.told) effects.spawnPing(wx, wy, "deny");
     },
   });
   const orderLine = new OrderLine(document.body, () => {
@@ -858,24 +978,26 @@ async function boot(): Promise<void> {
 
     // **더블탭 = 회피.** 단일 탭(이동)은 이미 나갔고, 두 번째 탭이 그것을 덮어쓴다.
     const now = performance.now();
-    const isDouble =
-      now - lastTap.t < DOUBLE_TAP_MS &&
-      Math.hypot(e.global.x - lastTap.x, e.global.y - lastTap.y) < DOUBLE_TAP_PX;
+    const isDouble = isDoubleTap(lastTap, now, e.global.x, e.global.y);
     lastTap = { t: now, x: e.global.x, y: e.global.y };
     if (isDouble) {
-      // 회피가 안 나갔으면 **왜** 안 나갔는지 그 자리에서 말한다(없다는 것으로 가르치는 건 가장
-      // 약한 가르침이다). ⚠ 예전엔 이유를 안 가리고 늘 "다리 1단이 되면…"이라 말했는데, 다리를
-      // 이미 판 사람이 쿨타임 중에 더블탭하면 그건 **거짓말**이었다. 근거는 game 이 판정한 그 값
-      // (orderWheel 의 unlocked·cdLeft)을 그대로 읽는다 · 조건을 여기서 다시 유도하지 않는다.
-      if (!issueOrder(p.x, p.y, "evade")) {
-        effects.spawnPing(p.x, p.y, "deny");
-        const slot = game.orderWheel().find((s) => s.spec.kind === "evade");
-        highlights.flash(
-          slot && !slot.unlocked
-            ? "다리 1단이 되면 「피해라」를 쓸 수 있습니다"
-            : "「피해라」는 아직 숨을 고르는 중입니다",
-          0xd0b050,
-        );
+      const r = issueOrder(p.x, p.y, "evade");
+      if (r.ok) {
+        // 회피가 접수됐다 · 첫 탭의 「가라」는 되돌릴 것이 아니라 이 명령에 덮인 것이다.
+        tapUndo = null;
+      } else {
+        // **거절됐으면 첫 탭의 「가라」도 남으면 안 된다.** 안 걷으면 "포식자를 피하라고 두 번
+        // 두드렸는데 무리가 그 포식자에게 걸어가는" 화면이 된다(`undoneOrder` 주석의 결함 D).
+        undoTapOrder();
+        // 회피가 안 나갔으면 **왜** 안 나갔는지 그 자리에서 말한다(없다는 것으로 가르치는 건 가장
+        // 약한 가르침이다). 근거는 game 이 판정한 그 값(orderWheel 의 unlocked·cdLeft)을 그대로
+        // 읽는다 · 조건을 여기서 다시 유도하지 않는다. 이유를 아는 자리가 이미 말했으면(`told`)
+        // 입을 다문다. 안 그러면 참인 이유가 거짓 이유에 덮인다(결함 E).
+        if (!r.told) {
+          effects.spawnPing(p.x, p.y, "deny");
+          const line = orderDenyLine(game.orderWheel().find((s) => s.spec.kind === "evade"));
+          if (line !== null) highlights.flash(line, 0xd0b050);
+        }
       }
       return;
     }
@@ -885,11 +1007,31 @@ async function boot(): Promise<void> {
     const own = nearestOwnEntity(p.x, p.y, 20);
     if (own !== null && game.passBaton(own)) {
       effects.spawnPing(p.x, p.y, "go");
+      tapUndo = null; // 이 탭은 명령을 안 바꿨다 · 되돌릴 것이 없다
       return;
     }
 
-    issueOrder(p.x, p.y);
+    // 「가라」가 무엇을 덮어썼는지 기억해 둔다 · 이 탭이 더블탭의 첫 탭으로 밝혀질 수 있다.
+    const before = game.herdOrder;
+    const installed = issueOrder(p.x, p.y).ok ? game.herdOrder : null;
+    tapUndo = installed === null ? null : { installed, prev: before, tick: game.world.tick };
   };
+
+  /**
+   * 거절된 더블탭 뒤에 남은 첫 탭의 「가라」를 걷고, 그 탭이 덮어쓴 앞 명령을 되돌린다.
+   * 무엇을 되돌릴지는 순수 함수(`undoneOrder`)가 정하고, 여기서는 그 답을 세계에 쓰기만 한다.
+   *
+   * ⚠ `setHerdOrder` 로 되돌리지 않는 이유: 그 문은 쿨타임과 기력을 **다시 물리고**, 잠긴 칸이면
+   *   되돌리기 자체를 거절한다. 되돌리기는 새 명령이 아니라 **없던 일로 하는 것**이라 대가가 없어야
+   *   한다. (Game 쪽에 되돌리기 문을 두는 편이 층 구분에는 더 맞다 · backlog)
+   */
+  function undoTapOrder(): void {
+    const back = undoneOrder(tapUndo, game.herdOrder, game.world.tick);
+    tapUndo = null;
+    if (back === undefined) return; // 그 사이 다른 것이 명령을 바꿨다 · 손대지 않는다
+    if (back === null) game.clearHerdOrder();
+    else game.world.herdOrder = back;
+  }
 
   /** 이 자리에서 반경 안에 있는 **내 종** 개체 중 가장 가까운 것의 id. 없으면 null. */
   function nearestOwnEntity(wx: number, wy: number, r: number): number | null {
@@ -912,8 +1054,11 @@ async function boot(): Promise<void> {
    * 탭 지점을 명령으로 해석한다 — 동시에 하나만: 사냥할 수 있는 개체면 사냥 잠금, 그 외 전부
    * (빈 땅·내 무리·못 사냥하는 상대)는 그 지점으로 이동. 목표가 못 가는 지형이거나 길이 없으면
    * 명령을 바꾸지 않고 거부 핑만 띄운다(왜 안 가는지 그 자리에서 보이게).
+   *
+   * 돌려주는 것이 불리언이 아닌 이유는 `OrderResult` 주석에 있다. **이유를 여기서 말했는지**를
+   * 부르는 쪽이 알아야 같은 자리에 두 번 말하지 않는다.
    */
-  function issueOrder(wx: number, wy: number, kind: OrderKind = "move"): boolean {
+  function issueOrder(wx: number, wy: number, kind: OrderKind = "move"): OrderResult {
     // 무리 지시(신탁) · 탭한 곳이 곧 "저기로 가라"다. 개체를 고르는 게 아니라 **종에게** 내리는 뜻이라
     // 무엇을 탭했는지는 상관없다(생물 위를 탭해도 그 자리로 간다).
     // ⚠ 「가라」만 통행 가능성을 본다 — 회피·원진처럼 제자리에서 하는 명령은 목표 지형과 무관하다.
@@ -922,18 +1067,20 @@ async function boot(): Promise<void> {
       // 0.25초짜리 핑만으로는 "탭이 먹기는 했는지"조차 안 읽힌다(실측: 탭 여섯 번 중 한 번이 조용히
       // 거부됐다). 새 줄을 만들지 않고 이미 있는 목표 줄에 잠깐 말로 남긴다.
       denyMs = ORDER_DENY_MS;
-      return false;
+      return { ok: false, told: true };
     }
     // **지휘 공백**(알파가 막 쓰러졌다)이면 아무도 안 듣는다 — 그 사실을 말로 알린다.
     if (game.leadVacuumSeconds > 0) {
       effects.spawnPing(wx, wy, "deny");
       highlights.flash("앞장서던 것이 쓰러졌습니다. 무리가 잠시 흩어집니다", 0xd07050);
-      return false;
+      return { ok: false, told: true };
     }
-    if (!game.setHerdOrder(wx, wy, kind)) return false;
+    // 여기까지 왔는데 game 이 거절하면 그건 잠긴 칸이거나 쿨타임이다 · 그 이유는 휠의 칸이 알고
+    // 있으므로(`orderDenyLine`) 여기서 지어내지 않는다. 아무 말도 안 했으니 told 는 false 다.
+    if (!game.setHerdOrder(wx, wy, kind)) return { ok: false, told: false };
     effects.spawnPing(wx, wy, "go");
     denyMs = 0; // 새 지시가 먹혔다 · 거부 안내는 그 자리에서 걷는다
-    return true;
+    return { ok: true, told: false };
   }
 
   /**
@@ -1390,6 +1537,12 @@ function emberDots(n: number): string {
   return "●".repeat(k) + "○".repeat(GAME.emberMax - k);
 }
 
-boot().catch((err: unknown) => {
-  console.error("부트 실패:", err);
-});
+// 브라우저에서만 부팅한다. 이 파일은 탭 판정의 순수 함수들(isDoubleTap·orderDenyLine·rewoundOrder·
+// undoneOrder)도 함께 내보내는데, 테스트가 그것들을 가져올 때 부팅까지 시작하면 window 가 없어
+// "부트 실패" 가 찍힌다. 동작에는 지장이 없지만, 테스트 출력에 상주하는 실패 로그는 **진짜 고장을
+// 가린다**. 실제 화면에는 window 가 늘 있으므로 이 조건이 부팅을 막는 일은 없다.
+if (typeof window !== "undefined") {
+  boot().catch((err: unknown) => {
+    console.error("부트 실패:", err);
+  });
+}
