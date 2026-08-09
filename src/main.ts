@@ -312,12 +312,13 @@ async function boot(): Promise<void> {
   // 무엇이 열렸는지 영영 모른다). 내보낸 수를 돌려준다.
   const playTierUps = (): number => {
     const ups = game.takeNewTiers();
-    ups.forEach((up, k) => {
-      const line = tierLine(up.cat, up.tier, game.genome.keys);
-      const title = `${CATEGORY_LABELS[up.cat]} ${TIER_ROMAN[up.tier]}`;
-      if (k === 0) moment.apex(title, up.tier, line.gain);
-      else window.setTimeout(() => moment.apex(title, up.tier, line.gain), k * 2300);
-    });
+    // 줄 세우기는 **연출 쪽이 쥔다.** 예전엔 여기서 setTimeout 으로 2.3초씩 엮었는데, 그러면
+    // 화면 밖 사정(구입 화면을 다시 열거나 시대가 넘어가는 것)과 순서가 어긋난다.
+    for (const up of ups) {
+      // 문구는 드래프트 미리보기와 **같은 문법**이다("가죽 IV") · 두 화면이 같은 사건을 다르게 부르면 안 된다.
+      const label = `${CATEGORY_LABELS[up.cat]} ${TIER_ROMAN[up.tier]}`;
+      moment.tierUp(label, up.tier, tierLine(up.cat, up.tier, game.genome.keys).gain);
+    }
     return ups.length;
   };
 
@@ -345,9 +346,11 @@ async function boot(): Promise<void> {
     buyTier: (cat: Category): boolean => {
       if (!game.buyTier(cat)) return false;
       refreshBuild(); // 설계도(내 형질)에 방금 오른 단을 반영
-      // 승급 연출(moment.apex)은 전체 화면 z18 이라 이 패널(z16)을 2.2초 동안 통째로 덮는다.
-      // 덮인 채로 두면 "닫힌 건지 멈춘 건지" 모를 화면이 되므로 먼저 접고 연출을 내보낸다.
+      // 승급 연출은 위쪽 띠(z18)라 이 패널(z16)의 머리를 가린다. 덮인 채로 두면 "닫힌 건지 멈춘
+      // 건지" 모를 화면이 되므로 먼저 접고 연출을 내보낸다.
       // 다시 사려면 알약 옆 카운터를 한 번 더 누르면 된다(문이 상시로 떠 있다).
+      // ⚠ 연출이 전체 화면 커튼이던 시절의 이유(2.2초간 통째로 덮음)는 사라졌다 · 띠가 패널을
+      //   안 가리게 자리를 잡으면 **패널을 연 채로 연속 구입**이 가능해진다(backlog 후보).
       genePanel.close();
       playTierUps();
       // 세대별 형질과 같은 처리 · 텍스처를 새로 만들지 않는다(이미 태어난 개체는 옛 모습을 유지하고
@@ -789,6 +792,12 @@ async function boot(): Promise<void> {
      * 미뤄 둔 자리에 UI 를 넣었으니 문을 열어 재게 한다(적어 둔 한계는 방지책이 아니다).
      * 기록·코드는 **게임이 만든 진짜 값**이다(가짜 문자열 금지).
      */
+    /**
+     * 티어 승급 띠를 지금 띄운다 · 겹침 검사기가 이 연출을 재게 하는 문(2026-08-09 신설).
+     * 승급은 방울을 모으거나 카드를 골라야 나오는 순간이라 검사기가 스스로 못 만든다.
+     * 값은 **게임과 같은 함수**로 만든다(`tierLine`) — 가짜 문자열을 재면 검사가 거짓말이 된다.
+     */
+    tierUp: (cat: string, tier: number) => void;
     report: () => void;
   }
   if (new URLSearchParams(window.location.search).has("ovhook")) {
@@ -810,6 +819,10 @@ async function boot(): Promise<void> {
         if (b) moment.era(b.title, b.lines, () => {});
       },
       genes: (n) => game.debugGrantGenes(n),
+      tierUp: (cat, tier) => {
+        const c = cat as Category;
+        moment.tierUp(`${CATEGORY_LABELS[c]} ${TIER_ROMAN[tier]}`, tier, tierLine(c, tier, game.genome.keys).gain);
+      },
       report: () => reportScreen.show(game.runHistory, game.runCode()),
     };
     (window as unknown as { __ov: OverlapHooks }).__ov = hooks;

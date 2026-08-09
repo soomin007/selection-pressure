@@ -337,6 +337,19 @@ const SCREENS = {
   // ── 런 보고서(이 혈통의 기록) + 판 분석 코드 ────────────────────────────────────
   // 이 화면은 오래 "런을 끝까지 굴려야 나와서 안 잰다"로 미뤄져 있었는데, 판 분석 코드 상자와
   // 복사 버튼이 여기 들어왔다. `?ovhook` 의 report 문이 **게임이 만든 진짜 기록·진짜 코드**로 연다.
+  // 티어 승급 띠 — 2026-08-09 에 통째로 새로 짠 연출(옛 「정점」 재활용을 걷었다).
+  // 승급은 방울을 모으거나 카드를 골라야 나오는 순간이라 검사기가 스스로 못 만든다 → `?ovhook` 의 문으로 연다.
+  // **4단**을 재는 이유: 띠가 가장 크고(고리까지 뜬다) 효과 줄이 가장 길어 최악 길이가 여기서 나온다.
+  tierUp: {
+    label: "티어 승급 띠(가죽 IV단 · 가장 긴 줄)",
+    async go(page) {
+      await toWatch(page);
+      await page.evaluate(() => window.__ov.tierUp("hide", 4));
+      await page.waitForTimeout(450); // 띠가 다 내려온 뒤(애니메이션 16% 지점을 넘겨) 잰다
+      const seen = await page.locator("text=/가죽 IV/").count(); // 표기는 드래프트 화면과 같은 로마자다
+      if (seen === 0) throw new Error("승급 띠가 안 떴다");
+    },
+  },
   runReport: {
     label: "런 보고서 + 판 분석 코드(복사)",
     async go(page) {
@@ -425,6 +438,8 @@ const SCENES = [
   { screen: "genePanelRich", viewport: DESKTOP, query: "?ovhook" },
   // 런 보고서 + 판 분석 코드 · 세로로 자라는 전체화면 오버레이라 짧은 폰이 최악이고,
   // 좁은 폰은 복사 버튼과 안내 줄이 한 줄에서 부딪히는 폭이다.
+  { screen: "tierUp", viewport: PHONE_NARROW, query: "?ovhook" },
+  { screen: "tierUp", viewport: PHONE_SHORT, query: "?ovhook" },
   { screen: "runReport", viewport: PHONE_NARROW, query: "?ovhook" },
   { screen: "runReport", viewport: PHONE_SHORT, query: "?ovhook" },
   { screen: "runReportBottom", viewport: PHONE_NARROW, query: "?ovhook" },
