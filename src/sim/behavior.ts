@@ -10,6 +10,7 @@
 import type { World, DeathCause } from "@/sim/world";
 import type { Entity } from "@/sim/entity";
 import type { Food } from "@/sim/food";
+import type { Terrain } from "@/sim/terrain";
 import type { Traits } from "@/sim/genome";
 import { TRAIT_MAX, cloneGenome, mutateGenome } from "@/sim/genome";
 import { carnivory01, grazeEfficiency, huntEfficiency } from "@/sim/diet";
@@ -773,7 +774,10 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         // ⚠ 도착(reached) 뒤에도 작동한다 · 그래야 목표 근방에 떨어진 방울을 무리가 알아서 줍는다.
         //   대신 이 개체는 **순종(orderFollowers)에 안 센다** · 지시가 아니라 방울이 몰고 있는 것이라,
         //   세면 화면의 "따르는 중 N/M" 이 부풀어 거짓말이 된다(가는 길 먹이와 같은 처리).
-        const drop = hunting ? null : nearestFreeDrop(world, e.x, e.y);
+        // ⚠ 통행 특성을 넘기는 이유: **걸어 닿을 수 있는 방울만** 고르게 하기 위해서다. 직선거리만
+        //   보던 시절에는 물 건너 방울이 뽑혀 개체가 물가에 머리를 박은 채 굶어 죽었다(2026-08-09 ·
+        //   `nearestFreeDrop` 주석에 실측이 있다). 이 개체가 갈 수 있는가는 이 개체의 게놈이 정한다.
+        const drop = hunting ? null : nearestFreeDrop(world, e.x, e.y, canSwim, canLand, canFly);
         if (drop !== null) {
           // 길찾기를 태우는 이유는 지시와 같다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다.
           const nav = navTo(e, world, drop, canSwim, canLand, canFly);
@@ -1381,18 +1385,50 @@ function nearestFood(
 }
 
 /**
- * **가장 가까운 아직 안 주운 방울**(ORDER.geneRadius 안). 없으면 null.
+ * **가장 가까운, 아직 안 주웠고 「걸어 닿을 수 있는」 방울**(ORDER.geneRadius 안). 없으면 null.
  *
  * **[사용자 2026-08-09]** "가라 명령 때 방울을 우선시해서 알아서 먹는다거나 하는 건 있었으면 좋겠어."
- * 부르는 곳은 behavior 의 **지시 블록 한 자리뿐**이다 — 지시가 없는 세계에서는 한 번도 안 불린다
+ * 부르는 곳은 behavior 의 **지시 블록 한 자리뿐**이다. 지시가 없는 세계에서는 한 번도 안 불린다
  * (그것이 「지시 없는 세계 1비트 불변」을 지키는 방식이다).
  *
- * · 야생은 방울을 못 줍는다(`world.collectGeneDrops` 의 `isPlayer`) · 이 함수를 야생 경로에서 부르면
- *   그 계약이 조용히 깨지므로, 부르는 자리가 내 종 전용 블록 안이라는 것이 곧 계약의 이행이다.
+ * ## 왜 도달 판정이 있나 (2026-08-09 실측 · 이 함수가 개체를 굶겨 죽였다)
+ * 처음엔 `taken` 과 **직선거리**만 봤다. 통행 가능성도 경로 존재도 안 봤다. 그래서 물 건너·산 너머
+ * 방울이 뽑혔고, 그것이 그대로 `navTo` 로 들어갔다. navTo 는 길을 못 찾으면(findPath 가 빈 배열)
+ * **목표로 직진**(final=true)을 돌려준다 · 그 벡터가 `ORDER.pull`(0.9)로 섞여 개체의 천성(먹이 찾기)이
+ * 10%만 남고, 개체는 물가·산자락에 머리를 박은 채 선다. 그리고 안 풀린다:
+ *   (a) 방울 추적에는 끼임 카운터가 없다(끼임 감지는 `targetFood`/`targetPrey` 가 있을 때만 돈다)
+ *   (b) 「가라」는 `ticks=0` 무기한이라 사람이 철회할 때까지 유지된다
+ *   (c) 도착(reached) 뒤에도 이 분기가 돈다
+ * 실측(폭 1타일 물벽 · 지시는 북쪽 끝 · 방울은 벽 남쪽 30px · `sim/herdOrder.test.ts` 의 그 판):
+ *   · 개체 하나 600틱 · 6시드: 고치기 전에는 여섯 시드 전부 y=480(물벽 북쪽 면)에 얼어붙어
+ *     정지 179~322틱 뒤 232~423틱에 **아사**했다. 고친 뒤에는 정지 0~14틱 · 다섯 시드 생존
+ *     (남은 하나는 방울이 없어도 굶는 시드다 · 혼자 390px 를 행군하는 판이라 그렇다).
+ *   · 무리 12마리 900틱 · 4시드: 생존 0/1/0/0 → **3/10/3/0** · 정지(개체틱 합) 1058~4745 → 4~106.
+ * 실제 생성 맵에서도 군도 20~30/120 · 대양 9~25/118 회의 방울이 "반경 안에 길 없는 개체"를 가졌다
+ * (대륙·판게아는 0/120 이라, 밸런스 기준선인 대륙 판의 수치는 이 고침으로 한 자리도 안 움직인다 ·
+ *  군도 판 16시드에서는 순종률이 오르고 회수율은 같거나 오른다: 다산 초식 무리 56.3% → 62.5%).
+ *
+ * ## 판정은 `world.pickGeneDropSpot`(방울을 **놓을** 자리를 고르는 함수)과 같은 것을 쓴다
+ * 거기가 요구하는 두 가지는 ① 내 종이 지나갈 수 있는 지형 ② **실제로 걸어 닿는 곳**이고, ②는
+ * `findPath(...).length > 0` 로 판정한다. 여기서도 같은 질문을 던진다. 다만 **답을 미리 만들어 둔다**
+ * (`reachLabels`). 놓을 때와 주우러 갈 때의 판정이 갈리면 "놓이기는 하는데 아무도 안 가는" 방울이
+ * 생기거나, 반대로 "갈 수 있는데 무시하는" 방울이 생긴다.
+ * ①은 ②에 포함된다 · 막힌 타일은 라벨이 -1 이라 어느 개체와도 같은 번호가 될 수 없다.
+ *
  * · rng 미사용 · 동률이면 배열에서 먼저 나온 것(= 먼저 떨어진 것)을 고르는 전순서라 답이 하나뿐이다.
  * · 방울은 한 시대에 스무 개 남짓이고 주운 것도 배열에 남으므로(taken) 선형 훑기로 충분하다.
+ * · 도달 판정은 **거리 심사를 통과한 후보에만** 건다 · 반경 밖 방울에는 한 번도 안 묻는다.
+ * · 야생은 방울을 못 줍는다(`world.collectGeneDrops` 의 `isPlayer`) · 이 함수를 야생 경로에서 부르면
+ *   그 계약이 조용히 깨지므로, 부르는 자리가 내 종 전용 블록 안이라는 것이 곧 계약의 이행이다.
  */
-function nearestFreeDrop(world: World, x: number, y: number): Vec | null {
+function nearestFreeDrop(
+  world: World,
+  x: number,
+  y: number,
+  canSwim: boolean,
+  canLand: boolean,
+  canFly: boolean,
+): Vec | null {
   let best: Vec | null = null;
   let bestD2 = ORDER.geneRadius * ORDER.geneRadius;
   for (const d of world.geneDrops) {
@@ -1400,12 +1436,114 @@ function nearestFreeDrop(world: World, x: number, y: number): Vec | null {
     const dx = d.x - x;
     const dy = d.y - y;
     const d2 = dx * dx + dy * dy;
-    if (d2 < bestD2) {
-      bestD2 = d2;
-      best = { x: d.x, y: d.y };
-    }
+    // 싼 것부터: 거리로 먼저 자르고, 지금까지의 최선을 이긴 후보에만 도달을 묻는다.
+    if (d2 >= bestD2) continue;
+    if (!canWalkTo(world.terrain, x, y, d.x, d.y, canSwim, canLand, canFly)) continue;
+    bestD2 = d2;
+    best = { x: d.x, y: d.y };
   }
   return best;
+}
+
+/**
+ * (x0,y0) 에서 (x1,y1) 로 **걸어갈 길이 있는가.** `terrain.findPath(...).length > 0` 과 같은 답을
+ * 돌려주되(같은 4방향 연결 · 같은 통행 규칙), BFS 를 매번 돌리는 대신 **연결 영역 라벨을 한 번 만들어
+ * 두고 번호만 비교**한다.
+ *
+ * 왜 이렇게까지 하나: 이 판정을 부르는 `nearestFreeDrop` 은 **개체마다 매 틱** 불린다. 거기서 findPath
+ * 를 부르면 길이 없는 경우가 최악이다. BFS 가 도달 가능한 타일을 **전부** 훑고 나서야 "없다"고 답한다.
+ * 그리고 길이 없는 경우가 바로 이 판정이 존재하는 이유(= 자주 일어나는 쪽)라, 고치려던 상황에서
+ * 가장 비싸진다. 라벨은 지형 한 판·통행 특성 하나당 딱 한 번 만들고(격자 27x48 = 1296칸), 그 뒤로는
+ * 배열 읽기 두 번이다.
+ *
+ * · **결정론**: 순수 기하 + 고정 순회 순서 · rng 미사용. 캐시는 (지형, 통행 특성) → 답의 메모일 뿐이라
+ *   같은 입력에 늘 같은 값이고, 세계를 1비트도 안 바꾼다.
+ * · **게으르다**: 라벨은 이 함수가 처음 불릴 때 만들어진다 = 지시가 걸리고 반경 안에 방울이 있을 때만.
+ *   지시 없는 세계에서는 `nearestFreeDrop` 자체가 안 불리므로 라벨도 안 만들어진다.
+ * · 통행 특성은 게놈에서 오고 게놈은 시대(World)마다 새로 만들어지지만, 한 시대 안에서도 안전하도록
+ *   특성 조합을 키에 넣는다(같은 지형 위에 육상 종과 비행 종의 답이 섞이면 안 된다).
+ * · 개체가 막힌 타일 위에 서 있으면(라벨 -1) 무조건 false 다 · 그 자리에서 어디로도 "걸어갈 길"을
+ *   보장할 수 없으니, 방울을 안 고르고 지시를 따르게 두는 쪽이 안전하다(이 함수가 고치려는 결함이
+ *   정확히 "못 가는 데로 끌려가 굳는 것"이다).
+ */
+function canWalkTo(
+  terr: Terrain,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  canSwim: boolean,
+  canLand: boolean,
+  canFly: boolean,
+): boolean {
+  if (canFly) return true; // 비행 종은 어느 두 점 사이든 지형에 안 막힌다(라벨을 만들 것도 없다)
+  const label = reachLabels(terr, canSwim, canLand, canFly);
+  const from = label[terr.tileIndex(x0, y0)] ?? -1;
+  if (from < 0) return false;
+  return from === (label[terr.tileIndex(x1, y1)] ?? -1);
+}
+
+/**
+ * 지형 한 판의 **연결 통행 영역 라벨** 캐시. `label[타일] = 영역 번호`(막힌 타일은 -1) ·
+ * 두 타일의 번호가 같으면 그 사이에 4방향으로 걸어갈 길이 반드시 있다.
+ *
+ * `Terrain` 은 시대마다 새로 만들어지고 타일 배열이 `readonly` 라 한 판 안에서는 답이 안 변한다.
+ * 그래서 지형 객체를 키로 한 WeakMap 이면 수명 관리가 저절로 된다(지형이 버려지면 라벨도 함께 간다).
+ * 안쪽 Map 의 키는 통행 특성 세 개를 비트로 접은 것이다.
+ *
+ * ⚠ 통행 규칙 자체는 여기서 다시 쓰지 않는다 · 반드시 `terrain.isPassable` 에 물어본다. 규칙을 두 곳에
+ *   적으면 "지나갈 수 있다고 판정한 곳으로 갔는데 못 지나가는" 어긋남이 조용히 생긴다.
+ */
+const REACH_LABELS = new WeakMap<Terrain, Map<number, Int32Array>>();
+
+function reachLabels(terr: Terrain, canSwim: boolean, canLand: boolean, canFly: boolean): Int32Array {
+  const key = (canSwim ? 1 : 0) | (canLand ? 2 : 0) | (canFly ? 4 : 0);
+  let byProfile = REACH_LABELS.get(terr);
+  if (byProfile === undefined) {
+    byProfile = new Map<number, Int32Array>();
+    REACH_LABELS.set(terr, byProfile);
+  }
+  const cached = byProfile.get(key);
+  if (cached !== undefined) return cached;
+
+  const cols = terr.cols;
+  const rows = terr.rows;
+  const n = cols * rows;
+  const label = new Int32Array(n).fill(-1);
+  const passable = (idx: number): boolean =>
+    terr.isPassable(terr.tileCenterX(idx), terr.tileCenterY(idx), canSwim, canLand, canFly);
+  let id = 0;
+  for (let start = 0; start < n; start += 1) {
+    if (label[start] !== -1 || !passable(start)) continue;
+    // 4방향 flood fill · 이웃 순회 순서는 findPath 와 같게 고정한다(답이 같아야 하는 두 함수다).
+    const queue: number[] = [start];
+    label[start] = id;
+    let head = 0;
+    while (head < queue.length) {
+      const cur = queue[head++] ?? 0;
+      const cx = cur % cols;
+      const cy = (cur - cx) / cols;
+      if (cx + 1 < cols && label[cur + 1] === -1 && passable(cur + 1)) {
+        label[cur + 1] = id;
+        queue.push(cur + 1);
+      }
+      if (cx - 1 >= 0 && label[cur - 1] === -1 && passable(cur - 1)) {
+        label[cur - 1] = id;
+        queue.push(cur - 1);
+      }
+      if (cy + 1 < rows && label[cur + cols] === -1 && passable(cur + cols)) {
+        label[cur + cols] = id;
+        queue.push(cur + cols);
+      }
+      if (cy - 1 >= 0 && label[cur - cols] === -1 && passable(cur - cols)) {
+        label[cur - cols] = id;
+        queue.push(cur - cols);
+      }
+    }
+    id += 1;
+  }
+  byProfile.set(key, label);
+  return label;
 }
 
 /**

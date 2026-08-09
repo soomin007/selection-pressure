@@ -102,19 +102,19 @@ function meanDistTo(w: World, p: { x: number; y: number }): number {
 }
 
 // ---------------------------------------------------------------------------
-// 「피해라」 — 2026-08-09 이전에는 **정반대로 작동했다**
+// 「피해라」: 2026-08-09 이전에는 **정반대로 작동했다**
 //
 // 휠에는 "반대 방향으로 흩어져 달아납니다"라 써 놓고, sim 에는 `order.kind` 를 읽는 분기가 한 줄도
 // 없어서 「가라」와 완전히 같은 코드를 밟았다(같은 시드에서 두 명령의 개체 좌표가 비트 단위로 같았다).
 // 더블탭은 기본 조작이라, 위험을 보고 누르면 무리가 **그리로** 갔다.
-// 아래 둘은 그 회귀의 감지기다 — 빨간불이면 kind 분기가 다시 사라진 것이다.
+// 아래 둘은 그 회귀의 감지기다. 빨간불이면 kind 분기가 다시 사라진 것이다.
 // ---------------------------------------------------------------------------
-describe("「피해라」 — 탭한 자리에서 멀어진다", () => {
+describe("「피해라」 · 탭한 자리에서 멀어진다", () => {
   const at = (kind: "move" | "evade", spot: { x: number; y: number }, steps: number): World =>
     run("order-evade", tune({ herding: 40 }), steps, { x: spot.x, y: spot.y, kind });
 
   it("「가라」는 그 자리로 모으고, 「피해라」는 그 자리에서 멀어진다", () => {
-    // 탭 지점을 무리 한복판으로 잡는다 — 무게중심은 흩어져도 잘 안 움직이므로 **평균 거리**로 잰다.
+    // 탭 지점을 무리 한복판으로 잡는다. 무게중심은 흩어져도 잘 안 움직이므로 **평균 거리**로 잰다.
     const c0 = playerCentroid(run("order-evade", tune({ herding: 40 }), 1, null));
     const spot = { x: c0.x, y: c0.y };
     const idle = meanDistTo(run("order-evade", tune({ herding: 40 }), 200, null), spot);
@@ -142,7 +142,7 @@ describe("「피해라」 — 탭한 자리에서 멀어진다", () => {
   });
 });
 
-describe("명령 휠 — 구현 안 된 칸은 화면에서 약속하지 않는다", () => {
+describe("명령 휠 · 구현 안 된 칸은 화면에서 약속하지 않는다", () => {
   it("`ready: false` 인 칸은 어떤 도장으로도 안 열린다(게이트가 하나뿐이다)", () => {
     const maxed = {
       fang: TIER_STEPS[3] as number,
@@ -168,9 +168,9 @@ describe("명령 휠 — 구현 안 된 칸은 화면에서 약속하지 않는�
 });
 
 // ---------------------------------------------------------------------------
-// 방울 우선 — **[사용자 2026-08-09]** "가라 명령 때 방울을 우선시해서 알아서 먹는다"
+// 방울 우선 · **[사용자 2026-08-09]** "가라 명령 때 방울을 우선시해서 알아서 먹는다"
 // ---------------------------------------------------------------------------
-describe("방울 우선 — 지시가 걸린 동안에만 새어 줍는다", () => {
+describe("방울 우선 · 지시가 걸린 동안에만 새어 줍는다", () => {
   /** 개체 하나만 남긴 세계 · 방울을 (dx,dy) 만큼 옆에 놓고 지시는 정반대(동쪽 끝)로 준다. */
   function oneWithDrop(seed: string, order: HerdOrder | null, steps: number): { taken: boolean; snap: string } {
     const w = new World(seed, W, H, tune({ herding: 40 }));
@@ -644,5 +644,208 @@ describe("오목한 만 · 지형에 막힌 코앞은 「도착」이 아니다"
       // 전부 57~60 에서 멈췄고, 고친 뒤에는 1~24 까지 들어간다.
       expect(best, `시드 ${seed}`).toBeLessThan(40);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 방울 우선 · **닿을 수 없는 방울은 아예 안 고른다** (2026-08-09 실측)
+//
+// 무엇이 문제였나: `nearestFreeDrop` 이 `taken` 과 **직선거리**만 봤다. 통행 가능성도 경로 존재도
+// 안 봤다. 물 건너 방울이 뽑히면 그것이 navTo 로 들어가는데, findPath 가 빈 배열을 돌려주면 navTo 는
+// **목표로 직진**(final=true)을 반환한다. 그 벡터가 ORDER.pull(0.9)로 섞여 개체의 천성(먹이 찾기)이
+// 10%만 남고, 개체는 물가에 머리를 박은 채 선다. 그리고 안 풀린다:
+//   (a) 방울 추적에는 끼임 카운터가 없다(끼임 감지는 targetFood/targetPrey 가 있을 때만 돈다)
+//   (b) 「가라」는 무기한이라 사람이 철회할 때까지 유지된다
+//   (c) 도착(reached) 뒤에도 이 분기가 돈다
+// 실측(아래 판 그대로 · 고치기 전 → 고친 뒤):
+//   · 개체 하나 600틱 · 6시드: 정지 179~322틱 → **0~14틱** · 죽은 시각 232~423틱 → 6시드 중 5시드 생존
+//     (남은 한 시드 wall-c 는 방울이 없어도 471틱에 굶는다 · 혼자 390px 를 행군하는 판이라 그렇다).
+//     고치기 전에는 여섯 시드 전부 y=480(물벽 북쪽 면)에 얼어붙은 채 죽었다.
+//   · 무리 12마리 900틱 · 4시드: 생존 0/1/0/0 → **3/10/3/0** · 정지(개체틱 합) 1058~4745 → 4~106.
+//
+// 지금은 **건너편 방울이 있는 판과 없는 판이 비트 단위로 같다** · 못 가는 방울은 아무 힘도 안 쓴다.
+// 그것이 아래 A/B 단언들이 재는 것이고, 옛 결함의 가장 정확한 감지기다.
+//
+// ⚠ 「가라」의 **목표 자체**에 길이 없을 때의 직진 폴백은 여기서 안 다룬다(그건 이 기능보다 오래된
+//   더 큰 구멍이고, 손대면 밸런스 기준선이 통째로 이동한다 · backlog).
+// ---------------------------------------------------------------------------
+
+/**
+ * 판을 남북으로 가르는 **폭 1타일 물벽**. gapX 를 주면 그 칸만 육지로 남겨 **돌아가는 길**을 낸다
+ * (= 직선은 막혔는데 길은 있는 자리 · 싼 직선 판정만으로 거르면 이 방울을 잃는다).
+ * 생성기에 안 기댄다 · 시드마다 지형이 달라지면 재현이 안 된다(만 테스트와 같은 결).
+ */
+const WALL_TY = 24;
+function wallTerrain(gapX: number | null): Terrain {
+  const tiles: TileKind[] = new Array<TileKind>(COLS * ROWS).fill(TILE.land);
+  const elev: number[] = new Array<number>(COLS * ROWS).fill(0.5);
+  for (let x = 0; x < COLS; x++) {
+    if (gapX !== null && x === gapX) continue;
+    tiles[WALL_TY * COLS + x] = TILE.water;
+  }
+  return new Terrain(COLS, ROWS, CS, elev, tiles);
+}
+
+/** 벽 북쪽에 개체 하나 · 벽 남쪽에 방울 하나 · 지시는 북쪽 끝. 방울은 `drop` 이 true 일 때만 놓는다. */
+function wallRun(
+  seed: string,
+  terrain: Terrain,
+  drop: boolean,
+  order: HerdOrder | null,
+  steps: number,
+): { taken: boolean; stalled: number; alive: boolean; toTarget: number; snap: string } {
+  const w = worldOn(terrain, seed);
+  const start = { x: 270, y: 450 }; // 타일 (13,22) 중심 · 벽(24행)에서 두 칸 북쪽
+  let kept = false;
+  for (let i = w.entities.length - 1; i >= 0; i--) {
+    const e = w.entities[i];
+    if (e === undefined) continue;
+    if (e.species.isPlayer && !kept) {
+      kept = true;
+      e.x = start.x;
+      e.y = start.y;
+      e.prevX = e.x;
+      e.prevY = e.y;
+      e.vx = 0;
+      e.vy = 0;
+      continue;
+    }
+    w.entities.splice(i, 1); // 한 마리만 · 뭉침·도망·야생이 계측을 흐리지 않게
+  }
+  // 방울은 벽 **남쪽** 30px(반경 160 안이지만 벽 건너) · 지시는 정반대인 북쪽 끝.
+  if (drop) w.spawnGeneDrop(270, 530, 3, "boss");
+  const target = order === null ? start : { x: order.x, y: order.y };
+  let stalled = 0;
+  let px = start.x;
+  let py = start.y;
+  for (let i = 0; i < steps; i++) {
+    w.armLead();
+    w.herdOrder = order;
+    w.step();
+    const me = w.entities.find((e) => e.alive && e.species.isPlayer);
+    if (me === undefined) break;
+    // 이번 틱에 사실상 안 움직였나(벽에 머리를 박고 선 상태). 속도 상한이 1px/틱 언저리라 0.05 면 정지다.
+    if (Math.hypot(me.x - px, me.y - py) < 0.05) stalled += 1;
+    px = me.x;
+    py = me.y;
+  }
+  const me = w.entities.find((e) => e.alive && e.species.isPlayer);
+  return {
+    taken: w.geneDrops[0]?.taken === true,
+    stalled,
+    alive: me !== undefined,
+    toTarget: me === undefined ? Infinity : Math.hypot(me.x - target.x, me.y - target.y),
+    snap: snapshot(w),
+  };
+}
+
+/** 벽 북쪽에 무리 n 마리 · 벽 남쪽에 방울 하나 · 지시는 북쪽 끝. 굶주림은 무리 단위로만 읽힌다. */
+function wallHerdRun(
+  seed: string,
+  drop: boolean,
+  steps: number,
+  n: number,
+): { alive: number; stalled: number; taken: boolean } {
+  const w = worldOn(wallTerrain(null), seed);
+  let kept = 0;
+  for (let i = w.entities.length - 1; i >= 0; i--) {
+    const e = w.entities[i];
+    if (e === undefined) continue;
+    if (e.species.isPlayer && kept < n) {
+      e.x = 270 + ((kept % 4) - 1.5) * 16;
+      e.y = 450 - Math.floor(kept / 4) * 16; // 벽(24행 = y 480~500) 북쪽에 뭉쳐 세운다
+      e.prevX = e.x;
+      e.prevY = e.y;
+      e.vx = 0;
+      e.vy = 0;
+      kept += 1;
+      continue;
+    }
+    w.entities.splice(i, 1); // 야생은 뺀다 · 도망이 굶주림 계측을 흐리지 않게
+  }
+  if (drop) w.spawnGeneDrop(270, 530, 3, "boss");
+  let stalled = 0;
+  const prev = new Map<number, { x: number; y: number }>();
+  for (const e of w.entities) prev.set(e.id, { x: e.x, y: e.y });
+  for (let i = 0; i < steps; i++) {
+    w.armLead();
+    w.herdOrder = { x: 270, y: 60, kind: "move" };
+    w.step();
+    for (const e of w.entities) {
+      if (!e.alive || !e.species.isPlayer) continue;
+      const p = prev.get(e.id);
+      if (p !== undefined && Math.hypot(e.x - p.x, e.y - p.y) < 0.05) stalled += 1;
+      prev.set(e.id, { x: e.x, y: e.y });
+    }
+  }
+  let alive = 0;
+  for (const e of w.entities) if (e.alive && e.species.isPlayer) alive += 1;
+  return { alive, stalled, taken: w.geneDrops[0]?.taken === true };
+}
+
+describe("방울 우선 · 닿을 수 없는 방울은 안 고른다", () => {
+  const north: HerdOrder = { x: 270, y: 60, kind: "move" };
+
+  it("물로 갈린 판에서 건너편 방울을 안 고른다(있는 판과 없는 판이 비트 단위로 같다)", () => {
+    for (const seed of ["wall-a", "wall-b", "wall-c"]) {
+      const withDrop = wallRun(seed, wallTerrain(null), true, north, 600);
+      const without = wallRun(seed, wallTerrain(null), false, north, 600);
+      expect(withDrop.taken, `시드 ${seed}`).toBe(false); // 애초에 못 가는 방울이다
+      // 건너편 방울이 이동에 **한 번도 안 닿았다**는 가장 강한 진술. 고치기 전에는 이 판이
+      // 통째로 다른 세계였다(개체가 물벽에 붙어 굶어 죽었다).
+      expect(withDrop.snap, `시드 ${seed}`).toBe(without.snap);
+    }
+  });
+
+  it("벽에 안 박히고 지시를 계속 따른다 · 정지 틱이 안 는다", () => {
+    for (const seed of ["wall-a", "wall-b", "wall-follow"]) {
+      const r = wallRun(seed, wallTerrain(null), true, north, 600);
+      // 고치기 전: 이 시드들이 정지 179~322틱이었고 y=480(물벽 면)에 얼어붙었다.
+      expect(r.stalled, `시드 ${seed}`).toBeLessThan(60);
+      expect(r.alive, `시드 ${seed}`).toBe(true);
+      expect(r.toTarget, `시드 ${seed}`).toBeLessThan(160); // 북쪽 지시점 근처까지 실제로 갔다
+    }
+  });
+
+  it("무리가 건너편 방울 앞에서 굶어 죽지 않는다(12마리 900틱)", () => {
+    // 이 게임에서 굶주림은 개체 하나가 아니라 무리 단위로 읽힌다 · 혼자 행군하는 판은 방울과
+    // 무관하게도 굶는 시드가 있어(위 wall-c) 생존을 홀로 재면 잡음이 크다.
+    let aliveWith = 0;
+    let stalledWith = 0;
+    for (const seed of ["herd-a", "herd-b", "herd-c", "herd-d"]) {
+      const withDrop = wallHerdRun(seed, true, 900, 12);
+      const without = wallHerdRun(seed, false, 900, 12);
+      expect(withDrop.taken, `시드 ${seed}`).toBe(false);
+      expect(withDrop.alive, `시드 ${seed}`).toBe(without.alive); // 방울이 죽음을 안 만든다
+      expect(withDrop.stalled, `시드 ${seed}`).toBe(without.stalled);
+      aliveWith += withDrop.alive;
+      stalledWith += withDrop.stalled;
+    }
+    // 고치기 전 실측: 생존 합 1(0/1/0/0) · 정지 합 10169. 고친 뒤: 16(3/10/3/0) · 227.
+    expect(aliveWith).toBeGreaterThan(8);
+    expect(stalledWith).toBeLessThan(1000);
+  });
+
+  it("길이 있는 방울은 여전히 고른다 · 직선(같은 판·벽 없음)", () => {
+    // 이 케이스가 빨간불이면 「기능을 통째로 끈 것」과 구별이 안 된다.
+    const r = wallRun("wall-flat", flatTerrain(), true, north, 600);
+    expect(r.taken).toBe(true);
+  });
+
+  it("길이 있는 방울은 여전히 고른다 · 돌아가는 길(직선은 물에 막혔다)", () => {
+    // 벽에 구멍 하나(타일 x=10) · 개체(x=13)와 방울(x=13) 사이 직선은 물이지만 돌아가면 닿는다.
+    // 싼 직선 판정(walkableLine)만으로 걸렀다면 이 방울은 영영 안 주워진다.
+    const terrain = wallTerrain(10);
+    expect(terrain.walkableLine(270, 450, 270, 530, false, true, false)).toBe(false); // 전제: 직선은 막혔다
+    expect(terrain.findPath(270, 450, 270, 530, false, true, false).length).toBeGreaterThan(0); // 전제: 길은 있다
+    const r = wallRun("wall-gap", terrain, true, north, 600);
+    expect(r.taken).toBe(true);
+  });
+
+  it("지시가 null 이면 방울이 있든 없든 세계가 1비트도 안 달라진다", () => {
+    // 도달 판정을 넣으면서 지형 훑기가 지시 밖으로 새면 여기서 잡힌다.
+    const withDrop = wallRun("wall-idle", wallTerrain(null), true, null, 300);
+    const without = wallRun("wall-idle", wallTerrain(null), false, null, 300);
+    expect(withDrop.snap).toBe(without.snap);
   });
 });
