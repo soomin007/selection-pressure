@@ -1042,8 +1042,9 @@ async function boot(): Promise<void> {
     const back = undoneOrder(tapUndo, game.herdOrder, game.world.tick);
     tapUndo = null;
     if (back === undefined) return; // 그 사이 다른 것이 명령을 바꿨다 · 손대지 않는다
-    if (back === null) game.clearHerdOrder();
-    else game.world.herdOrder = back;
+    // ⚠ `world.herdOrder` 를 직접 쓰지 않는다 — 그러면 세계는 되돌아가는데 **판 분석 코드에는
+    //   취소된 탭이 남아**, 되살릴 때 재현이 그 명령을 다시 내려 판이 갈라진다(2026-08-09).
+    game.undoHerdOrder(back);
   }
 
   /** 이 자리에서 반경 안에 있는 **내 종** 개체 중 가장 가까운 것의 id. 없으면 null. */

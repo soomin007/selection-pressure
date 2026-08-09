@@ -713,6 +713,31 @@ export class Game {
   }
 
   /**
+   * **방금 접수한 명령을 없던 일로 한다** — 세계의 뜻을 되돌리고 **기록에서도 지운다**.
+   *
+   * 더블탭이 거절될 때 첫 탭의 「가라」를 걷는 자리가 이걸 쓴다(main 의 `undoTapOrder`).
+   * ⚠ 예전에는 main 이 `world.herdOrder` 를 직접 되돌렸는데, 그러면 **세계는 원상복구되는데
+   *   판 분석 코드에는 그 탭이 남았다.** 되살릴 때 재현은 취소된 명령을 그대로 다시 내리고,
+   *   그 한 번으로 판이 갈라진다(2026-08-09 · 사용자 판 재생이 단계 1부터 어긋난 원인).
+   *   되돌리기는 새 명령이 아니라 **없던 일로 하는 것**이라, 세계와 기록이 같이 움직여야 한다.
+   *
+   * `back` 이 null 이면 명령을 거두고, 아니면 그 뜻으로 되돌린다.
+   */
+  undoHerdOrder(back: HerdOrder | null): void {
+    this.world.herdOrder = back;
+    for (let i = this.runLog.length - 1; i >= 0; i -= 1) {
+      const e = this.runLog[i];
+      if (e === undefined) continue;
+      if (e.t === "order") {
+        this.runLog.splice(i, 1);
+        return;
+      }
+      // 명령보다 나중에 적힌 것(단계 결과·구입 등)이 있으면 그건 「방금」이 아니다 · 손대지 않는다.
+      break;
+    }
+  }
+
+  /**
    * **방울 구입 화면을 연다 = 시간이 멈춘다.**
    *
    * **[사용자 2026-08-09]** "방울 업그레이드 고르는 중에는 시간이 안 멈추나? 그거 보다보니
