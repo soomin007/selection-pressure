@@ -23,6 +23,8 @@
 //   npm run probe -- order        지시 순종·도착·시험 계수 (지시를 안 준 대조군과 함께)
 //   npm run probe -- raid         프리셋 8종 x 떼 보스 5종 격퇴 (최소 체력 비율)
 //   npm run probe -- poison       독 안개(전역 흡수) · 기준선/안 몲/수풀로 몲 셋을 나란히
+//   npm run probe -- extinction   **대멸종 넷을 같은 자로.** 재난이 「예고한 방식으로」 죽이는지 잰다.
+//                                 ⚠ 재난을 추가·수정하면 반드시 이걸 먼저 돌린다(known_issues).
 //   npm run probe -- sweep        공격력 스윕 x 약탈자
 //   npm run probe -- era0         첫 시대 한 판 전체(실제 일정) · 단계별 개체 수 + 사망 원인 전 항목
 //   npm run probe -- encounter    내 종과 가장 가까운 포식자의 초기 거리 · 첫 감지 시각
@@ -123,15 +125,17 @@ if (GENE_RADIUS_ARG !== "" && !GENE_RADIUS_ARG.includes(",")) ORDER.geneRadius =
 const {
   GAME, SCHEDULE, mapScale, eraScarcity, eraDifficulty, eraPredatorPressure,
   eraRewardBoostAt, bossPassNeeded, extinctionPassNeeded, onboardingStep, stepUsesDrawnMap, stepWorldOptions,
+  EXTINCTION,
 } = await server.ssrLoadModule("/src/game/config.ts");
 const { createBoss, bossRaidable } = await server.ssrLoadModule("/src/sim/boss.ts");
 // 몰기(무리 지시)를 흉내 내려면 게임과 **같은 함수**로 목소리 반경·지휘 공백을 넣어야 한다.
 // 프로브가 임의의 숫자를 넣으면 "몰면 산다"를 게임과 다른 조건에서 재게 된다.
 const { voiceRadius, vacuumTicks } = await server.ssrLoadModule("/src/sim/herdOrder.ts");
-const { defaultGenome, refreshDerived, TRAIT_KEYS, TRAIT_LABELS } = await server.ssrLoadModule("/src/sim/genome.ts");
+const { defaultGenome, refreshDerived, genomeFromPips, TRAIT_KEYS, TRAIT_LABELS } = await server.ssrLoadModule("/src/sim/genome.ts");
 // v8 — 성장은 형질 숫자가 아니라 **도장과 티어**로 잰다. 이 모듈이 그 단일 진실이다.
 const {
   CATEGORIES, CATEGORY_LABELS, TIER_STEPS, MAX_TIER, tierOf, tiersOf, tierSum, activeDuos,
+  emptyPips, emptyKeys,
 } = await server.ssrLoadModule("/src/sim/tiers.ts");
 const {
   PRESET_CARDS, applyCard, cardPips, cardCategories, cardRedundant, cardPrereqMet, drawCards,
@@ -299,7 +303,11 @@ const RECOVER_FRAC = Number(opt("recover", String(CRISIS_BACK))); // 최고의 �
 const CRISIS_MIN_PEAK = Number(opt("crisismin", String(GAME.geneCrisisMinPeak)));
 
 const BOSS_HORDES = ["swarm", "raider", "isolation", "stalker", "hornet"];
-const WARMUP = 600; // 틱. 무리가 자리를 잡고 흩어진 뒤 (라운드 중반과 비슷한 상태)
+// 틱. 무리가 자리를 잡고 흩어진 뒤 (라운드 중반과 비슷한 상태).
+// ⚠ `--warmup=3540` 처럼 늘리면 **이미 여러 단계를 굴린 판**(먹이가 깎인 세계)을 잴 수 있다.
+// 대멸종은 한 판의 **마지막** 단계라, 600틱짜리 갓 만든 세계로 재면 실제보다 훨씬 순하게 나온다
+// (2026-08-09: 그래서 프로브는 통과 0/8 인데 사람은 전멸했다).
+const WARMUP = Number(opt("warmup", "600"));
 
 function presetGenome(card) {
   const g = defaultGenome();
@@ -666,6 +674,120 @@ function poisonRound(genome, seed, era, mode, drainOverride, shelterOn) {
     grass: grassSamples === 0 ? 0 : grassHits / grassSamples,
     hasGrass: spot !== null || mode !== "drive",
   };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// extinction — **대멸종 넷을 같은 자로 잰다.**
+//
+// 왜 이 자가 필요했나(2026-08-09). 같은 사고가 두 번 났다:
+//   · 독 안개(2026-08-08) — 예고는 「공격력이나 원거리로 잡으세요」였는데 격퇴가 아예 없었다.
+//   · 한파(2026-08-09) — 예고는 「대사가 낮으면 얼어 죽습니다」인데, 실제로는 **야생을 84% 지워**
+//     먹이 사슬을 끊어서 육식 무리를 **굶겨** 죽였다(사용자 판: 사망 원인 굶음 76 대 추위 25).
+// 둘 다 「재난이 예고한 방식으로 죽이는가」를 아무도 안 재서 났다. 값만 고치면 다음 재난에서 또 난다.
+//
+// **이 표가 답하는 질문 셋:**
+//   ① 이 재난은 예고한 방식으로 죽이는가 — `굶음` 열이 재난 직접 사인(추위·더위·역병)보다 크면
+//      **예고가 거짓말**이다. 사람은 화면이 시킨 대비를 하고도 다른 이유로 죽는다.
+//   ② 야생을 얼마나 지우는가 — `야생후` 가 무너지면 육식 갈래가 자동으로 굶는다. 재난의 진짜 세기는
+//      내 종에 준 피해가 아니라 **생태에 준 피해**다.
+//   ③ 갈래마다 공평한가 — 초식은 풀만 있으면 살고 육식은 먹잇감이 사라지면 죽는다. 같은 재난이
+//      갈래에 따라 다른 게임이 되면, 그건 빌드 선택이 아니라 복불복이다.
+const STRENGTH = Number(opt("strength", "1"));
+
+function extinctionRound(genome, seed, era, kind) {
+  const step = onboardingStep(0, era);
+  const scale = mapScale(step);
+  const world = buildWorld(seed, genome, undefined, step, scale, era);
+  for (let i = 0; i < WARMUP; i++) world.step();
+
+  const wildBefore = world.entities.filter((e) => e.alive && !e.species.isPlayer).length;
+  const popBefore = world.playerPopulation;
+  // 게임과 **같은 값**을 건다(game.ts 의 applyExtinction) · 여기서 숫자를 새로 지으면 다른 세계를 재게 된다.
+  // `--strength=0.7` 로 네 재난의 세기를 한꺼번에 훑는다(값을 확정하기 전 스윕용) · 기본 1 = 게임 값.
+  const mul = eraDifficulty(era) * STRENGTH;
+  if (kind === "cold") world.globalCold = EXTINCTION.cold * mul;
+  else if (kind === "heat") world.heat = EXTINCTION.heat * mul;
+  else if (kind === "famine") world.foodRegrowMultiplier = 1 + (EXTINCTION.famine - 1) * mul;
+  else if (kind === "plague") world.plagueRate = EXTINCTION.plague * mul;
+
+  const before = { ...world.deaths };
+  const ticks = GAME.extinctionSeconds * SIM.stepsPerSecond;
+  for (let i = 0; i < ticks; i++) world.step();
+  const d = {};
+  for (const k of Object.keys(world.deaths)) d[k] = world.deaths[k] - (before[k] ?? 0);
+  return {
+    popBefore,
+    pop: world.playerPopulation,
+    wildBefore,
+    wild: world.entities.filter((e) => e.alive && !e.species.isPlayer).length,
+    starve: d.starve ?? 0,
+    // 재난이 **직접** 죽인 수 — 예고가 약속한 사인이다. 굶음보다 작으면 예고가 거짓말이다.
+    direct: (d.cold ?? 0) + (d.heat ?? 0) + (d.plague ?? 0),
+    predation: d.predation ?? 0,
+  };
+}
+
+/**
+ * 이 모드가 재는 **무리의 정체**. 기본은 프리셋(= 성장 안 한 시작 게놈)인데, 시대 3 이후에는 그 무리가
+ * 재난 없이도 죽으므로 재난의 세기가 안 잡힌다. `--pips=fang:25,leg:20,eye:20,hide:20,herd:22` 를 주면
+ * **실제로 자란 무리**를 재고, `--keys=fin,hide,call` 로 열쇠도 심는다(판 분석 코드에서 그대로 옮긴다).
+ */
+function extinctionSubjects() {
+  const raw = opt("pips", "");
+  if (raw === "") return pickPresets();
+  const pips = emptyPips();
+  for (const part of raw.split(",")) {
+    const [k, v] = part.split(":");
+    if (k in pips) pips[k] = Number(v);
+  }
+  const keys = emptyKeys();
+  for (const k of opt("keys", "").split(",")) if (k !== "" && k in keys) keys[k] = true;
+  const t = tiersOf(pips);
+  const name = CATEGORIES.map((c) => `${CATEGORY_LABELS[c][0]}${t[c]}`).join("");
+  return [{ key: "pips", name: `도장 ${name}`, genome: genomeFromPips(pips, keys) }];
+}
+
+async function runExtinction() {
+  const presets = extinctionSubjects();
+  const eras = opt("eras", "1,3,5").split(",").map(Number);
+  const KINDS = ["none", "cold", "heat", "famine", "plague"];
+  const LABEL = { none: "없음", cold: "한파", heat: "폭염", famine: "대가뭄", plague: "대역병" };
+
+  console.log(
+    `# extinction · 시대 ${eras.join("·")} · 시드 ${SEEDS.length} · 프리셋 ${presets.length} · ` +
+      `${GAME.extinctionSeconds}초 단계 · 워밍업 ${WARMUP}틱 · 세기 ×${STRENGTH}`,
+  );
+  console.log(
+    "# 읽는 법: **굶음 > 직접** 이면 그 재난은 예고와 다른 방식으로 죽인다(= 화면이 거짓말한다). " +
+      "야생후가 무너지면 육식 갈래가 자동으로 굶는다.",
+  );
+  console.log("# 직접 = 추위+더위+역병 사망(예고가 약속한 사인) · 탈락 = 끝 개체 < 통과기준 · 멸종 = 0마리.");
+  console.log(
+    ["시대", "프리셋".padEnd(18), "재난".padEnd(6), "통과", "내종전", "내종후", "탈락", "멸종", "야생전", "야생후", "굶음", "직접", "잡아먹힘"].join("\t"),
+  );
+
+  for (const era of eras) {
+    const need = extinctionPassNeeded(era);
+    for (const p of presets) {
+      for (const kind of KINDS) {
+        const rows = SEEDS.map((s) => extinctionRound(p.genome, s, era, kind));
+        console.log(
+          [
+            String(era), p.name.padEnd(18), LABEL[kind].padEnd(6), String(need),
+            cell(rows.map((r) => r.popBefore), 1),
+            cell(rows.map((r) => r.pop), 1),
+            `${rows.filter((r) => r.pop < need).length}/${rows.length}`,
+            `${rows.filter((r) => r.pop === 0).length}/${rows.length}`,
+            cell(rows.map((r) => r.wildBefore), 1),
+            cell(rows.map((r) => r.wild), 1),
+            cell(rows.map((r) => r.starve), 1),
+            cell(rows.map((r) => r.direct), 1),
+            cell(rows.map((r) => r.predation), 1),
+          ].join("\t"),
+        );
+      }
+    }
+  }
 }
 
 async function runPoison() {
@@ -1928,6 +2050,7 @@ try {
   if (MODE === "order") await runOrder();
   else if (MODE === "raid") await runRaid();
   else if (MODE === "poison") await runPoison();
+  else if (MODE === "extinction") await runExtinction();
   else if (MODE === "sweep") await runSweep();
   else if (MODE === "era0") await runEra0();
   else if (MODE === "encounter") await runEncounter();
@@ -1940,7 +2063,7 @@ try {
   else if (MODE === "sens") await runSens();
   else {
     console.error(
-      `알 수 없는 모드: ${MODE} (order | raid | poison | sweep | era0 | encounter | steps | growth | apex | scale | sens)`,
+      `알 수 없는 모드: ${MODE} (order | raid | poison | extinction | sweep | era0 | encounter | steps | growth | apex | scale | sens)`,
     );
     process.exitCode = 1;
   }

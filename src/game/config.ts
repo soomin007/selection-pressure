@@ -346,5 +346,30 @@ export function onboardingOpenedLine(step: number): string {
 
 // 한 런의 라운드 계획. 각 단계 앞에는 드래프트가 붙는다.
 //   forage = 채집 라운드, boss = 보스 게이트, extinction = 대멸종 피날레
+/**
+ * **대멸종 넷의 세기.** 시대 배율(`eraDifficulty`)을 곱해 세계에 걸린다(`applyExtinction`).
+ *
+ * ⚠ **여기가 단일 진실이다.** 예전에는 이 넷이 `game.ts` 의 `applyExtinction` 안에 숫자로 박혀 있어서
+ *   프로브가 값을 **베껴 적을 수밖에 없었고**, 그래서 재난을 실제로 잰 적이 한 번도 없었다.
+ *   같은 규칙을 두 곳에 적으면 반드시 갈라진다는 이 저장소의 단골 함정 그대로였다(2026-08-09).
+ *
+ * ⚠ **이 값을 만지면 `npm run probe -- extinction` 을 반드시 돌려라.** 그 표가 답하는 것은
+ *   「이 재난이 예고한 방식으로 죽이는가」다. 재난은 내 종을 직접 때리기도 하지만 **야생을 지워
+ *   먹이 사슬을 끊기도** 하고, 후자는 예고에 한 줄도 안 적혀 있었다.
+ */
+export const EXTINCTION = {
+  /**
+   * 한파 — 전역 추위. `coldField = 바이옴 추위 + globalCold × SIM.globalColdLethality(2.0)`.
+   * ⚠ 값은 아래 실측을 보고 정한다(이 줄은 실측 뒤 갱신한다).
+   */
+  cold: 1.3,
+  /** 폭염 — 전역 열기. 고대사(가죽이 두꺼운 몸)에 불리하다. */
+  heat: 1.1,
+  /** 대가뭄 — 먹이 재생 시간 배수(클수록 느리게 자란다). 넷 중 가장 순하다(내 종 피해 −2%). */
+  famine: 3.6,
+  /** 대역병 — 매 틱 발병 확률. 무리가 빽빽할수록 아프다. */
+  plague: 0.006,
+} as const;
+
 export const SCHEDULE = ["forage", "forage", "boss", "forage", "boss", "extinction"] as const;
 export type StageKind = (typeof SCHEDULE)[number];

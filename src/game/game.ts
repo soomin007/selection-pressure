@@ -50,6 +50,7 @@ import {
   eraRewardBoostAt,
   bossPassNeeded,
   extinctionPassNeeded,
+  EXTINCTION,
   mapScale,
   onboardingStep,
   onboardingOpenedLine,
@@ -2320,19 +2321,38 @@ function extinctionCounter(type: ExtinctionType): string {
   return "느린 대사라야 타지 않고 버팁니다";
 }
 
+/**
+ * 대멸종 예고 한 줄.
+ *
+ * ⚠ **여기는 「무엇이 죽이는가」를 실제와 맞춰 적어야 하는 자리다**(전달 규칙: 수치가 화면 표시와
+ *   다르면 그건 거짓말이다). 2026-08-09 실측에서 이 넷의 예고가 전부 **실제 사인과 달랐다**:
+ *   자란 무리(가죽 IV단)에게 재난이 직접 죽인 개체는 **0.0명**이고, 죽은 것은 전부 **굶주림**이었다
+ *   (시대 3 · 시드 8 · `probe extinction`: 굶음 54~131 대 직접 0.0).
+ *   재난이 **야생 생태를 함께 쓸어서**(같은 판에서 야생 157 → 16, −90%) 먹이 사슬이 끊기기 때문이다.
+ *   그런데 옛 예고는 「얼어 죽습니다」·「타 죽습니다」처럼 **직접 사인만** 말했다. 사람은 화면이
+ *   시킨 대비를 하고도 다른 이유로 죽었고, 그래서 「왜 졌는지 모르는데 졌다」가 됐다(기획서 §4.2 위반).
+ *
+ * 그래서 두 가지를 반드시 함께 적는다: ① 재난이 **먹이를 함께 앗아간다**는 것
+ * ② 그 판에서 **실제로 듣는 대비**. 재는 자는 `npm run probe -- extinction` 이다.
+ */
 function extinctionPreview(type: ExtinctionType): string {
-  if (type === "cold") return "혹독한 추위가 닥칩니다. 대사가 낮으면 얼어 죽습니다(뜨거운 피가 유리).";
+  if (type === "cold")
+    return "혹독한 추위가 닥칩니다. 먹이도 다른 생물도 함께 얼어붙어, 대개는 굶주림으로 무너집니다. 뭉쳐 있으면 서로 덥혀 줍니다.";
   if (type === "famine")
     return "대가뭄이 옵니다. 먹이가 다시 자라지 않습니다. 에너지를 아끼고 수가 많아야 버팁니다.";
   if (type === "plague")
-    return "대역병이 번집니다. 번식이 더디면 회복하지 못해 스러집니다(번식력이 높아야 유리).";
-  return "폭염이 옵니다. 대사가 높으면 타 죽습니다(느린 대사가 유리).";
+    return "대역병이 번집니다. 앓다 스러진 자리를 메울 만큼 번식이 빨라야 하고, 먹잇감도 함께 줄어듭니다.";
+  return "폭염이 옵니다. 들판이 마르고 먹잇감이 흩어져, 타 죽기보다 굶어 죽는 일이 많습니다.";
 }
 
 // 대멸종 강도를 세팅한다. mul(era 난이도 배율)로 시대가 오를수록 더 혹독하게. mul=1(첫 시대)이면 기존과 동일.
+/**
+ * 대멸종을 세계에 건다. **세기는 `EXTINCTION`(config) 한 곳에만 적혀 있다** — 여기에 숫자를 다시
+ * 쓰면 프로브가 게임과 다른 세계를 재게 된다(2026-08-09 · 그래서 재난을 실제로 잰 적이 없었다).
+ */
 function applyExtinction(world: World, type: ExtinctionType, mul = 1): void {
-  if (type === "cold") world.globalCold = 1.3 * mul;
-  else if (type === "famine") world.foodRegrowMultiplier = 3.6 * mul;
-  else if (type === "plague") world.plagueRate = 0.006 * mul; // 0.005→0.006: 바이옴 생태 추가로 저산 필터가 경계(3)로 → 복원.
-  else world.heat = 1.1 * mul; // 폭염 — 0.9→1.1: 바이옴 동물이 env 생태를 바꿔 고대사 필터가 경계(3)로 약해져 복원.
+  if (type === "cold") world.globalCold = EXTINCTION.cold * mul;
+  else if (type === "famine") world.foodRegrowMultiplier = EXTINCTION.famine * mul;
+  else if (type === "plague") world.plagueRate = EXTINCTION.plague * mul;
+  else world.heat = EXTINCTION.heat * mul;
 }
