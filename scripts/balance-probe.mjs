@@ -796,7 +796,8 @@ async function runReplay() {
   // 어긋나도 그게 「게임과 프로브의 차이」인지 「재생기 버그」인지 가릴 수 없다.
   // (사람 판은 **탭이 코드에 안 담기므로** 원리적으로 완전 일치가 안 된다 · 아래 결론 참고.)
   if (args.includes("--selftest")) {
-    console.log("# replay --selftest · 손이 안 붙은 판을 굴려 코드를 뽑고, 그 코드로 되살려 대조한다");
+    const HANDS = args.includes("--hands");
+    console.log(`# replay --selftest · ${HANDS ? "손을 붙인" : "손이 안 붙은"} 판을 굴려 코드를 뽑고, 그 코드로 되살려 대조한다`);
     debugResetAchievements();
     setSavedProgress(0, 0);
     const g0 = new Game(MOBILE.width, MOBILE.height);
@@ -816,6 +817,19 @@ async function runReplay() {
       if (g0.phase === "result") {
         if (g0.result === "win" && !g0.isFinalEra) { g0.continueToNextEra(); continue; }
         break;
+      }
+      // **손을 붙인다** — 탭이 재현되는지 검사하려면 원판에 탭이 있어야 한다(`--hands` 로 켠다).
+      // 사람처럼 가끔, 그리고 자리를 바꿔 가며 찍는다. 매 틱 찍으면 무리가 먹지도 못하고 행군만 한다.
+      if (HANDS && guard0 % 90 === 0) {
+        const c = centroid(mine(g0.world));
+        if (c !== null) {
+          const a = rng0.unit() * Math.PI * 2;
+          const r = 120 + rng0.unit() * 240;
+          g0.setHerdOrder(
+            Math.max(4, Math.min(g0.world.width - 4, c.x + Math.cos(a) * r)),
+            Math.max(4, Math.min(g0.world.height - 4, c.y + Math.sin(a) * r)),
+          );
+        }
       }
       for (const c of CATEGORIES) if (g0.buyTier(c)) break; // 방울이 모이면 아무거나 하나 산다
       g0.update(ms);
@@ -875,9 +889,25 @@ function replayAgainst(dec, label) {
 
   const drafts = want.entries.filter((e) => e.t === "draft");
   const buys = want.entries.filter((e) => e.t === "buy");
+  // 사람이 내린 탭 — **재현의 마지막 조각**(2026-08-09 신설). 단계 순번과 그 단계 안 경과 틱으로
+  // 적혀 있어, 재현이 같은 단계·같은 틱에 같은 자리를 다시 찍는다.
+  // ⚠ 탭이 하나도 없는 코드는 이 기능이 생기기 **전에 뽑힌 것**이다. 그 판은 조종을 했더라도
+  //   되살릴 때 손을 안 댄 판이 되므로, 어긋나도 그것을 버그로 읽으면 안 된다.
+  const orders = want.entries.filter((e) => e.t === "order");
+  const ordersByStage = new Map();
+  for (const o of orders) {
+    const list = ordersByStage.get(o.stage) ?? [];
+    list.push(o);
+    ordersByStage.set(o.stage, list);
+  }
+  for (const list of ordersByStage.values()) list.sort((a, b) => a.tick - b.tick);
   const stepMs = 1000 / SIM.stepsPerSecond;
   let di = 0;
   let bi = 0;
+  let stageNo = 0; // 재현이 지금 몇 번째 단계에 있는가(게임의 stageOrdinal 과 같은 눈금)
+  let oi = 0; // 이번 단계에서 다음에 내릴 탭
+  let ordersReplayed = 0;
+  let ordersRejected = 0;
   let guard = 0;
   const notes = [];
   while (guard < 600000) {
@@ -910,10 +940,35 @@ function replayAgainst(dec, label) {
       }
       break;
     }
-    // 기록된 순서대로, 살 수 있게 되는 즉시 산다(사람도 방울이 모이면 바로 샀다).
-    // ⚠ **한 프레임에 하나만 산다.** 여러 개를 몰아 사면 구입 시점이 원판보다 앞당겨지고,
-    //   도장이 붙는 틱이 달라져 세계가 그 자리에서 갈라진다(자가 검사에서 실제로 그랬다).
-    if (bi < buys.length && game.buyTier(buys[bi].cat)) bi += 1;
+    // 새 단계에 들어섰나 — 게임의 stageOrdinal 과 같은 눈금으로 따라간다.
+    if (game.stageOrdinalNow !== stageNo) {
+      stageNo = game.stageOrdinalNow;
+      oi = 0;
+    }
+    // 이번 단계의 이 틱에 사람이 찍은 탭이 있으면 그대로 다시 찍는다.
+    // ⚠ 시각은 **게임에게 묻는다**(`stageTickNow`) · 여기서 프레임을 세면 어긋난다 —
+    //   update 는 드래프트·결과 단계에서 일찍 돌아가므로 프레임 수와 단계 틱이 다르다.
+    const list = ordersByStage.get(stageNo);
+    while (list !== undefined && oi < list.length && list[oi].tick <= game.stageTickNow) {
+      const o = list[oi];
+      if (game.setHerdOrder(o.x, o.y, o.kind)) ordersReplayed += 1;
+      else ordersRejected += 1;
+      oi += 1;
+    }
+    // 구입 — **시각이 담긴 코드는 그 시각에 정확히 산다.** 옛 코드(stage 0)는 시각을 모르므로
+    // 「살 수 있게 되면 곧」이라는 근사로 되돌아간다(그 판은 구입 시점이 원판과 다를 수 있다).
+    // ⚠ 어느 쪽이든 **한 프레임에 하나만** 산다 · 몰아 사면 도장이 붙는 틱이 원판보다 앞당겨진다.
+    const nb = buys[bi];
+    if (nb !== undefined) {
+      const timed = nb.stage > 0;
+      // 창을 놓쳤으면(그 단계를 이미 지났으면) 곧바로 산다 — 안 그러면 `bi` 가 영영 안 넘어가
+      // 뒤의 구입이 전부 막힌다(재현이 한 번 어긋나면 그때부터 아무것도 못 사는 상태가 된다).
+      const due = timed
+        ? nb.stage < game.stageOrdinalNow ||
+          (nb.stage === game.stageOrdinalNow && nb.tick <= game.stageTickNow)
+        : true;
+      if (due && game.buyTier(nb.cat)) bi += 1;
+    }
     game.update(stepMs);
   }
 
@@ -962,7 +1017,14 @@ function replayAgainst(dec, label) {
   }
 
   console.log("");
-  console.log(`# 드래프트 ${di}/${drafts.length} 재현 · 방울 구입 ${bi}/${buys.length} 재현`);
+  console.log(
+    `# 드래프트 ${di}/${drafts.length} 재현 · 방울 구입 ${bi}/${buys.length} 재현 · ` +
+      `탭 ${ordersReplayed}/${orders.length} 재현${ordersRejected > 0 ? ` (거절 ${ordersRejected})` : ""}`,
+  );
+  if (orders.length === 0 && want.header.leadEnabled) {
+    console.log("# ⚠ 탭이 한 개도 안 담긴 코드다 — 명령 기록이 생기기 전(2026-08-09 이전)에 뽑혔거나");
+    console.log("#   정말로 한 번도 안 탭한 판이다. 앞이라면 **이 재현은 손을 안 댄 판**이라 어긋나는 게 정상이다.");
+  }
   if (notes.length > 0) {
     console.log("# 어긋난 것:");
     for (const t of notes) console.log(`  · ${t}`);

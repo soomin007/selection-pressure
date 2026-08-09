@@ -326,6 +326,11 @@ export class Game {
 
   private stageIndex = 0;
   private stageTicksLeft = 0;
+  /** 이 런에서 시작한 단계의 개수 — 명령 기록이 "몇 번째 단계의 탭인가"를 적는 데 쓴다. */
+  private stageOrdinal = 0;
+  /** 지금 단계가 시작한 뒤 흐른 틱 — 명령 기록의 시각. 단계마다 0 으로 돌아간다.
+   *  누적 틱으로 적으면 앞 단계가 한 틱만 밀려도 뒤의 모든 탭이 함께 밀린다. */
+  private stageTick = 0;
   private firstChoice = true; // 런 첫 드래프트 = 시작 프리셋 선택
   /**
    * 이 런의 갈래(계통). 시작 프리셋이 정한다. 드래프트 3장 중 1장은 늘 이 갈래의 전용 카드이고,
@@ -687,7 +692,18 @@ export class Game {
       }
     }
     const ticks = spec.kind === "move" ? 0 : Math.round(SIM.stepsPerSecond * 4);
-    this.world.herdOrder = { x, y, kind, ticks };
+    // **탭 자리는 정수 픽셀로 접는다.** 손가락이 찍는 자리에 소수점은 뜻이 없고(해제 반경이 64px 다),
+    // 대신 이 한 줄이 **판을 정확히 재현 가능하게** 만든다: 판 분석 코드는 좌표를 정수로 담으므로,
+    // 게임이 소수점을 쓰면 되살린 판이 원판과 미세하게 다른 곳을 향하고 그 차이가 480틱 동안
+    // 눈덩이처럼 커진다(2026-08-09 · 자가 검사에서 실제로 그랬다 · 단계 1부터 갈렸다).
+    // 「기록된 값이 곧 게임이 쓴 값」이라야 재현이 성립한다.
+    const ox = Math.round(x);
+    const oy = Math.round(y);
+    this.world.herdOrder = { x: ox, y: oy, kind, ticks };
+    // 판 분석 코드에 남긴다 — **재현의 마지막 조각**이다(2026-08-09). 거절된 탭은 세계를 1비트도
+    // 안 바꾸므로 안 담는다 · 여기까지 온 것만이 실제로 일어난 명령이다.
+    // ⚠ 기록은 rng 를 안 쓰고 세계를 안 건드린다(runCode.ts 의 제약과 같은 계열).
+    this.runLog.push({ t: "order", stage: this.stageOrdinal, tick: this.stageTick, x: ox, y: oy, kind });
     return true;
   }
 
@@ -858,6 +874,7 @@ export class Game {
         // update 끝에서 모으면 마지막 몇 틱에 주운 방울이 그대로 증발한다.
         this.harvestGenes();
         this.stageTicksLeft -= 1;
+        this.stageTick += 1; // 명령 기록의 시각(단계 안에서의 경과)
         this.runSteps += 1;
         // 런 보고서 시계열 — 일정 주기로 개체 수·형질 평균을 남긴다(연대기 그래프의 점들).
         if (this.runSteps % REPORT_SAMPLE_STEPS === 0) this.sampleRun();
@@ -1114,6 +1131,20 @@ export class Game {
     this.stageTicksLeft = 99999; // 관찰용 — 타이머 만료로 통과 판정이 나지 않게
   }
 
+  /**
+   * 이 런에서 시작한 단계의 순번(1부터). **판 재현 전용 눈금**이다 — 명령 기록의 `stage` 와 같은 값이라,
+   * 재생기가 "지금 몇 번째 단계인가"를 게임에게 직접 물어 자기 눈금을 맞춘다(밖에서 다시 세면 갈라진다).
+   */
+  get stageOrdinalNow(): number {
+    return this.stageOrdinal;
+  }
+
+  /** 지금 단계가 시작한 뒤 흐른 틱. 명령 기록의 `tick` 과 같은 눈금이다(밖에서 다시 세면 갈라진다 —
+   *  update 는 드래프트·결과 단계에서 일찍 돌아가므로 프레임 수와 이 값이 다르다). */
+  get stageTickNow(): number {
+    return this.stageTick;
+  }
+
   /** 레벨업 게이지 진행도 0~1 (HUD 표시용). */
   get xpProgress(): number {
     return this.xpToNext > 0 ? Math.min(1, this.xp / this.xpToNext) : 0;
@@ -1245,6 +1276,8 @@ export class Game {
     this.runEvents = [];
     this.runSteps = 0;
     this.runLog = []; // 판 분석 코드의 기록도 새 혈통과 함께 처음부터
+    this.stageOrdinal = 0;
+    this.stageTick = 0;
     this.geneEarnedTotal = 0;
     this.geneSpentTotal = 0;
     this.stageThreat = null;
@@ -1373,7 +1406,15 @@ export class Game {
     this.newTiers.push({ cat, tier: tiersOf(this.genome.pips)[cat] });
     this.logEvent("card", `방울 · ${CATEGORY_LABELS[cat]} ${TIER_ROMAN[tiersOf(this.genome.pips)[cat]]}`);
     // 분석 기록 — 연대기 줄은 「이빨 II」라고만 말한다. 든 값(방울)과 순서는 여기에만 남는다.
-    this.runLog.push({ t: "buy", cat, cost, tier: tiersOf(this.genome.pips)[cat] });
+    this.runLog.push({
+      t: "buy",
+      cat,
+      cost,
+      tier: tiersOf(this.genome.pips)[cat],
+      // 시각도 함께 — 순서만으로는 되살릴 때 구입이 앞뒤로 밀린다(도장이 붙는 틱이 곧 세계다).
+      stage: this.stageOrdinal,
+      tick: this.stageTick,
+    });
     return true;
   }
 
@@ -1684,6 +1725,8 @@ export class Game {
    * 레벨업으로만), 위협만 흐른다. 예고(preview)는 stageLabel 과 함께 main 이 하이라이트로 띄운다.
    */
   private beginStage(): void {
+    this.stageOrdinal += 1; // 명령 기록이 "몇 번째 단계의 탭인가"를 적는 눈금
+    this.stageTick = 0; // 그 단계 안에서의 시각도 0 부터 다시
     this.stageXp = 0; // 조종 모드 경험치 상한은 단계마다 새로 찬다(leadEnabled=false 면 안 읽힌다)
     this.syncCommandReach(); // 무리 티어가 오르면 목소리가 더 멀리 간다 · 단계마다 다시 읽는다
     this.orderCd.clear(); // 명령 쿨타임은 라운드 경계에서 씻는다(라운드 시작에 손이 묶여 있으면 답답하다)

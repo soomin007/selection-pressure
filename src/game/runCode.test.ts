@@ -77,7 +77,9 @@ function sampleData(): RunCodeData {
         cards: [CARD_POOL[3]!.id, CARD_POOL[40]!.id, CARD_POOL[70]!.id],
         outcome: DRAFT_SKIPPED,
       },
-      { t: "buy", cat: "fang", cost: 5, tier: 2 },
+      { t: "buy", cat: "fang", cost: 5, tier: 2, stage: 2, tick: 140 },
+      // 탭 하나 — 재현의 마지막 조각도 왕복하는지 함께 못박는다(2026-08-09 신설).
+      { t: "order", stage: 2, tick: 141, x: 231, y: 604, kind: "evade" },
       {
         t: "stage",
         kind: "boss",

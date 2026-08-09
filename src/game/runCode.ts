@@ -26,6 +26,7 @@ import type { BossType } from "@/sim/boss";
 import type { MapType } from "@/sim/mapType";
 import type { DeathCause } from "@/sim/world";
 import type { StageKind } from "@/game/config";
+import type { OrderKind } from "@/sim/herdOrder";
 import type { ExtinctionType, TrialKind } from "@/game/game";
 
 /** 코드 구조(스키마) 버전. **구조가 바뀌면 올린다** · 다르면 디코더가 아예 못 읽는다고 말한다. */
@@ -60,6 +61,19 @@ const EXTINCTION_CODE: Record<ExtinctionType, number> = {
   heat: 2,
   plague: 3,
 };
+
+/** 명령 종류 — 순서가 곧 저장된 숫자의 뜻이다(재배열 금지 · 새 칸은 끝에만). */
+const ORDER_KIND_CODE: Record<OrderKind, number> = {
+  move: 0,
+  hunt: 1,
+  evade: 2,
+  gather: 3,
+  scan: 4,
+  brace: 5,
+  ring: 6,
+  drive: 7,
+};
+const ORDER_KIND_BY_CODE: OrderKind[] = ["move", "hunt", "evade", "gather", "scan", "brace", "ring", "drive"];
 
 const TRIAL_CODE: Record<TrialKind, number> = {
   hunt: 0,
@@ -241,6 +255,14 @@ export interface BuyRecord {
   cost: number;
   /** 사고 나서 오른 단. */
   tier: number;
+  /**
+   * 이 구입이 떨어진 단계 순번(1부터). **0 = 시각이 안 담긴 옛 코드**(2026-08-09 이전).
+   * 순서만 알고 시각을 모르면 되살릴 때 구입이 원판보다 앞뒤로 밀려, 도장이 붙는 틱이 달라지고
+   * 세계가 그 자리에서 갈라진다(자가 검사에서 실제로 그랬다 · 시대 4 첫 단계에서 6 대 5).
+   */
+  stage: number;
+  /** 그 단계가 시작한 뒤 흐른 틱. `stage` 가 0 이면 뜻이 없다. */
+  tick: number;
 }
 
 /** 라운드 시험의 판정(수치까지). */
@@ -269,6 +291,31 @@ export interface StageRecord {
   trial: TrialRecord | null;
 }
 
+/**
+ * **사람이 내린 명령 하나(탭).** 재현의 마지막 빠진 조각이다.
+ *
+ * ⚠ 왜 필요했나(2026-08-09). 판 코드는 시드와 카드·구입을 담아 "판이 통째로 재현된다"고 적혀
+ *   있었지만, **탭은 안 담겼다.** 그래서 사람이 실제로 플레이한 판을 되살리면 첫 단계부터
+ *   개체 수가 갈렸고(기록 13 · 재현 22), 무엇이 다른지 알 길이 없었다. 조종이 기본이 된 지금
+ *   탭은 카드만큼 판을 바꾼다 — 지시를 따르는 동안 무리는 먹지 않고, 방울을 주우러 새고,
+ *   「피해라」는 기력을 문다.
+ *
+ * 담는 것은 **월드 좌표와 종류와 시각(틱)** 셋뿐이다. 화면 좌표·카메라는 안 담는다(파생이라
+ * 재현에 필요 없고, 담으면 화면 크기가 다른 기기에서 거짓이 된다).
+ * `tick` 은 **그 단계가 시작한 뒤 흐른 틱**이다 — 런 전체 누적으로 담으면 단계 하나가 밀릴 때
+ * 뒤의 모든 탭이 함께 밀린다.
+ */
+export interface OrderRecord {
+  t: "order";
+  /** 이 탭이 떨어진 단계(`entries` 안의 몇 번째 stage 인지가 아니라 그 단계의 순서 번호). */
+  stage: number;
+  /** 단계 시작 후 흐른 틱. */
+  tick: number;
+  x: number;
+  y: number;
+  kind: OrderKind;
+}
+
 /** 시대를 넘었다. */
 export interface EraRecord {
   t: "era";
@@ -284,7 +331,7 @@ export interface EndRecord {
   level: number;
 }
 
-export type RunLogEntry = DraftRecord | BuyRecord | StageRecord | EraRecord | EndRecord;
+export type RunLogEntry = DraftRecord | BuyRecord | OrderRecord | StageRecord | EraRecord | EndRecord;
 
 /** 재현에 필요한 판 밖의 상태(세계를 만드는 재료). */
 export interface RunCodeHeader {
@@ -446,7 +493,11 @@ function fromBase64Url(text: string): Uint8Array {
 
 // ─────────────────────────────── 인코더 ───────────────────────────────
 
-const TAG = { draft: 1, buy: 2, stage: 3, era: 4, end: 5 } as const;
+// ⚠ **태그는 끝에만 더한다.** 번호가 곧 저장된 뜻이라 재배열하면 어제 뽑은 코드가 다른 것을 가리킨다.
+//   새 태그(order=6)를 더하는 것은 안전하다 — 옛 코드에는 그 바이트가 없으므로 그대로 읽힌다.
+//   그래서 스키마 버전을 안 올렸다(올리면 사용자가 이미 보낸 코드를 못 읽게 된다).
+//   buy=2 는 시각이 없던 옛 칸이다 · buyAt=7 이 그 자리를 잇는다(옛 코드를 계속 읽으려고 남겨 둔다).
+const TAG = { draft: 1, buy: 2, stage: 3, era: 4, end: 5, order: 6, buyAt: 7 } as const;
 
 export function encodeRunCode(data: RunCodeData): string {
   const w = new ByteWriter();
@@ -494,10 +545,23 @@ function writeEntry(w: ByteWriter, e: RunLogEntry): void {
     return;
   }
   if (e.t === "buy") {
-    w.u8(TAG.buy);
+    // 새 코드는 언제나 시각을 담는 칸(buyAt)으로 쓴다 · 옛 칸(buy)은 읽기 전용으로만 남는다.
+    w.u8(TAG.buyAt);
     w.u8(CATEGORIES.indexOf(e.cat));
     w.varint(e.cost);
     w.u8(e.tier);
+    w.varint(e.stage);
+    w.varint(e.tick);
+    return;
+  }
+  if (e.t === "order") {
+    w.u8(TAG.order);
+    w.varint(e.stage);
+    w.varint(e.tick);
+    // 좌표는 정수 픽셀로 접는다 — 소수점은 재현에 필요 없다(탭은 손가락이 찍는 자리다).
+    w.varint(Math.round(e.x));
+    w.varint(Math.round(e.y));
+    w.u8(ORDER_KIND_CODE[e.kind] ?? 0);
     return;
   }
   if (e.t === "stage") {
@@ -667,8 +731,10 @@ function readEntry(r: ByteReader): RunLogEntry {
     return { t: "draft", kind, boost, level, cards, outcome: r.u8() };
   }
   if (tag === TAG.buy) {
+    // 옛 칸 — 시각이 없다. `stage: 0` 이 "안 담겼다"는 뜻이고, 재생기는 그때만 「살 수 있게 되면 곧」
+    // 이라는 근사로 되돌아간다(그 판은 구입 시점이 원판과 다를 수 있다).
     const cat = CATEGORIES[r.u8()] ?? "fang";
-    return { t: "buy", cat, cost: r.varint(), tier: r.u8() };
+    return { t: "buy", cat, cost: r.varint(), tier: r.u8(), stage: 0, tick: 0 };
   }
   if (tag === TAG.stage) {
     const f = r.u8();
@@ -697,6 +763,26 @@ function readEntry(r: ByteReader): RunLogEntry {
       defeated: (f & 8) !== 0,
       pop,
       trial,
+    };
+  }
+  if (tag === TAG.buyAt) {
+    return {
+      t: "buy",
+      cat: (CATEGORIES[r.u8()] ?? CATEGORIES[0]) as Category,
+      cost: r.varint(),
+      tier: r.u8(),
+      stage: r.varint(),
+      tick: r.varint(),
+    };
+  }
+  if (tag === TAG.order) {
+    return {
+      t: "order",
+      stage: r.varint(),
+      tick: r.varint(),
+      x: r.varint(),
+      y: r.varint(),
+      kind: ORDER_KIND_BY_CODE[r.u8()] ?? "move",
     };
   }
   if (tag === TAG.era) return { t: "era", era: r.varint() };
