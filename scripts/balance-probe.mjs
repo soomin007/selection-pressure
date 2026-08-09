@@ -22,6 +22,9 @@
 //   npm run probe                 (= order)
 //   npm run probe -- order        지시 순종·도착·시험 계수 (지시를 안 준 대조군과 함께)
 //   npm run probe -- raid         프리셋 8종 x 떼 보스 5종 격퇴 (최소 체력 비율)
+//   npm run probe -- replay --code=SP1-…   **사람이 보낸 판을 그대로 되살린다.**
+//                                 같은 시드·같은 선택으로 다시 굴려, 기록된 결과와 한 줄씩 대조한다.
+//                                 어긋나는 첫 줄이 곧 「프로브(또는 시뮬)가 게임과 갈라진 자리」다.
 //   npm run probe -- poison       독 안개(전역 흡수) · 기준선/안 몲/수풀로 몲 셋을 나란히
 //   npm run probe -- extinction   **대멸종 넷을 같은 자로.** 재난이 「예고한 방식으로」 죽이는지 잰다.
 //                                 ⚠ 재난을 추가·수정하면 반드시 이걸 먼저 돌린다(known_issues).
@@ -152,6 +155,11 @@ const { Rng } = await server.ssrLoadModule("/src/sim/rng.ts");
 const { FIRST_ERA_MAP } = await server.ssrLoadModule("/src/sim/mapType.ts");
 const { TILE } = await server.ssrLoadModule("/src/sim/terrain.ts");
 const { Game } = await server.ssrLoadModule("/src/game/game.ts");
+const { debugResetAchievements } = await server.ssrLoadModule("/src/game/achievements.ts");
+// 판 분석 코드(런 코드) — `replay` 모드가 사람이 보낸 판을 그대로 되살리는 데 쓴다.
+const {
+  decodeRunCode, currentCodeStamp, baseCardId, DRAFT_SKIPPED, DRAFT_REROLLED, DRAFT_NONE,
+} = await server.ssrLoadModule("/src/game/runCode.ts");
 // 메타 레벨·리롤 해금은 **게임과 같은 함수**로 읽는다. 프로브가 "레벨 2 면 리롤" 같은 숫자를 손으로
 // 적으면 해금 사다리(meta.ts UNLOCK_TIERS)를 바꿨을 때 프로브만 옛 사다리로 재게 된다.
 const { metaLevel, isRerollUnlockedAtLevel, xpForLevelStart, UNLOCK_TIERS } =
@@ -745,6 +753,229 @@ function extinctionSubjects() {
   const t = tiersOf(pips);
   const name = CATEGORIES.map((c) => `${CATEGORY_LABELS[c][0]}${t[c]}`).join("");
   return [{ key: "pips", name: `도장 ${name}`, genome: genomeFromPips(pips, keys) }];
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// replay — **사람이 보낸 판을 그대로 되살린다.**
+//
+// 왜 이것이 먼저인가(2026-08-09 · [사용자] 지적).
+// 프로브는 「비슷한 세계」를 만들어 재 왔다. 그런데 사람이 실제로 겪은 판과 프로브가 낸 표가
+// 정면으로 어긋났다(사람: 한파에 58 → 2 전멸 · 프로브: 같은 빌드가 0/8 탈락으로 통과).
+// 그때 「무엇이 다른가」를 추측으로 메우면 또 틀린다 — 실제로 이 저장소에서 두 번 연달아 틀렸다.
+// 판 분석 코드에는 **시드와 모든 선택**이 들어 있다. 그러니 근사치를 재지 말고 그 판을 그대로
+// 다시 굴려서, 기록과 재현이 같은지 먼저 답해야 한다.
+//
+// **이 모드가 답하는 것은 예/아니오 하나다: 프로브는 사람과 같은 게임을 하는가.**
+//   · 재현이 기록과 같다 → 시뮬·프로브 배선은 맞다. 그러면 어긋난 것은 다른 모드의 **세계 구성**이고,
+//     그 모드가 무엇을 다르게 만들었는지 좁히면 된다.
+//   · 재현이 기록과 다르다 → **게임과 프로브(또는 그 사이 어딘가)가 갈라져 있다.** 어긋나는 첫 줄이
+//     곧 이분 지점이다. 그때는 밸런스 수치를 하나도 믿으면 안 된다.
+//
+// ⚠ 재현은 **축을 전부 코드에서 읽어** 맞춘다(시드·메타 레벨·끝낸 런·은근한 보정·조종).
+//   프로브 기본값(보정 끔 등)을 쓰면 그 순간 다른 판이 된다 — 이 모드에서는 `--assist` 류를 안 본다.
+function replayPick(game, rec) {
+  if (rec.outcome === DRAFT_REROLLED) {
+    game.reroll();
+    return "리롤";
+  }
+  if (rec.outcome === DRAFT_SKIPPED) {
+    game.skipDraft();
+    return "건너뜀";
+  }
+  if (rec.outcome === DRAFT_NONE) {
+    game.skipDraft();
+    return "기록없음→건너뜀";
+  }
+  game.pickCard(rec.outcome);
+  return `${rec.outcome}번`;
+}
+
+async function runReplay() {
+  // `--selftest` — **재생기 자신을 검사한다.** 손이 안 붙은 판을 하나 굴려 코드를 뽑고, 그 코드를
+  // 그대로 되살려 기록과 대조한다. 여기서 완전히 같지 않으면 재생기가 고장 난 것이고, 사람 판이
+  // 어긋나도 그게 「게임과 프로브의 차이」인지 「재생기 버그」인지 가릴 수 없다.
+  // (사람 판은 **탭이 코드에 안 담기므로** 원리적으로 완전 일치가 안 된다 · 아래 결론 참고.)
+  if (args.includes("--selftest")) {
+    console.log("# replay --selftest · 손이 안 붙은 판을 굴려 코드를 뽑고, 그 코드로 되살려 대조한다");
+    debugResetAchievements();
+    setSavedProgress(0, 0);
+    const g0 = new Game(MOBILE.width, MOBILE.height);
+    g0.assistEnabled = false;
+    g0.leadEnabled = true;
+    g0.fixedSeed = opt("seed", "selftest-1");
+    g0.beginRun();
+    const ms = 1000 / SIM.stepsPerSecond;
+    const rng0 = new Rng("selftest-policy");
+    let guard0 = 0;
+    while (guard0 < 600000) {
+      guard0 += 1;
+      if (g0.phase === "draft") {
+        g0.pickCard(rng0.int(0, Math.max(0, g0.draftCards.length - 1)));
+        continue;
+      }
+      if (g0.phase === "result") {
+        if (g0.result === "win" && !g0.isFinalEra) { g0.continueToNextEra(); continue; }
+        break;
+      }
+      for (const c of CATEGORIES) if (g0.buyTier(c)) break; // 방울이 모이면 아무거나 하나 산다
+      g0.update(ms);
+    }
+    const code = g0.runCode();
+    console.log(`# 코드 ${code.length}자 · 시드 ${g0.fixedSeed}`);
+    return replayAgainst(decodeRunCode(code), "자가 검사");
+  }
+  const text = opt("code", "").trim();
+  if (text === "") {
+    console.error("판 코드를 주세요: node scripts/balance-probe.mjs replay --code=SP1-…");
+    process.exitCode = 1;
+    return;
+  }
+  return replayAgainst(decodeRunCode(text), "사람이 보낸 판");
+}
+
+/** 디코드된 판 하나를 되살려 기록과 한 줄씩 대조한다(사람 판·자가 검사가 같은 자리를 쓴다). */
+function replayAgainst(dec, label) {
+  if (dec.ok !== true) {
+    console.error(`이 코드를 못 읽습니다: ${dec.reason ?? "(이유 없음)"}`);
+    process.exitCode = 1;
+    return;
+  }
+  const want = dec.data;
+  const now = currentCodeStamp();
+  console.log(`# replay · ${label} 을(를) 그대로 되살린다`);
+  console.log(
+    `# 코드 도장 스키마 ${want.schema} · 게놈 v${want.genomeVersion} · 카드 풀 ${want.poolDigest.toString(16)}` +
+      `  ▸ 지금 빌드 스키마 ${now.schema} · 게놈 v${now.genomeVersion} · 풀 ${now.poolDigest.toString(16)}`,
+  );
+  if (want.genomeVersion !== now.genomeVersion || want.poolDigest !== now.poolDigest) {
+    console.log("# ⚠ 도장이 다르다 — 코드를 뽑은 뒤 게놈이나 카드 풀이 바뀌었다.");
+    console.log("#   어긋남이 나와도 그것이 「버그」인지 「그 사이의 변경」인지 이 줄을 보고 갈라야 한다.");
+  }
+  const h = want.header;
+  console.log(
+    `# 축 · 시드 ${h.seed} · 메타레벨 ${h.metaLevel} · 끝낸 런 ${h.runsDone} · ` +
+      `보정 ${h.assistEnabled ? "켬" : "끔"} · 조종 ${h.leadEnabled ? "켬" : "끔"} · 챔피언 ${h.champions}마리`,
+  );
+  if (h.champions > 0) {
+    console.log("# ⚠ 챔피언이 있던 판이다 — 코드는 챔피언 **수**만 담고 게놈은 안 담는다. 재현이 여기서 갈린다.");
+  }
+
+  // --- 축을 코드에서 읽어 그대로 심는다 ---
+  // ⚠ **업적 캐시를 반드시 먼저 비운다.** `achievements.ts` 의 unlockedCache 는 모듈 수명이라
+  //   같은 프로세스에서 판을 두 번 굴리면 앞 판이 연 카드가 뒤 판의 드래프트 풀에 남는다
+  //   (2026-08-09 known_issues). 그러면 재생이 **원래 판에 없던 카드**를 후보로 받아, 어긋남이
+  //   「게임과 프로브의 차이」가 아니라 프로브 자신이 만든 오염이 된다.
+  debugResetAchievements();
+  setSavedProgress(h.runsDone, xpForLevelStart(h.metaLevel));
+  const game = new Game(MOBILE.width, MOBILE.height);
+  game.assistEnabled = h.assistEnabled;
+  game.leadEnabled = h.leadEnabled;
+  game.fixedSeed = h.seed;
+  game.beginRun();
+
+  const drafts = want.entries.filter((e) => e.t === "draft");
+  const buys = want.entries.filter((e) => e.t === "buy");
+  const stepMs = 1000 / SIM.stepsPerSecond;
+  let di = 0;
+  let bi = 0;
+  let guard = 0;
+  const notes = [];
+  while (guard < 600000) {
+    guard += 1;
+    if (game.phase === "draft") {
+      if (di >= drafts.length) {
+        notes.push(`드래프트가 기록보다 많다(기록 ${drafts.length}회) — 여기서 멈춘다`);
+        break;
+      }
+      const rec = drafts[di];
+      // **후보가 같은가**가 가장 강한 신호다. 같은 시드에서 다른 후보가 나오면 카드 풀이나
+      // 드래프트 rng 가 갈라진 것이라, 그 뒤의 모든 수치가 무의미해진다.
+      // ⚠ 강화 꼬리(`_x2`)를 떼고 비교한다 — 코드는 카드를 **번호**로 접어 담으므로 꼬리가 안 남는다.
+      //   떼지 않으면 시대 보상 드래프트가 매번 「후보가 다르다」로 잘못 잡힌다(재현은 멀쩡한데).
+      const got = game.draftCards.map((c) => baseCardId(c.id));
+      const wantIds = rec.cards.map((id) => baseCardId(id));
+      if (got.join(",") !== wantIds.join(",")) {
+        notes.push(
+          `드래프트 ${di + 1}: 후보가 다르다\n    기록 ${rec.cards.join(" · ")}\n    재현 ${got.join(" · ")}`,
+        );
+      }
+      replayPick(game, rec);
+      di += 1;
+      continue;
+    }
+    if (game.phase === "result") {
+      if (game.result === "win" && !game.isFinalEra) {
+        game.continueToNextEra();
+        continue;
+      }
+      break;
+    }
+    // 기록된 순서대로, 살 수 있게 되는 즉시 산다(사람도 방울이 모이면 바로 샀다).
+    // ⚠ **한 프레임에 하나만 산다.** 여러 개를 몰아 사면 구입 시점이 원판보다 앞당겨지고,
+    //   도장이 붙는 틱이 달라져 세계가 그 자리에서 갈라진다(자가 검사에서 실제로 그랬다).
+    if (bi < buys.length && game.buyTier(buys[bi].cat)) bi += 1;
+    game.update(stepMs);
+  }
+
+  // --- 기록과 재현을 한 줄씩 대조 ---
+  const got = game.runCodeData();
+  const wStages = want.entries.filter((e) => e.t === "stage");
+  const gStages = got.entries.filter((e) => e.t === "stage");
+  console.log("");
+  console.log(`# 단계 대조 · 기록 ${wStages.length}줄 · 재현 ${gStages.length}줄`);
+  console.log(["#", "시대", "단계".padEnd(10), "위협".padEnd(10), "기록 개체", "재현 개체", "기록 합불", "재현 합불"].join("\t"));
+  const n = Math.max(wStages.length, gStages.length);
+  let firstDiff = -1;
+  for (let i = 0; i < n; i++) {
+    const a = wStages[i];
+    const b = gStages[i];
+    const threat = a ? (a.boss ?? a.extinction ?? "-") : (b?.boss ?? b?.extinction ?? "-");
+    const same = a && b && a.pop === b.pop && a.passed === b.passed && a.kind === b.kind;
+    if (!same && firstDiff < 0) firstDiff = i;
+    console.log(
+      [
+        same ? " " : "▶",
+        String(a?.era ?? b?.era ?? "-"),
+        String(a?.kind ?? b?.kind ?? "-").padEnd(10),
+        String(threat).padEnd(10),
+        a ? String(a.pop) : "-",
+        b ? String(b.pop) : "-",
+        a ? (a.passed ? "합격" : "불합격") : "-",
+        b ? (b.passed ? "합격" : "불합격") : "-",
+      ].join("\t"),
+    );
+  }
+
+  console.log("");
+  console.log("# 결말 대조");
+  const rowsFinal = [
+    ["도달 시대", want.summary.era, got.summary.era],
+    ["레벨", want.summary.level, got.summary.level],
+    ["끝 개체", want.summary.popEnd, got.summary.popEnd],
+    ["최고 개체", want.summary.popMax, got.summary.popMax],
+    ["방울 번 것", want.summary.geneEarned, got.summary.geneEarned],
+    ["방울 쓴 것", want.summary.geneSpent, got.summary.geneSpent],
+  ];
+  for (const c of CATEGORIES) rowsFinal.push([`도장 ${CATEGORY_LABELS[c]}`, want.summary.pips[c], got.summary.pips[c]]);
+  for (const [k, a, b] of rowsFinal) {
+    console.log([a === b ? " " : "▶", String(k).padEnd(12), String(a), String(b)].join("\t"));
+  }
+
+  console.log("");
+  console.log(`# 드래프트 ${di}/${drafts.length} 재현 · 방울 구입 ${bi}/${buys.length} 재현`);
+  if (notes.length > 0) {
+    console.log("# 어긋난 것:");
+    for (const t of notes) console.log(`  · ${t}`);
+  }
+  console.log("");
+  if (firstDiff < 0 && notes.length === 0 && want.summary.popEnd === got.summary.popEnd) {
+    console.log("# ✅ 재현이 기록과 같다 — 프로브 배선은 게임과 같은 게임을 한다.");
+    console.log("#    그러면 다른 모드가 어긋난 것은 **세계 구성**이다(그 모드가 무엇을 다르게 만드는지 좁혀라).");
+  } else {
+    console.log(`# ❌ 재현이 기록과 다르다. 첫 어긋남: ${firstDiff < 0 ? "(단계는 같고 결말이 다름)" : `단계 ${firstDiff + 1}`}`);
+    console.log("#    그 줄까지는 같으므로, 거기서부터 이분하면 갈라진 자리가 나온다.");
+    console.log("#    ⚠ 이 상태에서는 어떤 밸런스 수치도 근거로 쓰지 마라.");
+  }
 }
 
 async function runExtinction() {
@@ -2051,6 +2282,7 @@ try {
   else if (MODE === "raid") await runRaid();
   else if (MODE === "poison") await runPoison();
   else if (MODE === "extinction") await runExtinction();
+  else if (MODE === "replay") await runReplay();
   else if (MODE === "sweep") await runSweep();
   else if (MODE === "era0") await runEra0();
   else if (MODE === "encounter") await runEncounter();
@@ -2063,7 +2295,7 @@ try {
   else if (MODE === "sens") await runSens();
   else {
     console.error(
-      `알 수 없는 모드: ${MODE} (order | raid | poison | extinction | sweep | era0 | encounter | steps | growth | apex | scale | sens)`,
+      `알 수 없는 모드: ${MODE} (replay | order | raid | poison | extinction | sweep | era0 | encounter | steps | growth | apex | scale | sens)`,
     );
     process.exitCode = 1;
   }
