@@ -311,8 +311,15 @@ export class World {
    *   무엇보다 불씨는 「시험에 떨어졌다」 한 뜻만 가진 미터인데 알파 죽음을 섞으면 뜻이 흐려진다.
    *   공백은 **손끝으로 치르는 대가**다 — 몇 초 동안 무리가 자율로 흩어진다.
    */
+  // ⚠⚠ **2026-08-10 부터 이 값을 읽는 규칙이 하나도 없다.** **[사용자]** 「이끌던 개체 어쩌고
+  //   아예 없애줘」로 명령 게이트 둘(`hearsOrder` · `game.setHerdOrder`)에서 걷어냈다.
+  //   값은 여전히 세지만(아래 `vacuumOnLeadDeath`) 세계는 그것으로 아무 일도 안 한다.
+  //   **지우지 않고 남긴 이유**: 알파를 통째로 없앨지가 아직 미결이고(backlog 「알파를 없앨지
+  //   정한다」), 그 결정과 함께 `lead`·`passBaton`·`HERD_VACUUM_TICKS` 를 한 묶음으로 정리하는
+  //   편이 낫다. 지금 여기만 지우면 무리 티어의 값어치 표(`HERD_VACUUM_TICKS`)가 홀로 남는다.
   leadVacuum = 0;
-  /** 알파가 죽었을 때 걸 지휘 공백의 길이(틱). game 이 무리 티어에서 계산해 넣어 준다. */
+  /** 알파가 죽었을 때 걸 지휘 공백의 길이(틱). game 이 무리 티어에서 계산해 넣어 준다.
+   *  ⚠ 위 주석대로 **지금은 아무 효과가 없다.** */
   vacuumOnLeadDeath = 0;
 
   /**
@@ -327,8 +334,10 @@ export class World {
    * rng 미사용 · 순수 기하. 지시가 없으면 부르는 쪽이 없으므로 스트림에 영향이 없다.
    */
   hearsOrder(x: number, y: number): boolean {
+    // ⚠ 여기 있던 `this.leadVacuum <= 0 &&`(지휘 공백)을 2026-08-10 에 걷었다 ·
+    //   **[사용자]** 「이끌던 개체 어쩌고 아예 없애줘」. 알파가 쓰러진 직후에도 명령이 계속 닿는다.
+    //   `leadVacuum` 은 아직 세계가 세지만 **이제 아무도 안 본다**(아래 필드 주석 참조).
     return (
-      this.leadVacuum <= 0 &&
       this.voiceR > 0 &&
       (this.lead.x - x) ** 2 + (this.lead.y - y) ** 2 <= this.voiceR * this.voiceR
     );

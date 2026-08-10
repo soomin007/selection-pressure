@@ -97,15 +97,17 @@ describe("거절 이유 한 줄 · 참인 것만, 모르면 입을 다문다 (�
     );
   });
 
-  it("지휘 공백으로 거절될 때는 **이 함수가 입을 다문다** · 이유는 그것을 아는 자리가 이미 말했다", () => {
+  // ⚠ **2026-08-10 에 계약이 뒤집혔다.** 예전엔 「알파가 막 쓰러지면 몇 초 동안 명령이 안 통한다」
+  //   (지휘 공백)였고, 이 테스트는 그때 **거짓 이유를 말하지 않는지**를 재고 있었다.
+  //   **[사용자 2026-08-10]** "지금도 여전히 이끌던 개체 어쩌고가 남아있는데, 이거 그냥 아예 없애줘."
+  //   → 문구뿐 아니라 **명령을 막던 게이트 자체**를 걷었다. 이제 알파가 쓰러져도 명령은 통한다.
+  it("알파가 막 쓰러져도 명령은 통한다 — 지휘 공백이 더는 명령을 안 막는다", () => {
     const g = startRun("tap-deny-vacuum");
-    g.genome.pips.leg = TIER_STEPS[0] as number; // 잠김도 쿨타임도 아닌 상태를 만든다
-    g.world.leadVacuum = 150; // 알파가 막 쓰러졌다(5초)
-    expect(g.setHerdOrder(120, 200, "evade")).toBe(false);
-    const slot = g.orderWheel().find((s) => s.spec.kind === "evade");
-    expect(slot?.unlocked).toBe(true); // 칸만 보면 멀쩡하다 · 그래서 예전에 거짓 이유가 나왔다
-    expect(slot?.cdLeft ?? 0).toBe(0);
-    expect(orderDenyLine(slot)).toBeNull();
+    g.genome.pips.leg = TIER_STEPS[0] as number; // 잠김도 쿨타임도 아닌 상태
+    g.world.leadVacuum = 150; // 알파가 막 쓰러졌다(5초) · 그래도 상관없어야 한다
+    // 명령 **전에** 물어본다 — 통하고 나면 쿨타임이 걸려 그때는 「숨을 고르는 중」이 참말이 된다.
+    expect(orderDenyLine(g.orderWheel().find((s) => s.spec.kind === "evade"))).toBeNull();
+    expect(g.setHerdOrder(120, 200, "evade")).toBe(true);
   });
 });
 

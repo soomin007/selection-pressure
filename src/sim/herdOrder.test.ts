@@ -438,7 +438,12 @@ describe("지휘 공백 — 알파가 쓰러지면 잠시 명령이 안 통한�
     expect(at(TIER_STEPS[3])).toBeGreaterThan(0); // 그래도 공짜는 아니다
   });
 
-  it("알파가 죽으면 공백이 걸리고, 그동안 명령이 아무에게도 안 간다", () => {
+  // ⚠⚠ **2026-08-10 에 계약이 뒤집혔다.** **[사용자]** "지금도 여전히 이끌던 개체 어쩌고가
+  //   남아있는데, **이거 그냥 아예 없애줘**." → 지휘 공백을 **명령 경로에서 통째로 걷어냈다**
+  //   (`world.hearsOrder` · `game.setHerdOrder`). 알파가 쓰러져도 명령은 계속 통한다.
+  //   `leadVacuum` 값 자체는 아직 세지만 **아무도 그것으로 판정하지 않는다**(world.ts 필드 주석).
+  //   이 테스트는 그 사실을 **거꾸로** 못 박는다 — 옛 계약이 되살아나면 여기서 걸린다.
+  it("알파가 죽어도 명령이 계속 통한다 — 공백은 더 이상 명령을 안 막는다", () => {
     const w = new World("order-vacuum", W, H, tune({ herding: 40 }));
     w.voiceR = 4000; // 목소리는 넉넉하다 — 막는 것이 거리가 아님을 분명히 한다
     w.vacuumOnLeadDeath = 90;
@@ -456,27 +461,16 @@ describe("지휘 공백 — 알파가 쓰러지면 잠시 명령이 안 통한�
     expect(w.leadVacuum).toBeGreaterThan(0);
     expect(w.herdOrder).toBeNull(); // 걸려 있던 명령도 함께 풀린다(누가 시켰는지가 없어졌다)
 
-    // 공백 동안에는 다시 찍어도 안 통한다.
+    // **공백 동안에도 통한다** — 다시 찍으면 그 자리에서 무리가 따른다.
+    let during = 0;
     for (let i = 0; i < 20; i++) {
       w.armLead();
       w.herdOrder = { x: 60, y: 900 };
       w.step();
-      expect(w.orderFollowers).toBe(0);
+      during = Math.max(during, w.orderFollowers);
     }
-    // 공백이 다 지나면 다시 통한다.
-    while (w.leadVacuum > 0) {
-      w.armLead();
-      w.herdOrder = { x: 60, y: 900 };
-      w.step();
-    }
-    let after = 0;
-    for (let i = 0; i < 30; i++) {
-      w.armLead();
-      w.herdOrder = { x: 60, y: 900 };
-      w.step();
-      after = Math.max(after, w.orderFollowers);
-    }
-    expect(after).toBeGreaterThan(0);
+    expect(during, "공백 중인데 아무도 안 따랐다 — 게이트가 되살아났는지 보라").toBeGreaterThan(0);
+    expect(w.leadVacuum, "전제: 이 구간이 실제로 공백이었다").toBeGreaterThan(0);
   });
 
   it("공백은 불씨를 안 깎는다 — 대가는 손끝이 치른다(sim 은 불씨를 아예 모른다)", () => {
