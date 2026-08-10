@@ -31,6 +31,7 @@ import {
   rarityOdds,
   cardPoolFor,
   rarityWeightsAtLevel,
+  cardGateOpen,
   cardPrereqMet,
   cardRedundant,
   type Card,
@@ -66,6 +67,10 @@ const pipsOf = (partial: Partial<Pips>): Pips => ({ ...emptyPips(), ...partial }
 
 /** 특성 이름 전부(순서는 `PERK_DEFS` 그대로). 「그릇을 다 채운 종」을 만들 때 쓴다. */
 const ALL_PERKS: PerkName[] = PERKS.map((p) => p.id);
+
+/** 듀오 카드인가 · 규칙 특성(`rule`)을 주는 카드. 두 범주 3단에서만 열린다. */
+const isDuoCard = (c: Card): boolean =>
+  c.perk !== undefined && PERK_BY_NAME.get(c.perk)?.rule !== undefined;
 
 /** 최고 티어 다섯 + 열쇠 셋 — 도장 쪽으로는 더 갈 데가 없는 게놈. */
 const APEX_PIPS: Pips = pipsOf({
@@ -200,16 +205,47 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
     //
     // ⚠ 이건 **가중치만의 성질이 아니라 풀 구성의 성질**이다. 등급이 뜰 확률 = 종류 수 × 가중치라,
     //   한 등급의 **종류 수**가 위 등급보다 많으면 가중치가 낮아도 더 자주 뜬다.
-    //   v9 풀(52장)은 흔함 16 · 드묾 13 · 귀함 9 · 아주 귀함 7 · 전설 7 이라 서열이 지켜진다:
-    //   레벨 1 은 1600 > 845 > 342 > 140 > 70, 최대 레벨은 1600 > 1268 > 821 > 504 > 385.
     //   ⚠ 특성 배수를 튜닝하면 `perkRarity` 가 등급을 다시 계산해 **장수가 저절로 움직인다.**
     //     그때 이 서열이 깨지면 배수를 되돌리거나 띠(`PERK_VALUE_BANDS`)를 손봐야 한다.
+    //
+    // ⚠⚠ **듀오 열 장은 이 셈에서 뺀다**(2026-08-10). 풀 전체로 세면 「아주 귀함」의 종류가 갑절이
+    //   되어 서열이 뒤집히는데, 그 수는 **아무도 겪지 않는 세계의 수**다 · 듀오는 두 범주를 함께
+    //   3단으로 올려야(도장 28개) 후보에 뜨고, 다섯 범주를 전부 3단으로 만드는 판은 존재하지 않는다
+    //   (tiers.ts 사다리표: 가장 후한 판도 두 범주가 한계다). 한 종이 실제로 보는 후보 풀에서
+    //   서열이 지켜지는지는 **바로 아래 테스트**가 따로 못 박는다.
+    const noDuo = cardPoolFor().filter((c) => !isDuoCard(c));
     for (const level of [1, 3, 5, 7, 30]) {
-      const o = rarityOdds(cardPoolFor(), 3, level);
+      const o = rarityOdds(noDuo, 3, level);
       expect(o.legendary.perCard, `레벨 ${level}: 전설 < 아주 귀함`).toBeLessThan(o.epic.perCard);
       expect(o.epic.perCard, `레벨 ${level}: 아주 귀함 < 귀함`).toBeLessThan(o.rare.perCard);
       expect(o.rare.perCard, `레벨 ${level}: 귀함 < 드묾`).toBeLessThan(o.uncommon.perCard);
       expect(o.uncommon.perCard, `레벨 ${level}: 드묾 < 흔함`).toBeLessThan(o.common.perCard);
+    }
+  });
+
+  it("**한 종이 실제로 보는 후보 풀**에서도 서열이 지켜진다 · 듀오를 포함해서", () => {
+    // 위 테스트가 듀오를 뺀 이유의 반대편 증명이다. 실제 종에게는 게이트가 걸려 있으므로
+    // 후보에 드는 듀오가 한둘뿐이고, 그러면 「아주 귀함」이 「귀함」을 못 넘는다.
+    const at3 = (...cats: Category[]): Pips => {
+      const p = emptyPips();
+      for (const c of cats) p[c] = TIER_STEPS[2] as number;
+      return p;
+    };
+    const cases: [string, Pips][] = [
+      ["두 기둥(이빨+무리)", at3("fang", "herd")],
+      ["두 기둥(가죽+다리)", at3("hide", "leg")],
+      ["세 기둥(이빨+무리+가죽)", at3("fang", "herd", "hide")],
+    ];
+    for (const [label, pips] of cases) {
+      const g = genomeFromPips(pips, emptyKeys());
+      const pool = CARD_POOL.filter((c) => cardPrereqMet(c, g));
+      const duos = pool.filter(isDuoCard);
+      // 두 기둥이면 듀오는 정확히 하나, 세 기둥이어도 셋이다(짝의 수 = 기둥 수 C 2).
+      expect(duos.length, `${label}: 후보에 드는 듀오 수`).toBeLessThanOrEqual(3);
+      for (const level of [1, 30]) {
+        const o = rarityOdds(pool, 3, level);
+        expect(o.epic.perCard, `${label} 레벨 ${level}: 아주 귀함 < 귀함`).toBeLessThan(o.rare.perCard);
+      }
     }
   });
 });
@@ -220,6 +256,46 @@ describe("등급 기준 (v9 — 등급을 손으로 안 적는다)", () => {
     expect(legendary.every((c) => c.key !== undefined)).toBe(true);
     expect(legendary.length).toBe(KEY_NAMES.length);
     expect(new Set(legendary.map((c) => c.key))).toEqual(new Set(KEY_NAMES));
+  });
+
+  it("듀오 열 장은 **두 범주 3단 전에는 후보에 안 든다** · 티어를 올릴 이유가 여기 있다", () => {
+    const duoCards = CARD_POOL.filter(isDuoCard);
+    expect(duoCards.length, "듀오 카드 수").toBe(10);
+    for (const c of duoCards) {
+      expect(cardRarity(c), `${c.id} 의 등급`).toBe("epic");
+      // 도장이 하나도 없는 종에게는 절대 안 뜬다.
+      expect(cardGateOpen(c, defaultGenome()), `${c.id} 가 0단에서 열렸다`).toBe(false);
+      // 한 범주만 최고 티어여도 안 뜬다 · 두 범주가 함께 3단이라야 한다.
+      for (const cat of CATEGORIES) {
+        const only = emptyPips();
+        only[cat] = TIER_STEPS[3] as number;
+        expect(cardGateOpen(c, genomeFromPips(only, emptyKeys())), `${c.id} 가 ${cat} 하나로 열렸다`).toBe(
+          false,
+        );
+      }
+    }
+    // 다섯 범주가 전부 3단이면(현실에서는 안 오는 자리) 열 장이 다 열린다 · 게이트가 막힌 게 아니다.
+    const all3 = genomeFromPips(
+      pipsOf({
+        fang: TIER_STEPS[2],
+        leg: TIER_STEPS[2],
+        eye: TIER_STEPS[2],
+        hide: TIER_STEPS[2],
+        herd: TIER_STEPS[2],
+      }),
+      emptyKeys(),
+    );
+    expect(duoCards.filter((c) => cardGateOpen(c, all3)).length).toBe(10);
+  });
+
+  it("듀오 카드는 **고른 뒤에야** 종에 붙는다 · 도장이 저절로 켜 주지 않는다", () => {
+    const g = genomeFromPips(pipsOf({ fang: TIER_STEPS[2], herd: TIER_STEPS[2] }), emptyKeys());
+    expect(g.perks).toEqual([]); // 3단 둘을 가졌지만 아직 아무 듀오도 없다
+    const wolflaw = CARD_POOL.find((c) => c.perk === "duo_wolflaw") as Card;
+    expect(cardPrereqMet(wolflaw, g)).toBe(true); // 후보에는 든다
+    applyCard(g, wolflaw);
+    expect(g.perks).toEqual(["duo_wolflaw"]);
+    expect(cardRedundant(wolflaw, g), "같은 듀오를 두 번 주지 않는다").toBe(true);
   });
 
   it("특성 카드의 등급은 perkRarity 가 낸 값과 **정확히** 같다", () => {
@@ -431,7 +507,9 @@ describe("카드 적용 — 특성이 붙고, 열쇠가 열리고, (프리셋만
 
 describe("죽은 카드 필터(cardPrereqMet · cardRedundant)", () => {
   it("이미 가진 열쇠 카드는 후보에 안 든다", () => {
-    const has = genomeFromPips(emptyPips(), { ...emptyKeys(), fin: true });
+    // ⚠ 열쇠 카드는 **모 범주 1단**에서 열린다(2026-08-10 게이트). 도장 0 으로 재면 게이트에서
+    //    먼저 걸려 「이미 가져서 빠진 것」과 구별이 안 된다 — 그래서 다리를 1단으로 켜 놓고 잰다.
+    const has = genomeFromPips(pipsOf({ leg: TIER_STEPS[0] }), { ...emptyKeys(), fin: true });
     expect(cardPrereqMet(card("ky_fin"), has)).toBe(false);
     expect(cardRedundant(card("ky_fin"), has)).toBe(true);
     expect(cardPrereqMet(card("ky_wing"), has)).toBe(true); // 아직 안 가진 열쇠는 유효
@@ -445,7 +523,8 @@ describe("죽은 카드 필터(cardPrereqMet · cardRedundant)", () => {
   });
 
   it("이미 가진 특성은 후보에 안 든다 — 같은 특성은 한 번뿐이다", () => {
-    const has = genomeFromPips(emptyPips(), emptyKeys(), ["vision_night"]);
+    // 게이트를 열어 두고 잰다(눈 3단) · 안 그러면 게이트에 먼저 걸려 중복 판정이 안 보인다.
+    const has = genomeFromPips(APEX_PIPS, emptyKeys(), ["vision_night"]);
     expect(cardRedundant(card("pk_vision_night"), has)).toBe(true);
     expect(cardPrereqMet(card("pk_vision_night"), has)).toBe(false);
     // 같은 축의 다른 특성은 여전히 후보다(축을 판다고 그 축이 닫히지 않는다).
@@ -453,14 +532,31 @@ describe("죽은 카드 필터(cardPrereqMet · cardRedundant)", () => {
     expect(cardPrereqMet(card("pk_vision_day"), has)).toBe(true);
   });
 
-  it("도장은 후보 판정에 아무 영향이 없다 — 최고 티어 종에게도 카드 52장이 그대로 뜬다", () => {
-    // v8 에서 「주는 범주가 전부 최고 티어면 죽은 카드」였고, 그것이 만렙 뒤 빈 드래프트의 원인이었다.
+  // ⚠⚠ **이 계약은 2026-08-10 저녁에 정반대로 뒤집혔다.**
+  //   그날 아침(v9 1차)에는 「도장은 후보 판정에 아무 영향이 없다」가 계약이었다 — v8 의 「최고 티어면
+  //   죽은 카드」가 만렙 뒤 빈 드래프트를 만들었기에 그 반대로 갔던 것이다.
+  //   그런데 **[사용자 2026-08-10]** 폰 검토에서 「티어를 올리면 더 특별한 카드가 열려야 한다 ·
+  //   지금은 역할이 뒤바뀌었다」는 지적이 나와, 도장이 **카드를 여는 열쇠**가 됐다.
+  //   두 계약이 정반대라 헷갈리기 쉽다: **도장은 카드를 「닫지」 않고 「연다」.** 최고 티어 종에게
+  //   모든 카드가 열리는 것은 그대로이고, 달라진 것은 **낮은 티어에서 일부가 아직 안 열린다**는 쪽이다.
+  it("도장이 카드를 **연다** — 최고 티어 종에게는 전부 열리고, 도장이 없으면 특성이 하나도 안 열린다", () => {
     const apex = genomeFromPips(APEX_PIPS, emptyKeys());
-    const bare = defaultGenome();
-    for (const c of CARD_POOL) {
-      expect(cardPrereqMet(c, apex), c.id).toBe(cardPrereqMet(c, bare));
-    }
     expect(CARD_POOL.filter((c) => cardPrereqMet(c, apex)).length).toBe(CARD_POOL.length);
+
+    // 도장이 하나도 없으면(프리셋 이전) 특성도 열쇠도 안 열린다 — 열 것이 아직 없다.
+    const bare = defaultGenome();
+    expect(CARD_POOL.filter((c) => cardPrereqMet(c, bare)).length).toBe(0);
+  });
+
+  it("티어를 올리면 후보가 늘어난다 — 드래프트에서 눈으로 확인되는 보상", () => {
+    const counts = [1, 2, 3, 4].map((tier) => {
+      const pips = emptyPips();
+      for (const c of CATEGORIES) pips[c] = TIER_STEPS[tier - 1] as number;
+      const g = genomeFromPips(pips, emptyKeys());
+      return CARD_POOL.filter((c) => cardPrereqMet(c, g)).length;
+    });
+    expect(counts[1] as number, "2단이 1단보다 많다").toBeGreaterThan(counts[0] as number);
+    expect(counts[2] as number, "3단이 2단보다 많다").toBeGreaterThan(counts[1] as number);
   });
 
   it("어떤 게놈에서도 후보에 남은 카드는 반드시 무언가를 바꾼다", () => {
@@ -498,13 +594,13 @@ describe("죽은 카드 필터(cardPrereqMet · cardRedundant)", () => {
     // (카드 12~22장)으로는 절반도 못 채운다 — 즉 **정상 플레이에서 도달 불가능한 자리**다.
     // 그래도 0장이 되는 것 자체는 사실이므로, 그 사실을 여기 못 박아 둔다(game 이 빈 후보를 받는
     // 경우를 언젠가 다루게 될 때 근거가 된다).
-    const everything = genomeFromPips(emptyPips(), THREE_KEYS, ALL_PERKS);
+    const everything = genomeFromPips(APEX_PIPS, THREE_KEYS, ALL_PERKS);
     const allow = (c: Card): boolean => cardPrereqMet(c, everything) && !cardRedundant(c, everything);
     expect(CARD_POOL.filter(allow).length).toBe(0);
     expect(drawCards(new Rng("everything"), 3, allow, 7)).toEqual([]);
 
     // 한 장만 모자라면 정확히 그 한 장이 뜬다 — 마르는 것은 「전부 가졌을 때」 딱 한 지점뿐이다.
-    const almost = genomeFromPips(emptyPips(), THREE_KEYS, ALL_PERKS.slice(1));
+    const almost = genomeFromPips(APEX_PIPS, THREE_KEYS, ALL_PERKS.slice(1));
     const allowAlmost = (c: Card): boolean => cardPrereqMet(c, almost) && !cardRedundant(c, almost);
     expect(CARD_POOL.filter(allowAlmost).map((c) => c.id)).toEqual([`pk_${ALL_PERKS[0] as string}`]);
   });
@@ -600,7 +696,7 @@ describe("반복 완화(소프트 디듑)", () => {
 describe("갈래 전용 풀은 폐기됐다 — 52장 전부가 누구에게나 나온다", () => {
   it("cardPoolFor 는 늘 풀 전체를 준다", () => {
     expect(cardPoolFor().length).toBe(CARD_POOL.length);
-    expect(CARD_POOL.length).toBe(52);
+    expect(CARD_POOL.length).toBe(PERKS.length + KEY_NAMES.length);
   });
 
   it("최고 티어 상한은 넷이다(사다리 끝이 곧 성장의 끝)", () => {

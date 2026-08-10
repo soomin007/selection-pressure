@@ -26,6 +26,8 @@ import {
   CATEGORY_AXES,
   PERKS,
   PERK_BY_NAME,
+  gateOpen,
+  perkGate,
   perkLine,
   perkRarity,
   type PerkName,
@@ -37,6 +39,7 @@ import {
   KEY_PARENT,
   MAX_KEYS,
   keyCount,
+  tierOf,
   type Category,
   type KeyName,
 } from "@/sim/tiers";
@@ -173,7 +176,26 @@ export function cardCategories(card: Card): Category[] {
  */
 export function cardPrereqMet(card: Card, genome: Genome): boolean {
   if (card.ember) return false; // 불씨 카드는 game 이 따로 끼워 넣는다(일반 뽑기에 안 섞인다)
+  if (!cardGateOpen(card, genome)) return false;
   return !cardRedundant(card, genome);
+}
+
+/**
+ * **이 카드가 아직 잠겨 있는가** — 티어가 카드를 여는 자리(**[사용자 2026-08-10]**).
+ *
+ * 이것이 「티어를 올릴 이유」다. 티어 자체의 파생 능치보다 **새로 열리는 카드**가 더 큰 보상이어야
+ * 한다는 것이 사용자 설계이고, 그 약속을 지키는 유일한 판정이 여기다.
+ *
+ * ⚠ 드래프트 필터와 **화면의 해금 예고가 같은 함수를 부른다**(`sim/perks.gateOpen`).
+ *   두 곳에 조건을 적으면 「열린다고 적어 놓고 안 뜨는」 카드가 생긴다.
+ * ⚠ 열쇠 카드는 **모 범주 1단**에서 열린다(`KEY_PARENT`). 세게 잠그지 않는 이유: 프리셋이 두 범주를
+ *   1단으로 켜고 시작하므로 이 규칙이면 **첫 판에도 전설이 후보에 든다** — 그게 없으면 첫 판에
+ *   전설 등급을 볼 길이 아예 없다(meta.ts UNLOCK_TIERS 주석의 같은 근거).
+ */
+export function cardGateOpen(card: Card, genome: Genome): boolean {
+  if (card.key !== undefined) return tierOf(genome.pips[KEY_PARENT[card.key]]) >= 1;
+  if (card.perk !== undefined) return gateOpen(perkGate(card.perk), genome.pips, genome.keys);
+  return true;
 }
 
 export function cardRedundant(card: Card, genome: Genome): boolean {
@@ -289,28 +311,32 @@ export const PRESET_CARDS: readonly Card[] = [
   },
 ];
 
-// ─────────────────────────────── 카드 풀 52장 ───────────────────────────────
+// ─────────────────────────────── 카드 풀 ───────────────────────────────
 //
 // **카드 하나 = 특성 하나**(1:1). 이름·설명·효과 한 줄이 전부 `sim/perks.ts` 에서 온다.
 // 여기에 다시 적지 않는 이유는 늘 같다 — 두 곳에 적힌 규칙은 반드시 조용히 어긋난다.
+// 장수는 `PERKS.length + KEY_NAMES.length` 라 여기 숫자로 안 적는다(적으면 늘 낡는다).
 //
-// | 등급 | 장수 | 무엇인가 |
-// |---|---|---|
-// | 흔함      | 16 | 조건이 넓고 배수가 작다(늘 · 낮에 · 배가 절반 아래일 때) |
-// | 드묾      | 13 | 조건이 좁아지고 배수가 커진다 |
-// | 귀함      |  9 | |
-// | 아주 귀함 |  7 | 조건이 아주 좁고 배수가 크거나(달아나는 동안 ×3.5) 늘 켜지며 크다 |
-// | 전설      |  7 | **열쇠** · 배수가 아니라 없던 규칙을 연다 |
+// | 등급 | 무엇인가 |
+// |---|---|
+// | 흔함      | 조건이 넓고 배수가 작다(늘 · 낮에 · 배가 절반 아래일 때) |
+// | 드묾      | 조건이 좁아지고 배수가 커진다 |
+// | 귀함      | |
+// | 아주 귀함 | 조건이 아주 좁고 배수가 크거나(달아나는 동안 ×3.5) 늘 켜지며 크다 · **듀오 열 장이 여기 있다** |
+// | 전설      | **열쇠** · 배수가 아니라 없던 규칙을 연다 |
 //
-// ★ **등급을 손으로 안 적는다.** `perkRarity` 가 「조건 성립 빈도 × 효과 크기」로 계산한다.
+// ★ **등급을 손으로 안 적는다.** `perkRarity` 가 「조건 성립 빈도 × 효과 크기」로 계산한다
+//   (규칙 특성 = 듀오만 예외 · 곱해지는 축이 없어 그 자로 못 재므로 `RULE_PERK_RARITY` 로 고정한다).
 //   손으로 적으면 배수를 튜닝할 때마다 등급이 조용히 거짓이 되고, 그 순간 배지가 거짓말을 한다.
 //   (v8 에서는 「등급 = 도장 크기」였는데, 도장이 사라지면서 그 척도 자체가 없어졌다.)
 //
 // ⚠ **등급별 「종류 수」가 서열을 뒤집을 수 있다.** 한 등급이 뜰 확률은 `종류 수 × 가중치` 라,
 //   윗 등급의 종류가 많으면 아랫 등급보다 자주 뜬다 — 그 순간 배지가 거짓말이 된다.
 //   레벨이 오르면 윗 등급에 배수가 붙으므로(RARITY_BOOST_MAX) **레벨 1 과 최대 레벨 양쪽에서** 봐야 한다.
-//   지금 구성(52장): 레벨 1 은 1600 > 845 > 342 > 140 > 70, 최대 레벨은 1600 > 1268 > 821 > 504 > 385.
-//   **장수를 바꾸면 이 산수를 다시 하라**(cards.test 가 레벨 1·3·5·7·30 에서 잡는다).
+// ⚠ **듀오 열 장은 이 산수에서 따로 봐야 한다**(2026-08-10). 풀 전체로 세면 「아주 귀함」의 종류가
+//   갑절이 되지만, 듀오는 두 범주를 함께 3단으로 올려야(도장 28개) 후보에 뜨므로 **한 종이 동시에
+//   보는 듀오 카드는 사실상 한둘**이다. 그래서 서열 검사는 ① 듀오를 뺀 풀 ② 한 종이 실제로 보는
+//   후보 풀, 두 자리에서 한다(`cards.test.ts`). **장수를 바꾸면 그 두 테스트를 다시 보라.**
 
 /**
  * **전설 — 열쇠.** 없던 규칙 하나를 연다(물에 들어간다 · 산을 날아 넘는다 · 어둠 속에서 소리로 본다).
@@ -337,7 +363,9 @@ const split = (s: string): [string, string] => {
 
 function buildPool(): Card[] {
   const out: Card[] = [];
-  // 특성 카드 마흔다섯 — 카드가 이름을 따로 안 갖는다. 특성이 곧 카드다.
+  // 특성 카드 — 카드가 이름을 따로 안 갖는다. 특성이 곧 카드다.
+  // **듀오 열 장도 여기 섞여 들어온다**(`PERKS` 가 이미 품고 있다 · `perks.DUO_PERK_DEFS`).
+  // 게이트(두 범주 3단)는 `cardGateOpen` 이 다른 특성과 **똑같은 함수**로 판정하므로 예외가 없다.
   for (const p of PERKS) {
     out.push({ id: `pk_${p.id}`, name: p.name, desc: p.flavor, perk: p.id, rarity: perkRarity(p) });
   }

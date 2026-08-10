@@ -14,12 +14,13 @@ import type { Terrain } from "@/sim/terrain";
 import type { Traits } from "@/sim/genome";
 import { TRAIT_MAX, cloneGenome, mutateGenome } from "@/sim/genome";
 import { carnivory01, grazeEfficiency, huntEfficiency } from "@/sim/diet";
-import { hasDuo } from "@/sim/tiers";
 import { createEntity } from "@/sim/entity";
 import { areFriends } from "@/sim/species";
 import { bossCanHunt, isRaidFighter, isRaidRangedFighter, raidRangedPower, dealRaidHit, bossRaidTargetFor } from "@/sim/boss";
 import { ORDER, SIM } from "@/sim/params";
-import { perkCtxOf, perkMul } from "@/sim/perks";
+// 듀오는 2026-08-10 부터 **도장이 아니라 카드**다 · `hasRule` 이 「그 카드를 골랐는가」를 묻는다
+// (옛 `tiers.hasDuo(pips, id)` 는 지웠다 · 두 범주를 3단까지 올려도 그것만으로는 안 켜진다).
+import { hasRule, perkCtxOf, perkMul } from "@/sim/perks";
 
 interface Vec {
   x: number;
@@ -300,8 +301,8 @@ export function herdShielded(p: Entity, world: World): boolean {
     SIM.herdShieldRadius,
     (m) => m.alive && m !== p && m.species.id === p.species.id,
   );
-  // 듀오 「원진」(가죽 III + 무리 III): 이웃이 **하나만** 있어도 벽이 선다(사향소의 원).
-  if (hasDuo(p.genome.pips, "ring") && neighbors >= 1) return true;
+  // 듀오 「원진」(가죽 III + 무리 III 에서 열리는 카드): 이웃이 **하나만** 있어도 벽이 선다(사향소의 원).
+  if (hasRule(p.genome.perks, "ring") && neighbors >= 1) return true;
   return herdShieldedBy(herding, neighbors);
 }
 
@@ -332,7 +333,7 @@ function devour(e: Entity, prey: Entity, world: World): void {
   // 사냥 수입 = 기본 × 방어독 감쇠 × 사냥 효율(이빨 티어) × 큰 사냥(육식성이 강할수록 크게 먹는다).
   // 육식 빌드는 상한(maxEnergyFor)이 100 위로 올라 이 큰 사냥을 비축한다(긴 포만) — 초식은 상한 100 그대로.
   // 듀오 「큰 턱」(가죽 III + 이빨 III): 한 번 문 것으로 기력이 훨씬 많이 찬다.
-  const jaw = hasDuo(e.genome.pips, "bigjaw") ? 1.5 : 1;
+  const jaw = hasRule(e.genome.perks, "bigjaw") ? 1.5 : 1;
   // 조건부 특성의 사냥 배수(「밤 사냥 ×1.3」 등)는 여기 한 자리에서만 걸린다.
   // 무리 나눔(packShareGain)은 이 huntGain 을 밑으로 삼으므로 자동으로 함께 커진다 —
   // 「내가 크게 잡으면 무리도 크게 나눈다」가 그대로 성립한다(따로 곱하면 두 번 걸린다).
@@ -346,7 +347,7 @@ function devour(e: Entity, prey: Entity, world: World): void {
   // 나눔이 거의 없다(자연 격리). 나눔 몫은 packmate 자신의 herding·식성으로 스케일(무리 성향이 클수록 많이).
   if (carn > 0) {
     // 듀오 「늑대의 법」(이빨 III + 무리 III): 같이 잡은 것을 나누는 몫이 커진다.
-    const law = hasDuo(e.genome.pips, "wolflaw") ? 1.6 : 1;
+    const law = hasRule(e.genome.perks, "wolflaw") ? 1.6 : 1;
     world.grid.forEachMatching(prey.x, prey.y, SIM.packShareRadius, (m) => {
       if (!m.alive || m === e || m.species.id !== e.species.id) return;
       const mt = m.genome.traits;
@@ -395,11 +396,11 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
   // 큰 먹잇감은 잘 안 죽고, 아주 크면 이빨이 아예 안 박힌다(biteIgnoreDiff).
   // 듀오 「매복」(눈 III + 이빨 III): **아직 한 번도 안 다친** 상대에 넣는 첫 이빨은 피해 2배.
   // 듀오 「덮치기」(이빨 III + 다리 III): 쫓던 표적에 넣는 물기는 거의 빗나가지 않는다.
-  const pips = e.genome.pips;
+  const perks = e.genome.perks;
   const bite = biteOutcome(t.attack, prey.genome.traits.defense, t.size, prey.genome.traits.size);
   if (!bite.ignored) {
-    if (prey.woundTicks <= 0 && hasDuo(pips, "ambush")) bite.damage *= 2;
-    if (e.targetPrey === prey && hasDuo(pips, "pounce")) {
+    if (prey.woundTicks <= 0 && hasRule(perks, "ambush")) bite.damage *= 2;
+    if (e.targetPrey === prey && hasRule(perks, "pounce")) {
       bite.killChance = Math.min(SIM.killChanceMax, bite.killChance + 0.25);
     }
     // ── 조건부 특성의 무는 피해·버티는 힘 ──────────────────────────────────────────────
@@ -1140,7 +1141,7 @@ function computeFlee(
     if (bd2 < fr * fr) return clearFleeDir(e, world, bdx, bdy, maxSpeed, canSwim, canLand, canFly);
   }
   // 듀오 「먼저 보고 먼저 뛴다」(눈 III + 다리 III): 포식자를 1.5배 멀리서 알아챈다(가젤·영양).
-  const senseR = hasDuo(e.genome.pips, "seefirst") ? SIM.predatorSenseRange * 1.5 : SIM.predatorSenseRange;
+  const senseR = hasRule(e.genome.perks, "seefirst") ? SIM.predatorSenseRange * 1.5 : SIM.predatorSenseRange;
   const predator = world.grid.nearestMatching(
     e.x,
     e.y,
@@ -1271,7 +1272,7 @@ function chooseGoal(
     const dy = p.y - e.y;
     const d2 = dx * dx + dy * dy;
     // 듀오 「바위」(가죽 III + 눈 III): 가만히 있으면 돌처럼 보인다 — 숨기 열쇠가 없어도 안 띈다.
-    const still = p.vx * p.vx + p.vy * p.vy < 0.02 && hasDuo(p.genome.pips, "stone");
+    const still = p.vx * p.vx + p.vy * p.vy < 0.02 && hasRule(p.genome.perks, "stone");
     const camoF = apexEye
       ? 1
       : Math.min(
@@ -1323,7 +1324,20 @@ function chooseGoal(
     const reachable = world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly);
     if (p.alive && p.species.id !== e.species.id && reachable && !herdShielded(p, world) && !outrunsHunters(p)) {
       const cur2 = dist2(e, p);
-      if (cur2 <= keep2 && cand2 >= cur2 * SIM.targetSwitchGain) return { x: p.x, y: p.y };
+      // ── 듀오 「파도」(다리 III + 무리 III 에서 열리는 카드) ────────────────────────────────
+      // 「무리가 한 몸처럼 방향을 바꿉니다. 그때 쫓던 포식자가 표적을 놓칩니다.」
+      // 구현은 **끈질김(히스테리시스)을 끄는 것**이다. 평소 포식자는 새 후보가 기존 목표 거리²의
+      // 0.5배(≈71% 거리)보다 가까워야 갈아타는데, 파도가 걸린 상대를 쫓는 동안은 **조금이라도 더
+      // 가까운 것이 있으면 그리로 넘어간다**(문턱 1). 정어리 떼 한복판에서는 매번 다른 개체가
+      // 더 가까워지므로 추격이 계속 처음으로 돌아가고, 혼자 달아나는 개체에게는 아무 일도 안 난다
+      // (갈아탈 상대가 없다) · 무리를 판 종만 얻는 효과라는 뜻이다.
+      // ⚠ **면역이 아니다.** 포식자는 여전히 누군가를 쫓는다. 무리 방어(`herdShielded`)처럼 표적에서
+      //   통째로 빠지는 것이 아니라, 「한 마리에 집중하지 못하게」 하는 것뿐이다.
+      // ⚠ rng 를 한 번도 안 쓴다. 파도가 없는 종에게는 `SIM.targetSwitchGain` 이 그대로 들어가
+      //   부동소수점까지 예전과 같다(결정론 지문 불변).
+      // ⚠ **아직 안 잰 수다.** 무리 빌드의 생존율에 얼마나 걸리는지 프로브로 재야 한다.
+      const stick = p.fleeing && hasRule(p.genome.perks, "wave") ? 1 : SIM.targetSwitchGain;
+      if (cur2 <= keep2 && cand2 >= cur2 * stick) return { x: p.x, y: p.y };
     }
     e.targetPrey = null;
   }
@@ -1621,13 +1635,14 @@ export function makeFovTest(e: Entity): (tx: number, ty: number) => boolean {
  * ⚠ **최고 티어여도 안 넓어진다.** 예전 「정점 시야」는 부채꼴 규칙을 통째로 면제해 줬는데, 그건
  * **[사용자 2026-08-06]** 「티어가 오를수록 대가도 확연히 벌어진다」와 정면으로 어긋난다. 눈 4단은
  * 밤·수풀·상대 은신에서 규칙 밖으로 나가되(`isApex`), **뒤는 끝까지 캄캄하다.**
- * 사각을 메우는 유일한 길은 듀오 「파수꾼」(눈 III + 무리 III)이다 — 무리가 사각을 나눠 진다.
+ * 사각을 메우는 유일한 길은 듀오 「파수꾼」이다 · 눈 III + 무리 III 에서 **열리는 카드**를 골라야
+ * 하고(2026-08-10 · 도장만으로는 안 켜진다), 그러면 무리가 사각을 나눠 진다.
  */
 export function fovCosOf(e: Entity): number {
   const cos = e.genome.traits.fovCos;
   if (cos <= SIM.fovHalfCos) return cos;
   // 파수꾼: 기본 시야각을 넘어 좁아진 몫을 절반만 진다.
-  return hasDuo(e.genome.pips, "sentinel") ? SIM.fovHalfCos + (cos - SIM.fovHalfCos) * 0.5 : cos;
+  return hasRule(e.genome.perks, "sentinel") ? SIM.fovHalfCos + (cos - SIM.fovHalfCos) * 0.5 : cos;
 }
 
 /**

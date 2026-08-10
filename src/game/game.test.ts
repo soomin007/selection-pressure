@@ -34,13 +34,13 @@ import {
   MAX_TIER,
   TIER_STEPS,
   emptyKeys,
-  emptyPips,
   keyCount,
   nearestTierGoal,
   pipsForTier,
   pipsToNext,
   tierOf,
   type Category,
+  type Pips,
 } from "@/sim/tiers";
 import { GENE_AWARD, milestonesCrossed, type CrisisWatch, type GeneReason } from "@/sim/gene";
 import { SIM } from "@/sim/params";
@@ -496,6 +496,17 @@ describe("런 통계(도전 과제 판정의 재료)", () => {
 describe("카드의 전제 조건(드래프트 후보 필터)", () => {
   const keyCards = CARD_POOL.filter((c) => c.key !== undefined);
 
+  // ⚠ **게이트를 연 게놈으로 잰다** (2026-08-10 · **[사용자]** 「티어를 올리면 카드가 열린다」).
+  //   도장 0 으로 재면 카드가 게이트에서 **먼저** 걸려, 「이미 가져서 빠진 것」과 「아직 안 열린 것」이
+  //   구별되지 않는다. 이 블록이 재려는 것은 앞쪽(죽은 카드 필터)이므로 문을 다 열어 놓고 잰다.
+  const OPEN_PIPS: Pips = {
+    fang: TIER_STEPS[3] as number,
+    leg: TIER_STEPS[3] as number,
+    eye: TIER_STEPS[3] as number,
+    hide: TIER_STEPS[3] as number,
+    herd: TIER_STEPS[3] as number,
+  };
+
   it("풀에 열쇠 카드가 일곱 종류 있다(열쇠마다 정확히 한 장)", () => {
     expect(keyCards.length).toBe(KEY_NAMES.length);
     expect(new Set(keyCards.map((c) => c.key)).size).toBe(KEY_NAMES.length);
@@ -504,7 +515,7 @@ describe("카드의 전제 조건(드래프트 후보 필터)", () => {
   it("이미 가진 열쇠는 한 번도 다시 안 나온다", () => {
     debugSetMetaLevel(20); // 모든 카드 해금
     const rng = new Rng("prereq");
-    const g = genomeFromPips(emptyPips(), { ...emptyKeys(), fin: true });
+    const g = genomeFromPips(OPEN_PIPS, { ...emptyKeys(), fin: true });
     let seen = 0;
     for (let i = 0; i < 3000; i++) {
       const drawn = drawCards(rng, 3, (c) => cardPrereqMet(c, g), 7);
@@ -522,7 +533,7 @@ describe("카드의 전제 조건(드래프트 후보 필터)", () => {
   });
 
   it("열쇠 상한(3개)에 닿으면 열쇠 카드가 통째로 후보에서 빠진다", () => {
-    const full = genomeFromPips(emptyPips(), { ...emptyKeys(), fin: true, echo: true, venom: true });
+    const full = genomeFromPips(OPEN_PIPS, { ...emptyKeys(), fin: true, echo: true, venom: true });
     expect(keyCount(full.keys)).toBe(MAX_KEYS);
     for (const c of keyCards) {
       expect(cardPrereqMet(c, full), `${c.id} 가 상한을 넘어 후보에 남았다`).toBe(false);
@@ -546,7 +557,7 @@ describe("카드의 전제 조건(드래프트 후보 필터)", () => {
     const ownedCards = perkCards.slice(0, 3);
     const owned: PerkName[] = [];
     for (const c of ownedCards) if (c.perk !== undefined) owned.push(c.perk);
-    const g = genomeFromPips(emptyPips(), emptyKeys(), owned);
+    const g = genomeFromPips(OPEN_PIPS, emptyKeys(), owned);
     for (const c of ownedCards) {
       expect(cardPrereqMet(c, g), `${c.id} 를 이미 가졌는데 후보에 남았다`).toBe(false);
       expect(cardRedundant(c, g)).toBe(true);

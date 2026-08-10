@@ -15,16 +15,22 @@
 import { describe, it, expect } from "vitest";
 import {
   CATEGORIES,
+  DUOS,
+  DUO_TIER,
   EYE_ECHO,
   EYE_VISION,
   KEY_NAMES,
   MAX_TIER,
+  activeDuos,
   deriveTraits,
   emptyKeys,
   emptyPips,
+  nearDuo,
+  openDuos,
   pipsForTier,
   tierLine,
   type Keys,
+  type Pips,
 } from "@/sim/tiers";
 import { SIM } from "@/sim/params";
 import { isApex, nightVisionFactor } from "@/sim/behavior";
@@ -151,5 +157,44 @@ describe("tierLine · 그 문구가 서 있는 전제(상수를 튜닝하면 여
       expect(deriveTraits(pips, ECHO).echo).toBe(EYE_ECHO[t]);
       expect(deriveTraits(pips, emptyKeys()).echo).toBe(0); // 열쇠가 없으면 세계에 없는 것과 같다
     }
+  });
+});
+
+// ─────────────────────────────── 듀오 · 도장은 카드를 「열 뿐」이다 ───────────────────────────────
+//
+// **[사용자 2026-08-10]** "티어를 올리면 더 좋은 카드, 더 특별한 카드들이 열려서 그걸 위해 티어를
+// 올리는 거고." 그 전까지 듀오만 혼자 도장으로 저절로 켜졌다. 이제 두 범주 3단은 **카드를 열고**,
+// 켜는 것은 드래프트에서 고르는 일이다(`sim/perks.ts` 의 `duo_*` · `perks.hasRule`).
+// 이 파일은 그 경계의 **도장 쪽**만 잰다(카드 쪽은 `perks.test.ts`).
+describe("듀오는 도장으로 열리고 카드로 켜진다", () => {
+  it("두 범주가 함께 3단이라야 열린다 · 한쪽만 최고 티어여도 안 열린다", () => {
+    for (const d of DUOS) {
+      const onlyA = { ...emptyPips(), [d.a]: pipsForTier(MAX_TIER) } as Pips;
+      const both = { ...emptyPips(), [d.a]: pipsForTier(DUO_TIER), [d.b]: pipsForTier(DUO_TIER) } as Pips;
+      expect(openDuos(onlyA).map((x) => x.id), `${d.id}: ${d.a} 한 범주만`).not.toContain(d.id);
+      expect(openDuos(both).map((x) => x.id), `${d.id}: 두 범주 3단`).toContain(d.id);
+    }
+  });
+
+  it("activeDuos 는 openDuos 의 옛 이름일 뿐이다 · 「가진 듀오」를 묻는 함수가 아니다", () => {
+    // 「가졌는가」는 `perks.ownedDuos(genome.perks)` 가 답한다. 이 이름을 남긴 것은 `src/ui/` 의
+    // 두 호출부를 이번 갈래가 안 건드리기로 했기 때문이고, UI 가 옮겨 가면 지운다.
+    expect(activeDuos).toBe(openDuos);
+  });
+
+  it("nearDuo 는 「한 칸 앞」을 짚는다 · 어느 범주를 몇 칸 올리면 듀오 카드가 열리는가", () => {
+    const d = DUOS[0] as (typeof DUOS)[number];
+    const pips = { ...emptyPips(), [d.a]: pipsForTier(DUO_TIER), [d.b]: pipsForTier(DUO_TIER - 1) } as Pips;
+    const near = nearDuo(pips);
+    expect(near, "한쪽이 3단 · 다른 쪽이 2단이면 예고가 있어야 한다").not.toBeNull();
+    expect(near?.pips).toBe(pipsForTier(DUO_TIER) - pipsForTier(DUO_TIER - 1));
+    // 예고한 만큼 채우면 실제로 열린다 · 예고와 판정이 같은 사다리를 본다.
+    const filled = { ...pips, [near?.need ?? d.b]: pipsForTier(DUO_TIER) } as Pips;
+    expect(openDuos(filled).length).toBeGreaterThan(0);
+  });
+
+  it("도장이 하나도 없으면 열리는 듀오도 예고도 없다", () => {
+    expect(openDuos(emptyPips())).toEqual([]);
+    expect(nearDuo(emptyPips())).toBeNull();
   });
 });

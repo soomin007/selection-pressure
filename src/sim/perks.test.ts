@@ -3,9 +3,12 @@
 // 이 저장소의 제1 규칙이 「수치가 화면 표시와 다르면 그건 거짓말이다」라, 여기 테스트는 대부분
 // **표시와 실제를 맞대 보는** 것이다. 나머지는 등급이 값어치 순서를 지키는지와 결정론이다.
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   ALONE_MAX,
+  AXIS_CATEGORY,
+  CATEGORY_AXES,
   CROWD_MIN,
   DAY_LIGHT,
   NIGHT_LIGHT,
@@ -13,10 +16,17 @@ import {
   PERK_AXES,
   PERK_AXIS_INFO,
   PERK_BY_NAME,
+  PERK_RULES,
   PERK_WHENS,
   PERK_WHEN_INFO,
+  RULE_PERK_RARITY,
   activePerks,
+  gateDepth,
+  gateOpen,
+  hasRule,
   isPerkName,
+  ownedDuos,
+  perkGate,
   perkLine,
   perkMul,
   perkRarity,
@@ -26,9 +36,26 @@ import {
   type PerkCtx,
   type PerkName,
 } from "@/sim/perks";
+import {
+  CATEGORIES,
+  DUOS,
+  DUO_TIER,
+  TIER_STEPS,
+  emptyKeys,
+  emptyPips,
+  openDuos,
+  pipsForTier,
+  type Pips,
+} from "@/sim/tiers";
+import { CHARGE_RAID_MUL } from "@/sim/boss";
 import { SIM } from "@/sim/params";
 import type { Entity } from "@/sim/entity";
 import type { World } from "@/sim/world";
+
+/** 배수 특성 · 「조건 · 축 · 배수」로 이루어진 것. 규칙 특성(듀오)은 이 자로 못 잰다. */
+const MUL_PERKS: Perk[] = PERKS.filter((p) => p.rule === undefined);
+/** 규칙 특성 · 배수가 없고 sim 의 분기 하나와 1:1 로 묶인 것(지금은 듀오 열 개). */
+const RULE_PERKS: Perk[] = PERKS.filter((p) => p.rule !== undefined);
 
 /**
  * 조건 판정에 필요한 것만 가진 가짜 맥락. 실제 World 를 띄우면 이 테스트가 지형 생성·먹이 배치까지
@@ -75,6 +102,13 @@ const byId = (id: PerkName): Perk => {
   return p;
 };
 
+/** 배수 특성의 배수. 규칙 특성에는 배수가 없으므로 그 자리에서 터뜨린다. */
+const mulOf = (id: PerkName): number => {
+  const m = byId(id).mul;
+  if (m === undefined) throw new Error(`배수가 없는 특성: ${id}`);
+  return m;
+};
+
 describe("특성 목록의 무결성", () => {
   it("id 가 겹치지 않는다", () => {
     expect(new Set(PERKS.map((p) => p.id)).size).toBe(PERKS.length);
@@ -91,8 +125,18 @@ describe("특성 목록의 무결성", () => {
     for (const w of PERK_WHENS) expect(whens.has(w), `조건 ${w} 을 쓰는 특성이 없다`).toBe(true);
   });
 
-  it("배수가 이득 방향이다 — 「낮아야 이득」인 축만 1 아래", () => {
+  it("특성은 **배수 아니면 규칙** 둘 중 하나다 — 둘 다이거나 둘 다 아닌 것은 없다", () => {
     for (const p of PERKS) {
+      const isRule = p.rule !== undefined;
+      expect(p.mul === undefined, `${p.id}: 배수와 규칙 중 하나만 가져야 한다`).toBe(isRule);
+      // 규칙 특성만 화면 문구를 스스로 갖는다(배수 특성은 `perkLine` 이 표에서 만든다).
+      expect(p.gain !== undefined, `${p.id}: gain 은 규칙 특성만 갖는다`).toBe(isRule);
+    }
+    expect(MUL_PERKS.length + RULE_PERKS.length).toBe(PERKS.length);
+  });
+
+  it("배수가 이득 방향이다 — 「낮아야 이득」인 축만 1 아래", () => {
+    for (const p of MUL_PERKS) {
       const lower = PERK_AXIS_INFO[p.axis].lower;
       if (lower) expect(p.mul, p.id).toBeLessThan(1);
       else expect(p.mul, p.id).toBeGreaterThan(1);
@@ -101,7 +145,7 @@ describe("특성 목록의 무결성", () => {
 
   it("효과 문구에 적힌 배수가 실제로 곱해지는 배수와 **글자까지** 같다", () => {
     // 0.625 같은 값을 쓰면 화면엔 0.63 이 뜨는데 sim 은 0.625 를 곱한다 — 작지만 거짓말이다.
-    for (const p of PERKS) {
+    for (const p of MUL_PERKS) {
       const shown = perkLine(p).match(/×([\d.]+)/)?.[1];
       expect(shown, p.id).toBeDefined();
       expect(Number(shown), `${p.id} 의 표시(${String(shown)})가 실제 배수(${p.mul})와 다르다`).toBe(p.mul);
@@ -109,7 +153,7 @@ describe("특성 목록의 무결성", () => {
   });
 
   it("한 줄에 조건과 효과가 다 있다 — 이 문구는 카드·도감에 단독으로 뜬다", () => {
-    for (const p of PERKS) {
+    for (const p of MUL_PERKS) {
       const line = perkLine(p);
       expect(line, p.id).toContain(PERK_AXIS_INFO[p.axis].label);
       const when = PERK_WHEN_INFO[p.when].label;
@@ -139,10 +183,12 @@ describe("등급은 값어치가 정한다", () => {
   });
 
   it("등급이 오르면 값어치도 오른다 — 배지가 크기를 말한다", () => {
+    // ⚠ 규칙 특성(듀오)은 뺀다 · 곱해지는 축이 없어 `perkValue` 가 못 재고 0 을 돌려준다.
+    //   그 0 을 등급 사다리에 섞으면 「아주 귀함의 최솟값이 0」이 되어 사다리 자체가 뜻을 잃는다.
     const order = ["common", "uncommon", "rare", "epic"] as const;
     let prevMax = 0;
     for (const r of order) {
-      const vals = PERKS.filter((p) => perkRarity(p) === r).map(perkValue);
+      const vals = MUL_PERKS.filter((p) => perkRarity(p) === r).map(perkValue);
       expect(vals.length, `${r} 등급이 비어 있다`).toBeGreaterThan(0);
       expect(Math.min(...vals), `${r} 의 최솟값이 아래 등급의 최댓값보다 작다`).toBeGreaterThanOrEqual(
         prevMax,
@@ -152,18 +198,198 @@ describe("등급은 값어치가 정한다", () => {
   });
 
   it("아래 등급일수록 종류가 많다 — 종류 수 × 가중치가 등장 확률이라 뒤집히면 배지가 거짓말한다", () => {
-    const count = (r: string): number => PERKS.filter((p) => perkRarity(p) === r).length;
+    // ⚠ 규칙 특성(듀오 열 장)은 뺀다. 풀 전체로 세면 「아주 귀함」이 갑절이 되지만, 듀오는 두 범주를
+    //   함께 3단으로 올려야(도장 28개) 후보에 뜬다 · 한 종이 동시에 보는 듀오는 사실상 한둘이다.
+    //   「실제로 보는 후보 풀에서도 서열이 지켜지는가」는 `game/cards.test.ts` 가 따로 못 박는다.
+    const count = (r: string): number => MUL_PERKS.filter((p) => perkRarity(p) === r).length;
     expect(count("common")).toBeGreaterThan(count("uncommon"));
     expect(count("uncommon")).toBeGreaterThan(count("rare"));
     expect(count("rare")).toBeGreaterThan(count("epic"));
   });
 
-  it("한 축에 등급이 몰리지 않는다 — 몰리면 그 축을 안 파는 빌드에게 드래프트가 죽는다", () => {
-    for (const a of PERK_AXES) {
-      const n = PERKS.filter((p) => p.axis === a).length;
-      expect(n, `축 ${a}`).toBeGreaterThanOrEqual(4);
-      expect(n, `축 ${a}`).toBeLessThanOrEqual(7);
+  // ⚠ **축이 아니라 범주로 센다**(2026-08-10 게이트 도입). 카드가 열리는 단위는 범주이므로,
+  //   「무리를 파는 사람에게 열릴 카드가 몇 장인가」가 실제 질문이다. 축은 범주 안의 갈래일 뿐이라
+  //   축별로 고르게 맞추면 오히려 범주가 기울 수 있다(다리·눈은 축이 하나뿐이다).
+  it("한 범주에 카드가 몰리거나 마르지 않는다 — 마르면 그 범주를 판 사람에게 열릴 것이 없다", () => {
+    // 상한 14 는 듀오 열 장이 들어오면서 올렸다(범주마다 정확히 둘씩 · 아래 테스트가 그 균형을 지킨다).
+    for (const cat of Object.keys(CATEGORY_AXES) as (keyof typeof CATEGORY_AXES)[]) {
+      const n = PERKS.filter((p) => AXIS_CATEGORY[p.axis] === cat).length;
+      expect(n, `범주 ${cat}`).toBeGreaterThanOrEqual(9);
+      expect(n, `범주 ${cat}`).toBeLessThanOrEqual(14);
     }
+  });
+});
+
+describe("듀오는 카드다 (2026-08-10 · 도장만으로는 안 켜진다)", () => {
+  it("듀오 열 개가 전부 카드가 됐고, 이름·설명이 tiers.DUOS 와 **글자까지** 같다", () => {
+    expect(RULE_PERKS.length).toBe(DUOS.length);
+    for (const d of DUOS) {
+      const p = RULE_PERKS.find((x) => x.rule === d.id);
+      expect(p, `듀오 ${d.id} 의 카드가 없다`).toBeDefined();
+      if (p === undefined) continue;
+      // 문구를 옮겨 적으면 대백과와 카드가 다른 말을 한다 · 그래서 표를 그대로 읽는다.
+      expect(p.name, d.id).toBe(d.name);
+      expect(p.flavor, d.id).toBe(d.flavor);
+      expect(perkLine(p), d.id).toBe(d.desc);
+    }
+  });
+
+  it("게이트가 **두 범주 3단**이다 · 듀오의 두 범주에서 그대로 유도된다", () => {
+    for (const p of RULE_PERKS) {
+      const d = DUOS.find((x) => x.id === p.rule);
+      expect(d, p.id).toBeDefined();
+      if (d === undefined) continue;
+      const gate = perkGate(p.id);
+      expect(gate?.tiers?.length, p.id).toBe(2);
+      expect(gate?.key, `${p.id}: 듀오는 열쇠를 요구하지 않는다`).toBeUndefined();
+      const need = new Map((gate?.tiers ?? []).map((t) => [t.cat, t.tier]));
+      expect(need.get(d.a), `${p.id} 의 ${d.a}`).toBe(DUO_TIER);
+      expect(need.get(d.b), `${p.id} 의 ${d.b}`).toBe(DUO_TIER);
+    }
+  });
+
+  it("**티어만 올려서는 안 켜진다** · 열리기만 한다(이게 이번 재설계의 전부다)", () => {
+    const d = DUOS[0] as (typeof DUOS)[number];
+    const p = RULE_PERKS.find((x) => x.rule === d.id) as Perk;
+    const pips = emptyPips();
+    pips[d.a] = pipsForTier(DUO_TIER);
+    pips[d.b] = pipsForTier(DUO_TIER);
+    // 도장은 카드를 **연다**
+    expect(gateOpen(perkGate(p.id), pips, emptyKeys())).toBe(true);
+    expect(openDuos(pips).map((x) => x.id)).toContain(d.id);
+    // 그러나 카드를 고르기 전에는 sim 이 아무것도 못 본다
+    expect(hasRule([], d.id as (typeof PERK_RULES)[number])).toBe(false);
+    expect(ownedDuos([])).toEqual([]);
+    // 골라야 켜진다
+    expect(hasRule([p.id], d.id as (typeof PERK_RULES)[number])).toBe(true);
+    expect(ownedDuos([p.id]).map((x) => x.id)).toEqual([d.id]);
+  });
+
+  it("듀오 카드가 범주 다섯에 **둘씩** 나뉜다 · 한 범주만 듀오가 넷이면 그쪽이 늘 정답이 된다", () => {
+    const per = new Map<string, number>();
+    for (const p of RULE_PERKS) {
+      const cat = AXIS_CATEGORY[p.axis];
+      const d = DUOS.find((x) => x.id === p.rule);
+      // 카드가 입은 색은 반드시 그 듀오의 **두 범주 중 하나**여야 한다(아무 색이나 입히면 거짓말).
+      expect([d?.a, d?.b], `${p.id} 의 색(${cat})이 듀오의 범주가 아니다`).toContain(cat);
+      per.set(cat, (per.get(cat) ?? 0) + 1);
+    }
+    for (const c of CATEGORIES) expect(per.get(c) ?? 0, `범주 ${c} 의 듀오 카드 수`).toBe(2);
+  });
+
+  it("등급은 값어치 산식 밖에서 고정된다 · 배수가 없어 그 자로 못 잰다", () => {
+    for (const p of RULE_PERKS) {
+      expect(perkRarity(p), p.id).toBe(RULE_PERK_RARITY);
+      expect(perkValue(p), `${p.id}: 못 재는 것은 0 으로 둔다`).toBe(0);
+    }
+  });
+
+  it("배수 축에는 아무것도 안 곱한다 · `axis` 는 카드 색일 뿐이다", () => {
+    const names = RULE_PERKS.map((p) => p.id);
+    for (const a of PERK_AXES) expect(perkMul(names, a, ctx({})), a).toBe(1);
+  });
+
+  // ★ **이 테스트가 「적어만 놓고 안 만든 규칙」을 막는다.**
+  //   규칙 특성은 카드에 문장을 약속해 놓고 sim 이 그 이름을 한 번도 안 물으면 아무 일도 안 한다.
+  //   그건 이 저장소가 금지한 거짓말(「수치가 화면 표시와 다르면」의 가장 나쁜 형태 · 0 이다)이라,
+  //   **sim 소스를 실제로 읽어** `hasRule(…, "이름")` 이 있는지 확인한다.
+  it("모든 규칙 이름이 sim 안에서 **실제로 읽힌다**", () => {
+    const src = ["./behavior.ts", "./boss.ts"]
+      .map((f) => readFileSync(new URL(f, import.meta.url), "utf8"))
+      .join("\n");
+    const read = new Set<string>();
+    for (const m of src.matchAll(/hasRule\([^,]+,\s*"([a-z_]+)"\s*\)/g)) read.add(m[1] as string);
+    for (const r of PERK_RULES) {
+      expect(read.has(r), `규칙 «${r}» 을 sim 이 한 번도 안 읽는다 · 카드가 아무 일도 안 한다`).toBe(true);
+    }
+    // 반대쪽도 막는다: sim 이 목록에 없는 이름을 물으면 그 조건은 영원히 거짓이다(죽은 분기).
+    for (const r of read) {
+      expect((PERK_RULES as readonly string[]).includes(r), `sim 이 없는 규칙 «${r}» 을 묻는다`).toBe(true);
+    }
+  });
+
+  it("듀오 「돌진」의 설명에 적힌 배수와 sim 의 상수가 같다 · 문장에서 뺄 수 없는 유일한 수다", () => {
+    const charge = DUOS.find((d) => d.id === "charge");
+    expect(charge?.desc, "돌진 설명이 사라졌다").toContain(`${CHARGE_RAID_MUL}배`);
+  });
+});
+
+describe("티어가 카드를 연다 (게이트)", () => {
+  /** 다섯 범주를 각각 이 단으로 올린 도장. */
+  const pipsAt = (tier: number): Pips => {
+    const p = emptyPips();
+    for (const c of CATEGORIES) p[c] = tier <= 0 ? 0 : (TIER_STEPS[tier - 1] as number);
+    return p;
+  };
+  const openCount = (tier: number): number =>
+    PERKS.filter((p) => gateOpen(perkGate(p.id), pipsAt(tier), emptyKeys())).length;
+
+  it("모든 특성에 열리는 자리가 있다 — 게이트가 없으면 티어를 올릴 이유에서 빠진다", () => {
+    for (const p of PERKS) expect(perkGate(p.id), p.id).toBeDefined();
+  });
+
+  it("도장이 하나도 없으면 아무 특성도 안 열린다 — 첫 카드는 프리셋이 켠 범주에서 나온다", () => {
+    expect(openCount(0)).toBe(0);
+  });
+
+  it("**티어를 올릴 때마다 열리는 것이 늘어난다** — 이것이 티어를 올릴 이유다", () => {
+    const counts = [0, 1, 2, 3].map(openCount);
+    for (let t = 1; t <= 3; t += 1) {
+      expect(counts[t] as number, `${t}단이 ${t - 1}단보다 많이 열려야 한다`).toBeGreaterThan(
+        counts[t - 1] as number,
+      );
+    }
+  });
+
+  it("⚠ **4단은 아직 아무것도 안 연다** — 이 테스트가 깨지면 그때가 위 셋을 4단까지 넓힐 때다", () => {
+    // 실패하라고 둔 감지기다. 4단 카드(범주당 2 · 규칙을 바꾸는 것)를 채우면 이 기대가 틀어지고,
+    // 그러면 위의 「티어를 올릴 때마다 늘어난다」와 「최소 두 장」의 상한을 4 로 올려야 한다.
+    // 그때까지 4단을 찍은 사람에게는 **파생 능치 말고 새로 열리는 것이 없다**(backlog 「카드 재설계 2차」).
+    expect(openCount(4), "4단 카드가 생겼다면 이 테스트와 위 둘을 함께 고쳐라").toBe(openCount(3));
+  });
+
+  it("한 범주를 한 단 올리면 **최소 두 장**이 열린다 — 「올렸는데 아무것도 안 열렸다」가 없어야 한다", () => {
+    // ⚠ 4단은 아직 비어 있다(규칙을 바꾸는 카드라 sim 분기가 필요하다 · backlog 「카드 재설계 2차」).
+    //   그 칸이 채워지면 아래 `maxTier` 를 4 로 올리고 이 주석을 지운다.
+    const maxTier = 3;
+    for (const cat of CATEGORIES) {
+      for (let t = 1; t <= maxTier; t += 1) {
+        const before = emptyPips();
+        const after = emptyPips();
+        if (t > 1) before[cat] = TIER_STEPS[t - 2] as number;
+        after[cat] = TIER_STEPS[t - 1] as number;
+        const opened = PERKS.filter(
+          (p) =>
+            gateOpen(perkGate(p.id), after, emptyKeys()) && !gateOpen(perkGate(p.id), before, emptyKeys()),
+        );
+        expect(opened.length, `${cat} ${t}단에서 열리는 카드`).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it("깊은 단일수록 값어치가 크다 — 「티어를 올리면 더 좋은 카드」가 참이어야 한다", () => {
+    // ⚠ 규칙 특성(듀오)은 뺀다 · `perkValue` 가 못 재는 것을 평균에 섞으면 3단 평균이 0 쪽으로 끌린다.
+    //   듀오가 「더 좋은 카드」인 것은 값어치 수가 아니라 **게이트 자체**(두 범주 3단)가 말한다.
+    const byDepth = new Map<number, number[]>();
+    for (const p of MUL_PERKS) {
+      const d = gateDepth(perkGate(p.id));
+      byDepth.set(d, [...(byDepth.get(d) ?? []), perkValue(p)]);
+    }
+    const depths = [...byDepth.keys()].sort((a, b) => a - b);
+    for (let i = 1; i < depths.length; i += 1) {
+      const prev = byDepth.get(depths[i - 1] as number) as number[];
+      const cur = byDepth.get(depths[i] as number) as number[];
+      const avgPrev = prev.reduce((s, v) => s + v, 0) / prev.length;
+      const avgCur = cur.reduce((s, v) => s + v, 0) / cur.length;
+      expect(avgCur, `${depths[i]}단 평균이 ${depths[i - 1]}단보다 커야 한다`).toBeGreaterThan(avgPrev);
+    }
+  });
+
+  it("열쇠를 요구하는 게이트는 그 열쇠가 없으면 안 열린다", () => {
+    const gate = { key: "venom" as const, tiers: [{ cat: "herd" as const, tier: 1 }] };
+    const pips = pipsAt(4);
+    expect(gateOpen(gate, pips, emptyKeys())).toBe(false);
+    expect(gateOpen(gate, pips, { ...emptyKeys(), venom: true })).toBe(true);
   });
 });
 
@@ -227,7 +453,7 @@ describe("배수 적용", () => {
   it("같은 축의 여러 특성은 곱해진다", () => {
     const night = ctx({ daylight: 0 });
     const both = perkMul(["vision_night", "vision_always"], "vision", night);
-    expect(both).toBeCloseTo(byId("vision_night").mul * byId("vision_always").mul, 10);
+    expect(both).toBeCloseTo(mulOf("vision_night") * mulOf("vision_always"), 10);
   });
 
   it("같은 입력이면 같은 결과 — rng 를 안 쓴다(결정론)", () => {

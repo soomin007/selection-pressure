@@ -10,9 +10,12 @@
 //   (지금까지는 카드와 방울이 각자 밀어서, 어느 쪽을 조여도 다른 쪽이 메웠다).
 //
 // 이 파일이 지키는 것 여섯:
-//  ① **특성은 「조건 · 축 · 배수」 셋뿐이다.** 새 sim 메커니즘은 안 만든다 — 그건 열쇠의 몫이고
-//     열쇠 하나 = sim 규칙 하나라 비싸다. **[사용자 2026-07-11]** "새 형질을 만들기보다 이미 있는
-//     형질이 그 맥락에서 작동하게 한다."
+//  ① **특성은 두 종류뿐이다.** (a) **배수 특성** = 「조건 · 축 · 배수」 · 새 sim 메커니즘을 안 만든다
+//     (**[사용자 2026-07-11]** "새 형질을 만들기보다 이미 있는 형질이 그 맥락에서 작동하게 한다").
+//     (b) **규칙 특성**(`rule`) = 배수로 표현이 안 되는 것 · 듀오 열 개가 여기 산다
+//     (「이웃이 하나만 있어도 무리 방어가 켜진다」는 어떤 축에도 안 곱해진다).
+//     규칙 특성은 **새로 만들지 않는다** · 이미 sim 에 있던 듀오 열 개를 카드로 옮긴 것이 전부다.
+//     그리고 규칙 이름은 반드시 sim 어딘가에서 `hasRule` 로 읽혀야 한다(`perks.test.ts` 가 검사한다).
 //  ② **대가를 안 붙인다. 조건 자체가 대가다** — 「밤에」는 판의 40%에서만 켜진다. 한 특성에 대가를
 //     겹치면 함정 카드가 된다(known_issues 「새 형질의 대가를 여러 개 겹치면」 · 몸집이 그랬다).
 //  ③ **rng 를 한 번도 안 쓴다.** 순수 판정 + 곱셈이라 난수 스트림을 안 민다(결정론 · 기획서 §3.4).
@@ -26,7 +29,8 @@
 
 import type { Entity } from "@/sim/entity";
 import type { World } from "@/sim/world";
-import type { Category } from "@/sim/tiers";
+import type { Category, Duo, KeyName, Keys, Pips } from "@/sim/tiers";
+import { DUOS, DUO_BY_ID, DUO_TIER, tierOf } from "@/sim/tiers";
 import { SIM } from "@/sim/params";
 
 // ─────────────────────────────── 축 ───────────────────────────────
@@ -247,7 +251,69 @@ export function whenHolds(when: PerkWhen, ctx: PerkCtx): boolean {
   return WHEN_TEST[when](ctx);
 }
 
+// ─────────────────────────────── 카드가 열리는 자리(게이트) ───────────────────────────────
+//
+// **[사용자 2026-08-10]** "티어를 올리면 더 좋은 카드, 더 특별한 카드들이 열려서 그걸 위해 티어를
+// 올리는 거고, 그에 따라오는 티어 자체의 보상은 카드에 비해서는 소소한 정도였는데."
+//
+// 그래서 티어의 첫 번째 값어치는 파생 능치가 아니라 **카드를 여는 것**이다. 게이트 하나로 세 가지를
+// 전부 표현한다 — 형태가 하나라 드래프트 필터도 화면 예고도 한 함수만 부른다:
+//   · 보통 카드   `{ tiers: [{ cat: "fang", tier: 2 }] }`            이빨 II 에서 열린다
+//   · 듀오 카드   `{ tiers: [{ cat:"fang",tier:3 }, { cat:"leg",tier:3 }] }`  둘 다 III 이어야
+//   · 열쇠 듀오   `{ key: "venom", tiers: [{ cat: "herd", tier: 3 }] }`       독니 + 무리 III
+// 게이트가 없으면(`undefined`) 처음부터 열려 있다.
+export interface PerkGate {
+  /** 이 범주들이 **각각** 이 단 이상이어야 한다. 둘이면 듀오다. */
+  readonly tiers?: readonly { readonly cat: Category; readonly tier: number }[];
+  /** 이 열쇠를 가지고 있어야 한다. */
+  readonly key?: KeyName;
+}
+
+/**
+ * 이 카드가 지금 열려 있는가. **드래프트 필터와 화면의 해금 예고가 같은 함수를 쓴다** —
+ * 두 곳에 조건을 적으면 「열린다고 적혀 있는데 안 뜨는」 카드가 생긴다.
+ */
+export function gateOpen(gate: PerkGate | undefined, pips: Pips, keys: Keys): boolean {
+  if (gate === undefined) return true;
+  if (gate.key !== undefined && !keys[gate.key]) return false;
+  for (const need of gate.tiers ?? []) {
+    if (tierOf(pips[need.cat]) < need.tier) return false;
+  }
+  return true;
+}
+
+/** 이 게이트가 요구하는 가장 깊은 단 — 등급 산정과 정렬에 쓴다(깊을수록 귀하다). */
+export function gateDepth(gate: PerkGate | undefined): number {
+  if (gate === undefined) return 0;
+  let d = 0;
+  for (const need of gate.tiers ?? []) d = Math.max(d, need.tier);
+  // 열쇠는 그 자체로 한 단계 더 귀하다(열쇠 상한이 3개라 아무나 못 가진다).
+  return gate.key === undefined ? d : d + 1;
+}
+
 // ─────────────────────────────── 특성 목록 ───────────────────────────────
+
+/**
+ * **규칙 특성의 이름** · 배수로 표현이 안 되는 것. 지금은 듀오 열 개가 전부이고, 이름은 듀오 id 와
+ * 글자까지 같다(`tiers.DUOS`).
+ *
+ * ⚠ **여기 이름을 늘리면 sim 에 `hasRule(perks, "그이름")` 을 부르는 자리가 반드시 있어야 한다.**
+ *   `perks.test.ts` 가 `behavior.ts`·`boss.ts` 를 읽어 그것을 검사한다 · 적어만 놓고 안 만든 규칙은
+ *   「카드에 적힌 것이 세계에서 아무 일도 안 하는」 상태이고, 그건 이 저장소가 금지한 거짓말이다.
+ */
+export const PERK_RULES = [
+  "pounce",
+  "wolflaw",
+  "ring",
+  "seefirst",
+  "sentinel",
+  "charge",
+  "ambush",
+  "stone",
+  "bigjaw",
+  "wave",
+] as const;
+export type PerkRule = (typeof PERK_RULES)[number];
 
 interface PerkDef {
   id: string;
@@ -256,9 +322,18 @@ interface PerkDef {
   /** 플레이버 한 줄. **효과를 여기 적지 않는다** — 효과는 `perkLine` 이 표에서 만든다. */
   flavor: string;
   when: PerkWhen;
+  /**
+   * 이 특성이 속한 축. **규칙 특성에게는 배수의 자리가 아니라 「어느 범주의 카드인가」의 자리다**
+   * (카드 색·정렬·드래프트 보정이 `AXIS_CATEGORY[axis]` 로 범주를 읽는다). 규칙 특성은 축에
+   * 아무것도 안 곱하므로, 여기 무엇이 오든 세계는 안 움직인다.
+   */
   axis: PerkAxis;
-  /** 곱해지는 배수. 「기운 소모」만 1 아래가 이득이다(`PERK_AXIS_INFO.lower`). */
-  mul: number;
+  /** 곱해지는 배수. **규칙 특성에는 없다.** 「기운 소모」만 1 아래가 이득이다(`PERK_AXIS_INFO.lower`). */
+  mul?: number;
+  /** 규칙 특성이면 그 규칙 이름. sim 은 `hasRule(perks, 이름)` 으로만 묻는다. */
+  rule?: PerkRule;
+  /** 규칙 특성이 화면에 뜨는 한 줄(듀오의 `desc` 를 그대로 쓴다). 배수 특성은 `perkLine` 이 만든다. */
+  gain?: string;
 }
 
 /**
@@ -305,6 +380,9 @@ const PERK_DEFS = [
 
   // ── 빠르기 ─────────────────────────────────────────────────────────────
   { id: "speed_always", name: "긴 정강이", flavor: "한 걸음이 멀어집니다.", when: "always", axis: "speed", mul: 1.05 },
+  { id: "speed_day", name: "해 있을 때의 걸음", flavor: "밝을 때 부지런히 움직입니다.", when: "day", axis: "speed", mul: 1.16 },
+  { id: "speed_crowd", name: "발맞춤", flavor: "여럿이 함께 가면 걸음이 붙습니다.", when: "crowd", axis: "speed", mul: 1.25 },
+  { id: "speed_shore", name: "물가를 달린다", flavor: "젖은 모래는 단단해 잘 튀어 오릅니다.", when: "shore", axis: "speed", mul: 1.75 },
   { id: "speed_rough", name: "험한 땅의 걸음", flavor: "돌밭을 평지처럼 딛습니다.", when: "rough", axis: "speed", mul: 1.5 },
   { id: "speed_night", name: "밤길", flavor: "어두워도 걸음을 안 줄입니다.", when: "night", axis: "speed", mul: 1.25 },
   { id: "speed_hungry", name: "굶주린 추격", flavor: "배가 고프면 다리가 먼저 움직입니다.", when: "hungry", axis: "speed", mul: 1.35 },
@@ -315,6 +393,9 @@ const PERK_DEFS = [
 
   // ── 보는 거리 ──────────────────────────────────────────────────────────
   { id: "vision_always", name: "높이 든 고개", flavor: "고개를 들고 오래 봅니다.", when: "always", axis: "vision", mul: 1.06 },
+  { id: "vision_full", name: "느긋한 눈", flavor: "배가 부르면 주위를 천천히 살핍니다.", when: "full", axis: "vision", mul: 1.3 },
+  { id: "vision_rough", name: "높은 데서 본다", flavor: "돌밭 위에 올라서서 멀리 봅니다.", when: "rough", axis: "vision", mul: 1.9 },
+  { id: "vision_shore", name: "트인 물가", flavor: "물 위는 가리는 것이 없습니다.", when: "shore", axis: "vision", mul: 1.75 },
   { id: "vision_alone", name: "혼자 서는 파수", flavor: "곁에 아무도 없으면 스스로 살핍니다.", when: "alone", axis: "vision", mul: 1.3 },
   { id: "vision_grass", name: "수풀 너머", flavor: "덤불 사이로 보는 법을 익힙니다.", when: "grass", axis: "vision", mul: 1.55 },
   { id: "vision_day", name: "맑은 낮", flavor: "밝을 때 가장 멀리 봅니다.", when: "day", axis: "vision", mul: 1.3 },
@@ -337,13 +418,167 @@ const PERK_DEFS = [
   { id: "fertility_crowd", name: "함께 기른다", flavor: "여럿이 돌보면 어린 것이 덜 죽습니다.", when: "crowd", axis: "fertility", mul: 1.85 },
 ] as const satisfies readonly PerkDef[];
 
-export type PerkName = (typeof PERK_DEFS)[number]["id"];
+// ─────────────────────────────── 듀오 = 규칙 특성 열 개 ───────────────────────────────
+//
+// **[사용자 2026-08-10]** 의 「티어를 올리면 카드가 열린다」 구조에서 듀오만 혼자 자동 발동이었다.
+// 카드로 옮기면 **고르는 순간**이 생기고, 「켜진 순간의 연출이 없다」는 오래된 결함이 통째로 사라진다
+// (backlog 「듀오 열 개 중 셋은 아직 화면에서 안 읽힌다」).
+//
+// **이름·설명은 여기 안 적는다.** `tiers.DUOS` 의 `name`·`desc`·`flavor` 를 그대로 읽어 쓴다 —
+// 옮겨 적으면 언젠가 한쪽만 바뀌어 대백과와 카드가 다른 말을 하게 된다(이 저장소가 반복해서 데인 사고).
+//
+// **`axis` 는 「어느 범주의 카드로 보이는가」만 정한다.** 듀오는 범주 둘에 걸쳐 있어 색이 하나뿐인
+// 화면(카드 테두리·칩)에서는 둘 중 하나를 골라야 한다. 열 개를 **범주마다 정확히 둘씩** 나눠 가지게
+// 배분했다(K5 의 변 열 개를 꼭짓점마다 둘씩 · `perks.test.ts` 가 이 균형을 검사한다). 안 그러면
+// 「가죽을 판 사람에게 열리는 듀오 카드가 넷, 다리를 판 사람에게 하나」처럼 기운다.
+const DUO_PERK_DEFS = [
+  { id: "duo_pounce", rule: "pounce", axis: "attack", when: "always" },
+  { id: "duo_ambush", rule: "ambush", axis: "attack", when: "always" },
+  { id: "duo_charge", rule: "charge", axis: "speed", when: "always" },
+  { id: "duo_wave", rule: "wave", axis: "speed", when: "always" },
+  { id: "duo_seefirst", rule: "seefirst", axis: "vision", when: "always" },
+  { id: "duo_sentinel", rule: "sentinel", axis: "vision", when: "always" },
+  { id: "duo_stone", rule: "stone", axis: "defense", when: "always" },
+  { id: "duo_bigjaw", rule: "bigjaw", axis: "upkeep", when: "always" },
+  { id: "duo_wolflaw", rule: "wolflaw", axis: "graze", when: "always" },
+  { id: "duo_ring", rule: "ring", axis: "fertility", when: "always" },
+] as const satisfies readonly { id: string; rule: PerkRule; axis: PerkAxis; when: PerkWhen }[];
+
+export type PerkName = (typeof PERK_DEFS)[number]["id"] | (typeof DUO_PERK_DEFS)[number]["id"];
+
+/** 듀오 하나를 꺼낸다. 표에 없으면 배치가 어긋난 것이라 조용히 넘기지 않고 그 자리에서 터뜨린다. */
+function duoOf(rule: PerkRule): Duo {
+  const d = DUO_BY_ID.get(rule);
+  if (d === undefined) throw new Error(`듀오 «${rule}» 이 tiers.DUOS 에 없다`);
+  return d;
+}
+
+/**
+ * **어느 티어가 어느 카드를 여는가** — 이 표가 「티어를 올릴 이유」다 (**[사용자 2026-08-10]**).
+ *
+ * 카드 정의와 **따로 둔 이유**: 배치는 한눈에 보고 고쳐야 하는 것이라, 45줄에 흩어 놓으면
+ * 「무리를 파면 뭐가 열리지?」에 답하려고 파일 전체를 훑어야 한다. 여기 모아 두면 표가 곧 답이다.
+ *
+ * **칸 수** (**[사용자 2026-08-10]** 확정 · 클래시 로얄식 「아레나마다 새 유닛」):
+ *   1단 4~7장 · 2단 3장 · 3단 2장 · 4단 2장. **위로 갈수록 적고 대신 세다.**
+ *   위쪽을 얇게 잡은 이유 셋: ① 4단은 도달이 드물어 여러 장을 만들면 대부분 아무도 못 본다
+ *   ② 위쪽 카드는 한 장이 sim 분기 하나라 비싸다 ③ 4단은 원래 「한 장이 판을 바꾸는」 자리다.
+ *   **하한 2장은 지킨다** — 「올렸는데 아무것도 안 열렸다」가 한 번이라도 생기면 그 자리에서
+ *   티어를 올릴 이유가 무너진다.
+ *
+ * ⚠ **4단 열 칸(범주당 2)이 아직 비어 있다.** 거기 들어갈 것은 배수가 아니라 **규칙을 바꾸는 카드**라
+ *   (「기운이 다해도 한 번은 안 죽는다」) sim 분기가 필요하다 · backlog 「1. 카드 재설계 2차」.
+ *   그때까지 4단은 **파생 능치만** 주므로, 4단을 찍은 사람에게는 새로 열리는 것이 없다.
+ * ⚠ 배치는 **값어치 순서**를 따른다(`perkValue`). 깊은 단일수록 값어치가 커야 하고,
+ *   `perks.test.ts` 가 그것이 뒤집히지 않았는지 검사한다.
+ */
+const BASE_GATES: Record<(typeof PERK_DEFS)[number]["id"], PerkGate> = {
+  // ── 이빨 ─────────────────────────────────────────────────────────────
+  attack_always: { tiers: [{ cat: "fang", tier: 1 }] },
+  attack_hunting: { tiers: [{ cat: "fang", tier: 1 }] },
+  hunt_always: { tiers: [{ cat: "fang", tier: 1 }] },
+  hunt_hungry: { tiers: [{ cat: "fang", tier: 1 }] },
+  attack_night: { tiers: [{ cat: "fang", tier: 1 }] },
+  attack_crowd: { tiers: [{ cat: "fang", tier: 2 }] },
+  hunt_night: { tiers: [{ cat: "fang", tier: 2 }] },
+  attack_hungry: { tiers: [{ cat: "fang", tier: 2 }] },
+  hunt_alone: { tiers: [{ cat: "fang", tier: 3 }] },
+  hunt_gorge: { tiers: [{ cat: "fang", tier: 3 }] },
+
+  // ── 다리 ─────────────────────────────────────────────────────────────
+  speed_always: { tiers: [{ cat: "leg", tier: 1 }] },
+  speed_rough: { tiers: [{ cat: "leg", tier: 1 }] },
+  speed_day: { tiers: [{ cat: "leg", tier: 1 }] },
+  speed_crowd: { tiers: [{ cat: "leg", tier: 1 }] },
+  speed_night: { tiers: [{ cat: "leg", tier: 2 }] },
+  speed_shore: { tiers: [{ cat: "leg", tier: 2 }] },
+  speed_hungry: { tiers: [{ cat: "leg", tier: 2 }] },
+  speed_hunting: { tiers: [{ cat: "leg", tier: 3 }] },
+  speed_fleeing: { tiers: [{ cat: "leg", tier: 3 }] },
+
+  // ── 눈 ───────────────────────────────────────────────────────────────
+  vision_always: { tiers: [{ cat: "eye", tier: 1 }] },
+  vision_alone: { tiers: [{ cat: "eye", tier: 1 }] },
+  vision_full: { tiers: [{ cat: "eye", tier: 1 }] },
+  vision_rough: { tiers: [{ cat: "eye", tier: 1 }] },
+  vision_shore: { tiers: [{ cat: "eye", tier: 2 }] },
+  vision_day: { tiers: [{ cat: "eye", tier: 2 }] },
+  vision_grass: { tiers: [{ cat: "eye", tier: 2 }] },
+  vision_night: { tiers: [{ cat: "eye", tier: 3 }] },
+  vision_far: { tiers: [{ cat: "eye", tier: 3 }] },
+
+  // ── 가죽 ─────────────────────────────────────────────────────────────
+  defense_always: { tiers: [{ cat: "hide", tier: 1 }] },
+  upkeep_always: { tiers: [{ cat: "hide", tier: 1 }] },
+  defense_fleeing: { tiers: [{ cat: "hide", tier: 1 }] },
+  upkeep_full: { tiers: [{ cat: "hide", tier: 1 }] },
+  upkeep_grass: { tiers: [{ cat: "hide", tier: 1 }] },
+  defense_grass: { tiers: [{ cat: "hide", tier: 1 }] },
+  defense_wounded: { tiers: [{ cat: "hide", tier: 1 }] },
+  defense_crowd: { tiers: [{ cat: "hide", tier: 2 }] },
+  upkeep_crowd: { tiers: [{ cat: "hide", tier: 2 }] },
+  upkeep_night: { tiers: [{ cat: "hide", tier: 2 }] },
+  defense_rock: { tiers: [{ cat: "hide", tier: 3 }] },
+  upkeep_slow: { tiers: [{ cat: "hide", tier: 3 }] },
+
+  // ── 무리 ─────────────────────────────────────────────────────────────
+  fertility_always: { tiers: [{ cat: "herd", tier: 1 }] },
+  graze_day: { tiers: [{ cat: "herd", tier: 1 }] },
+  fertility_day: { tiers: [{ cat: "herd", tier: 1 }] },
+  graze_crowd: { tiers: [{ cat: "herd", tier: 1 }] },
+  graze_grass: { tiers: [{ cat: "herd", tier: 1 }] },
+  fertility_grass: { tiers: [{ cat: "herd", tier: 1 }] },
+  graze_shore: { tiers: [{ cat: "herd", tier: 2 }] },
+  fertility_full: { tiers: [{ cat: "herd", tier: 2 }] },
+  graze_hungry: { tiers: [{ cat: "herd", tier: 2 }] },
+  fertility_crowd: { tiers: [{ cat: "herd", tier: 3 }] },
+  graze_always: { tiers: [{ cat: "herd", tier: 3 }] },
+};
+
+/**
+ * **듀오 카드의 게이트는 표에 안 적는다** · 듀오의 두 범주(`tiers.DUOS`)에서 그대로 유도한다.
+ * 손으로 옮겨 적으면 「대백과에는 가죽+무리라 적혀 있는데 실제로는 이빨에서 열리는」 카드가 생긴다.
+ */
+const DUO_GATES: Record<(typeof DUO_PERK_DEFS)[number]["id"], PerkGate> = (() => {
+  const out = {} as Record<(typeof DUO_PERK_DEFS)[number]["id"], PerkGate>;
+  for (const d of DUO_PERK_DEFS) {
+    const duo = duoOf(d.rule);
+    out[d.id] = {
+      tiers: [
+        { cat: duo.a, tier: DUO_TIER },
+        { cat: duo.b, tier: DUO_TIER },
+      ],
+    };
+  }
+  return out;
+})();
+
+const GATES: Record<PerkName, PerkGate> = { ...BASE_GATES, ...DUO_GATES };
+
+/** 이 특성이 열리는 자리. 표에 없으면 처음부터 열려 있다. */
+export function perkGate(id: PerkName): PerkGate | undefined {
+  return GATES[id];
+}
 
 export interface Perk extends PerkDef {
   id: PerkName;
 }
 
-export const PERKS: readonly Perk[] = PERK_DEFS as readonly Perk[];
+/** 듀오 열 개를 카드로 · 이름·설명·효과 한 줄이 전부 `tiers.DUOS` 에서 온다. */
+const DUO_PERKS: readonly Perk[] = DUO_PERK_DEFS.map((d): Perk => {
+  const duo = duoOf(d.rule);
+  return {
+    id: d.id,
+    name: duo.name,
+    flavor: duo.flavor,
+    gain: duo.desc,
+    rule: d.rule,
+    axis: d.axis,
+    when: d.when,
+  };
+});
+
+export const PERKS: readonly Perk[] = [...(PERK_DEFS as readonly Perk[]), ...DUO_PERKS];
 
 export const PERK_BY_NAME: ReadonlyMap<PerkName, Perk> = new Map(PERKS.map((p) => [p.id, p]));
 
@@ -367,6 +602,9 @@ export function isPerkName(s: string): s is PerkName {
  *   지금 이 산식이 하는 일은 **카드끼리의 순서를 지키는 것**뿐이고 그건 추정으로도 성립한다.
  */
 export function perkValue(p: Perk): number {
+  // 규칙 특성(듀오)은 이 자로 못 잰다 · 곱해지는 축이 없다. 0 은 「값어치가 없다」가 아니라
+  // **「이 자로는 못 잰다」**는 뜻이므로, 등급도 이 수로 정하지 않는다(`perkRarity` 가 따로 답한다).
+  if (p.mul === undefined) return 0;
   const info = PERK_AXIS_INFO[p.axis];
   const gain = info.lower ? 1 / p.mul - 1 : p.mul - 1;
   return gain * PERK_WHEN_INFO[p.when].freq;
@@ -386,7 +624,20 @@ export const PERK_VALUE_BANDS = [
 
 export type PerkRarity = (typeof PERK_VALUE_BANDS)[number]["rarity"];
 
+/**
+ * **규칙 특성(듀오)의 등급은 값어치 산식 밖에서 고정한다.** 배수가 없어 「빈도 × 크기」로 못 재기
+ * 때문이다. 대신 게이트 자체가 값어치의 증거다 · 두 범주를 함께 3단까지 올려야 후보에 뜬다.
+ *
+ * ⚠ 왜 전설이 아닌가: **전설은 열쇠 전용**이다(열쇠는 없던 규칙을 열고, 듀오는 이미 판 두 범주가
+ *   맞물리는 것이다). 이 경계는 `cards.test.ts` 가 지킨다.
+ * ⚠ 이 열 장은 **풀 전체로 세면** 「아주 귀함」의 종류 수를 갑절로 만든다. 그런데 한 종이 동시에 볼 수
+ *   있는 듀오 카드는 사실상 한둘이다(3단 두 개를 만드는 데 도장 28개가 든다). 그래서 등급 서열
+ *   검사는 **한 종이 실제로 보는 후보 풀**에서 해야 뜻이 있다(`cards.test.ts` 의 두 테스트).
+ */
+export const RULE_PERK_RARITY: PerkRarity = "epic";
+
 export function perkRarity(p: Perk): PerkRarity {
+  if (p.rule !== undefined) return RULE_PERK_RARITY;
   const v = perkValue(p);
   for (const band of PERK_VALUE_BANDS) if (v < band.max) return band.rarity;
   return "epic";
@@ -405,10 +656,46 @@ export function perkMul(perks: Perks, axis: PerkAxis, ctx: PerkCtx): number {
   let m = 1;
   for (const name of perks) {
     const p = PERK_BY_NAME.get(name);
-    if (p === undefined || p.axis !== axis) continue;
+    // 규칙 특성(듀오)은 축에 아무것도 안 곱한다 · `axis` 는 카드 색을 정할 뿐이다.
+    if (p === undefined || p.mul === undefined || p.axis !== axis) continue;
     if (WHEN_TEST[p.when](ctx)) m *= p.mul;
   }
   return m;
+}
+
+// ─────────────────────────────── 규칙 특성 묻기 ───────────────────────────────
+
+/** 규칙 이름 → 그 규칙을 주는 특성 id. 규칙 하나는 정확히 카드 하나에서만 나온다. */
+const PERK_ID_BY_RULE: Record<PerkRule, PerkName> = (() => {
+  const out = {} as Record<PerkRule, PerkName>;
+  for (const d of DUO_PERK_DEFS) out[d.rule] = d.id;
+  for (const r of PERK_RULES) {
+    if (out[r] === undefined) throw new Error(`규칙 «${r}» 을 주는 카드가 없다`);
+  }
+  return out;
+})();
+
+/**
+ * **이 종이 그 규칙을 가졌는가** · sim 이 듀오를 묻는 유일한 함수.
+ *
+ * ⚠ **2026-08-10 이전에는 도장을 봤다**(`tiers.hasDuo(pips, id)`). 이제는 **카드를 골랐는가**를 본다.
+ *   두 범주를 3단까지 올려도 그것만으로는 아무 일도 안 일어난다 · 티어는 카드를 **열 뿐**이다.
+ * ⚠ 특성이 없는 종(야생·보스·v8 챔피언)은 첫 줄에서 곧바로 false 로 빠진다 · 그 세계는 예전과
+ *   비트 단위로 같다. 배열 훑기도 안 하므로 옛 `hasDuo`(도장 → 티어표 객체 생성)보다 오히려 싸다.
+ */
+export function hasRule(perks: Perks, rule: PerkRule): boolean {
+  return perks.length !== 0 && perks.includes(PERK_ID_BY_RULE[rule]);
+}
+
+/**
+ * **이 종이 실제로 가진 듀오들** · 화면이 「듀오: 늑대의 법」이라 적을 때 물어야 하는 것.
+ * (`tiers.openDuos(pips)` 는 「열려 있는가」를 답할 뿐 「가졌는가」를 답하지 않는다.)
+ */
+export function ownedDuos(perks: Perks): Duo[] {
+  if (perks.length === 0) return [];
+  const owned = new Set<string>();
+  for (const d of DUO_PERK_DEFS) if (perks.includes(d.id)) owned.add(d.rule);
+  return DUOS.filter((d) => owned.has(d.id)); // 표시 순서는 DUOS 그대로(대백과와 같은 차례)
 }
 
 /** 지금 켜져 있는 특성들 — 화면이 「무엇이 지금 작동하는가」를 보여 줄 때 쓴다(sim 과 같은 판정). */
@@ -441,8 +728,12 @@ function fmtMul(mul: number): string {
  *   달라지는지가 그 줄 안에 다 있어야 한다(`tiers.tierLine` 과 같은 규칙).
  */
 export function perkLine(p: Perk): string {
+  // 규칙 특성(듀오)은 표에서 만들 수가 없다 · 곱해지는 축이 없으므로 「무엇이 달라지는가」를
+  // 문장으로만 말할 수 있다. 그 문장의 단일 진실은 `tiers.DUOS` 의 `desc` 이고, 여기서는
+  // 그것을 **그대로** 내보낸다(카드·대백과·내 종 패널이 한 글자도 안 갈린다).
+  if (p.gain !== undefined) return p.gain;
   const when = PERK_WHEN_INFO[p.when].label;
   const axis = PERK_AXIS_INFO[p.axis].label;
-  const body = `${axis} ${fmtMul(p.mul)}`;
+  const body = `${axis} ${fmtMul(p.mul as number)}`;
   return when === "" ? body : `${when} ${body}`;
 }

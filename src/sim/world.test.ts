@@ -6,7 +6,8 @@ import { GAME, ONBOARDING_MAX_STEP, mapScale, stepUsesDrawnMap, stepWorldOptions
 import { createBoss } from "@/sim/boss";
 import { MUTABLE_TRAITS, cloneGenome, genomeFromTraits, mutateGenome, randomGenome, type Genome } from "@/sim/genome";
 import { nightVisionFactor, makeFovTest, fovCosOf, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome, grazeEfficiency, huntEfficiency, huntSprintFactor, carnivory01, gorgeFactor, maxEnergyFor, packShareGain, packHerdFactor, herdShieldedBy, isApex, sizeDev, sizeSpeedFactor, sizeDrainFactor, sizeFertilityFactor, effectiveCamo, camoVisionFactor } from "@/sim/behavior";
-import { EYE_FOV_COS, FANG_CARN, MAX_TIER, TIER_STEPS, emptyPips, hasDuo, type Pips } from "@/sim/tiers";
+import { EYE_FOV_COS, FANG_CARN, MAX_TIER, TIER_STEPS, emptyPips, openDuos, type Pips } from "@/sim/tiers";
+import { hasRule, type PerkName } from "@/sim/perks";
 import { areFriends, generateWildSpecies, WILD_ARCHETYPE_NAMES, BIOME_FOOD_KIND, type Species } from "@/sim/species";
 import { FIRST_ERA_MAP } from "@/sim/mapType";
 import { createEntity, type Entity } from "@/sim/entity";
@@ -635,8 +636,16 @@ describe("시야각(부채꼴) — 눈 티어의 고유 대가", () => {
   // makeFovTest 는 e 의 x,y,vx,vy 와 **시야각(fovCos)·도장**만 본다 → 부분 mock 으로 충분.
   // ⚠ v8 에서 시야각이 능치가 됐다(`fovCos`). 예전 mock 처럼 vision 만 주면 fovCos 가 undefined 라
   //   `fovCosOf` 가 엉뚱한 가지로 빠진다 — 세계가 읽는 값을 그대로 넘겨야 한다.
-  const ent = (vx: number, vy: number, fovCos: number = SIM.fovHalfCos, pips: Pips = emptyPips()): Entity =>
-    ({ x: 0, y: 0, vx, vy, genome: { traits: { fovCos }, pips } }) as unknown as Entity;
+  // ⚠ **특성 목록(perks)도 반드시 넘겨야 한다**(2026-08-10). 듀오가 카드가 되면서 `fovCosOf` 가
+  //   도장이 아니라 `genome.perks` 를 읽는다 · 빠뜨리면 undefined 를 훑다 터진다.
+  const ent = (
+    vx: number,
+    vy: number,
+    fovCos: number = SIM.fovHalfCos,
+    pips: Pips = emptyPips(),
+    perks: PerkName[] = [],
+  ): Entity =>
+    ({ x: 0, y: 0, vx, vy, genome: { traits: { fovCos }, pips, perks } }) as unknown as Entity;
 
   it("움직이면 보는 방향(앞)은 보고 등 뒤는 못 본다", () => {
     const test = makeFovTest(ent(1, 0)); // 동쪽(+x)으로 이동 = 동쪽을 봄
@@ -673,13 +682,22 @@ describe("시야각(부채꼴) — 눈 티어의 고유 대가", () => {
     expect(at(MAX_TIER)).toBe(false);
   });
 
-  it("듀오 「파수꾼」(눈 III + 무리 III)은 좁아진 몫을 절반만 지게 한다", () => {
+  it("듀오 「파수꾼」 카드는 좁아진 몫을 절반만 지게 한다 · 티어만 올려서는 안 켜진다", () => {
     // 사각을 메우는 유일한 길 — 무리가 사각을 나눠 진다. 이게 듀오가 「대가를 되사는」 유일한 자리다.
+    // ⚠ **2026-08-10 에 판정 근거가 바뀌었다.** 예전엔 눈 III + 무리 III 이면 저절로 켜졌는데
+    //   (`tiers.hasDuo(pips, "sentinel")`), 이제 그 두 단은 **카드를 열 뿐**이고 실제로 켜지려면
+    //   드래프트에서 「파수꾼」을 골라야 한다(`perks.hasRule(genome.perks, "sentinel")`).
     const narrow = EYE_FOV_COS[MAX_TIER] as number;
     const duoPips = { ...emptyPips(), eye: TIER_STEPS[2], herd: TIER_STEPS[2] };
     const plain = ent(1, 0, narrow);
-    const sentinel = ent(1, 0, narrow, duoPips);
-    expect(hasDuo(duoPips, "sentinel")).toBe(true); // 전제: 듀오가 실제로 켜져 있다
+    const opened = ent(1, 0, narrow, duoPips); // 도장은 3단 둘 · 카드는 아직 안 골랐다
+    const sentinel = ent(1, 0, narrow, duoPips, ["duo_sentinel"]);
+    // 전제 ①: 그 도장이면 카드가 **열린다**
+    expect(openDuos(duoPips).map((d) => d.id)).toContain("sentinel");
+    // 전제 ②: 그래도 고르기 전에는 sim 이 못 본다
+    expect(hasRule(opened.genome.perks, "sentinel")).toBe(false);
+    expect(fovCosOf(opened)).toBe(fovCosOf(plain)); // 티어만으로는 1비트도 안 달라진다
+    expect(hasRule(sentinel.genome.perks, "sentinel")).toBe(true);
     expect(fovCosOf(sentinel)).toBeLessThan(fovCosOf(plain)); // 작을수록 넓다
     expect(fovCosOf(sentinel)).toBeGreaterThan(SIM.fovHalfCos); // 그래도 기본보다는 좁다(공짜가 아니다)
   });

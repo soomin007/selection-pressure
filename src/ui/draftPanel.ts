@@ -24,7 +24,7 @@ import {
   type Rarity,
 } from "@/game/cards";
 import { cloneGenome, type Genome } from "@/sim/genome";
-import { AXIS_CATEGORY, PERK_BY_NAME, perkLine } from "@/sim/perks";
+import { AXIS_CATEGORY, PERK_BY_NAME, ownedDuos, perkLine } from "@/sim/perks";
 import {
   CATEGORIES,
   CATEGORY_LABELS,
@@ -34,7 +34,6 @@ import {
   KEY_NAMES,
   MAX_TIER,
   TIER_ROMAN,
-  activeDuos,
   nearDuo,
   pipsToNext,
   SIZE_MEANING,
@@ -50,7 +49,6 @@ import {
   categoryColor,
   crossingMoves,
   demotingMoves,
-  iGa,
   pipPct,
   tierBadges,
   tierTrackBackground,
@@ -540,7 +538,9 @@ export function createDraftPanel(
     // 듀오와 유지비는 **도장에서만 나온다**(`activeDuos` 는 도장을, `derivedUpkeep` 도 도장을 읽는다) ▸
     // 카드로는 안 움직이므로 「이 카드를 고르면」식 예고를 붙이지 않는다. 지금 상태만 적는다.
     const duoLine = el("div");
-    duoLine.textContent = `듀오: ${activeDuos(c.genome.pips).map((d) => d.name).join(" · ") || "없음"}`;
+    // **가진 것만**(2026-08-10 · 듀오가 카드가 됐다). 열렸지만 아직 안 고른 듀오를 여기 세면
+    // 「이미 있는 줄 알았는데 없다」가 된다 — buildPanel 과 같은 이유로 `ownedDuos` 를 쓴다.
+    duoLine.textContent = `듀오: ${ownedDuos(c.genome.perks).map((d) => d.name).join(" · ") || "없음"}`;
     lines.appendChild(duoLine);
 
     const upkeepLine = el("div");
@@ -706,8 +706,10 @@ export function createDraftPanel(
     const near = nearDuo(nextCtx.genome.pips);
     if (near) {
       const catName = CATEGORY_LABELS[near.need];
+      // 「켜집니다」가 아니라 「열립니다」다 — 2026-08-10 부터 듀오는 카드라, 그 단에 닿아도
+      // 카드를 골라야 켜진다. 예고가 「켜집니다」라고 하면 고르는 단계를 통째로 감춘다.
       duoEl.textContent =
-        `${catName} ${TIER_ROMAN[DUO_TIER]} 이 되면 「${near.duo.name}」${iGa(near.duo.name)} 켜집니다 · ${near.pips}칸 남음`;
+        `${catName} ${TIER_ROMAN[DUO_TIER]} 이 되면 「${near.duo.name}」 카드가 열립니다 · ${near.pips}칸 남음`;
       duoEl.style.display = "";
     } else {
       duoEl.style.display = "none";

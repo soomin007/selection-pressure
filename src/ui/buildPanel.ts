@@ -17,10 +17,10 @@ import {
   MAX_TIER,
   SIZE_MEANING,
   TIER_ROMAN,
-  activeDuos,
   pipsToNext,
   tierOf,
 } from "@/sim/tiers";
+import { ownedDuos } from "@/sim/perks";
 import { categoryColor, pipPct, tierTrackBackground } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
 
@@ -128,8 +128,10 @@ export function createBuildPanel(): BuildPanel {
     const owned = KEY_NAMES.filter((k) => g.keys[k]).map((k) => KEY_LABELS[k]);
     keysLine.textContent = `열쇠: ${owned.join(" · ") || "없음"}`;
 
-    // 듀오 · 두 범주가 함께 3단 이상일 때 켜지는 합체 형질. 없어도 줄은 보여 "이런 게 있다"를 알린다.
-    const duos = activeDuos(g.pips);
+    // 듀오 · **가진 것만 센다**(2026-08-10). 듀오가 카드가 되면서 「열린 것」과 「고른 것」이
+    // 갈라졌다 — 여기는 내 종 패널이라 **실제로 켜져 있는 것**을 말해야 한다.
+    // `openDuos(pips)` 를 쓰면 「도장은 찍었지만 아직 안 고른」 듀오까지 세어 화면이 거짓말한다.
+    const duos = ownedDuos(g.perks);
     duosLine.textContent = `듀오: ${duos.map((d) => d.name).join(" · ") || "없음"}`;
     duosLine.title = duos.map((d) => `${d.name}: ${d.desc}`).join("\n");
 

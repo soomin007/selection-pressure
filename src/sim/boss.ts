@@ -23,6 +23,7 @@ import type { Terrain } from "@/sim/terrain";
 import type { Traits } from "@/sim/genome";
 import { TRAIT_MAX } from "@/sim/genome";
 import { SIM } from "@/sim/params";
+import { hasRule } from "@/sim/perks";
 
 export type BossType =
   | "chaser"
@@ -769,6 +770,22 @@ export function raidRangedPower(t: Traits): number {
 }
 
 /**
+ * 듀오 「돌진」(가죽 III + 다리 III 에서 열리는 카드) · **부딪혀 싸운다. 보스를 밀어내는 힘이 커진다.**
+ *
+ * ⚠ 이 수는 `tiers.DUOS` 의 「돌진」 설명(「1.6배」)과 **한 쌍**이다. 배수를 문장에서 없앨 수 없는
+ *   자리라(규칙 특성은 축이 없어 `perkLine` 이 표에서 못 만든다) 두 곳에 적힌 유일한 수이고,
+ *   그래서 `perks.test.ts` 가 「설명의 수 = 이 상수」를 못 박는다. 한쪽만 고치면 테스트가 깨진다.
+ * ⚠ **근접에만 걸린다.** 「부딪혀 싸운다」이므로 원거리 사격(`raidRangedPower`)에는 안 붙는다.
+ * ⚠ 전사 자격(`isRaidFighter`·`tagRaidFighters`)에는 안 걸린다 · 거기서는 0 보다 큰지만 보므로
+ *   배수를 곱해도 판정이 안 바뀐다. 곱하는 자리를 「깎는 순간」 둘로 좁혀 둔다.
+ */
+export const CHARGE_RAID_MUL = 1.6;
+
+function chargeMul(e: Entity): number {
+  return hasRule(e.genome.perks, "charge") ? CHARGE_RAID_MUL : 1;
+}
+
+/**
  * power 만큼 격퇴 체력을 깎는다(**공격당** 이벤트 · 깎이는 양 = SIM.raidHitDamage × power).
  * 연출(근접 counter / 원거리 spit)은 방향이 달라 호출부에서 낸다.
  * ⚠ power 는 충족도(0~1)가 **아니다.** 호출부가 배율을 이미 곱해 넘긴다: 떼 근접 반격은 ×
@@ -860,7 +877,7 @@ function stepSingleBoss(boss: Boss, world: World): void {
             // 떼처럼 반경·쿨다운을 따로 두지 않고 예전 구조(닿은 틱마다 반격)를 그대로 둔다.
             // 연출만 bite → counter 로 가른다(씹힌 것과 되받아친 것이 같은 그림이면 구별이 안 된다).
             if (melee > 0) {
-              dealRaidHit(boss, melee, world);
+              dealRaidHit(boss, melee * chargeMul(e), world); // 듀오 「돌진」이 밀어내는 힘을 키운다
               world.emit("counter", e.x, e.y, e.species.isPlayer, boss.x, boss.y); // 연출: 맞받아침(근접)
             }
             continue;
@@ -994,7 +1011,7 @@ function stepMeleeCounter(boss: Boss, world: World): void {
       }
     }
     if (best2 > r2) continue;
-    dealRaidHit(boss, power * SIM.raidCounterMul, world);
+    dealRaidHit(boss, power * SIM.raidCounterMul * chargeMul(e), world); // 듀오 「돌진」 포함
     e.raidCounterCd = SIM.raidCounterCooldown;
     // 연출: 되받아침. 씹힌 것(bite)과 **다른 그림**이라야 화면에서 구별된다.
     world.emit("counter", e.x, e.y, true, bx, by);

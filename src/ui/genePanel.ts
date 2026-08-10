@@ -14,6 +14,14 @@
 //  ⑤ **몸집은 상수표가 아니라 실값 전후로 적는다.** 몸집은 20~100 으로 잘리는 파생값이라
 //     「+8」 같은 증분을 적으면 상한에 걸린 종에게 거짓말이 된다 · `derivedSize` 를 두 번 불러
 //     「몸집 94 ▸ 100」처럼 적으면 잘림이 저절로 반영된다(카드 미리보기와 같은 표기).
+//  ⑥ **무엇이 열리는지 말한다 — 이것이 티어를 올릴 첫 번째 이유다** (**[사용자 2026-08-10]**:
+//     "티어를 올리면 더 좋은 카드, 더 특별한 카드들이 열려서 그걸 위해 티어를 올리는 거고, 그에
+//     따라오는 티어 자체의 보상은 카드에 비해서는 소소한 정도였는데, 지금은 좀 뒤바뀐 느낌이잖아."
+//     · "방울로 올리는 티어가 카드를 해금해준다는 알림도 없고"). 화면은 두 단계다:
+//       ① 줄마다 **이름만** 몇 개 — 「II단에서 열립니다: 굳은 턱 · 쫓는 이빨 …」
+//       ② 그 줄을 **한 번 더 누르면** 각 카드의 효과 한 줄과 등급이 펼쳐진다.
+//     ⚠ 조건을 여기서 다시 적지 않는다 · 드래프트 후보 필터가 부르는 그 함수(`cardGateOpen` ·
+//       `cardPrereqMet`)를 그대로 부른다. 두 곳에 적으면 「열린다고 적어 놓고 안 뜨는」 카드가 생긴다.
 //
 // ⚠ 폰 함정 하나를 피해 만들었다: 세로로 자라는 전체 화면 오버레이에서 가운데 정렬을
 //    `justify-content`/`align-items` 로 잡으면, 내용이 화면보다 길어질 때 **시작 모서리를 안 지켜**
@@ -26,7 +34,9 @@ import {
   CATEGORIES,
   CATEGORY_DESC,
   CATEGORY_LABELS,
+  KEY_DESC,
   KEY_NAMES,
+  MAX_TIER,
   SIZE_MEANING,
   TIER_ROMAN,
   derivedSize,
@@ -34,14 +44,18 @@ import {
   tierLine,
   tierOf,
 } from "@/sim/tiers";
-import type { Category, Keys, Pips } from "@/sim/tiers";
+import type { Category, Pips } from "@/sim/tiers";
+import type { Genome } from "@/sim/genome";
+import { PERK_BY_NAME, perkLine } from "@/sim/perks";
 import { GENE_AWARD, GENE_REASON_LABELS } from "@/sim/gene";
 import type { GeneReason } from "@/sim/gene";
 import { TRIAL_EXCEED_EXCLUDED, type TrialKind } from "@/game/game";
+import { CARD_POOL, cardGateOpen, cardPrereqMet, cardRarity, type Card } from "@/game/cards";
 import { GAME } from "@/game/config";
 import { COLORS, hexColor } from "@/config";
 import { categoryColor, pipPct, tierTrackBackground } from "@/ui/traitDisplay";
 import { ensurePanelStyles } from "@/ui/panelStyles";
+import { RARITY_STYLE, rarityIndex } from "@/ui/rarity";
 import { keyChip, registerKeyLayer } from "@/ui/keys";
 
 /**
@@ -92,13 +106,18 @@ export interface GeneShop {
   /** 아직 안 쓴 방울. */
   readonly geneBank: number;
   /**
-   * 지금 도장과 열쇠 · 티어·막대·몸집을 전부 여기서 읽는다.
+   * 지금 게놈 통째로 · 티어·막대·몸집·해금 예고를 전부 여기서 읽는다. **읽기만 한다**(이 화면은
+   * 게놈을 절대 안 건드린다 · 「사면 어떻게 되는가」는 늘 도장 사본 위에서 계산한다).
    *
-   * 열쇠까지 받는 이유는 **몸집** 하나다. 몸집은 도장과 열쇠가 함께 정하고 20~100 으로 잘리는
-   * 파생값이라(`tiers.derivedSize`), 열쇠를 모르면 「사면 몸집이 얼마가 되는가」를 정확히 못 적는다.
+   * 도장 말고 **열쇠와 특성까지** 필요한 이유 둘:
+   *  · **몸집** — 도장과 열쇠가 함께 정하고 20~100 으로 잘리는 파생값이라(`tiers.derivedSize`),
+   *    열쇠를 모르면 「사면 몸집이 얼마가 되는가」를 정확히 못 적는다.
+   *  · **해금 예고** — 「이 단을 사면 열리는 카드」는 드래프트 후보 필터(`cardPrereqMet`)를 그대로
+   *    부르는데, 그 판정이 이미 가진 특성과 열쇠 상한을 본다. 안 넘기면 이미 가진 카드를
+   *    「열립니다」라고 적는 화면이 된다.
    * `Game.genome` 이 이미 이 모양이라 부르는 쪽은 그대로 통과한다(구조적 타이핑).
    */
-  readonly genome: { readonly pips: Pips; readonly keys: Keys };
+  readonly genome: Genome;
   /** 이 범주의 다음 단까지 드는 방울 수(이미 최고 단이면 0). */
   tierCost(cat: Category): number;
   /** 지금 살 수 있는가 · 버튼을 켜고 끄는 단일 진실. */
@@ -174,6 +193,69 @@ const REASON_NOTE: Readonly<Record<GeneReason, string>> = {
  *  드래프트(15) 위 · 로비/프리셋(20) 아래 · 관전 중에만 열리는 화면이다. */
 const Z = 16;
 
+// ─────────────────────────────── 무엇이 열리는가 ───────────────────────────────
+
+/**
+ * 접기 전에 **이름을 몇 개까지 늘어놓는가.**
+ *
+ * 셋으로 잡은 이유(폰 실측 폭 기준): 가장 좁은 폰(360px)에서 패널은 331px, 줄 안쪽은 약 300px 이다.
+ * 이름 한 장이 보통 4~7글자(가장 긴 것이 「허기가 부지런을 만든다」 11글자)라 11px 글씨로 셋이면
+ * **두 줄 안에 들어온다.** 넷을 넘기면 세 줄이 되고, 그게 다섯 범주에 곱해져 패널이 화면 두 장을
+ * 넘긴다 — 그러면 「티어를 올릴 이유」가 스크롤 밑으로 숨어 애초의 목적을 잃는다.
+ * 나머지는 「외 N장」으로 세고, 세부는 한 번 더 눌러서 본다(**[사용자 2026-08-10]**).
+ */
+const PREVIEW_NAMES = 3;
+
+/** 이 범주를 한 단 올렸을 때의 결과 · 열리는 카드와, 「원래 이 단에 걸린 카드가 몇 장인가」. */
+interface OpensAt {
+  /** 지금 고를 수 있게 되는 카드들(귀한 것부터). */
+  cards: Card[];
+  /** 이 단에 걸려 있는 카드 수 · 이미 가진 것까지 센다. `cards` 가 비었을 때 이유를 가르는 데 쓴다. */
+  total: number;
+}
+
+/**
+ * **이 범주를 한 단 올리면 새로 열리는 카드들.** 이 화면이 「티어를 올릴 이유」를 대는 유일한 계산이다.
+ *
+ * ⚠ **조건을 여기서 다시 적지 않는다.** 드래프트가 후보를 거를 때 부르는 그 함수를 그대로 부른다
+ *   (`cardGateOpen` · `cardPrereqMet` → `sim/perks.gateOpen`). 두 곳에 적으면 「열린다고 적어 놓고
+ *   안 뜨는」 카드가 생긴다 · 이 저장소가 반복해서 데인 사고다.
+ * ⚠ **게놈을 안 건드린다.** 도장 사본을 새로 만들어 그 위에서만 판정한다(`Game` 의 값은 읽기만).
+ */
+function opensAtTier(genome: Genome, cat: Category, tier: number): OpensAt {
+  const nextPips: Pips = { ...genome.pips };
+  nextPips[cat] = pipsForTier(tier);
+  const after: Genome = { ...genome, pips: nextPips };
+
+  const cards: Card[] = [];
+  let total = 0;
+  for (const card of CARD_POOL) {
+    if (cardGateOpen(card, genome)) continue; // 지금도 열려 있다 = 이 단이 여는 것이 아니다
+    if (!cardGateOpen(card, after)) continue; // 이 단으로는 아직 안 열린다(더 깊은 단 · 듀오 · 열쇠)
+    total += 1;
+    // 이미 가진 특성이나 열쇠 상한에 걸린 카드는 후보에 안 뜬다 → 「열립니다」라 적으면 거짓말이다.
+    if (!cardPrereqMet(card, after)) continue;
+    cards.push(card);
+  }
+  // 귀한 것부터. 이 줄은 「올릴 이유」라서 가장 큰 것이 먼저 읽혀야 한다(전설 = 열쇠가 맨 앞).
+  cards.sort((a, b) => rarityIndex(cardRarity(b)) - rarityIndex(cardRarity(a)));
+  return { cards, total };
+}
+
+/**
+ * 카드 한 장의 **효과 한 줄** · 드래프트 카드에 뜨는 것과 **같은 문자열**이다.
+ * 특성은 `sim/perks.perkLine`, 열쇠는 `tiers.KEY_DESC`(대가까지 함께 적는 줄)가 만든다 —
+ * 여기서 다시 적으면 언젠가 한쪽만 바뀌어 화면이 거짓말을 한다.
+ */
+function cardEffectLine(card: Card): string {
+  if (card.key !== undefined) return KEY_DESC[card.key];
+  if (card.perk !== undefined) {
+    const p = PERK_BY_NAME.get(card.perk);
+    if (p !== undefined) return perkLine(p);
+  }
+  return card.desc;
+}
+
 export function createGenePanel(shop: GeneShop): GenePanel {
   ensurePanelStyles(); // :root 토큰 보장
   ensureGeneStyles();
@@ -227,8 +309,11 @@ export function createGenePanel(shop: GeneShop): GenePanel {
   // ⚠ **v9 에서 이 줄이 거짓말이 됐던 자리다.** 예전 문구는 "카드로 받은 도장은 그만큼 값을
   //   깎습니다"였는데, 드래프트 카드는 이제 도장을 한 칸도 안 준다(도장은 방울 구입과 시작 갈래뿐).
   //   값이 남은 거리라는 사실은 그대로이므로, 그 사실만 말한다(`Game.tierCost` = `pipsToNext`).
+  // ⚠ **첫 문장이 바뀌었다** (**[사용자 2026-08-10]**: "방울로 올리는 티어가 카드를 해금해준다는
+  //   알림도 없고, 그것 때문에 티어를 올려야겠다는 생각도 안 들어"). 단을 사는 첫 번째 이유는
+  //   파생 능치가 아니라 **드래프트에 새 카드가 열리는 것**이라, 그 말이 맨 앞에 있어야 한다.
   lead.textContent =
-    "모은 방울로 범주의 다음 단을 삽니다. 단이 오르면 능력이 통째로 바뀝니다. 값은 다음 단까지 남은 도장 수입니다.";
+    "모은 방울로 범주의 다음 단을 삽니다. 단이 오르면 드래프트에 새 카드가 열리고, 능력도 함께 바뀝니다. 값은 다음 단까지 남은 도장 수입니다.";
 
   // 방울이 어디서 나오는지 · 값은 `GENE_AWARD`, 이름은 `GENE_REASON_LABELS`, 조건은 `REASON_NOTE`
   // (게이트가 읽는 상수에서 만든다). 여기서 손으로 적으면 표를 튜닝하는 순간 화면이 거짓말을 한다.
@@ -253,8 +338,14 @@ export function createGenePanel(shop: GeneShop): GenePanel {
   panel.append(head, frozen, bankRow, lead, sources, list);
   document.body.appendChild(root);
 
-  // ── 범주 다섯 줄 · 한 줄이 통째로 버튼이다(폰에서 손가락이 크다) ────────────
+  // ── 범주 다섯 칸 · 한 칸이 「사는 버튼」 + 「무엇이 열리는가」 두 층이다 ────────
+  //
+  // ⚠ **해금 예고를 사는 버튼 안에 넣지 않는다.** 버튼 안의 버튼은 브라우저가 바깥 버튼을 먼저
+  //   닫아 버려 배치가 통째로 깨진다(HTML 규칙). 그래서 한 칸(.gene-slot)이 테두리와 둥근 모서리를
+  //   갖고, 그 안에 버튼 둘을 위아래로 붙인다 — 화면에는 한 카드로 읽히고 손에는 두 동작이다.
+  //   위를 누르면 **산다**, 아래를 누르면 **무엇이 열리는지 펼친다**(**[사용자 2026-08-10]**).
   interface Row {
+    slot: HTMLElement;
     btn: HTMLButtonElement;
     dot: HTMLElement;
     name: HTMLElement;
@@ -264,10 +355,31 @@ export function createGenePanel(shop: GeneShop): GenePanel {
     gain: HTMLElement;
     cost: HTMLElement;
     size: HTMLElement;
+    /** 해금 예고 줄 = 펼치기 토글. */
+    open: HTMLButtonElement;
+    openLead: HTMLElement;
+    openNames: HTMLElement;
+    openMore: HTMLElement;
+    /** 펼친 상세가 사는 칸. */
+    detail: HTMLElement;
+    /** 상세 한 줄씩 · **지우지 않고 재사용한다**(아래 fillDetail 주석 참고). */
+    items: DetailItem[];
+  }
+  /** 상세 한 줄의 뼈대 · 카드 이름 · 등급 배지 · 효과 한 줄. */
+  interface DetailItem {
+    root: HTMLElement;
+    name: HTMLElement;
+    rar: HTMLElement;
+    line: HTMLElement;
   }
   const rows = new Map<Category, Row>();
+  /** 지금 상세를 펼쳐 둔 범주들. 화면 상태일 뿐이라 게놈에도 game 에도 안 남는다. */
+  const expanded = new Set<Category>();
 
   CATEGORIES.forEach((cat, i) => {
+    const slot = document.createElement("div");
+    slot.className = "gene-slot";
+
     const btn = document.createElement("button");
     btn.className = "gene-row";
     btn.type = "button";
@@ -304,9 +416,36 @@ export function createGenePanel(shop: GeneShop): GenePanel {
     size.className = "gene-line size";
     size.title = SIZE_MEANING; // 몸집은 좋고 나쁨이 안 갈리는 축이라 뜻은 이 한 문장만 말한다
 
+    // ── 「무엇이 열리는가」 줄 · 이 화면에서 티어를 올릴 첫 번째 이유다 ──────────
+    const open = document.createElement("button");
+    open.className = "gene-open";
+    open.type = "button";
+    open.addEventListener("click", () => {
+      if (expanded.has(cat)) expanded.delete(cat);
+      else expanded.add(cat);
+      // 다시 그리는 것은 갱신 루프가 맡는다 · 펼침 상태가 상태 지문에 들어 있어 다음 프레임에 따라온다.
+    });
+    const openHead = document.createElement("span");
+    openHead.className = "gene-open-head";
+    const openLead = document.createElement("span");
+    openLead.className = "gene-open-lead";
+    const openMore = document.createElement("span");
+    openMore.className = "gene-open-more";
+    openHead.append(openLead, openMore);
+    const openNames = document.createElement("span");
+    openNames.className = "gene-open-names";
+    open.append(openHead, openNames);
+
+    const detail = document.createElement("div");
+    detail.className = "gene-detail";
+
     btn.append(top, track, gain, cost, size);
-    list.appendChild(btn);
-    rows.set(cat, { btn, dot, name, tier, price, fill, gain, cost, size });
+    slot.append(btn, open, detail);
+    list.appendChild(slot);
+    rows.set(cat, {
+      slot, btn, dot, name, tier, price, fill, gain, cost, size,
+      open, openLead, openMore, openNames, detail, items: [],
+    });
   });
 
   // ── 상태 ──────────────────────────────────────────────────────────────────
@@ -321,14 +460,60 @@ export function createGenePanel(shop: GeneShop): GenePanel {
   // ⚠ 지문에 **열쇠도 넣는다.** 열쇠가 열리면 같은 도장·같은 잔액이어도 문구가 바뀐다
   //   (초음파를 얻는 순간 눈 줄에 「듣는 거리」가 함께 붙는다) · 안 넣으면 열어 둔 채 열쇠가
   //   열렸을 때 화면만 옛말을 계속한다.
+  // ⚠ **펼침 상태와 특성 수도 지문에 넣는다.** 펼침은 이 화면만의 상태라 안 넣으면 눌러도 다음
+  //   프레임에 아무 일도 안 일어난다(값이 안 바뀌었으니 다시 안 그린다). 특성 수는 「이미 가진
+  //   카드」를 예고에서 빼는 판정(`cardPrereqMet`)이 읽는 값이다.
   const stateSig = (): string => {
     const p = shop.genome.pips;
     const k = shop.genome.keys;
-    return `${shop.geneBank}|${CATEGORIES.map((c) => p[c]).join(",")}|${KEY_NAMES.filter((n) => k[n]).join(",")}`;
+    const opened = CATEGORIES.filter((c) => expanded.has(c)).join(",");
+    return (
+      `${shop.geneBank}|${CATEGORIES.map((c) => p[c]).join(",")}` +
+      `|${KEY_NAMES.filter((n) => k[n]).join(",")}|${shop.genome.perks.length}|${opened}`
+    );
   };
 
   const setText = (el: HTMLElement, s: string): void => {
     if (el.textContent !== s) el.textContent = s;
+  };
+
+  /**
+   * 상세 목록을 채운다 · **줄을 지우지 않고 재사용한다.**
+   * 필요한 만큼만 새로 만들고, 남는 줄은 숨긴다 — 매번 지웠다 다시 만들면 폰에서 레이아웃 비용이
+   * 되고, 무엇보다 이 화면은 열려 있는 동안 매 프레임 그릴 수 있는 자리라 쓰레기를 만들면 안 된다.
+   */
+  const fillDetail = (r: Row, cards: readonly Card[]): void => {
+    while (r.items.length < cards.length) {
+      const root = document.createElement("div");
+      root.className = "gene-card";
+      const head = document.createElement("span");
+      head.className = "gene-card-head";
+      const name = document.createElement("span");
+      name.className = "gene-card-name";
+      const rar = document.createElement("span");
+      rar.className = "gene-card-rar";
+      head.append(name, rar);
+      const line = document.createElement("span");
+      line.className = "gene-card-line";
+      root.append(head, line);
+      r.detail.appendChild(root);
+      r.items.push({ root, name, rar, line });
+    }
+    r.items.forEach((item, i) => {
+      const card = cards[i];
+      if (card === undefined) {
+        item.root.style.display = "none";
+        return;
+      }
+      item.root.style.display = "block";
+      setText(item.name, card.name);
+      // 등급 이름·색은 카드 배지와 **같은 표**에서 온다(`ui/rarity`) · 두 곳에 적지 않는다.
+      const style = RARITY_STYLE[cardRarity(card)];
+      setText(item.rar, style.label);
+      item.rar.style.color = style.color;
+      item.rar.style.background = style.badgeBg;
+      setText(item.line, cardEffectLine(card));
+    });
   };
 
   function render(): void {
@@ -394,8 +579,59 @@ export function createGenePanel(shop: GeneShop): GenePanel {
       r.cost.style.display = r.cost.textContent ? "block" : "none";
       r.size.style.display = r.size.textContent ? "block" : "none";
 
+      // ── 무엇이 열리는가 ────────────────────────────────────────────────────
+      // ⚠ 최고 단에서는 이 줄을 통째로 감춘다. 「더 오를 단이 없습니다」가 바로 위에 이미 있어
+      //   그 칸이 빈 것으로 보이지 않는다(빈칸은 고장으로 보인다는 규칙은 **다음 단이 있는데
+      //   할 말이 없는 경우**를 막는 것이고, 여기는 다음 단 자체가 없다).
+      if (maxed) {
+        r.open.style.display = "none";
+        r.detail.style.display = "none";
+      } else {
+        const next = t + 1;
+        const roman = TIER_ROMAN[next] ?? "";
+        const { cards, total } = opensAtTier(shop.genome, cat, next);
+        r.open.style.display = "block";
+        if (cards.length > 0) {
+          const head = cards.slice(0, PREVIEW_NAMES);
+          const rest = cards.length - head.length;
+          const names = head.map((c) => c.name).join(" · ");
+          setText(r.openLead, `${roman}단에서 카드가 열립니다`);
+          setText(r.openNames, rest > 0 ? `${names} 외 ${rest}장` : names);
+          const on = expanded.has(cat);
+          setText(r.openMore, on ? "접기 ▴" : "자세히 ▾");
+          r.open.disabled = false;
+          r.open.className = "gene-open";
+          r.open.setAttribute("aria-expanded", on ? "true" : "false");
+          r.detail.style.display = on ? "block" : "none";
+          if (on) fillDetail(r, cards);
+        } else {
+          // **빈칸을 남기지 않는다.** 열릴 카드가 없으면 왜 없는지를 그 자리에서 말한다.
+          //  · total > 0  = 이 단에 걸린 카드는 있는데 전부 가졌다(또는 열쇠 상한에 걸렸다)
+          //  · 최고 단    = 4단은 카드가 아니라 규칙 자체가 면제되는 자리다(`tiers.MAX_TIER` 주석)
+          //  ⚠ 4단 칸이 채워지면 이 분기는 저절로 위쪽(cards.length > 0)으로 넘어간다 — 여기서
+          //    「4단은 카드가 없다」고 못 박지 않는 이유다.
+          const why =
+            total > 0
+              ? `${roman}단에서 열리는 카드는 이미 다 가졌습니다.`
+              : next >= MAX_TIER
+                ? `${roman}단은 카드가 아니라 규칙 자체가 바뀌는 단입니다.`
+                : `${roman}단에서 새로 열리는 카드는 없습니다.`;
+          setText(r.openLead, why);
+          setText(r.openNames, "");
+          setText(r.openMore, "");
+          r.open.disabled = true;
+          r.open.className = "gene-open plain";
+          r.open.setAttribute("aria-expanded", "false");
+          r.detail.style.display = "none";
+        }
+        // 이름 줄이 빈 상태(위의 else 갈래)에서 위쪽 여백만 남지 않게 · 값 줄과 같은 처리다.
+        r.openNames.style.display = r.openNames.textContent ? "block" : "none";
+      }
+
       r.btn.disabled = !can;
       r.btn.className = `gene-row${maxed ? " maxed" : can ? "" : " locked"}`;
+      // 살 수 있는 칸만 테두리가 살아난다(예전에 .gene-row 가 하던 일 · 테두리가 칸으로 옮겨 왔다).
+      r.slot.className = can ? "gene-slot can" : "gene-slot";
     }
   }
 
@@ -528,19 +764,59 @@ function ensureGeneStyles(): void {
   .gene-sources { font-family: var(--font-mono); font-size: 10.5px; color: var(--sub);
     opacity: 0.9; line-height: 1.6; margin-top: 8px; word-break: keep-all; }
   .gene-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  /* 범주 한 칸 · **테두리와 둥근 모서리를 이 상자가 갖는다**(예전엔 .gene-row 가 가졌다).
+     안에 버튼이 둘 들어가는데(사기 · 무엇이 열리는지 펼치기) 하나의 카드로 읽혀야
+     「이 단을 사면 저것이 열린다」가 이어지기 때문이다. overflow:hidden 이 아래쪽 모서리를 깎는다. */
+  .gene-slot { background: var(--panelSolid); border: 1px solid var(--line);
+    border-radius: var(--r-card); overflow: hidden;
+    transition: border-color 0.15s ease; }
+  /* 살 수 있는 칸만 테두리가 방울 색으로 살아난다 · 「지금 뭘 살 수 있나」가 글씨를 읽기 전에 보인다. */
+  .gene-slot.can { border-color: var(--geneLine); }
   /* 한 줄이 통째로 버튼 · 폰에서 작은 버튼을 겨냥하게 만들지 않는다. */
   .gene-row { width: 100%; box-sizing: border-box; text-align: left; display: block;
-    padding: 10px 12px 11px; background: var(--panelSolid);
-    border: 1px solid var(--line); border-radius: var(--r-card); color: var(--ink);
-    font: inherit; cursor: pointer; transition: transform 0.07s ease, border-color 0.15s ease; }
+    padding: 10px 12px 11px; background: none; border: 0; border-radius: 0; color: var(--ink);
+    font: inherit; cursor: pointer; transition: transform 0.07s ease; }
   .gene-row:active { transform: translateY(2px); }
-  /* 살 수 있는 줄만 테두리가 방울 색으로 살아난다 · 「지금 뭘 살 수 있나」가 글씨를 읽기 전에 보인다. */
-  .gene-row:not(.locked):not(.maxed) { border-color: var(--geneLine); }
   /* 못 사는 줄은 흐리되 **읽을 수는 있어야 한다** · 거기 적힌 「몇 개 모자람」이 왜 못 사는지의
-     유일한 설명이다. 안 읽히게 죽이면 고장 난 버튼과 구별이 안 된다(0.6 은 폰에서 안 읽혔다). */
+     유일한 설명이다. 안 읽히게 죽이면 고장 난 버튼과 구별이 안 된다(0.6 은 폰에서 안 읽혔다).
+     ⚠ 흐려지는 것은 **사는 줄뿐**이다 · 아래 해금 예고는 못 살 때도 또렷해야 한다.
+        그게 「지금은 못 사지만 모아서 사야겠다」를 만드는 유일한 문장이기 때문이다. */
   .gene-row.locked, .gene-row.maxed { cursor: default; transform: none; }
   .gene-row.locked { opacity: 0.75; }
   .gene-row.maxed { opacity: 0.82; }
+
+  /* ── 무엇이 열리는가 · 사는 버튼 바로 아래 ────────────────────────────────────
+     **[사용자 2026-08-10]** "티어 화면에서는 카드들의 대략적인 이름 정도만 보여주고, 그 티어
+     버튼을 한 번 더 누르면 각 카드의 상세 내용을 볼 수 있게." 그래서 이 줄은 이름만 말하고,
+     누르면 아래 .gene-detail 이 펼쳐진다. 값 칸보다 위계가 높다(방울 색으로 머리를 단다). */
+  .gene-open { display: block; width: 100%; box-sizing: border-box; text-align: left;
+    padding: 8px 12px 9px; background: rgba(255,255,255,0.035); border: 0;
+    border-top: 1px solid var(--line); color: var(--ink); font: inherit; cursor: pointer; }
+  .gene-open:active { background: rgba(255,255,255,0.09); }
+  /* 펼칠 것이 없는 상태(이미 다 가졌다 · 규칙이 바뀌는 단) · 눌리지 않지만 문장은 읽힌다. */
+  .gene-open.plain { cursor: default; background: none; }
+  .gene-open-head { display: flex; align-items: baseline; gap: 8px; }
+  .gene-open-lead { flex: 1; min-width: 0; font-size: 10.5px; line-height: 1.45;
+    color: var(--gene); word-break: keep-all; }
+  .gene-open.plain .gene-open-lead { color: var(--sub); }
+  .gene-open-more { flex: none; font-family: var(--font-mono); font-size: 9.5px;
+    color: var(--sub); white-space: nowrap; }
+  .gene-open-names { display: block; margin-top: 3px; font-size: 11px; line-height: 1.45;
+    color: var(--ink); opacity: 0.92; word-break: keep-all; }
+
+  /* 펼친 상세 · 카드 한 장이 한 줄이다. 효과 문구는 드래프트 카드에 뜨는 것과 **같은 문자열**이라
+     (sim/perks.perkLine · tiers.KEY_DESC) 여기와 카드가 갈라질 수 없다. */
+  .gene-detail { padding: 3px 12px 10px; border-top: 1px solid var(--line);
+    background: rgba(0,0,0,0.20); }
+  .gene-card { padding-top: 8px; }
+  .gene-card-head { display: flex; align-items: baseline; gap: 7px; }
+  /* 이름은 한 줄로 자른다 · 등급 배지는 안 줄어든다(값 칸과 같은 규칙). */
+  .gene-card-name { flex: 1; min-width: 0; font-family: var(--font-title); font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gene-card-rar { flex: none; font-family: var(--font-mono); font-size: 9px; white-space: nowrap;
+    border-radius: 999px; padding: 2px 7px; }
+  .gene-card-line { display: block; margin-top: 2px; font-size: 10.5px; line-height: 1.4;
+    color: var(--sub); word-break: keep-all; }
   .gene-row-top { display: flex; align-items: center; gap: 7px; }
   .gene-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
   .gene-name { font-family: var(--font-title); font-size: 14.5px; flex: 1; min-width: 0;
@@ -572,13 +848,19 @@ function ensureGeneStyles(): void {
     .gene-panel { width: min(420px, 92vw); }
     .gene-line { font-size: 11.5px; }
     .gene-price { font-size: 11px; }
+    .gene-open-lead { font-size: 11.5px; }
+    .gene-open-more { font-size: 10.5px; }
+    .gene-open-names { font-size: 12px; }
+    .gene-card-name { font-size: 13px; }
+    .gene-card-line { font-size: 11.5px; }
+    .gene-card-rar { font-size: 10px; }
   }
 
   @media (prefers-reduced-transparency: reduce) {
     .gene-root { background: rgba(11,9,6,0.96); backdrop-filter: none; -webkit-backdrop-filter: none; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .gene-row { transition: none; }
+    .gene-row, .gene-slot { transition: none; }
     .gene-row:active { transform: none; }
   }
   `;
