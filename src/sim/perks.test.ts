@@ -328,8 +328,28 @@ describe("티어가 카드를 연다 (게이트)", () => {
     for (const p of PERKS) expect(perkGate(p.id), p.id).toBeDefined();
   });
 
-  it("도장이 하나도 없으면 아무 특성도 안 열린다 — 첫 카드는 프리셋이 켠 범주에서 나온다", () => {
-    expect(openCount(0)).toBe(0);
+  // ⚠ **2026-08-10 밤에 뒤집힌 계약.** 그날 낮에는 「도장이 없으면 아무것도 안 열린다」였는데,
+  //   그것이 **악순환**을 만들었다(실측: 잡식 시작 시 후보 13장이 전부 이빨·눈 · 다른 세 범주는 0).
+  //   **[사용자]** "매번 이빨 카드만 떠서 다른 범주는 아예 올릴 엄두도 못 내고 있는데, 이게 티어를
+  //   올릴 동기가 될 수도 있지만 지금은 **의욕을 잃게 하는 게 더 큰** 것 같아."
+  it("범주마다 두 장은 처음부터 열려 있다 — 「이런 범주가 있다」를 시작부터 보여 준다", () => {
+    const open = PERKS.filter((p) => gateOpen(perkGate(p.id), emptyPips(), emptyKeys()));
+    expect(open.length).toBe(10);
+    // 다섯 범주가 **빠짐없이** 둘씩이어야 한다 — 한 범주라도 0 이면 그 범주는 다시 안 보이게 된다.
+    for (const cat of CATEGORIES) {
+      const n = open.filter((p) => AXIS_CATEGORY[p.axis] === cat).length;
+      expect(n, `범주 ${cat} 가 처음부터 보이는 카드 수`).toBe(2);
+    }
+  });
+
+  it("처음부터 열린 열 장은 **가장 작은 것들**이다 — 티어를 올릴 이유가 남아야 한다", () => {
+    const open = PERKS.filter((p) => gateOpen(perkGate(p.id), emptyPips(), emptyKeys()));
+    const locked = MUL_PERKS.filter((p) => !gateOpen(perkGate(p.id), emptyPips(), emptyKeys()));
+    const maxOpen = Math.max(...open.map(perkValue));
+    const avgLocked = locked.reduce((s, p) => s + perkValue(p), 0) / locked.length;
+    expect(maxOpen, "처음부터 열린 것 중 가장 큰 것이 잠긴 것들의 평균보다 작아야 한다").toBeLessThan(
+      avgLocked,
+    );
   });
 
   it("**티어를 올릴 때마다 열리는 것이 늘어난다** — 이것이 티어를 올릴 이유다", () => {

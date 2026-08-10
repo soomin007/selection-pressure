@@ -38,7 +38,7 @@ import {
   type Rarity,
 } from "@/game/cards";
 import { defaultGenome, genomeFromPips } from "@/sim/genome";
-import { PERKS, PERK_BY_NAME, perkLine, perkRarity, type PerkName } from "@/sim/perks";
+import { AXIS_CATEGORY, PERKS, PERK_BY_NAME, perkLine, perkRarity, type PerkName } from "@/sim/perks";
 import {
   CATEGORIES,
   KEY_NAMES,
@@ -539,13 +539,36 @@ describe("죽은 카드 필터(cardPrereqMet · cardRedundant)", () => {
   //   지금은 역할이 뒤바뀌었다」는 지적이 나와, 도장이 **카드를 여는 열쇠**가 됐다.
   //   두 계약이 정반대라 헷갈리기 쉽다: **도장은 카드를 「닫지」 않고 「연다」.** 최고 티어 종에게
   //   모든 카드가 열리는 것은 그대로이고, 달라진 것은 **낮은 티어에서 일부가 아직 안 열린다**는 쪽이다.
-  it("도장이 카드를 **연다** — 최고 티어 종에게는 전부 열리고, 도장이 없으면 특성이 하나도 안 열린다", () => {
+  it("도장이 카드를 **연다** — 최고 티어 종에게는 전부 열린다", () => {
     const apex = genomeFromPips(APEX_PIPS, emptyKeys());
     expect(CARD_POOL.filter((c) => cardPrereqMet(c, apex)).length).toBe(CARD_POOL.length);
+  });
 
-    // 도장이 하나도 없으면(프리셋 이전) 특성도 열쇠도 안 열린다 — 열 것이 아직 없다.
+  // ⚠ 2026-08-10 밤에 뒤집혔다: 낮에는 「도장이 없으면 0장」이었는데 그것이 악순환을 만들었다
+  //   (시작 범주 카드만 계속 뜬다 → 다른 범주를 볼 일이 없다 → 올릴 이유가 없다).
+  //   지금은 **범주마다 두 장이 문 밖에 있다**(`perks.ts` 의 BASE_GATES 머리 주석).
+  it("도장이 없어도 다섯 범주가 다 보인다 — 「이런 범주가 있다」를 시작부터 알린다", () => {
     const bare = defaultGenome();
-    expect(CARD_POOL.filter((c) => cardPrereqMet(c, bare)).length).toBe(0);
+    const open = CARD_POOL.filter((c) => cardPrereqMet(c, bare));
+    expect(open.length).toBe(10); // 범주 다섯 × 둘
+    expect(open.every((c) => c.perk !== undefined), "열쇠는 아직 안 열린다").toBe(true);
+  });
+
+  it("**시작 갈래로 시작해도 다섯 범주가 다 후보에 든다** — 한 범주만 계속 뜨면 안 된다", () => {
+    // [사용자 2026-08-10] "매번 이빨 카드만 떠서 다른 범주는 아예 올릴 엄두도 못 내고 있는데."
+    // 잡식(이빨 4 · 눈 3)으로 시작한 그 자리를 그대로 재현해 잰다.
+    for (const preset of PRESET_CARDS) {
+      const g = defaultGenome();
+      applyCard(g, preset);
+      const open = CARD_POOL.filter((c) => cardPrereqMet(c, g));
+      const cats = new Set<Category>();
+      for (const c of open) {
+        if (c.perk === undefined) continue;
+        const p = PERK_BY_NAME.get(c.perk);
+        if (p !== undefined) cats.add(AXIS_CATEGORY[p.axis]);
+      }
+      expect(cats.size, `${preset.name}: 후보에 든 범주 수`).toBe(CATEGORIES.length);
+    }
   });
 
   it("티어를 올리면 후보가 늘어난다 — 드래프트에서 눈으로 확인되는 보상", () => {

@@ -473,9 +473,19 @@ function duoOf(rule: PerkRule): Duo {
  *   `perks.test.ts` 가 그것이 뒤집히지 않았는지 검사한다.
  */
 const BASE_GATES: Record<(typeof PERK_DEFS)[number]["id"], PerkGate> = {
+  // ⚠⚠ **범주마다 두 장은 게이트가 없다**(`{}` 로 적힌 것들 · 2026-08-10 밤).
+  //   그게 없으면 게이트가 **악순환**을 만든다. 실측: 잡식으로 시작하면(이빨 4 · 눈 3) 후보 13장이
+  //   **전부 이빨·눈**이었다 — 다리·가죽·무리는 도장이 0 이라 카드가 한 장도 안 열리고, 그러면
+  //   그 범주에 무엇이 있는지 **영영 못 보므로** 올릴 이유를 못 느끼고, 계속 이빨만 나온다.
+  //   **[사용자 2026-08-10]** "매번 이빨 카드만 떠서 다른 범주는 아예 올릴 엄두도 못 내고 있는데,
+  //   이게 티어를 올릴 동기가 될 수도 있지만 지금은 **의욕을 잃게 하는 게 더 큰** 것 같아."
+  //
+  //   그래서 **각 범주의 가장 작은 두 장을 문 밖에 뒀다.** 「이런 범주가 있다」를 시작부터 보여 주되
+  //   그 둘은 값어치가 바닥이라(0.05~0.06) **티어를 올릴 이유는 그대로다** — 1단을 사면 그 범주에서
+  //   두세 장이 더 열리고 그것들이 더 세다.
   // ── 이빨 ─────────────────────────────────────────────────────────────
-  attack_always: { tiers: [{ cat: "fang", tier: 1 }] },
-  attack_hunting: { tiers: [{ cat: "fang", tier: 1 }] },
+  attack_always: {},
+  attack_hunting: {},
   hunt_always: { tiers: [{ cat: "fang", tier: 1 }] },
   hunt_hungry: { tiers: [{ cat: "fang", tier: 1 }] },
   attack_night: { tiers: [{ cat: "fang", tier: 1 }] },
@@ -486,8 +496,8 @@ const BASE_GATES: Record<(typeof PERK_DEFS)[number]["id"], PerkGate> = {
   hunt_gorge: { tiers: [{ cat: "fang", tier: 3 }] },
 
   // ── 다리 ─────────────────────────────────────────────────────────────
-  speed_always: { tiers: [{ cat: "leg", tier: 1 }] },
-  speed_rough: { tiers: [{ cat: "leg", tier: 1 }] },
+  speed_always: {},
+  speed_rough: {},
   speed_day: { tiers: [{ cat: "leg", tier: 1 }] },
   speed_crowd: { tiers: [{ cat: "leg", tier: 1 }] },
   speed_night: { tiers: [{ cat: "leg", tier: 2 }] },
@@ -497,8 +507,8 @@ const BASE_GATES: Record<(typeof PERK_DEFS)[number]["id"], PerkGate> = {
   speed_fleeing: { tiers: [{ cat: "leg", tier: 3 }] },
 
   // ── 눈 ───────────────────────────────────────────────────────────────
-  vision_always: { tiers: [{ cat: "eye", tier: 1 }] },
-  vision_alone: { tiers: [{ cat: "eye", tier: 1 }] },
+  vision_always: {},
+  vision_alone: {},
   vision_full: { tiers: [{ cat: "eye", tier: 1 }] },
   vision_rough: { tiers: [{ cat: "eye", tier: 1 }] },
   vision_shore: { tiers: [{ cat: "eye", tier: 2 }] },
@@ -508,8 +518,8 @@ const BASE_GATES: Record<(typeof PERK_DEFS)[number]["id"], PerkGate> = {
   vision_far: { tiers: [{ cat: "eye", tier: 3 }] },
 
   // ── 가죽 ─────────────────────────────────────────────────────────────
-  defense_always: { tiers: [{ cat: "hide", tier: 1 }] },
-  upkeep_always: { tiers: [{ cat: "hide", tier: 1 }] },
+  defense_always: {},
+  upkeep_always: {},
   defense_fleeing: { tiers: [{ cat: "hide", tier: 1 }] },
   upkeep_full: { tiers: [{ cat: "hide", tier: 1 }] },
   upkeep_grass: { tiers: [{ cat: "hide", tier: 1 }] },
@@ -522,8 +532,8 @@ const BASE_GATES: Record<(typeof PERK_DEFS)[number]["id"], PerkGate> = {
   upkeep_slow: { tiers: [{ cat: "hide", tier: 3 }] },
 
   // ── 무리 ─────────────────────────────────────────────────────────────
-  fertility_always: { tiers: [{ cat: "herd", tier: 1 }] },
-  graze_day: { tiers: [{ cat: "herd", tier: 1 }] },
+  fertility_always: {},
+  graze_day: {},
   fertility_day: { tiers: [{ cat: "herd", tier: 1 }] },
   graze_crowd: { tiers: [{ cat: "herd", tier: 1 }] },
   graze_grass: { tiers: [{ cat: "herd", tier: 1 }] },
