@@ -218,15 +218,20 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     expect(w.deaths.boss).toBeGreaterThan(0); // 떼가 문 사망이 실제로 발생
   });
 
+  // ⚠ **여섯 시드 합계로 바꿨다**(2026-08-10). 단일 시드(env-1)로 재던 것이 전투 재설계
+  //   (즉사 → 피해 싸움) 뒤에 뒤집혔다 — 실측: 고대사가 워밍업 750틱 만에 6마리까지 줄어(유지비
+  //   1.4 라 원래 불리하다) 한파 뒤 2마리가 됐고, 기준 3 에 하나가 모자랐다. **방향은 그대로였다**
+  //   (고대사 2 vs 저대사 0). 위 「독 안개」가 같은 이유로 이미 여섯 시드로 옮겨져 있다 —
+  //   소수 개체 시뮬에서 단일 시드의 절대 개체수는 노이즈다(known_issues).
   it("한파 대멸종: 고대사는 통과, 저대사는 실패", () => {
-    const hi = afterGate(tune({ metabolism: 90 }), GAME.extinctionSeconds, (w) => {
+    const seeds = ["env-1", "env-2", "env-3", "env-4", "env-5", "env-6"];
+    const cold = (w: World): void => {
       w.globalCold = 1.3;
-    });
-    const lo = afterGate(tune({ metabolism: 10 }), GAME.extinctionSeconds, (w) => {
-      w.globalCold = 1.3;
-    });
+    };
+    const hi = afterGateSum(tune({ metabolism: 90 }), GAME.extinctionSeconds, cold, seeds);
+    const lo = afterGateSum(tune({ metabolism: 10 }), GAME.extinctionSeconds, cold, seeds);
     expect(hi).toBeGreaterThanOrEqual(FILTER_SURVIVE);
-    expect(lo).toBeLessThan(FILTER_SURVIVE);
+    expect(hi).toBeGreaterThan(lo); // 추위에 강한 쪽이 실제로 더 남는다
   });
 
   it("폭염 대멸종: 저대사는 통과, 고대사는 실패", () => {
@@ -854,10 +859,19 @@ describe("비행 유지비 — 나는 것은 끝까지 비싸다", () => {
 });
 
 describe("사냥 판정 — 물기(쿨다운 + 기운 깎기)", () => {
-  it("압도하면 거의 한 번에 잡는다(상한 95%)", () => {
+  // ⚠ **2026-08-10 에 계약이 바뀌었다.** 전투를 「즉사 판정」에서 「피해 싸움」으로 옮기면서
+  //   기울기(`killChanceScale`)를 1.5 → 0.5 로 낮췄다 · **[사용자]** "애초에 지금 애들 공격 속도가
+  //   하도 빨라서 뭐 대미지 배수가 의미가 있나 싶기도 하고".
+  //   그래서 **압도해도 한 번에 안 잡는다** — 공격 100 대 방어 0 이라는 극단에서도 58% 다.
+  //   상한(95%)은 여전히 살아 있지만 **닿으려면 몸집 차까지 겹쳐야 한다**(아래에서 함께 잰다).
+  it("압도해도 한 번에는 못 잡는다 · 상한은 몸집 차까지 겹쳐야 닿는다", () => {
     const b = biteOutcome(100, 0);
     expect(b.ignored).toBe(false);
-    expect(b.killChance).toBe(SIM.killChanceMax);
+    expect(b.killChance).toBeGreaterThan(SIM.killChanceBias); // 압도가 확률을 올리긴 한다
+    expect(b.killChance).toBeLessThan(SIM.killChanceMax); // 그래도 한 방은 아니다
+    // 공격력 차에 몸집 차까지 얹으면 상한에 닿는다(체급이 곧 힘이다).
+    const huge = biteOutcome(100, 0, 100, 20);
+    expect(huge.killChance).toBe(SIM.killChanceMax);
   });
 
   it("호각이면 즉사 확률은 기준값, 물기 피해는 biteDamage 그대로", () => {

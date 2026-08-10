@@ -400,9 +400,13 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
   const bite = biteOutcome(t.attack, prey.genome.traits.defense, t.size, prey.genome.traits.size);
   if (!bite.ignored) {
     if (prey.woundTicks <= 0 && hasRule(perks, "ambush")) bite.damage *= 2;
-    if (e.targetPrey === prey && hasRule(perks, "pounce")) {
-      bite.killChance = Math.min(SIM.killChanceMax, bite.killChance + 0.25);
-    }
+    // ⚠ **2026-08-10 에 즉사 확률 +0.25 에서 피해 ×1.5 로 바꿨다.** 그날 전투를 「즉사 판정」에서
+    //   「피해 싸움」으로 옮기면서 즉사 밑값이 0.34 → 0.08 이 됐는데, +0.25 라는 **절대값**은 그
+    //   변화를 안 따라온다 — 상대적으로 1.7배 보너스가 **4배**가 됐다. 게다가 설명("거의 빗나가지
+    //   않습니다")은 33% 를 가리키게 되어 사실이 아니었다.
+    //   피해 배수로 옮기면 ① 지금 주역인 축에 걸리고 ② 값이 또 바뀌어도 상대 세기가 안 뒤틀리며
+    //   ③ 문구가 실제와 정확히 맞는다(`tiers.DUOS` 의 설명도 함께 고쳤다).
+    if (e.targetPrey === prey && hasRule(perks, "pounce")) bite.damage *= 1.5;
     // ── 조건부 특성의 무는 피해·버티는 힘 ──────────────────────────────────────────────
     // **결과(피해·치명 확률)에 곧바로 곱한다.** 능치(attack·defense)를 키워 `biteOutcome` 을 다시
     // 돌리지 않는 이유가 셋이다:

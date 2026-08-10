@@ -126,6 +126,24 @@ const NO_MARK: LeadMarkWeights = { threat: false, prey: false, threatPower: 0, p
  *   후자는 이미 못 가는 지형 레이어가 같은 화면에서 답한다(물속 물고기에 브래킷 + 바다는 어둡게 =
  *   "물면 잡히지만 갈 수는 없다"). 여기에 도달 판정을 섞으면 물기 버튼과 화면이 갈라진다.
  */
+/**
+ * 한 번의 물기가 **상대에게서 앗아 가는 몫**(0~1). 표식의 진하기가 이 값이다.
+ *
+ * ⚠ **2026-08-10 에 즉사 확률 하나에서 이 식으로 바꿨다.** 그날 전투를 「즉사 판정」에서
+ *   「피해 싸움」으로 옮기면서(`params.ts` 의 전투 주석) 즉사 확률이 0.34 → 0.08 로 내려갔는데,
+ *   표식이 그 확률만 보고 있어서 **위험이 실제보다 흐려 보였다** — 여러 번 물려 죽는 상대가
+ *   「약한 상대」로 그려지는 셈이다. 화면이 실제보다 안전하다고 말하면 그것도 거짓말이다.
+ *
+ * 지금 식은 「한 번 물릴 때 기대되는 손실」이다: 즉사하면 전부(1.0), 아니면 깎이는 기운의 비율.
+ * 두 축이 모두 들어가므로 **어느 쪽이 주역이든 표식이 따라온다** — 나중에 값을 또 만져도 안 갈린다.
+ */
+function bitePower(attack: number, defense: number, size: number, otherSize: number): number {
+  const b = biteOutcome(attack, defense, size, otherSize);
+  if (b.ignored) return 0;
+  const dmgShare = Math.min(1, b.damage / SIM.maxEnergy);
+  return Math.min(1, b.killChance + (1 - b.killChance) * dmgShare);
+}
+
 export function leadMarkWeights(lead: Entity, other: Entity): LeadMarkWeights {
   const rel = leadRelation(lead, other);
   if (!rel.threat && !rel.prey) return NO_MARK;
@@ -134,12 +152,11 @@ export function leadMarkWeights(lead: Entity, other: Entity): LeadMarkWeights {
   return {
     threat: rel.threat,
     prey: rel.prey,
-    threatPower: rel.threat
-      ? biteOutcome(it.attack, me.attack, it.size, me.size).killChance / SIM.killChanceMax
-      : 0,
-    preyPower: rel.prey
-      ? biteOutcome(me.attack, it.attack, me.size, it.size).killChance / SIM.killChanceMax
-      : 0,
+    // ⚠ `leadRelation` 과 **같은 인자**로 물어야 한다(공격 대 방어 · 몸집 대 몸집).
+    //   v8 에서 방어가 공격과 갈라졌는데 여기는 `attack` 을 방어 자리에 그대로 넘기고 있었다 —
+    //   야생종은 `defense = attack` 이라 값이 같아 안 드러났지만, **내 종은 갈린다**(가죽 티어).
+    threatPower: rel.threat ? bitePower(it.attack, me.defense, it.size, me.size) : 0,
+    preyPower: rel.prey ? bitePower(me.attack, it.defense, me.size, it.size) : 0,
   };
 }
 

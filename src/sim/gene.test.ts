@@ -342,7 +342,11 @@ describe("방울을 놓을 자리 (pickGeneDropSpot)", () => {
       const w = new World("gene-reach", W, H, land, 1, [], map);
       for (let i = 0; i < 60; i++) w.step();
       const c = w.playerCentroid();
-      for (let k = 0; k < 25; k++) {
+      // ⚠ 시도를 25 → 40 으로 늘렸다(2026-08-10). 아래 `checked > 20` 은 **표본이 충분한지** 보는
+      //   보조 단언인데, 전투 재설계로 60틱 뒤 무리 자리가 조금 달라지자 19 로 떨어져 걸렸다
+      //   (정작 중요한 계약 — 고른 자리가 걸어 닿는가 — 은 19번 모두 통과했다).
+      //   하한을 낮추는 대신 **표본을 늘린다** · 그래야 계약 검증이 오히려 강해진다.
+      for (let k = 0; k < 40; k++) {
         const spot = pickGeneDropSpot(w.geneRng, w);
         if (spot === null) continue;
         checked += 1;
