@@ -92,7 +92,81 @@ describe("tierLine · 열쇠를 안 넘기면 예전 그대로", () => {
   });
 
   it("0단은 열쇠와 무관하게 빈 줄이다(문턱을 안 넘으면 아무 일도 안 일어난다)", () => {
-    expect(tierLine("eye", 0, ECHO)).toEqual({ gain: "", cost: "", size: 0 });
+    expect(tierLine("eye", 0, ECHO)).toEqual({
+      gain: "",
+      cost: "",
+      size: 0,
+      gainHead: "",
+      gainFold: "",
+      costHead: "",
+      costFold: "",
+    });
+  });
+});
+
+// ─────────────────────── 줄을 접는 계약(2026-08-10 · 화면이 글자로 꽉 차던 것) ───────────────────────
+//
+// **[사용자 2026-08-10]** "티어별 얻는 것과 잃는 것 설명도 좀 길고 많아보이긴 하네. UI를 깔끔하게
+// 만드는 게 필요하겠어." 줄을 짧게 하되 **수치를 지우지는 않는다**(제1 규칙: 화면과 다른 수치는
+// 거짓말이다) → 「머리 + 접힘」으로 쪼개고 좁은 화면은 머리만 보여 준다.
+// 여기서 재는 것은 그 쪼갬이 **원래 줄을 하나도 안 잃었는가**다. 잃으면 그건 접은 게 아니라 지운 것이다.
+describe("tierLine · 접어도 잃는 말이 없다", () => {
+  const KEYSETS: readonly (Keys | undefined)[] = [undefined, emptyKeys(), ECHO, ALL_BUT_ECHO];
+
+  it("gain·cost 는 언제나 「머리 · 접힘」을 이어 붙인 것이다(두 곳에 문구가 안 생긴다)", () => {
+    const join = (h: string, f: string): string => (h === "" ? f : f === "" ? h : `${h} · ${f}`);
+    for (const k of KEYSETS) {
+      for (const c of CATEGORIES) {
+        for (let t = 0; t <= MAX_TIER; t += 1) {
+          const l = tierLine(c, t, k);
+          expect(join(l.gainHead, l.gainFold), `${c} ${t}단 gain`).toBe(l.gain);
+          expect(join(l.costHead, l.costFold), `${c} ${t}단 cost`).toBe(l.cost);
+        }
+      }
+    }
+  });
+
+  it("머리는 절대 안 비어 있다 · 접힌 화면에 빈칸이 남으면 고장으로 보인다", () => {
+    for (const k of KEYSETS) {
+      for (const c of CATEGORIES) {
+        for (let t = 1; t <= MAX_TIER; t += 1) {
+          const l = tierLine(c, t, k);
+          expect(l.gainHead, `${c} ${t}단: 얻는 것 머리가 비었다`).not.toBe("");
+          expect(l.costHead, `${c} ${t}단: 잃는 것 머리가 비었다`).not.toBe("");
+        }
+      }
+    }
+  });
+
+  it("접힘에 넣은 수치는 머리에 안 남는다(같은 말을 두 번 하지 않는다)", () => {
+    for (const c of CATEGORIES) {
+      for (let t = 1; t <= MAX_TIER; t += 1) {
+        const l = tierLine(c, t);
+        if (l.gainFold !== "") expect(l.gainHead, `${c} ${t}단 gain`).not.toContain(l.gainFold);
+        if (l.costFold !== "") expect(l.costHead, `${c} ${t}단 cost`).not.toContain(l.costFold);
+      }
+    }
+  });
+
+  it("접힌 화면 한 줄이 너무 길지 않다 · 폰 360px 에서 두 줄로 접히면 줄인 뜻이 없다", () => {
+    // 폰 최악(360px)의 줄 안쪽 폭은 약 300px, 글씨는 10.5px 다 → **한글 폭 기준 약 28칸**이 한 줄이다.
+    // 글자 수를 그냥 세면 안 된다 · 「×1.25」 같은 라틴 숫자는 한글의 절반 남짓 폭이라 28자짜리 줄도
+    // 실제로는 한 줄에 들어온다. 그래서 한글은 1칸, 나머지는 0.6칸, 띄어쓰기는 0.4칸으로 가늠한다.
+    // 여유를 두어 24칸으로 잡는다(값 칸 앞의 「II단 · 」·「대가 · 」 머리말이 이 뒤에 더 붙는다).
+    const cells = (s: string): number => {
+      let w = 0;
+      for (const ch of s) w += ch === " " ? 0.4 : /[ᄀ-퟿豈-﫿]/.test(ch) ? 1 : 0.6;
+      return Math.round(w * 10) / 10;
+    };
+    for (const k of KEYSETS) {
+      for (const c of CATEGORIES) {
+        for (let t = 1; t <= MAX_TIER; t += 1) {
+          const l = tierLine(c, t, k);
+          expect(cells(l.gainHead), `${c} ${t}단 얻는 것 머리: ${l.gainHead}`).toBeLessThanOrEqual(24);
+          expect(cells(l.costHead), `${c} ${t}단 잃는 것 머리: ${l.costHead}`).toBeLessThanOrEqual(24);
+        }
+      }
+    }
   });
 });
 

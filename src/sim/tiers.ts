@@ -633,8 +633,36 @@ export function nearestTierGoal(pips: Pips): { cat: Category; tier: number; need
 }
 
 /**
+ * 티어 줄 한 벌 · **한 줄은 두 토막이다**(2026-08-10).
+ *
+ * 왜 쪼갰나 (**[사용자 2026-08-10]** 폰 검토): "티어별 얻는 것과 잃는 것 설명도 좀 길고 많아보이긴
+ * 하네. UI를 깔끔하게 만드는 게 필요하겠어." 한 줄에 **수치와 규칙 변화가 함께** 들어 있어서
+ * (「무는 힘 ×1.56 · 보스에 맞설 수 있습니다」) 다섯 범주를 늘어놓으면 화면이 글자로 꽉 찼다.
+ *
+ * 그런데 이 저장소의 제1 규칙은 「수치가 화면 표시와 다르면 그건 거짓말이다」라, 수치를 **지울 수는
+ * 없다.** 그래서 지우는 대신 **접는다**: 줄을 「머리」와 「접힘」으로 쪼개고, 좁은 화면은 머리만
+ * 보여 주다가 「자세히」를 누르면 접힘까지 편다.
+ *
+ * ⚠ **`gain`·`cost` 는 예전과 같은 자립형 한 줄이다**(계약 유지) · 머리와 접힘을 ` · ` 로 이어 만든다.
+ *   카드 각주(`draftPanel`)·승급 연출(`main.playTierUps`)·도감은 그대로 이 둘만 읽으면 된다.
+ */
+export interface TierLine {
+  /** **자립형 한 줄**(머리 · 접힘). 「×0.5」처럼 앞줄에 기대는 축약을 쓰지 않는다. */
+  gain: string;
+  cost: string;
+  /** 이 범주를 한 단 올릴 때 몸집이 움직이는 몫(중립 표시용 · `SIZE_PER_TIER` 에서 나온다). */
+  size: number;
+  /** **접어도 남는 한 마디** — 대개 「무엇이 달라지는가」. 화면이 좁으면 이것만 보인다. */
+  gainHead: string;
+  costHead: string;
+  /** **접히는 나머지** — 대개 수치. 없으면 빈 문자열이고, 그러면 접을 것도 없다. */
+  gainFold: string;
+  costFold: string;
+}
+
+/**
  * 티어 하나가 켜질 때 화면에 뜨는 한 줄 — **무엇이 켜졌고 무엇을 잃었는가**.
- * 승급 연출·카드 각주·내 종 패널·대백과가 전부 이 함수만 부른다.
+ * 승급 연출·카드 각주·내 종 패널·구입 화면·대백과가 전부 이 함수만 부른다.
  *
  * ⚠ **배수는 문구에 박지 않고 위 파생표에서 계산한다.** 처음엔 "빠르기 ×1.19" 처럼 손으로 적었는데,
  *   그 뒤 파생표를 세 번 튜닝하는 동안 문구는 그대로 남아 **화면이 거짓말을 하게 됐다**. 이 저장소의
@@ -642,19 +670,31 @@ export function nearestTierGoal(pips: Pips): { cat: Category; tier: number; need
  *
  * ⚠ **모든 줄은 자립형이다.** 「×0.5」처럼 앞줄에 기대는 축약을 쓰지 않는다 — 이 문구는 카드 각주 ·
  *   도감 · 승급 연출에 **단독으로** 뜨므로, 무엇의 ×0.5 인지가 그 줄 안에 있어야 한다.
+ *   쪼갠 머리·접힘도 각자 그 규칙을 지킨다(머리만 봐도, 이어 붙여 봐도 말이 된다).
+ *
+ * ⚠ **머리에는 「규칙이 어떻게 바뀌는가」를, 접힘에는 「수치」를 둔다.** 그 단에 규칙 변화가 없으면
+ *   (예: 다리 I단은 그냥 빨라질 뿐이다) 수치가 곧 그 단의 전부이므로 머리가 수치를 맡고 접힘이 빈다.
  *
  * ⚠ **열쇠를 함께 넘겨라.** 같은 티어라도 열쇠를 가진 종에게는 **다른 일이 일어난다**(지금은 눈 ×
  *   초음파 한 자리). 안 넘기면 열쇠 없는 종의 문구가 나오므로 기존 호출부는 그대로 통과하지만,
  *   종의 게놈이 손에 있는 자리(구입 화면·카드 각주·승급 연출)에서는 **반드시 넘겨야** 화면이
  *   그 종에게 참인 말을 한다.
  */
-export function tierLine(
-  cat: Category,
-  tier: number,
-  keys?: Keys,
-): { gain: string; cost: string; size: number } {
+export function tierLine(cat: Category, tier: number, keys?: Keys): TierLine {
   const i = Math.max(0, Math.min(MAX_TIER, tier));
-  if (i === 0) return { gain: "", cost: "", size: 0 };
+  /** 머리와 접힘을 자립형 한 줄로 잇는다 · 한쪽이 비면 나머지가 그대로 그 줄이다. */
+  const join = (head: string, fold: string): string =>
+    head === "" ? fold : fold === "" ? head : `${head} · ${fold}`;
+  const made = (g: readonly [string, string], c: readonly [string, string], size: number): TierLine => ({
+    gain: join(g[0], g[1]),
+    cost: join(c[0], c[1]),
+    size,
+    gainHead: g[0],
+    gainFold: g[1],
+    costHead: c[0],
+    costFold: c[1],
+  });
+  if (i === 0) return made(["", ""], ["", ""], 0);
   /** 0단 대비 배수 — 표를 직접 읽어 계산한다. */
   const rel = (table: readonly number[], base = table[0] as number): string =>
     `×${((table[i] as number) / base).toFixed(2).replace(/0$/, "")}`;
@@ -668,41 +708,45 @@ export function tierLine(
     const f = (v: number): number => 0.3 + v / 100;
     return `×${(f(HERD_FERT[i] as number) / f(HERD_FERT[0] as number)).toFixed(2).replace(/0$/, "")}`;
   };
-  const gain: Record<Category, readonly string[]> = {
+  /** [머리, 접힘] · 머리는 규칙 변화, 접힘은 수치. 규칙 변화가 없는 단은 머리가 수치를 맡는다. */
+  type Split = readonly [string, string];
+  const gain: Record<Category, readonly Split[]> = {
     fang: [
-      "",
-      `사냥이 열립니다 · 무는 힘 ${rel(FANG_ATTACK)}`,
-      `무는 힘 ${rel(FANG_ATTACK)} · 보스에 맞설 수 있습니다`,
-      `무는 힘 ${rel(FANG_ATTACK)} · 한 번 잡으면 오래 버팁니다`,
-      "나보다 큰 것도 뭅니다 · 어떤 가죽도 이빨을 못 막습니다",
+      ["", ""],
+      ["사냥이 열립니다", `무는 힘 ${rel(FANG_ATTACK)}`],
+      ["보스에 맞설 수 있습니다", `무는 힘 ${rel(FANG_ATTACK)}`],
+      ["한 번 잡으면 오래 버팁니다", `무는 힘 ${rel(FANG_ATTACK)}`],
+      ["나보다 큰 것도 뭅니다", "어떤 가죽도 이빨을 못 막습니다"],
     ],
     leg: [
-      "",
-      `빠르기 ${speedRel()}`,
-      `빠르기 ${speedRel()} · 사냥할 때 질주합니다`,
-      `빠르기 ${speedRel()} · 험한 땅을 평지처럼 지납니다`,
-      "아무도 나를 쫓지 않습니다 · 험한 땅이 걸음을 못 늦춥니다",
+      ["", ""],
+      [`빠르기 ${speedRel()}`, ""],
+      ["사냥할 때 질주합니다", `빠르기 ${speedRel()}`],
+      ["험한 땅을 평지처럼 지납니다", `빠르기 ${speedRel()}`],
+      ["아무도 나를 쫓지 않습니다", "험한 땅이 걸음을 못 늦춥니다"],
     ],
     eye: [
-      "",
-      `보는 거리 ${rel(EYE_VISION)}`,
-      `보는 거리 ${rel(EYE_VISION)} · 밤에도 봅니다`,
-      `보는 거리 ${rel(EYE_VISION)} · 수풀 속이 보입니다`,
-      "밤도 수풀도 숨은 것도 눈을 못 가립니다",
+      ["", ""],
+      [`보는 거리 ${rel(EYE_VISION)}`, ""],
+      ["밤에도 봅니다", `보는 거리 ${rel(EYE_VISION)}`],
+      ["수풀 속이 보입니다", `보는 거리 ${rel(EYE_VISION)}`],
+      ["밤도 수풀도 숨은 것도 눈을 못 가립니다", ""],
     ],
     hide: [
-      "",
-      `물려도 덜 다칩니다 · 버티는 힘 ${rel(HIDE_DEFENSE)} · 추위에 강해집니다`,
-      `버티는 힘 ${rel(HIDE_DEFENSE)} · 한파를 거의 안 탑니다`,
-      `버티는 힘 ${rel(HIDE_DEFENSE)} · 보스를 버텨서 넘을 수 있습니다`,
-      "환경이 통째로 바뀌어도 안 죽습니다",
+      ["", ""],
+      // 「물려도 덜 다칩니다」는 「버티는 힘 ×1.21」을 쉬운 말로 옮긴 것뿐이라 같은 줄에 둘 다 두면
+      // 같은 말을 두 번 한다 · 쉬운 말을 머리에, 수치를 접힘에 둔다.
+      ["덜 다치고 추위에 강해집니다", `버티는 힘 ${rel(HIDE_DEFENSE)}`],
+      ["한파를 거의 안 탑니다", `버티는 힘 ${rel(HIDE_DEFENSE)}`],
+      ["보스를 버텨서 넘을 수 있습니다", `버티는 힘 ${rel(HIDE_DEFENSE)}`],
+      ["환경이 통째로 바뀌어도 안 죽습니다", ""],
     ],
     herd: [
-      "",
-      `새끼 확률 ${broodRel()} · 명령이 멀리 갑니다`,
-      `새끼 확률 ${broodRel()} · 잡은 것을 무리가 나눠 먹습니다`,
-      `새끼 확률 ${broodRel()} · 뭉치면 포식자가 안 건드립니다`,
-      "무리 안에 있는 한 즉사하지 않습니다",
+      ["", ""],
+      ["명령이 멀리 갑니다", `새끼 확률 ${broodRel()}`],
+      ["잡은 것을 무리가 나눠 먹습니다", `새끼 확률 ${broodRel()}`],
+      ["뭉치면 포식자가 안 건드립니다", `새끼 확률 ${broodRel()}`],
+      ["무리 안에 있는 한 즉사하지 않습니다", ""],
     ],
   };
   /** 전속력으로 달릴 때 유지비에 얹히는 몫(%). 다리의 고유 대가. */
@@ -721,41 +765,46 @@ export function tierLine(
   //      한 범주의 줄에서 몸집을 단정하면 그 종에게는 틀린 말이 된다.
   //   몸집은 `SIZE_PER_TIER` 로 따로 내보내 **중립 표시**(「몸집 +5」)와 그림(카드 미리보기에서
   //   생물이 실제로 커진다)이 맡는다. 무엇을 뜻하는지는 `SIZE_MEANING` 한 곳에서만 말한다.
-  const cost: Record<Category, readonly string[]> = {
+  const cost: Record<Category, readonly Split[]> = {
     fang: [
-      "",
-      `풀에서 얻는 것 ${rel(FANG_GRAZE)}`,
-      `풀에서 얻는 것 ${rel(FANG_GRAZE)}`,
-      `풀에서 얻는 것 ${rel(FANG_GRAZE)} · 풀만으로는 못 버팁니다`,
-      `풀에서 얻는 것 ${rel(FANG_GRAZE)} · 사실상 고기만 먹습니다`,
+      ["", ""],
+      [`풀에서 얻는 것 ${rel(FANG_GRAZE)}`, ""],
+      [`풀에서 얻는 것 ${rel(FANG_GRAZE)}`, ""],
+      ["풀만으로는 못 버팁니다", `풀에서 얻는 것 ${rel(FANG_GRAZE)}`],
+      ["사실상 고기만 먹습니다", `풀에서 얻는 것 ${rel(FANG_GRAZE)}`],
     ],
     leg: [
-      "",
-      `전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`,
-      `전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`,
-      `전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`,
-      `전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`,
+      ["", ""],
+      [`전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`, ""],
+      [`전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`, ""],
+      [`전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`, ""],
+      [`전속력으로 달리면 배가 ${sprintPct()} 더 고픕니다`, ""],
     ],
     eye: [
-      "",
-      `한눈에 보는 각이 ${fovDeg(0)} 에서 ${fovDeg(1)} 로 좁아집니다`,
-      `한눈에 보는 각이 ${fovDeg(2)} 로 좁아집니다`,
-      `한눈에 보는 각이 ${fovDeg(3)} · 뒤가 거의 안 보입니다`,
-      `한눈에 보는 각이 ${fovDeg(4)} · 최고 단계여도 안 넓어집니다`,
+      ["", ""],
+      // 「한눈에」를 뺐다 · 「보는 각」 자체가 이미 한눈에 담기는 부채꼴이라 없어도 뜻이 안 바뀐다.
+      // 출발 각(0단 160°)은 접힘으로 내린다 · 나머지 단은 애초에 도착 각만 말한다(표기가 한 벌이 된다).
+      [`보는 각이 ${fovDeg(1)} 로 좁아집니다`, `원래 ${fovDeg(0)}`],
+      [`보는 각이 ${fovDeg(2)} 로 좁아집니다`, ""],
+      [`보는 각이 ${fovDeg(3)} 로 좁아집니다`, "뒤가 거의 안 보입니다"],
+      [`보는 각이 ${fovDeg(4)} 로 좁아집니다`, "최고 단계여도 안 넓어집니다"],
     ],
     hide: [
-      "",
-      `더위에 받는 피해 ${heatRel()}`,
-      `더위에 받는 피해 ${heatRel()}`,
-      `더위에 받는 피해 ${heatRel()}`,
-      `더위에 받는 피해 ${heatRel()} · 뙤약볕에서 가장 먼저 지칩니다`,
+      ["", ""],
+      [`더위에 받는 피해 ${heatRel()}`, ""],
+      [`더위에 받는 피해 ${heatRel()}`, ""],
+      [`더위에 받는 피해 ${heatRel()}`, ""],
+      ["뙤약볕에서 가장 먼저 지칩니다", `더위에 받는 피해 ${heatRel()}`],
     ],
     herd: [
-      "",
-      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)}`,
-      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)}`,
-      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)}`,
-      `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)} · 한 번 돌면 무리가 휩쓸립니다`,
+      ["", ""],
+      [`개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)}`, ""],
+      [`개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)}`, ""],
+      [`개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)}`, ""],
+      [
+        "한 번 돌면 무리가 휩쓸립니다",
+        `개체당 풀 수입 ${rel(HERD_GRAZE_SHARE)} · 역병 피해 ${rel(HERD_PLAGUE)}`,
+      ],
     ],
   };
   // ── 초음파를 가진 종의 눈 사다리 · **눈 하나로 두 감각이 함께 자란다** ──────────────────
@@ -774,13 +823,12 @@ export function tierLine(
   //   초승달(예: 낮 4단 209~236px)이 부채꼴 안에서만 보이므로, 좁아지는 것이 이 종에게도 진짜 손해다.
   if (cat === "eye" && keys?.echo === true) {
     const both = `보는 거리 ${rel(EYE_VISION)} · 듣는 거리 ${rel(EYE_ECHO)}`;
-    return {
-      gain: i === MAX_TIER ? `${both} · 밤도 수풀도 눈을 못 가립니다` : both,
-      cost: cost[cat][i] as string,
-      size: SIZE_PER_TIER.eye * i,
-    };
+    // 이 종에게는 **두 수치가 곧 그 단의 답**이다("초음파를 얻으면 눈은 이제 쓸모없나?"). 그래서
+    // 여기서만 수치가 머리에 선다 — 접어 놓으면 물음에 답을 못 하는 화면이 된다.
+    const g: Split = i === MAX_TIER ? ["밤도 수풀도 눈을 못 가립니다", both] : [both, ""];
+    return made(g, cost[cat][i] as Split, SIZE_PER_TIER.eye * i);
   }
-  return { gain: gain[cat][i] as string, cost: cost[cat][i] as string, size: SIZE_PER_TIER[cat] * i };
+  return made(gain[cat][i] as Split, cost[cat][i] as Split, SIZE_PER_TIER[cat] * i);
 }
 
 /**
