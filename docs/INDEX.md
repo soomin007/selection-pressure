@@ -25,6 +25,16 @@
 
 진입점: `src/main.ts`. 전역 상수: `src/config.ts`.
 
+### 단일 진실 파일 (여기 말고 다른 데 옮겨 적지 않는다)
+
+| 파일 | 무엇의 단일 진실인가 |
+|---|---|
+| `src/sim/tiers.ts` | **성장 수치**: 범주 다섯·도장 문턱·티어 파생 능치·몸집 식·유지비·듀오, 그리고 티어 한 줄(`tierLine`). 도장은 **방울로만** 오른다(`Game.buyTier`). |
+| `src/sim/perks.ts` | **조건부 특성(perk)**: 카드가 주는 것의 단일 진실(v9 신설). 조건 13종·축 8종·배수, 등급 계산(`perkRarity`), 화면 한 줄(`perkLine`), sim 이 곱하는 자리(`perkMul`)가 전부 여기 있다. 카드(`game/cards.ts`)는 특성의 이름·설명·효과를 **따로 안 갖는다**. |
+| `src/sim/genome.ts` | **게놈 직렬화**(v9 = 도장 + 열쇠 + 특성 → 파생 능치) · `GENOME_VERSION` · 마이그레이션 |
+| `src/game/cards.ts` | **카드 풀과 뽑기**: 카드 = 열쇠 또는 특성 하나. 희귀도 가중치·레벨 보정·드래프트 보정(`DraftBias`) |
+| `src/game/runCode.ts` | **판 분석 코드**의 형식(`scripts/decode-run.mjs` 가 푼다) |
+
 ## 도구 (`scripts/`)
 - `balance-probe.mjs` — 밸런스 실측(`npm run probe -- <모드>`). 밸런스를 만졌을 때만 수동으로.
 - `overlap-check.mjs` — UI 겹침 점검(`npm run overlap`). **UI 를 넣거나 옮길 때마다.**

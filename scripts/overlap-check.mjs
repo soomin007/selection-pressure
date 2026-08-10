@@ -288,10 +288,14 @@ const SCREENS = {
     },
   },
   draftMineLateEra: {
-    label: "드래프트 + 내 종 팝업(후반 시대 · 천장 194)",
+    label: "드래프트 + 내 종 팝업(후반 시대)",
     async go(page) {
       await toWatch(page);
-      // 시대를 올려 형질 천장이 100 위로 열린 상태로 막대를 그린다 — 눈금 간격과 정점선이 그때만 생긴다.
+      // 시대를 올려 **후반 드래프트**를 띄운다 — 레벨 보정이 붙어 윗 등급 카드가 자주 뜨고,
+      // 특성 줄이 긴 카드(「곁에 동료가 많을 때 받는 피해 ×0.67」)가 그때 가장 잘 나온다.
+      // ⚠ 옛 라벨은 「천장 194」였고 주석은 「형질 천장이 100 위로 열린다」였다. 그건 형질이 0~100
+      //   자연수이던 시절의 이야기이고, 재려던 유령 막대는 v9 에서 걷어냈다(2026-08-10).
+      //   장면 자체는 여전히 값이 있다 — **후반 카드의 긴 문구가 폰에서 겹치는지**를 재는 자리다.
       await page.evaluate(() => window.__ov.setEra(4));
       await page.locator(".draft-root").waitFor({ state: "visible", timeout: 150000 });
       await page.waitForTimeout(2400);

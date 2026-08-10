@@ -6,6 +6,7 @@
 // 사전: npm run build (dist 필요), npx playwright install chromium (최초 1회).
 
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 import { chromium } from "playwright";
 
 const PORT = 4199;
@@ -28,9 +29,15 @@ function waitFor(url, timeoutMs) {
   });
 }
 
-const preview = spawn("npx", ["vite", "preview", "--port", String(PORT)], {
+// ⚠ `npx vite` 로 띄우지 않는다 — 이 체크아웃에는 `node_modules/.bin` 의 셸 shim 이 없어서
+//   npx 가 조용히 실패하고, 그러면 "preview 서버 대기 시간 초과"라는 **엉뚱한 오류**로 보인다
+//   (known_issues 「npm run typecheck · npm test 가 이 체크아웃에서 실행 자체가 안 된다」와 같은 뿌리).
+//   패키지 진입점을 직접 부르면 shim 유무와 무관하게 돈다.
+// ⚠ 이 파일은 위에서 `const URL` 을 자기 상수로 쓴다 — 전역 `URL` 이 가려져 `new URL(...)` 이
+//   "URL is not a constructor" 로 죽는다. 경로는 `import.meta.dirname` 으로 만든다.
+const VITE_BIN = join(import.meta.dirname, "..", "node_modules", "vite", "bin", "vite.js");
+const preview = spawn(process.execPath, [VITE_BIN, "preview", "--port", String(PORT)], {
   stdio: "ignore",
-  shell: true,
 });
 
 let exitCode = 1;

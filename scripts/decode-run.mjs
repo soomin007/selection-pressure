@@ -140,7 +140,10 @@ for (const e of data.entries) {
   }
   if (e.t === "draft") {
     draftNo += 1;
-    const boost = e.boost > 1 ? ` ×${e.boost} 강화` : "";
+    // 「강화 ×N」은 **v8 이하의 것**이다 — 그때는 시대 보상이 뽑은 카드의 도장을 곱했다.
+    // v9 부터 카드가 도장을 안 주므로 곱할 것이 없고, 게임도 늘 1 을 적는다(`game.recordDraft`).
+    // 칸은 옛 코드를 계속 읽으려고 남아 있으니, 1 이 아닌 값이 보이면 **옛 빌드의 판**이라고 말한다.
+    const boost = e.boost > 1 ? ` · 옛 빌드의 강화 ×${e.boost}` : "";
     let tail = "";
     if (e.outcome === DRAFT_REROLLED) tail = "  → 다시 뽑기로 버림";
     else if (e.outcome === DRAFT_SKIPPED) tail = "  → 건너뜀(새끼)";
@@ -152,7 +155,9 @@ for (const e of data.entries) {
       const rarity = card ? (RARITY_LABEL[card.rarity] ?? card.rarity) : "?";
       const name = card ? card.name : id;
       const eff = card ? cardSummary(card) : "";
-      line(`     ${mark} [${rarity.padEnd(4, " ")}] ${name}${eff ? `  (${eff}${e.boost > 1 ? ` ×${e.boost}` : ""})` : ""}`);
+      // ⚠ 효과 줄에 배수를 곱해 적지 않는다. v9 의 효과 줄은 「밤에 보는 거리 ×1.45」 같은 특성
+      //   문장이라, 뒤에 「×2」를 붙이면 그 자체가 없는 규칙을 지어내는 거짓말이 된다.
+      line(`     ${mark} [${rarity.padEnd(4, " ")}] ${name}${eff ? `  (${eff})` : ""}`);
     });
     continue;
   }

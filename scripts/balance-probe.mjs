@@ -39,12 +39,16 @@
 //                                 ⚠ 반경을 여럿 비교할 땐 **반경마다 따로 실행**한다. 쉼표 스윕
 //                                 (`--generadius=0,80,160`)은 앞 묶음의 업적 해금이 뒤 묶음에 새어
 //                                 값을 오염시킨다(runEcon 의 경고 주석 참조).
-//   npm run probe -- apex         정점 4개를 찍은 게놈의 드래프트 후보 구성(죽은 카드·몸집만 바꾸는 카드 비율)
-//   npm run probe -- scale        0~100 스케일의 산수만(시뮬 없음): 감쇠·정점 보상·형질 1의 실제 크기
-//   옵션: --seeds=6 --presets=omni,herd --boss=raider --era=0 --step=2 --cards=first|skip
-//   growth 전용: --policy=first|best|random --veteran(끝낸 런 3 = 늘 진도 3)
+//   옵션: --seeds=6 --presets=omni,herd --boss=raider --era=0 --step=2
+//   growth·econ 전용: --policy=first|rarity|focus|random --veteran(끝낸 런 3 = 늘 진도 3)
+//                     (v9 어법 · rarity=등급이 가장 높은 장 · focus=내가 판 범주를 돕는 장.
+//                      옛 이름 best·apexrush 는 경고와 함께 rarity·focus 로 옮겨 준다.)
 //
-// ⚠ **「누구의 판을 재는가」 축 넷** (era0 · growth · econ · tiers 에 걸린다 · 머리글에 늘 찍힌다):
+// ⚠ **멈춰 세운 모드 셋**(apex · scale · tiers). 부르면 「무엇을 재던 자였고 왜 죽었는지 · 지금은
+//   무엇을 쓰면 되는지」만 찍는다. 없는 자를 있는 척 남기지 않는다 · 그게 이 저장소가 네 번 겪은
+//   「잘못된 자로 잰 값」 사고의 입구다. 자세한 이유는 각 함수의 주석에 있다.
+//
+// ⚠ **「누구의 판을 재는가」 축 넷** (era0 · growth · econ 에 걸린다 · 머리글에 늘 찍힌다):
 //   --assist          은근한 보정을 **켠다**. 기본은 **끔**이다.
 //   --metaxp=<수>     저장본의 누적 메타 경험치(플레이어 레벨의 원천). 기본 0 = 첫 판.
 //   --reroll          드래프트에서 「다시 뽑기」를 쓴다(메타 레벨이 낮으면 아직 안 열려 있다 ·
@@ -127,30 +131,36 @@ const GENE_RADIUS_ARG = opt("generadius", "");
 if (GENE_RADIUS_ARG !== "" && !GENE_RADIUS_ARG.includes(",")) ORDER.geneRadius = Number(GENE_RADIUS_ARG);
 const {
   GAME, SCHEDULE, mapScale, eraScarcity, eraDifficulty, eraPredatorPressure,
-  eraRewardBoostAt, bossPassNeeded, extinctionPassNeeded, onboardingStep, stepUsesDrawnMap, stepWorldOptions,
+  // ⚠ `eraRewardBoostAt`(시대 보상 강화 배수)은 v9 에서 **가져오지 않는다.** 곱할 도장이 없어져
+  //   보상 카드는 이제 「그냥 한 장 더 고르는 기회」다. 머리글에 그 배수를 찍고 있으면 화면이
+  //   일어나지 않는 일을 약속한다(config.ts 에는 함수가 남아 있지만 아무도 안 곱한다).
+  bossPassNeeded, extinctionPassNeeded, onboardingStep, stepUsesDrawnMap, stepWorldOptions,
   EXTINCTION,
 } = await server.ssrLoadModule("/src/game/config.ts");
 const { createBoss, bossRaidable } = await server.ssrLoadModule("/src/sim/boss.ts");
 // 몰기(무리 지시)를 흉내 내려면 게임과 **같은 함수**로 목소리 반경·지휘 공백을 넣어야 한다.
 // 프로브가 임의의 숫자를 넣으면 "몰면 산다"를 게임과 다른 조건에서 재게 된다.
 const { voiceRadius, vacuumTicks } = await server.ssrLoadModule("/src/sim/herdOrder.ts");
-const { defaultGenome, refreshDerived, genomeFromPips, TRAIT_KEYS, TRAIT_LABELS } = await server.ssrLoadModule("/src/sim/genome.ts");
+const { defaultGenome, refreshDerived, genomeFromPips, TRAIT_LABELS } = await server.ssrLoadModule("/src/sim/genome.ts");
 // v8 — 성장은 형질 숫자가 아니라 **도장과 티어**로 잰다. 이 모듈이 그 단일 진실이다.
 const {
-  CATEGORIES, CATEGORY_LABELS, TIER_STEPS, MAX_TIER, tierOf, tiersOf, tierSum, activeDuos,
+  CATEGORIES, CATEGORY_LABELS, TIER_STEPS, MAX_TIER, tiersOf, tierSum, activeDuos,
   emptyPips, emptyKeys,
 } = await server.ssrLoadModule("/src/sim/tiers.ts");
+// v9 · 카드는 **도장을 안 준다**(특성과 열쇠만 준다 · `game/cards.ts` 파일 머리).
+// ⚠ `ssrLoadModule` 은 **없는 export 를 조용히 `undefined` 로 준다.** 그래서 지워진 함수를 여기에
+//   적어 두면 import 는 통과하고 **한참 뒤 실행 중에 TypeError 로 죽는다**(2026-08-10 에 세 모드가
+//   그렇게 즉사했다: `cardCrossesThreshold`·`boostCard`). 여기 이름을 지울 때는 쓰던 자리도 함께 본다.
 const {
-  PRESET_CARDS, applyCard, cardPips, cardCategories, cardRedundant, cardPrereqMet, drawCards,
-  cardCrossesThreshold, cardPoolFor, PRESET_LINEAGE, boostCard,
+  PRESET_CARDS, applyCard, CARD_POOL, RARITY_WEIGHT,
+  // 「내가 판 방향의 카드인가」의 **단일 진실**. 게임의 뽑기 보정·dryDrafts 가 부르는 바로 그 함수다.
+  // 여기에 조건을 다시 적으면 게임과 프로브가 갈라진다(이 저장소가 반복해서 데인 자리).
+  cardFavorsCategory, cardRarity,
 } = await server.ssrLoadModule("/src/game/cards.ts");
-const { cardAvailable } = await server.ssrLoadModule("/src/game/achievements.ts");
 // 방울(유전자 점수)의 「위기 회복」 판정 · **게임과 같은 상태 기계를 그대로 부른다.** 프로브가 규칙을
 // 다시 적으면 두 곳이 조용히 어긋나고, 그때 재는 난이도는 사람이 겪는 난이도가 아니게 된다.
 const { CRISIS_BACK, CRISIS_LOW, createCrisisWatch, stepCrisisWatch } =
   await server.ssrLoadModule("/src/sim/gene.ts");
-// 정점 보상의 크기를 재는 데만 쓴다 — 화면·sim 과 **같은 함수**여야 표가 거짓말을 안 한다.
-const { nightVisionFactor } = await server.ssrLoadModule("/src/sim/behavior.ts");
 const { Rng } = await server.ssrLoadModule("/src/sim/rng.ts");
 const { FIRST_ERA_MAP } = await server.ssrLoadModule("/src/sim/mapType.ts");
 const { TILE } = await server.ssrLoadModule("/src/sim/terrain.ts");
@@ -220,24 +230,36 @@ function rerollUnlocked() {
 }
 
 /**
- * 리롤 정책 — `--reroll` 일 때만. **「내가 파는 범주가 하나도 안 뜬 드래프트」일 때** 한 번 다시 뽑는다.
+ * **내가 파는 방향** = 도장이 가장 많은 한둘(도장이 하나도 없으면 방향이 없다).
  *
- * 왜 이 기준인가: 무조건 다시 뽑으면 좋은 3장까지 버려 사람이 하는 짓과 멀어진다. 그렇다고
- * 「문턱을 하나도 못 넘기는 3장」으로 잡으면 거의 안 걸린다 — 게임이 이미 **3장 중 최소 한 장은
- * 어느 문턱이든 넘긴다**를 보장하기 때문이다(실측: 판당 0.25회로 축이 사실상 죽는다). 사람이 실제로
- * 리롤을 누르는 자리는 「내 길이 하나도 없을 때」이고, 그건 게임 자신이 `dryDrafts` 로 세는 자리와 같다.
+ * ⚠ **게임의 `Game.draftBias()` 가 고르는 것과 같은 한둘이어야 한다.** 「내 방향이 떴는가」를
+ *   게임은 `dryDrafts` 로 세고 프로브는 리롤 판정에 쓰는데, 두 곳이 다른 범주를 보면 프로브의
+ *   리롤 축이 게임에 없는 자리에서 걸린다(= 사람이 안 하는 짓을 재게 된다).
+ */
+function digCategories(pips) {
+  return CATEGORIES.filter((c) => pips[c] > 0)
+    .sort((a, b) => pips[b] - pips[a])
+    .slice(0, 2);
+}
+
+/**
+ * 리롤 정책 · `--reroll` 일 때만. **「내가 파는 범주를 돕는 장이 하나도 안 뜬 드래프트」일 때** 한 번
+ * 다시 뽑는다. 사람이 실제로 리롤을 누르는 자리가 「내 길이 하나도 없을 때」이고, 그건 게임 자신이
+ * `dryDrafts` 로 세는 자리와 같다.
+ *
+ * ⚠ **v9 에서 판정 근거가 바뀌었다.** v8 은 「그 범주에 도장을 주는 장이 있는가」로 봤는데, v9 의
+ *   카드는 **도장을 안 준다** · 그대로 두면 그 조건이 늘 거짓이라 `--reroll` 이 **모든 드래프트를
+ *   리롤한다**(era0 는 크래시가 안 나므로 틀린 값이 조용히 나왔다 · 2026-08-10 교차 점검).
+ *   지금은 「내가 판 방향인가」의 단일 진실인 `cardFavorsCategory` 를 **게임과 같은 함수로** 부른다.
+ *   여기에 조건을 다시 적으면 게임과 프로브가 갈라진다(이 저장소가 반복해서 데인 자리).
  *
  * 결정론: 뽑기는 game.draftRng 로만 도므로 같은 시드 + 같은 정책 = 같은 결과.
  */
 function maybeReroll(game) {
   if (!USE_REROLL || !game.canReroll) return false;
-  const pips = game.pipsNow;
-  const ranked = [...CATEGORIES].sort((a, b) => pips[b] - pips[a]);
-  const dig = ranked[0];
-  // 내가 파는 범주에 도장을 주는 장이 하나라도 있으면 그대로 고른다.
-  // (`cardCrossesThreshold` 를 여기 OR 로 얹으면 안 된다 — 게임의 「3장 중 한 장은 문턱을 넘긴다」
-  //  보장 때문에 그 조건이 거의 늘 참이라 리롤이 영영 안 걸린다.)
-  if (game.draftCards.some((c) => cardPips(c, dig) > 0)) return false;
+  const dig = digCategories(game.pipsNow);
+  if (dig.length === 0) return false; // 방향이 없으면 「내 길이 없다」는 말도 성립하지 않는다
+  if (game.draftCards.some((c) => dig.some((cat) => cardFavorsCategory(c, cat)))) return false;
   game.reroll();
   return true;
 }
@@ -256,11 +278,7 @@ function axisLine() {
       ? "씀(내가 파는 범주가 하나도 안 뜬 드래프트에서 한 번)"
       : `쓰려 했으나 **잠김**(레벨 ${lvl}) · --metaxp=${REROLL_XP} 이상 필요`
     : "안 씀";
-  const tail = GAME_MODES.has(MODE)
-    ? ""
-    : MODE === "tiers"
-      ? " · (tiers 는 Game 을 안 태운다 · 보정만 반영 · 메타/리롤은 모델 없음)"
-      : " · (이 모드는 Game 을 안 태운다 · 위 축은 결과에 안 닿는다)";
+  const tail = GAME_MODES.has(MODE) ? "" : " · (이 모드는 Game 을 안 태운다 · 위 축은 결과에 안 닿는다)";
   return (
     `# 축 · 은근한 보정 ${ASSIST ? "켬(--assist)" : "끔(기본)"} · ` +
     `메타 경험치 ${METAXP}(플레이어 레벨 ${lvl}) · 끝낸 런 ${RUNS_DONE} · 리롤 ${reroll}${tail}`
@@ -1422,54 +1440,109 @@ async function runSteps() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// growth / apex / scale · "성장이 난이도를 언제 추월하는가 · 정점 뒤에 무엇이 남는가"
+// growth · "한 런이 어디까지 가는가 · 드래프트가 무엇을 내놓는가"
 // ────────────────────────────────────────────────────────────────────────────
 
-/** 정점(만렙)이 있는 형질 넷 — 이 넷이 다 100 이면 값형질 성장은 끝난다(몸집·대사·식성만 남는다). */
-const APEX_KEYS = ["speed", "vision", "attack", "fertility"];
+/**
+ * **최고 티어(4단)에 닿은 범주**를 세는 눈금.
+ *
+ * ⚠ 예전엔 여기에 형질 이름 넷(`speed`·`vision`·`attack`·`fertility`)이 `APEX_KEYS` 로 적혀 있었고,
+ *   그것을 **범주 표**(`tiersOf` 는 fang·leg·eye·hide·herd 를 돌려준다)에 넣어 조회하고 있었다.
+ *   그래서 늘 `undefined` 라 「정점」 칸이 **구조적으로 영원히 0**이었다(표가 아무 말도 안 하고 있었다).
+ *   v9 의 성장 눈금은 범주의 티어 하나뿐이므로 CATEGORIES 를 그대로 쓴다.
+ */
+const TOP_TIER_CATS = CATEGORIES;
 
 /**
- * 이 카드가 이 종에 실제로 찍는 도장. **드래프트 칩이 화면에 보여주는 것과 같은 함수**(cardPips)를
- * 쓴다 — 표시와 적용이 같은 함수에서 나오므로 "효과 0" 판정이 화면과 어긋날 수 없다.
+ * 후보 카드 한 장을 v9 어법으로 가른다.
+ *
+ * ⚠ **v8 의 dead/save/live 는 걷어냈다.** 그 셋은 「이 장이 찍는 도장이 문턱을 넘기는가」의 갈래였는데,
+ *   v9 의 카드는 **도장을 안 준다**(`cardPips` 가 드래프트 카드에서 늘 0). 그대로 두면 후보가 전부
+ *   `dead` 로 찍혀 표가 「죽은 카드 100%」라는 거짓말을 한다. 「저축 픽」·「몸집만 바꾸는 카드」도
+ *   가리킬 대상이 사라졌다.
+ *
+ * v9 에서 후보 한 장을 실제로 가르는 축은 셋이다:
+ *   kind   = 무엇을 주는가 · `key`(없던 규칙) / `perk`(조건부 배수) / `ember`(불씨 회복)
+ *   rarity = 등급 · 특성의 값어치가 곧 등급이다(`sim/perks.perkRarity` = 조건 성립 빈도 × 효과 크기)
+ *   cat    = 어느 범주를 돕는가 · 게임의 뽑기 보정과 **같은 함수**(`cardFavorsCategory`)로 묻는다
+ *            (특성은 축이 정확히 한 범주에 속하고 열쇠는 모 범주가 있으므로 한 장에 한 범주다)
  */
-function cardEffect(card, pips) {
-  const deltas = {};
-  let pos = 0;
-  let neg = 0;
-  let n = 0;
-  for (const cat of CATEGORIES) {
-    const d = cardPips(card, cat);
-    if (d === 0) continue;
-    deltas[cat] = d;
-    n += 1;
-    if (d > 0) pos += d;
-    else neg -= d;
+function classifyOffer(card, digs) {
+  const kind = card.key !== undefined ? "key" : card.ember ? "ember" : card.perk !== undefined ? "perk" : "기타";
+  const cat = CATEGORIES.find((c) => cardFavorsCategory(card, c)) ?? null;
+  return {
+    kind,
+    cat,
+    rarity: cardRarity(card),
+    favors: digs.some((c) => cardFavorsCategory(card, c)),
+  };
+}
+
+// --- 카드 선택 정책 (growth · econ) ----------------------------------------------------------
+//
+// **v9 에서 이름과 뜻을 함께 바꿨다.** v8 의 점수는 「이 장이 찍는 도장 수」였는데, v9 의 카드는
+// 도장을 안 준다 · 그래서 `best`·`focus`·`apexrush` 세 정책이 **모든 후보에 0점을 매겨** 늘 첫 장을
+// 골랐다. 세 정책이 `first` 와 글자 하나 안 다른 판을 돌면서 표에는 서로 다른 이름으로 찍혔다
+// (2026-08-10 교차 점검이 잡은 조용한 오염 · 크래시가 아니라서 아무도 못 알아챘다).
+//
+// v9 에서 「어떻게 고르는가」로 뜻이 남는 축은 둘뿐이다:
+//   rarity = **등급이 가장 높은 장**. 특성의 값어치가 곧 등급이라(`sim/perks.perkValue` =
+//            조건 성립 빈도 × 효과 크기) 이게 「가장 센 카드를 집는 사람」이다. 옛 `best` 자리.
+//   focus  = **내가 판 범주를 돕는 장**(한 우물). 판정은 게임의 뽑기 보정과 **같은 함수**
+//            (`cardFavorsCategory`)로 한다 · 같은 조건이면 등급이 높은 쪽. 옛 `focus`·`apexrush` 자리.
+// 대조군 둘: first(늘 첫 장 · 손 놓은 하한선) · random(무작위 · 정책의 값어치를 재는 밑바닥).
+const POLICIES = ["first", "rarity", "focus", "random"];
+/**
+ * 옛 이름 → [v9 이름, 왜 옮기는가]. 옛 명령줄이 **조용히 다른 것을 재지 않도록** 경고와 함께 옮긴다.
+ * ⚠ `skip` 은 era0 모드의 진짜 정책이다(`--cards=skip` = 드래프트를 건너뛴다). growth·econ 에는
+ *   그 갈래가 없어서 예전에도 첫 장으로 떨어지고 있었다 · 이제는 그 사실을 말하고 떨어진다.
+ */
+const POLICY_ALIAS = {
+  best: ["rarity", "v9 에서 뜻을 잃었다(도장을 주는 카드가 없어 모든 후보가 0점이었다)"],
+  apexrush: ["focus", "v9 에서 뜻을 잃었다(카드가 티어를 안 올린다)"],
+  skip: ["first", "growth·econ 에는 건너뛰기 갈래가 없다(era0 모드의 --cards=skip 은 그대로 작동한다)"],
+};
+const POLICY_LABEL = {
+  first: "first(늘 첫 장)",
+  rarity: "rarity(등급이 가장 높은 장)",
+  focus: "focus(내가 판 범주를 돕는 장 · 같으면 등급 높은 쪽)",
+  random: "random(무작위)",
+};
+
+/** 명령줄에서 받은 정책 이름을 v9 이름으로 옮긴다. 모르는 이름이면 크게 경고하고 first 로 떨어뜨린다. */
+function normalizePolicy(name) {
+  if (POLICIES.includes(name)) return name;
+  const moved = POLICY_ALIAS[name];
+  if (moved !== undefined) {
+    console.error(
+      `\n⚠ 카드 정책 「${name}」: ${moved[1]}. 「${moved[0]}」로 옮겨 돌린다.\n` +
+        `  쓸 수 있는 이름: ${POLICIES.join(" · ")}\n`,
+    );
+    return moved[0];
   }
-  return { deltas, pos, neg, n, crosses: cardCrossesThreshold(card, pips) };
+  console.error(
+    `\n⚠ 모르는 카드 정책 「${name}」 · first(늘 첫 장)로 돌린다. ` +
+      `쓸 수 있는 이름: ${POLICIES.join(" · ")}\n`,
+  );
+  return "first";
 }
 
 /**
- * 카드 한 장의 갈래.
- *   dead  = 도장을 하나도 안 준다(열쇠도 없다)
- *   save  = 도장은 주는데 이번엔 어느 문턱도 못 넘긴다(저축 · 나쁜 게 아니다)
- *   live  = 이 자리에서 문턱을 넘긴다(가장 크게 찍히는 범주와 함께)
- * **[사용자 2026-08-06]** 확정한 「3장 중 최소 한 장은 문턱을 넘긴다」 보장이 실제로 지켜지는지를
- * 이 분류로 잰다. save 가 100% 인 드래프트가 쌓이면 스킵(새끼 2)이 늘 정답이 된다.
+ * 이 정책이 이 후보에 매기는 점수(클수록 고른다). **rng 를 안 쓴다**(random 만 따로 처리).
+ *
+ * ⚠ 등급 순서를 여기 표로 다시 적지 않는다 · `RARITY_WEIGHT`(뽑기 가중치)를 뒤집어 쓴다.
+ *   드물수록 가중치가 작으므로 음수를 취하면 그대로 「귀한 순」이 되고, 등급을 새로 넣거나 이름을
+ *   바꿔도 이 자리가 따라온다(두 곳에 적힌 규칙은 반드시 조용히 어긋난다).
  */
-function classifyCard(card, pips) {
-  const eff = cardEffect(card, pips);
-  const keys = Object.keys(eff.deltas);
-  if (keys.length === 0 && card.key === undefined) return { kind: "dead", key: null, eff };
-  let best = null;
-  let bestAbs = -1;
-  for (const k of keys) {
-    const a = Math.abs(eff.deltas[k]);
-    if (a > bestAbs) {
-      bestAbs = a;
-      best = k;
-    }
+function policyScore(policy, card, digs) {
+  const rare = -RARITY_WEIGHT[cardRarity(card)];
+  if (policy === "focus") {
+    const hit = digs.some((c) => cardFavorsCategory(card, c));
+    // 방향이 맞는 장을 무조건 먼저 · 그 안에서 등급이 높은 쪽. 등급 점수는 절댓값이 100 이하라
+    // 1000 을 더하면 방향이 등급을 절대 못 이긴다(한 우물이 한 우물로 남는다).
+    return (hit ? 1000 : 0) + rare;
   }
-  return { kind: eff.crosses ? "live" : "save", key: best, eff };
+  return rare; // rarity
 }
 
 /**
@@ -1546,6 +1619,19 @@ function driveOrder(world) {
   return best;
 }
 
+/**
+ * 한 런을 **끝까지**(정복 또는 패배) 돌린다 · game.ts 를 통째로 태우고 시대 승리마다 이어간다.
+ * growth · econ 이 같은 이 함수를 쓴다.
+ *
+ * ⚠⚠ **이 판은 방울을 한 번도 안 쓴다**(`Game.buyTier` 를 안 부른다). v9 에서 도장은 **오직 방울로만**
+ *   오르므로, 이 함수가 돌리는 종은 **프리셋 시작 도장 7에서 한 칸도 안 자란다.** 그래서
+ *   「4단에 언제 닿나」·「티어합」 칸은 구조적으로 0/고정이고, 이 자로는 **v9 의 성장 속도를 못 잰다.**
+ *   그 자를 만들려면 「무엇을 언제 사는가」를 먼저 정해야 하는데 그건 아직 안 정해진 값이다
+ *   (backlog 「1. 성장 속도 재측정」). **여기서 임의로 구입 정책을 지어내면 그 순간 이 프로브가 내는
+ *   모든 성장 수치가 「내가 정한 값」이 된다** · 이 저장소가 네 번 데인 자리다.
+ *   지금 이 함수가 정직하게 재는 것: 한 런의 결말(도달 시대·패배 사유) · 사망 원인 · 방울 수입과
+ *   회수율 · 드래프트가 무엇을 내놓는가.
+ */
 function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
   setSavedProgress(veteranRuns, metaXp);
   const game = newGame();
@@ -1596,30 +1682,39 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
   let ordersIssued = 0;
   let ordersArrived = 0;
 
-  const picks = []; // 고른 카드마다 { n, era, level, name, apexHit }
-  const offers = []; // 열린 드래프트의 후보 카드마다 { era, n, postApex, kind, key }
-  const apexAt = {}; // 형질 → 몇 번째 카드에서 100 에 닿았나 { card, era }
-  let apexAllAt = null;
+  const picks = []; // 고른 카드마다 { n, era, level, name }
+  const offers = []; // 열린 드래프트의 후보 카드마다 { era, level, kind, cat, rarity, favors, id }
+  const topAt = {}; // 범주 → 몇 번째 카드 시점에 4단에 닿았나 { card, era }
+  let topAllAt = null;
   const eraRows = new Map();
   const eraRow = (era) => {
     let r = eraRows.get(era);
     if (r === undefined) {
-      r = { era, minPop: Infinity, endPop: 0, cards: 0, deaths: {}, embers: 0, level: 0, reached: 0, apexSum: 0 };
+      r = { era, minPop: Infinity, endPop: 0, cards: 0, deaths: {}, embers: 0, level: 0, reached: 0, tierSum: 0 };
       eraRows.set(era, r);
     }
     return r;
   };
 
-  const noteApex = () => {
+  /**
+   * 티어 사다리의 눈금을 찍는다 · **범주가 최고 티어(4단)에 닿은 시점.**
+   *
+   * ⚠ v9 에서 이 눈금은 **카드가 아니라 방울이 민다**(`Game.buyTier`). 그런데 이 함수는 방울을
+   *   한 번도 안 쓰므로(아래 playFullRun 주석) 도장은 프리셋 시작값에서 멈춰 있고, 그래서 여기 값은
+   *   **구조적으로 0 이다.** 0 인 것 자체가 「이 자로는 v9 의 성장 속도를 못 잰다」는 신호다 ·
+   *   눈금을 지우지 않고 남기는 이유는 구입 정책이 정해지면(backlog 「1. 성장 속도 재측정」)
+   *   그 자리에서 곧바로 살아나기 때문이다.
+   */
+  const noteTopTier = () => {
     const tiers = tiersOf(game.pipsNow);
-    for (const k of APEX_KEYS) {
-      if (apexAt[k] === undefined && tiers[k] >= MAX_TIER) apexAt[k] = { card: picks.length, era: game.era };
+    for (const c of TOP_TIER_CATS) {
+      if (topAt[c] === undefined && tiers[c] >= MAX_TIER) topAt[c] = { card: picks.length, era: game.era };
     }
-    if (apexAllAt === null && APEX_KEYS.every((k) => apexAt[k] !== undefined)) {
-      apexAllAt = { card: picks.length, era: game.era, level: game.level };
+    if (topAllAt === null && TOP_TIER_CATS.every((c) => topAt[c] !== undefined)) {
+      topAllAt = { card: picks.length, era: game.era, level: game.level };
     }
   };
-  noteApex(); // 프리셋만으로 정점이 찍히는 경우는 없지만, 기준점을 0 으로 박아 둔다
+  noteTopTier(); // 프리셋만으로 4단이 찍히는 경우는 없지만, 기준점을 0 으로 박아 둔다
 
   let guard = 0;
   let ticks = 0;
@@ -1628,30 +1723,21 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
   while (guard < 400000) {
     guard += 1;
     if (game.phase === "draft") {
-      const postApex = APEX_KEYS.every((k) => apexAt[k] !== undefined);
       // 리롤을 **후보를 적기 전에** 쓴다 — 사람이 실제로 고르는 3장이 다시 뽑은 쪽이기 때문이다.
       // (`--reroll` 없으면 아무 일도 안 일어난다 = 지금까지와 완전히 같은 판.)
       maybeReroll(game);
-      const pips = game.pipsNow;
+      const digs = digCategories(game.pipsNow);
       const cs = game.draftCards;
       for (const c of cs) {
-        const cl = classifyCard(c, pips);
-        offers.push({ era: game.era, postApex, kind: cl.kind, key: cl.key, id: c.id });
+        const cl = classifyOffer(c, digs);
+        offers.push({ era: game.era, level: game.level, kind: cl.kind, cat: cl.cat, rarity: cl.rarity, favors: cl.favors, id: c.id });
       }
       let idx = 0;
-      if (policy === "best" || policy === "apexrush" || policy === "focus") {
-        // **정책이 곧 「어떻게 파는가」다.** 공급 산수(tiers.ts TIER_STEPS 주석의 표)를 실제 풀로
-        // 검산하려면 이 셋이 필요하다:
-        //   best  = 도장을 가장 많이 주는 장(정책 없이 큰 숫자만 고르는 사람)
-        //   focus = 지금 가장 많이 판 범주에 들어가는 장(한 우물)
-        //   apexrush = focus 와 같되 최고 티어까지 밀어붙인다
+      if (policy === "rarity" || policy === "focus") {
+        // **정책이 곧 「어떻게 고르는가」다** · v9 어법으로 다시 정의했다(위 POLICIES 주석).
         let bestScore = -Infinity;
-        const ranked = [...CATEGORIES].sort((a, b) => pips[b] - pips[a]);
-        const target = ranked[0];
         for (let i = 0; i < cs.length; i++) {
-          const eff = cardEffect(cs[i], pips);
-          let s = eff.pos;
-          if (policy !== "best") s = Math.max(0, eff.deltas[target] ?? 0) * 10 + eff.pos;
+          const s = policyScore(policy, cs[i], digs);
           if (s > bestScore) {
             bestScore = s;
             idx = i;
@@ -1666,7 +1752,7 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
       game.pickCard(idx);
       picks.push({ n: picks.length + 1, era, level, name: chosen ? chosen.name : "-" });
       eraRow(era).cards += 1;
-      noteApex();
+      noteTopTier();
       continue;
     }
     if (game.phase === "result") {
@@ -1677,7 +1763,8 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
       r.deaths = { ...game.world.deaths };
       r.reached = 1;
       // 이 시대를 끝낼 때 티어가 얼마나 올라와 있나 — 성장 곡선의 눈금(다섯 범주 티어의 합).
-      r.apexSum = tierSum(game.pipsNow);
+      r.tierSum = tierSum(game.pipsNow);
+      r.geneBank = game.geneBank; // 안 쓰고 쌓아 둔 방울 · 「이 자가 성장을 안 굴린다」의 증거
       r.pips = { ...game.pipsNow };
       r.duos = activeDuos(game.pipsNow).length;
       if (game.result === "win" && !game.isFinalEra) {
@@ -1771,8 +1858,9 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
     level: game.level,
     cards: picks.length,
     rerolls: game.rerollsUsed, // --reroll 축이 실제로 몇 번 걸렸나(0 이면 축이 안 걸린 것)
-    apexAt,
-    apexAllAt,
+    topAt,
+    topAllAt,
+    geneBankEnd: game.geneBank, // 런이 끝날 때까지 안 쓴 방울(위 playFullRun 주석 참고)
     offers,
     eraRows: [...eraRows.values()],
     traits: { ...game.genome.traits },
@@ -1780,7 +1868,7 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
 }
 
 async function runGrowth() {
-  const policy = opt("policy", opt("cards", "best"));
+  const policy = normalizePolicy(opt("policy", opt("cards", "rarity")));
   const drive = args.includes("--drive"); // 손이 붙은 판(무리를 먹이·보스로 몬다)
   // 「누구의 판인가」 축은 전부 전역이다(`--veteran`·`--metaxp=`·`--reroll`·`--assist`) ·
   // 머리글(axisLine)이 그 값을 그대로 찍는다. 여기서 다시 파싱하면 두 곳이 갈린다.
@@ -1795,7 +1883,7 @@ async function runGrowth() {
   const presets = pickPresets().filter((p) => openIds.has(`preset_${p.key}`));
 
   console.log(
-    `# growth · 한 런 전체(시대 0~${GAME.eraCap - 1} · 정복까지) · 카드 정책 ${policy} · ` +
+    `# growth · 한 런 전체(시대 0~${GAME.eraCap - 1} · 정복까지) · 카드 정책 ${POLICY_LABEL[policy]} · ` +
       `${runsDone >= 3 ? `숙련자(끝낸 런 ${runsDone} = 늘 진도 3)` : `첫 런(진도 0→3)`} · 시드 ${SEEDS.length} · ${drive ? "손이 붙은 판(1초마다 지시)" : "지시 없음(손 놓음)"}`,
   );
   console.log(
@@ -1803,8 +1891,20 @@ async function runGrowth() {
 ` +
       `# 티어 문턱 ${TIER_STEPS.join("·")} · ` +
       `대멸종 생존 기준 ${[0, 1, 2, 3, 4].map((e) => extinctionPassNeeded(e)).join("·")}마리 · ` +
-      `보스 생존 기준 ${[0, 1, 2, 3, 4].map((e) => bossPassNeeded(e)).join("·")}마리 · ` +
-      `시대 보상 배수 ${[1, 2, 3, 4].map((e) => eraRewardBoostAt(e).toFixed(1)).join("·")}`,
+      `보스 생존 기준 ${[0, 1, 2, 3, 4].map((e) => bossPassNeeded(e)).join("·")}마리`,
+  );
+  // 풀 크기를 **손으로 안 적는다** · 예전엔 「90장」이 머리글에 박혀 있었고, v9 에서 풀이 바뀐 뒤에도
+  // 그대로 찍혀 보고서가 없는 세계를 말하고 있었다. 다음에 또 바뀌므로 배열에서 읽는다.
+  console.log(
+    `# 카드 풀 ${CARD_POOL.length}장(조건부 특성 + 열쇠) · ` +
+      `**드래프트 카드는 도장을 안 준다**(v9) · 시대 보상은 강화가 아니라 카드 한 장 더 고르는 기회다`,
+  );
+  console.log(
+    `# ⚠ **이 자는 성장 속도를 못 잰다.** 방울을 한 번도 안 쓴다(buyTier 미호출) → 도장이 프리셋 시작값에서
+` +
+      `#   멈추므로 표1 「4단 범주」·표2·표3 「티어합」은 구조적으로 고정이다. 그 자는 구입 정책을 정한 뒤에
+` +
+      `#   만든다(backlog 「1. 성장 속도 재측정」). 여기서 읽을 것은 **결말 · 사망 원인 · 드래프트 구성**이다.`,
   );
 
   const all = [];
@@ -1812,14 +1912,13 @@ async function runGrowth() {
     for (const seed of SEEDS) all.push(playFullRun(p, seed, policy, runsDone, metaXp, drive));
   }
 
-  console.log(`\n# 표1 · 한 런의 결말과 성장 총량 (프리셋별 평균 · 시드 ${SEEDS.length})`);
+  console.log(`\n# 표1 · 한 런의 결말 (프리셋별 평균 · 시드 ${SEEDS.length})`);
   console.log(
-    ["프리셋".padEnd(18), "정복", "패배", "도달시대", "최종레벨", "카드수", "정점4완성(카드/시대)", "정점개수"].join("\t"),
+    ["프리셋".padEnd(18), "정복", "패배", "도달시대", "최종레벨", "카드수", "4단범주", "안 쓴 방울"].join("\t"),
   );
   for (const p of presets) {
     const rs = all.filter((r) => r.preset === p.key);
-    const done = rs.filter((r) => r.apexAllAt !== null);
-    const apexN = rs.map((r) => APEX_KEYS.filter((k) => r.apexAt[k] !== undefined).length);
+    const topN = rs.map((r) => TOP_TIER_CATS.filter((c) => r.topAt[c] !== undefined).length);
     console.log(
       [
         p.name.padEnd(18),
@@ -1828,11 +1927,10 @@ async function runGrowth() {
         fmt(rs.reduce((a, r) => a + r.finalEra + 1, 0) / rs.length, 1),
         fmt(rs.reduce((a, r) => a + r.level, 0) / rs.length, 1),
         fmt(rs.reduce((a, r) => a + r.cards, 0) / rs.length, 1),
-        done.length === 0
-          ? "-"
-          : `${fmt(done.reduce((a, r) => a + r.apexAllAt.card, 0) / done.length, 1)} / ` +
-            `${fmt(done.reduce((a, r) => a + r.apexAllAt.era + 1, 0) / done.length, 1)} (${done.length}/${rs.length})`,
-        fmt(apexN.reduce((a, b) => a + b, 0) / apexN.length, 1),
+        fmt(topN.reduce((a, b) => a + b, 0) / topN.length, 1),
+        // 「안 쓴 방울」이 크면 클수록 이 자가 **성장을 하나도 안 굴리고 있다**는 뜻이다.
+        // 다음 세션이 구입 정책을 넣을 때, 이 값이 곧 그때 쓸 수 있는 예산의 상한이 된다.
+        fmt(rs.reduce((a, r) => a + r.geneBankEnd, 0) / rs.length, 1),
       ].join("\t"),
     );
   }
@@ -1845,13 +1943,18 @@ async function runGrowth() {
     );
   }
 
-  console.log(`\n# 표2 · 형질이 100 에 닿은 시점 (몇 번째 카드 / 몇 번째 시대 · 닿은 런만 평균)`);
-  console.log(["형질".padEnd(10), "닿은 런", "카드번호", "시대"].join("\t"));
-  for (const k of APEX_KEYS) {
-    const hits = all.filter((r) => r.apexAt[k] !== undefined).map((r) => r.apexAt[k]);
+  // 표2 는 예전에 「형질이 100 에 닿은 시점」이었다. 0~100 스케일이 v8 에서 폐기됐고, 그 뒤로는
+  // 형질 이름(speed…)으로 **범주 표**(fang…)를 조회하고 있어 늘 빈칸이었다. v9 눈금으로 다시 적는다.
+  console.log(`\n# 표2 · 범주가 최고 티어(${MAX_TIER}단)에 닿은 시점 (몇 번째 카드 / 몇 번째 시대 · 닿은 런만 평균)`);
+  console.log(
+    `#   ⚠ 이 판은 방울을 안 쓰므로 **전부 0/${all.length} 이 정상이다**(위 머리글의 경고 참고).`,
+  );
+  console.log(["범주".padEnd(10), "닿은 런", "카드번호", "시대"].join("\t"));
+  for (const c of TOP_TIER_CATS) {
+    const hits = all.filter((r) => r.topAt[c] !== undefined).map((r) => r.topAt[c]);
     console.log(
       [
-        TRAIT_LABELS[k].padEnd(10),
+        CATEGORY_LABELS[c].padEnd(10),
         `${hits.length}/${all.length}`,
         hits.length === 0 ? "-" : fmt(hits.reduce((a, h) => a + h.card, 0) / hits.length, 1),
         hits.length === 0 ? "-" : fmt(hits.reduce((a, h) => a + h.era + 1, 0) / hits.length, 1),
@@ -1861,7 +1964,7 @@ async function runGrowth() {
 
   console.log(`\n# 표3 · 시대별 난이도와 실제 위험 (전 런 평균 · 그 시대까지 간 런만)`);
   console.log(
-    ["시대", "천장", "정점4평균", "위협배율", "포식압", "통과기준", "도달런", "카드누계", "레벨", "최소개체", "끝개체", "사망", "최다 사인", "불씨", "여기서끝난런"].join("\t"),
+    ["시대", "듀오", "티어합", "위협배율", "포식압", "통과기준", "도달런", "카드누계", "레벨", "최소개체", "끝개체", "사망", "최다 사인", "불씨", "여기서끝난런"].join("\t"),
   );
   for (let era = 0; era < GAME.eraCap; era++) {
     const rows = [];
@@ -1877,7 +1980,7 @@ async function runGrowth() {
       [
         String(era + 1),
         fmt(rows.reduce((a, { e }) => a + (e.duos ?? 0), 0) / rows.length, 2),
-        fmt(rows.reduce((a, { e }) => a + e.apexSum, 0) / rows.length, 1),
+        fmt(rows.reduce((a, { e }) => a + e.tierSum, 0) / rows.length, 1),
         fmt(eraDifficulty(era), 2),
         fmt(eraPredatorPressure(era), 2),
         String(extinctionPassNeeded(era)),
@@ -1899,37 +2002,51 @@ async function runGrowth() {
     );
   }
 
-  console.log(`\n# 표4 · 드래프트 후보 3장의 구성 — 정점 4개를 다 찍기 전 vs 찍은 뒤 (후보 카드 한 장 단위)`);
-  console.log(["구간".padEnd(12), "후보수", "아무것도안바뀜", "몸집만", "그밖", "그밖의 주형질 상위"].join("\t"));
-  for (const phase of [false, true]) {
-    const os = all.flatMap((r) => r.offers).filter((o) => o.postApex === phase);
+  // 표4 는 예전에 「정점 전 vs 정점 뒤 · 죽은 카드 / 몸집만 바꾸는 카드」였다. 그 셋이 v9 에서 함께
+  // 사라졌다: 정점이라는 상태가 없고(티어는 범주마다 따로), 죽은 카드는 후보 필터(`cardRedundant`)가
+  // 이미 걷어내며, 「몸집만 바꾸는 카드」는 도장과 함께 없어졌다.
+  // v9 에서 이 자리가 답해야 하는 질문은 **「드래프트가 실제로 무엇을 내놓는가」** 다:
+  //   · 등급 구성이 레벨을 따라 실제로 무거워지는가(`rarityWeightsAtLevel` 이 약속한 것)
+  //   · 열쇠(없던 규칙)가 얼마나 자주 보이는가 · 한 런에 최대 3개뿐이라 이 비율이 곧 열쇠 빌드의 문턱
+  //   · 내가 판 방향이 얼마나 자주 뜨는가 · 게임의 뽑기 보정(`draftBias`)이 실제로 읽히는 크기
+  console.log(`\n# 표4 · 드래프트가 무엇을 내놓는가 (후보 카드 한 장 단위 · 시대별)`);
+  console.log(
+    ["시대".padEnd(6), "후보수", "열쇠%", "내방향%", "흔함%", "드묾%", "귀함%", "아주귀함%", "전설%", "돕는 범주 상위"].join("\t"),
+  );
+  const offerRow = (label, os) => {
     if (os.length === 0) {
-      console.log([(phase ? "정점 뒤" : "정점 전").padEnd(12), "0", "-", "-", "-", "-"].join("\t"));
-      continue;
+      console.log([label.padEnd(6), "0", "-", "-", "-", "-", "-", "-", "-", "-"].join("\t"));
+      return;
     }
-    const dead = os.filter((o) => o.kind === "dead").length;
-    const size = os.filter((o) => o.kind === "size").length;
-    const live = os.filter((o) => o.kind === "live");
-    const byKey = new Map();
-    for (const o of live) byKey.set(o.key, (byKey.get(o.key) ?? 0) + 1);
-    const top = [...byKey.entries()]
+    const pct = (n) => `${fmt((100 * n) / os.length, 1)}%`;
+    const ofRarity = (r) => os.filter((o) => o.rarity === r).length;
+    const byCat = new Map();
+    for (const o of os) if (o.cat !== null) byCat.set(o.cat, (byCat.get(o.cat) ?? 0) + 1);
+    const top = [...byCat.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
-      // ⚠ classifyCard 가 돌려주는 key 는 **범주**(fang·leg…)다. 예전엔 여기서 형질 이름표를
-      //   찾아 전부 `undefined 10%` 로 찍혔다(표가 아무 말도 안 하고 있었다).
-      .map(([k, n]) => `${CATEGORY_LABELS[k] ?? k} ${fmt((100 * n) / os.length, 0)}%`)
+      .map(([c, n]) => `${CATEGORY_LABELS[c] ?? c} ${fmt((100 * n) / os.length, 0)}%`)
       .join(" · ");
     console.log(
       [
-        (phase ? "정점 뒤" : "정점 전").padEnd(12),
+        label.padEnd(6),
         String(os.length),
-        `${fmt((100 * dead) / os.length, 1)}%`,
-        `${fmt((100 * size) / os.length, 1)}%`,
-        `${fmt((100 * live.length) / os.length, 1)}%`,
+        pct(os.filter((o) => o.kind === "key").length),
+        pct(os.filter((o) => o.favors).length),
+        pct(ofRarity("common")),
+        pct(ofRarity("uncommon")),
+        pct(ofRarity("rare")),
+        pct(ofRarity("epic")),
+        pct(ofRarity("legendary")),
         top,
       ].join("\t"),
     );
+  };
+  const allOffers = all.flatMap((r) => r.offers);
+  for (let era = 0; era < GAME.eraCap; era++) {
+    offerRow(String(era + 1), allOffers.filter((o) => o.era === era));
   }
+  offerRow("전체", allOffers);
 
   const lost = all.filter((r) => r.lost);
   console.log(
@@ -1937,136 +2054,47 @@ async function runGrowth() {
   );
 }
 
-/**
- * apex 모드 · **정점 4개를 찍은 게놈 앞에 드래프트가 무엇을 내놓는가**를 게임과 같은 필터로 잰다.
- * growth 모드의 표4 는 실제 런에서 나온 후보라 표본이 그 런의 갈래에 묶인다 — 이쪽은 갈래 8종을 전부
- * 쓸어 "구조적으로 무엇이 남는가"를 본다. sim 을 안 돌리므로 빠르다.
- */
 // ⚠ v8 에서 뜻이 사라진 모드 둘(apex · scale).
-//   · apex  — 「정점 넷을 찍은 뒤의 드래프트 구성」을 재던 모드. 티어 구조에서는 4단이 범주마다 따로이고
-//              카드가 도장만 주므로 「정점 후」라는 상태가 없다. 죽은 카드 비율은 growth 모드가 이미 잰다.
+//   · apex  · 「정점 넷을 찍은 뒤의 드래프트 구성」을 재던 모드. 티어 구조에서는 4단이 범주마다 따로라
+//              「정점 후」라는 상태가 없다. 드래프트 구성은 growth 모드의 표4 가 v9 어법으로 잰다.
 //   · scale — 0~100 스케일의 산수(상한 근접 감쇠·형질 1의 실제 크기)를 재던 모드. 그 스케일 자체를
 //              폐기했다(2026-08-06 회의: 「형질 1칸은 시드 노이즈에 묻힌다」가 재설계의 출발점이었다).
 async function runApex() {
-  console.log("apex 모드는 v8(티어 구조)에서 뜻이 사라졌습니다. growth 모드를 쓰세요.");
+  console.log("apex 모드는 v8(티어 구조)에서 뜻이 사라졌습니다. growth 모드의 표4 를 쓰세요.");
 }
 async function runScale() {
-  console.log("scale 모드는 0~100 스케일과 함께 폐기됐습니다. tiers 모드를 쓰세요.");
+  // ⚠ 예전엔 「tiers 모드를 쓰세요」라고 안내했는데, 그 tiers 도 v9 에서 멈춰 섰다(바로 아래).
+  //   죽은 모드가 죽은 모드를 가리키면 안내가 막다른 길이 된다.
+  console.log("scale 모드는 0~100 스케일과 함께 폐기됐습니다. 성장은 sim/tiers.ts 의 티어가 정합니다.");
 }
 
 /**
- * **티어 사다리 검산** — 시뮬 없이 산수만. 카드 예산 띠(12~22장) 전체에서 사다리가 성립하는지 본다.
- * 실제 90장 풀에 실제 희귀도 가중치를 걸고 「3장 중 1장」을 몬테카를로로 굴린다.
- */
-/**
- * 한 판에 **시대 보상 드래프트가 몇 번** 도는가.
+ * ⚠ **tiers 모드는 v9 에서 잴 대상 자체가 없어졌다** · 되살리지 않고 안내문만 남긴다
+ *   (apex · scale 이 v8 에서 폐기될 때와 같은 처리 · **없는 자를 있는 척 남기지 않는다**).
  *
- * ⚠ 이걸 0 으로 두고 사다리 3·8·14·20 을 계산했던 것이 2026-08-07 에 드러난 함정이다. 실제 게임은
- *   시대를 넘을 때마다 **3장 전부가 강화된** 드래프트를 한 번 준다(`game.ts` 의 `beginEraReward`).
- *   배수는 시대마다 커진다(×2.0 · 2.7 · 3.6 · 4.9). 아주 귀함(+5) 한 장이 ×2 면 **한 장에 +10칸**이라
- *   문턱 두 개를 통째로 넘는다 — 모델에 없으면 사다리가 실제보다 한참 느리게 계산된다.
+ * 무엇을 재던 모드인가: 시뮬 없이 산수만으로 「카드를 12~22장 뽑아 고르면 도장이 얼마나 쌓이는가」를
+ * 몬테카를로로 굴려, 티어 문턱 사다리(3·8·14·20)가 카드 예산 띠 안에서 성립하는지 검산했다.
  *
- * 기본값은 48시드 growth 실측(2026-08-07 · 도달 시대 2.3~2.7 에 카드 9.6~12.1장)에 맞춰 잡았다:
- * 12장이면 시대 전환 1회 · 17장이면 2회 · 22장이면 3회. `--eras=N` 으로 덮어쓸 수 있다.
- * **추정값이므로 머리글에 그대로 찍는다** — 가정이 숨으면 시드 절단 때와 같은 사고가 난다.
- */
-const ERAS_OPT = opt("eras", "");
-function eraRewardCount(cards) {
-  const n = ERAS_OPT === "" ? Math.round((cards - 7) / 5) : Number(ERAS_OPT);
-  return Math.max(0, Math.min(4, n));
-}
-
-/**
- * 이 모드가 `drawCards` 에 넘길 보정(bias). 게임은 늘 `draftBias()` 를 넘기고, 그 함수는
- * **보정이 꺼져 있으면 `undefined`** 를 돌려준다(game.ts). 여기도 스위치에 그대로 맞춘다 —
- * 예전엔 스위치와 무관하게 늘 `undefined` 였다(= 게임과 다른 뽑기로 사다리를 쟀다).
+ * 왜 죽었나: v9 에서 **드래프트 카드가 도장을 안 준다**(**[사용자 2026-08-07]** "카드에서 도장을
+ * 완전히 뺀다" · **[사용자 2026-08-08]** "카드는 유지하고 도장만 뺀다"). 그러니 이 모드가 세던
+ * 「카드가 쌓은 도장」이 정의상 전부 0 이다. 함께 쓰던 「시대 보상 강화 ×N」(`boostCard`)도 사라졌다 ·
+ * 곱할 도장이 없으니 그 자리도 함께 없어졌다.
  *
- * ⚠ **이건 `Game.draftBias()` 를 눈으로 옮겨 적은 근사다**(그 함수는 private 이고 이 모드는 Game 을
- *   안 태운다). 런 이력 축 하나(연속으로 내 방향이 안 뜬 드래프트 = `dryDrafts`)가 이 모델에 없으므로
- *   **여기 값은 실제 보정의 하한**이다. game.ts 의 그 함수를 고치면 이 자리도 함께 고쳐야 한다.
+ * v9 에서 사다리를 다시 재려면 **재는 축이 통째로 다르다**: 도장은 이제 **방울 구입**으로만 오르므로
+ *   「방울 수입(`src/sim/gene.ts` 의 방울 사건들) → `Game.buyTier` 로 실제로 산 문턱 수」
+ * 를 재야 한다. 수입 쪽은 `econ` 모드가 이미 잰다. 지출 쪽(무엇을 언제 사는가)은 **아직 안 정해진
+ * 값이라 여기서 지어내지 않는다** · 그 정책이 정해지면 그때 자를 만든다
+ * (backlog 「1. 성장 속도 재측정」).
  */
-function tiersBias(pips) {
-  if (!ASSIST) return undefined; // 게임에서 assistEnabled=false 일 때와 같은 값
-  const ranked = CATEGORIES.filter((c) => pips[c] > 0).sort((a, b) => pips[b] - pips[a]);
-  if (ranked.length === 0) return undefined;
-  // 1.35 = "조금 더 자주" + 한 번도 정복 못 한 사람 보정(런을 거듭할수록 준다) · 상한 1.9.
-  const w = 1.35 + Math.max(0, 0.3 - RUNS_DONE * 0.05);
-  return { cats: ranked.slice(0, 2), weight: Math.min(1.9, w) };
-}
-
 async function runTiers() {
-  const N = Number(opt("runs", "4000"));
-  const budgets = [12, 17, 22];
-  const policies = ["focus", "two", "best", "random"];
-  console.log("# 티어 사다리 검산 · 실제 90장 풀 · " + N + "런 · 3장 중 1장");
-  console.log("# 문턱 " + TIER_STEPS.join("·") + " · 프리셋 시작 도장 7(주 4 + 부 3)");
-  console.log(
-    "# 시대 보상(3장 전부 강화) " +
-      budgets.map((b) => `${b}장→${eraRewardCount(b)}회`).join(" · ") +
-      " · 배수 " +
-      [1, 2, 3, 4].map((k) => eraRewardBoostAt(k).toFixed(1)).join("·") +
-      (ERAS_OPT === "" ? " (--eras=N 으로 덮어씀)" : " (--eras 지정됨)"),
-  );
-  console.log(
-    "# 뽑기 보정 " +
-      (ASSIST
-        ? `켬 · 내가 판 두 범주 ×${(1.35 + Math.max(0, 0.3 - RUNS_DONE * 0.05)).toFixed(2)} (game.draftBias 의 근사 · 연속 헛방 가중은 모델 없음 = 하한)`
-        : "끔(기본) · 게임의 assistEnabled=false 와 같은 값"),
-  );
-  console.log(["정책", "카드", "최고범주", "2위", "T4", "T3이상", "듀오", "저축픽%"].join("	"));
-  for (const policy of policies) {
-    for (const cards of budgets) {
-      const acc = { top: 0, second: 0, t4: 0, t3: 0, duo: 0, dead: 0, picks: 0 };
-      // 시대 보상이 도는 자리 · 판 전체에 고르게 놓는다(실제로는 시대 길이에 따라 흩어지지만,
-      // 이 모델은 "몇 번 도는가"만 맞추면 된다 — 위치를 정밀하게 하려면 growth 모드를 써야 한다).
-      const rewardAt = new Map();
-      const eras = eraRewardCount(cards);
-      for (let k = 1; k <= eras; k++) rewardAt.set(Math.round((k * cards) / (eras + 1)), k);
-      for (let run = 0; run < N; run++) {
-        const rng = new Rng("tiers-" + policy + "-" + cards + "-" + run);
-        const g = defaultGenome();
-        applyCard(g, PRESET_CARDS[run % PRESET_CARDS.length]);
-        const picked = new Map();
-        for (let i = 0; i < cards; i++) {
-          const level = 1 + Math.floor((i / cards) * 12);
-          let cs = drawCards(rng, 3, (c) => cardPrereqMet(c, g) && !cardRedundant(c, g), level, picked, tiersBias(g.pips), g.pips);
-          if (cs.length === 0) break;
-          // 시대 보상이면 **3장 전부** 강화된 사본으로 바꾼다(game.ts 와 같은 처리).
-          const rk = rewardAt.get(i);
-          if (rk !== undefined) cs = cs.map((c) => boostCard(c, eraRewardBoostAt(rk)));
-          const ranked = [...CATEGORIES].sort((a, b) => g.pips[b] - g.pips[a]);
-          let idx = 0;
-          if (policy === "focus") {
-            let best = -1;
-            for (let k = 0; k < cs.length; k++) { const v = cardPips(cs[k], ranked[0]); if (v > best) { best = v; idx = k; } }
-          } else if (policy === "two") {
-            let best = -1;
-            for (let k = 0; k < cs.length; k++) { const v = cardPips(cs[k], ranked[0]) + cardPips(cs[k], ranked[1]); if (v > best) { best = v; idx = k; } }
-          } else if (policy === "best") {
-            let best = -1;
-            for (let k = 0; k < cs.length; k++) { let v = 0; for (const c of CATEGORIES) v += Math.max(0, cardPips(cs[k], c)); if (v > best) { best = v; idx = k; } }
-          } else { idx = rng.int(0, cs.length - 1); }
-          const chosen = cs[idx];
-          if (!cardCrossesThreshold(chosen, g.pips)) acc.dead += 1;
-          acc.picks += 1;
-          picked.set(chosen.id, (picked.get(chosen.id) ?? 0) + 1);
-          applyCard(g, chosen);
-        }
-        const sorted = [...CATEGORIES].map((c) => g.pips[c]).sort((a, b) => b - a);
-        const ts = tiersOf(g.pips);
-        acc.top += sorted[0];
-        acc.second += sorted[1];
-        acc.t4 += CATEGORIES.filter((c) => ts[c] >= 4).length;
-        acc.t3 += CATEGORIES.filter((c) => ts[c] >= 3).length;
-        acc.duo += activeDuos(g.pips).length;
-      }
-      console.log([
-        policy, String(cards), fmt(acc.top / N, 1), fmt(acc.second / N, 1),
-        fmt(acc.t4 / N, 2), fmt(acc.t3 / N, 2), fmt(acc.duo / N, 2),
-        fmt((100 * acc.dead) / Math.max(1, acc.picks), 1),
-      ].join("	"));
-    }
-  }
+  console.log("tiers 모드는 v9 에서 잴 대상이 없어져 멈춰 세웠습니다.");
+  console.log(`  · 무엇을 재던 자인가 · 「카드가 쌓는 도장」으로 티어 문턱 사다리(${TIER_STEPS.join("·")})를 검산했습니다.`);
+  console.log(`  · 왜 죽었나 · v9 의 드래프트 카드는 도장을 안 줍니다(풀 ${CARD_POOL.length}장 전부). 잴 대상이 정의상 0 입니다.`);
+  console.log("  · v9 에서 사다리를 재려면 · 방울 수입(sim/gene.ts) → Game.buyTier 로 산 문턱 수를 재야 합니다.");
+  console.log("    수입 쪽은 econ 모드가 이미 잽니다. 지출 쪽(무엇을 언제 사는가)은 아직 안 정해진 값이라");
+  console.log("    여기에 지어 넣지 않았습니다 · backlog 「1. 성장 속도 재측정」에서 정한 뒤 자를 만드세요.");
+  console.log("  · 지금 쓸 수 있는 자 · growth(한 런의 결말·사망 원인·드래프트 구성) · econ(방울 수입과 회수율)");
+  console.log("    · replay(사람 판을 그대로 되살린다 · 지금 이 저장소에서 유일하게 검증된 자입니다).");
 }
 
 /**
@@ -2080,7 +2108,7 @@ async function runTiers() {
  *   지금은 손 놓은 판 기준이라 **하한선**이다. 조종이 붙으면 개체 수가 더 커져 수입도 는다.
  */
 async function runEcon() {
-  const policy = opt("policy", "best");
+  const policy = normalizePolicy(opt("policy", "rarity"));
   const drive = args.includes("--drive"); // 손이 붙은 판(무리를 먹이·보스로 몬다) = 지시가 걸린 판
   // 방울 우선 반경 스윕 · `--generadius=0,80,160` 처럼 주면 값마다 한 번씩 돌려 나란히 찍는다.
   // ⚠ `ORDER` 는 런타임에는 평범한 객체라 여기서 덮어쓸 수 있다(`as const` 는 타입에만 건다).
@@ -2113,7 +2141,7 @@ async function runEcon() {
   const openIds = new Set(unlockProbe.draftCards.map((c) => c.id));
   const presets = pickPresets().filter((p) => openIds.has(`preset_${p.key}`));
   console.log(
-    `# econ · 방울 출처 실측 · 카드 정책 ${policy} · 시드 ${SEEDS.length} · ` +
+    `# econ · 방울 출처 실측 · 카드 정책 ${POLICY_LABEL[policy]} · 시드 ${SEEDS.length} · ` +
       `${drive ? "손이 붙은 판(--drive · 지시를 준다)" : "지시 없음(손 놓음 = 수입 하한선)"}`,
   );
   console.log(`# 갈래 ${presets.length}종(이 메타 레벨에 열려 있는 것만 · 잠긴 갈래를 태우면 같은 판이 중복된다)`);
