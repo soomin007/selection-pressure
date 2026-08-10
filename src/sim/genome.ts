@@ -19,6 +19,7 @@
 import type { Rng } from "@/sim/rng";
 import { carnivory01, grazeEfficiency, huntEfficiency } from "@/sim/diet";
 import { SIM } from "@/sim/params";
+import { isPerkName, type PerkName } from "@/sim/perks";
 import {
   CATEGORIES,
   deriveTraits,
@@ -34,7 +35,7 @@ import {
 } from "@/sim/tiers";
 
 /** 현재 게놈 스키마 버전. 형질을 추가/변경하면 올리고 migrate 에 단계를 더한다. */
-export const GENOME_VERSION = 8 as const;
+export const GENOME_VERSION = 9 as const;
 
 /** 능치 정규화의 분모. 시뮬 공식은 값을 이걸로 나눠 0~1 로 해석한다(파생값은 100 을 넘을 수 있다). */
 export const TRAIT_MAX = 100 as const;
@@ -109,17 +110,27 @@ export interface Traits {
 }
 
 /** 현재 게놈. **[사용자]** 도장과 열쇠가 진짜 게놈이고 traits 는 거기서 나온 결과다. */
-export interface GenomeV8 {
-  genomeVersion: 8;
-  /** 범주별 누적 도장. 카드가 여기에만 손댄다. */
+export interface GenomeV9 {
+  genomeVersion: 9;
+  /** 범주별 누적 도장. **v9 부터 카드는 여기 안 손댄다** — 도장은 오직 방울로만 오른다. */
   pips: Pips;
   /** 가진 열쇠. 세기는 모 범주의 티어가 정한다. */
   keys: Keys;
+  /**
+   * **조건부 특성**(v9 신설 · `sim/perks.ts`). 카드가 주는 것의 절반이다(나머지 절반은 열쇠).
+   *
+   * ⚠ **traits 에 안 담긴다.** 특성은 「밤에」·「수풀에서」처럼 **상황에 따라 켜졌다 꺼지는** 것이라
+   *   개체가 태어난 시점에 고정되는 파생 능치 표에 넣을 수 없다. sim 이 판정하는 그 자리에서
+   *   `perkMul(genome.perks, 축, 맥락)` 을 부른다.
+   * ⚠ **같은 특성은 한 번만 들어간다**(카드 쪽 `cardRedundant` 가 막는다). 중복을 허용하면 다시
+   *   「카드 운의 곱」이 되어 이 재설계의 뜻이 사라진다.
+   */
+  perks: PerkName[];
   /** 세계가 읽는 파생 능치. 야생종만 손으로 정한다. */
   traits: Traits;
 }
 
-export type Genome = GenomeV8;
+export type Genome = GenomeV9;
 
 /**
  * 능치 키 목록(순회용). 화면 표시·직렬화가 쓴다.
@@ -225,17 +236,20 @@ export function genomeFromTraits(partial: Partial<Traits>): Genome {
     traits.hunt = traits.diet > SIM.dietHuntMin ? huntEfficiency(traits.diet) : 0;
   }
   if (partial.carnivory === undefined) traits.carnivory = carnivory01(traits.diet);
-  return { genomeVersion: GENOME_VERSION, pips: pipsFromTraits(traits), keys: emptyKeys(), traits };
+  // 야생종은 특성을 안 갖는다 — 특성은 카드가 주는 것이고 카드는 플레이어만 뽑는다.
+  // 빈 배열이라 `perkMul` 이 곧바로 1 을 돌려주고, 그래서 야생 생태가 1비트도 안 움직인다.
+  return { genomeVersion: GENOME_VERSION, pips: pipsFromTraits(traits), keys: emptyKeys(), perks: [], traits };
 }
 
 /**
- * **플레이어 종의 게놈** — 도장과 열쇠에서 능치를 파생시킨다. 카드가 도장을 바꿀 때마다 다시 부른다.
+ * **플레이어 종의 게놈** — 도장과 열쇠에서 능치를 파생시킨다. 방울로 도장이 오를 때마다 다시 부른다.
  */
-export function genomeFromPips(pips: Pips, keys: Keys): Genome {
+export function genomeFromPips(pips: Pips, keys: Keys, perks: readonly PerkName[] = []): Genome {
   return {
     genomeVersion: GENOME_VERSION,
     pips: { ...pips },
     keys: { ...keys },
+    perks: [...perks],
     traits: deriveTraits(pips, keys),
   };
 }
@@ -272,6 +286,7 @@ export function cloneGenome(genome: Genome): Genome {
     genomeVersion: genome.genomeVersion,
     pips: { ...genome.pips },
     keys: { ...genome.keys },
+    perks: [...genome.perks],
     traits: { ...genome.traits },
   };
 }
@@ -327,19 +342,37 @@ export function clampGenome(genome: Genome): Genome {
  *
  * v1~v7 은 전부 **형질 열넷의 0~100 자연수** 세계였다. v8 은 도장 세계라 값 대 값 매핑이 없으므로,
  * 옛 능치를 그대로 살려 쓰되(`genomeFromTraits`) 도장은 능치에서 역산한다. 지난 런의 챔피언이
- * 옛 모습 그대로 세계에 돌아온다 — 그게 챔피언의 뜻이다.
+ * 옛 모습 그대로 세계에 돌아온다 · 그게 챔피언의 뜻이다.
+ *
+ * v9 는 v8 에 **조건부 특성 칸 하나**를 더한 것뿐이다(도장·열쇠·능치는 그대로). 그래서 v8 데이터가
+ * 손실 없이 올라온다 — 옛 챔피언은 특성이 없는 종이 되고, 특성이 없으면 배수가 1 이라 그 종이
+ * 겪는 세계는 v8 때와 정확히 같다.
  */
 export function migrateGenome(raw: unknown): Genome {
   if (raw === null || typeof raw !== "object") {
     throw new Error("게놈 데이터가 올바르지 않습니다.");
   }
-  const obj = raw as { genomeVersion?: unknown; traits?: unknown; pips?: unknown; keys?: unknown };
+  const obj = raw as {
+    genomeVersion?: unknown;
+    traits?: unknown;
+    pips?: unknown;
+    keys?: unknown;
+    perks?: unknown;
+  };
   const version = obj.genomeVersion;
-  if (version === 8) {
+  // v8 과 v9 는 **도장 세계가 같다.** v8 에는 특성 칸이 없을 뿐이라, 빈 특성으로 그대로 올라온다
+  // (지난 런의 챔피언이 옛 모습 그대로 돌아온다 — 그게 챔피언의 뜻이다).
+  if (version === 8 || version === 9) {
     const pips = { ...emptyPips(), ...((obj.pips ?? {}) as Partial<Pips>) };
     const keys = { ...emptyKeys(), ...((obj.keys ?? {}) as Partial<Keys>) };
+    // 모르는 특성 이름은 **조용히 버린다.** 다른 버전이 만든 게놈을 받아들이는 입구라(비동기 생물),
+    // 여기서 던지면 이름 하나 때문에 온전한 챔피언이 통째로 거절된다.
+    const perks: PerkName[] = [];
+    if (Array.isArray(obj.perks)) {
+      for (const p of obj.perks) if (typeof p === "string" && isPerkName(p)) perks.push(p);
+    }
     // 능치는 항상 도장에서 다시 낸다 — 저장된 값이 낡았어도 규칙이 이긴다.
-    const g = genomeFromPips(pips, keys);
+    const g = genomeFromPips(pips, keys, perks);
     // 야생 게놈(도장 밖 능치를 가진 종)은 저장된 능치를 존중한다.
     const t = obj.traits as Partial<Traits> | undefined;
     if (t && (t.diet !== undefined || t.graze !== undefined)) {

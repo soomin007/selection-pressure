@@ -15,6 +15,13 @@ import {
   type Rarity,
 } from "@/game/cards";
 import {
+  PERKS,
+  PERK_AXES,
+  PERK_AXIS_INFO,
+  PERK_WHENS,
+  PERK_WHEN_INFO,
+} from "@/sim/perks";
+import {
   CATEGORIES,
   CATEGORY_DESC,
   CATEGORY_LABELS,
@@ -204,16 +211,47 @@ const READING_ENTRY: Entry = {
   term: "도장과 티어 읽는 법",
   svg: SVG.scale,
   desc:
-    "카드는 다섯 범주에 도장을 찍습니다. 도장이 문턱에 닿으면 티어가 하나 오르고, 그 순간에만 종이 실제로 강해집니다. " +
-    "문턱 사이의 도장은 다음 계단을 위한 저축이라, 화면의 칩이 「몇 칸 남았는지」를 늘 알려줍니다.",
+    "다섯 범주에는 저마다 도장 칸이 있습니다. 도장이 문턱에 닿으면 티어가 하나 오르고, 그 순간에만 종이 실제로 강해집니다. " +
+    "도장은 카드가 아니라 방울로 삽니다. 판에 떨어진 방울을 무리가 밟아 주우면, 그 방울로 다음 단을 살 수 있습니다. " +
+    "값은 다음 문턱까지 남은 칸 수와 같아서, 화면의 막대가 곧 값표입니다.",
   rows: TIER_STEPS.map((s, i) => ({
     k: `${TIER_ROMAN[i + 1]} 티어`,
     v: `도장 ${s}개부터`,
     bar: s / (TIER_STEPS[TIER_STEPS.length - 1] as number),
   })),
   note:
-    "위로 갈수록 계단이 멀어집니다. " +
+    "위로 갈수록 계단이 멀어집니다. 시작 갈래가 주는 도장이 첫 계단을 미리 깎아 둡니다. " +
     `그리고 티어 합 1마다 유지비 배수가 ${UPKEEP_PER_TIER} 씩 올라, 많이 가진 종은 많이 먹어야 합니다.`,
+};
+
+/**
+ * 조건부 특성 항목 — **v9 에서 카드가 주는 것.** 조건 목록과 종류 수를 `sim/perks.ts` 에서 세어 만든다
+ * (손으로 적으면 특성을 늘리거나 배수를 손볼 때마다 이 표가 조용히 낡는다).
+ * ⚠ 조건별 「성립 빈도」 추정값은 여기 안 적는다 · 아직 프로브로 잰 적 없는 수라 화면에 올리면
+ *   그것이 근거처럼 인용된다(perks.ts 의 PERK_WHEN_INFO.freq 주석).
+ */
+const PERKS_ENTRY: Entry = {
+  term: "특성 (카드가 주는 것)",
+  svg: SVG.card,
+  desc:
+    "카드가 주는 것은 도장이 아니라 특성입니다. 특성마다 「언제」와 「무엇이 몇 배」가 정해져 있어, " +
+    "그 때가 되면 켜지고 아니면 꺼집니다. 밤에만 멀리 보는 눈, 달아나는 동안에만 나는 죽을힘 같은 것입니다. " +
+    "조건이 곧 대가라 따로 잃는 것이 없습니다. 좁은 때에만 켜지는 특성일수록 배수가 큽니다. " +
+    "같은 특성은 한 번만 얻습니다.",
+  // (상세 화면의 desc 는 줄바꿈을 공백으로 뭉갠다 · 줄바꿈이 살아 있는 곳은 섹션 intro 뿐이다.)
+  rows: ((): Row[] => {
+    const counts = PERK_WHENS.map((w) => PERKS.filter((p) => p.when === w).length);
+    const max = Math.max(1, ...counts);
+    return PERK_WHENS.map((w, i) => ({
+      k: PERK_WHEN_INFO[w].label || "늘 (조건 없음)",
+      v: `${counts[i] ?? 0}가지`,
+      bar: (counts[i] ?? 0) / max,
+    }));
+  })(),
+  note:
+    `바뀌는 것은 여덟 가지입니다: ${PERK_AXES.map((a) => PERK_AXIS_INFO[a].label).join(" · ")}. ` +
+    "기운 소모와 받는 피해만 배수가 1 아래로 내려가는 것이 이득이고(×0.7 은 덜 쓰고 덜 아프다는 뜻입니다), " +
+    "나머지는 클수록 이득입니다. 카드에 적힌 배수가 게임이 실제로 곱하는 배수 그대로입니다.",
 };
 
 const KEYS_ENTRY: Entry = {
@@ -247,45 +285,46 @@ const SECTIONS: readonly Section[] = [
   {
     title: "형질 도감",
     intro:
-      "이 게임의 성장은 다섯 범주(이빨·다리·눈·가죽·무리)에 도장을 모으는 일입니다.\n" +
+      "이 게임의 성장은 두 갈래입니다. 다섯 범주(이빨·다리·눈·가죽·무리)의 단은 모은 방울로 올리고, " +
+      "카드는 그 위에 특성과 열쇠를 얹습니다.\n" +
       `문턱(도장 ${TIER_STEPS.join(" · ")})에 닿을 때마다 티어가 I 에서 ${TIER_ROMAN[MAX_TIER]} 까지 오르고, 효과는 문턱을 넘는 순간에만 켜집니다.\n` +
       "범주마다 키울수록 얻는 것과 잃는 것이 함께 커집니다. 어느 범주도 항상 정답이 아닙니다.",
-    entries: [READING_ENTRY, ...CATEGORIES.map(categoryEntry), KEYS_ENTRY, DUOS_ENTRY, SIZE_ENTRY],
+    entries: [READING_ENTRY, ...CATEGORIES.map(categoryEntry), PERKS_ENTRY, KEYS_ENTRY, DUOS_ENTRY, SIZE_ENTRY],
   },
   {
     title: "카드 도감",
     intro:
       // (마크다운 별표를 쓰면 안 된다 · 이 문구는 textContent 로 그려져 별표가 그대로 보인다.)
-      "카드는 범주에 도장을 찍거나(대부분) 열쇠 하나를 엽니다(전설). 그 밖의 일은 하지 않습니다.\n" +
+      "카드는 특성 하나를 주거나(대부분) 열쇠 하나를 엽니다(전설). 그 밖의 일은 하지 않습니다. 범주의 단은 카드가 아니라 방울로 오릅니다.\n" +
       "카드 풀 전부가 어느 종에게나 나옵니다. 다만 내가 이미 판 방향의 카드가 조금 더 자주 뜹니다. 보장이 아니라 확률이라, 가끔 내 길이 하나도 안 뜨는 드래프트도 있습니다.\n" +
       "카드마다 희귀도가 있어, 희귀할수록 후보로 잘 안 뜨고 드래프트에서도 더 늦게 등장합니다. 무리가 세대를 거듭할수록 높은 등급이 더 자주 찾아옵니다.",
     entries: [
       {
         term: "희귀도와 확률",
         svg: SVG.card,
-        desc: `카드는 다섯 등급으로 나뉩니다. 등급은 그 카드가 종을 얼마나 바꾸는지로 정합니다. 흔함은 대가 없이 한 가지가 조금 오르고, 전설은 종의 정체성 자체를 바꿉니다. 세대(레벨)가 오를수록 높은 등급의 확률이 올라가며, 세대 ${RARITY_BOOST_FULL_LEVEL}에서 최대가 됩니다.`,
+        desc: `카드는 다섯 등급으로 나뉩니다. 특성 카드의 등급은 손으로 정하지 않고 「그 조건이 성립하는 때가 얼마나 잦은가」와 「그때 효과가 얼마나 큰가」를 곱해 계산합니다. 그래서 늘 켜지지만 조금 오르는 카드와, 드물게 켜지지만 크게 오르는 카드가 비슷한 등급에 놓입니다. 세대(레벨)가 오를수록 높은 등급의 확률이 올라가며, 세대 ${RARITY_BOOST_FULL_LEVEL}에서 최대가 됩니다.`,
         oddsTable: true,
-        note: "확률은 지금 열려 있는 카드만 세어 계산합니다. 판이 진행되는 동안에는 이미 소용없는 카드(예: 벌써 나는데 또 나오는 날개)가 후보에서 빠지므로, 실제 확률은 위 값과 조금 달라집니다.",
+        note: "확률은 지금 열려 있는 카드만 세어 계산합니다. 판이 진행되는 동안에는 이미 소용없는 카드(예: 벌써 나는데 또 나오는 날개, 이미 가진 특성)가 후보에서 빠지므로, 실제 확률은 위 값과 조금 달라집니다.",
       },
       {
         term: "흔함",
         rarity: "common",
-        desc: "한 범주에 도장을 안전하게 찍습니다. 기틀을 다질 때 고릅니다.",
+        desc: "조건이 넓어 거의 늘 켜지는 대신 배수가 작습니다. 언제 켜졌는지 신경 쓸 필요가 없는 카드입니다.",
       },
       {
         term: "드묾",
         rarity: "uncommon",
-        desc: "두 범주에 나눠 찍거나, 주 범주와 부 범주에 함께 찍습니다.",
+        desc: "조건이 조금 좁아지고, 그만큼 배수가 커집니다.",
       },
       {
         term: "귀함",
         rarity: "rare",
-        desc: "한 범주에 크게 찍습니다. 문턱을 한 장에 넘기기 좋은, 방향을 정하는 카드입니다.",
+        desc: "정해진 자리나 때에서만 켜지고, 켜지면 뚜렷하게 셉니다. 어디서 싸울지를 내가 고를 수 있을 때 값이 커집니다.",
       },
       {
         term: "아주 귀함",
         rarity: "epic",
-        desc: "가장 크게 찍거나, 다른 범주의 도장을 내놓는 맞바꿈입니다. 판을 한쪽으로 크게 기울입니다.",
+        desc: "아주 좁은 순간에만 켜지면서 그때는 판이 뒤집힐 만큼 커지거나, 늘 켜지면서도 큽니다.",
       },
       {
         term: "전설",
@@ -355,7 +394,7 @@ const SECTIONS: readonly Section[] = [
       {
         term: "내 종",
         svg: creature("#6cc24a"),
-        desc: "당신이 기르는 종입니다. 시작 갈래로 출발 도장의 배분과 시작 열쇠를 정하고, 카드로 계속 특화시키세요.",
+        desc: "당신이 기르는 종입니다. 시작 갈래로 출발 도장의 배분과 시작 열쇠를 정하고, 방울로 단을 올리고 카드로 특성을 모아 특화시키세요.",
         rows: [
           { k: "시작", v: "시작 갈래 중 하나" },
           { k: "시작 수", v: "36마리" },
@@ -524,13 +563,13 @@ const SECTIONS: readonly Section[] = [
       {
         term: "카드 고르기",
         svg: SVG.card,
-        desc: "카드는 범주에 도장을 찍습니다. 도장이 문턱에 닿아 티어가 오르는 순간에만 종이 강해집니다. 카드에 붙은 칩이 이번 장으로 문턱을 넘는지, 몇 칸 남는지를 미리 알려줍니다. 한 판 동안 누적되고, 새 판에서 리셋됩니다.",
-        note: "형질 도감에서 각 범주의 티어가 실제로 무엇을 켜는지 미리 볼 수 있습니다.",
+        desc: "카드는 특성 하나를 줍니다. 특성은 정해진 때에만 켜져서 한 가지를 몇 배로 만듭니다. 「밤에 보는 거리 ×1.45」처럼 언제 무엇이 얼마나 달라지는지가 카드의 칩에 그대로 적혀 있고, 그 수가 게임이 실제로 곱하는 수입니다. 전설 카드만은 특성 대신 열쇠(없던 능력)를 엽니다. 한 판 동안 누적되고, 새 판에서 리셋됩니다.",
+        note: "범주의 단은 카드가 아니라 방울로 올립니다. 판에 떨어진 방울을 무리가 밟아 주우면, 목표 줄 옆의 방울 카운터에서 다음 단을 살 수 있습니다.",
       },
       {
         term: "위협에 대비하기",
         svg: SVG.card,
-        desc: "보스와 대멸종은 각각 약점이 있습니다. 단계 전에 다가오는 위협을 예고로 알려줍니다. 그 약점에 해당하는 형질을 키우는 카드를 고르세요.",
+        desc: "보스와 대멸종은 각각 약점이 있습니다. 단계 전에 다가오는 위협을 예고로 알려줍니다. 그 약점에 해당하는 범주의 단을 방울로 올리고, 그쪽으로 작동하는 특성 카드를 고르세요.",
         note: "위협 도감에서 각 위협의 약점을 미리 확인하세요.",
       },
       {
@@ -564,7 +603,7 @@ function pct(v: number): string {
   return `${p.toFixed(2)}%`;
 }
 
-/** 카드 한 줄 요약 칩 · cardSummary(단일 진실)를 그대로 보여준다. 예: 「가죽 +3 · 다리 −1」 */
+/** 카드 한 줄 요약 칩 · cardSummary(단일 진실)를 그대로 보여준다. 예: 「밤에 보는 거리 ×1.45」 */
 function chipRow(card: Card): HTMLElement {
   const wrap = document.createElement("div");
   wrap.style.cssText = "display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; max-width:100%;";
@@ -687,9 +726,21 @@ function oddsRows(pool: readonly Card[], runLevel: number): HTMLElement {
   return table;
 }
 
+/**
+ * 보상 카드의 이름 — **카드 풀에서 읽는다.** 여기 손으로 적으면 카드가 바뀌거나 사라지는 날
+ * 화면이 없는 카드를 약속한다(v9 에서 카드 풀을 90장에서 52장으로 갈아엎으며 실제로 그렇게 됐다).
+ * 못 찾으면 null · 이름을 지어내지 않는다.
+ */
+function rewardCardName(cardId: string): string | null {
+  return CARD_POOL.find((c) => c.id === cardId)?.name ?? null;
+}
+
 /** 보상 한 줄 — 무엇을 얻는가. 형질 보상은 "형질"이라 못박고, 나머지는 "꾸밈(효과 없음)"이라 적는다. */
 function rewardText(a: Achievement): string {
-  if (a.reward.kind === "card") return `형질 「거인」. 드래프트에 나타난다`;
+  if (a.reward.kind === "card") {
+    const nm = rewardCardName(a.reward.cardId);
+    return nm === null ? "카드 하나. 드래프트에 나타난다" : `형질 「${nm}」. 드래프트에 나타난다`;
+  }
   return `꾸밈 · ${COSMETICS[a.reward.cosmetic].name}. ${COSMETICS[a.reward.cosmetic].desc}`;
 }
 

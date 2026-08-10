@@ -4,7 +4,18 @@
 
 import { metaLevelInfo, type RunProgress, type UnlockTier } from "@/game/meta";
 import { COSMETICS, type Achievement } from "@/game/achievements";
+import { CARD_POOL } from "@/game/cards";
 import { registerKeyLayer, keyChip } from "@/ui/keys";
+
+/**
+ * 도전 과제가 여는 카드의 이름 — **카드 풀에서 읽는다.** 이름을 여기 적어 두면 카드가 바뀌거나
+ * 사라지는 날 화면이 없는 카드를 약속한다(v9 에서 카드 풀을 갈아엎으며 실제로 그렇게 됐다).
+ * 대백과의 보상 줄(`glossary.rewardText`)도 같은 근거를 읽는다.
+ */
+function rewardCardLine(cardId: string): string {
+  const nm = CARD_POOL.find((c) => c.id === cardId)?.name;
+  return nm === undefined ? "카드 하나. 드래프트에 나타난다" : `형질 「${nm}」. 드래프트에 나타난다`;
+}
 
 export interface LevelUpScreen {
   /**
@@ -188,7 +199,7 @@ export function createLevelUpScreen(): LevelUpScreen {
       const reward = document.createElement("div");
       reward.textContent =
         a.reward.kind === "card"
-          ? "형질 「거인」이 드래프트에 나타난다"
+          ? rewardCardLine(a.reward.cardId)
           : `꾸밈 · ${COSMETICS[a.reward.cosmetic].name}`;
       reward.style.cssText = "color:#c9b98a; font-size:12px; font-weight:500; line-height:1.35;";
       texts.append(name, reward);

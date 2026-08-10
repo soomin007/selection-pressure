@@ -29,8 +29,7 @@ import {
 import {
   drawCards,
   applyCard,
-  boostCard,
-  cardPips,
+  cardFavorsCategory,
   cardPrereqMet,
   cardRedundant,
   EMBER_CARD,
@@ -47,7 +46,6 @@ import {
   eraDifficulty,
   eraScarcity,
   eraPredatorPressure,
-  eraRewardBoostAt,
   bossPassNeeded,
   extinctionPassNeeded,
   EXTINCTION,
@@ -985,14 +983,14 @@ export class Game {
       // **줄 게 하나도 없으면 열지 않는다** (2026-08-09 [사용자] 제보: "모든 범주 만렙을 찍었더니
       // 업그레이드 드래프트 화면이 고장나버렸고, 건너뛰어 새끼 치기만 겨우 클릭이 가능했다").
       //
-      // 화면이 깨진 게 아니라 **게임에 남은 내용이 없었던 것**이다. 카드는 도장만 주는데
-      // (`cardRedundant`), 범주 다섯이 전부 4단이고 열쇠도 MAX_KEYS 를 채우면 카드 100장이 전부
-      // 죽은 카드가 된다. 그러면 후보가 0장인 드래프트가 그냥 열려 "고장난 화면"으로 보인다.
+      // 화면이 깨진 게 아니라 **게임에 남은 내용이 없었던 것**이다. 후보가 0장인 드래프트가 그냥
+      // 열려 "고장난 화면"으로 보였다.
       //
-      // ⚠ 이건 **증상 방어**일 뿐이다. 근본은 「카드가 도장 말고는 줄 게 없다」이고, 그 답은 이미
-      //   합의된 카드 재설계다(**[사용자 2026-08-08]** · docs/design/card_redesign_proposal.md).
-      //   재설계 뒤에도 이 가드는 남겨 둔다 — 어떤 이유로든 후보가 빌 수 있고, 그때 빈 화면을
-      //   띄우는 것보다 조용히 넘기는 편이 언제나 낫다.
+      // ⚠ **그때의 원인은 v9 에서 사라졌다.** v8 은 카드가 도장만 줬으므로 범주 다섯이 4단이고
+      //   열쇠가 차면 풀 전체가 죽은 카드가 됐다. 지금 카드는 특성을 주므로 만렙과 후보 수는
+      //   아무 관계가 없다(카드 재설계 · **[사용자 2026-08-08]**).
+      //   그래도 가드는 남긴다 — 어떤 이유로든 후보가 빌 수 있고(특성을 전부 모은 종), 그때 빈
+      //   화면을 띄우는 것보다 조용히 넘기는 편이 언제나 낫다(`emptyDraft.test.ts` 가 못박는다).
       if (this.draftCards.length === 0) {
         this.recordDraft(DRAFT_NONE); // 판 분석 코드에 "이 레벨업은 고를 게 없었다"가 남는다
         continue;
@@ -1011,7 +1009,11 @@ export class Game {
   /**
    * 다시 뽑기(리롤) — 3장이 마음에 안 들면 형질 포기(스킵) 대신 카드를 새로 뽑는다. 여러 런을 마쳐야 열리는
    * 편의(meta.isRerollUnlocked). 드래프트당 GAME.rerollsPerDraft 회 제한(무한 낚시 방지). 프리셋 선택엔 없음.
-   * 결정론: 시드 draftRng 로 다음 후보를 뽑는다(같은 플레이 → 같은 결과). 시대 보상 리롤이면 강화 사본으로.
+   * 결정론: 시드 draftRng 로 다음 후보를 뽑는다(같은 플레이 → 같은 결과).
+   *
+   * ⚠ v8 에는 여기 「시대 보상이면 강화 사본으로」가 있었고, 그 배수를 고정값으로 쓰면 리롤이 조용한
+   *   벌칙이 되는 결함이 있었다(2026-08-07 발견·수정). v9 에서 강화 자체가 사라져 **그 함정이 구조적으로
+   *   없어졌다** — 리롤은 이제 어느 드래프트에서나 같은 일을 한다.
    */
   reroll(): void {
     if (this.phase !== "draft" || this.firstChoice || this.rerollsLeft <= 0) return;
@@ -1019,12 +1021,7 @@ export class Game {
     this.recordDraft(DRAFT_REROLLED);
     this.rerollsLeft -= 1;
     this.rerollsUsed += 1;
-    const drawn = this.drawDraft();
-    // ⚠ 배수는 `eraRewardBoostAt(era)` 여야 한다. 고정 `GAME.eraRewardBoost`(=2) 를 쓰면 시대 5 의
-    //   보상을 다시 뽑는 순간 ×4.9 가 ×2 로 떨어져, **리롤이 조용한 벌칙**이 된다(2026-08-07 발견).
-    this.draftCards = this.eraReward
-      ? drawn.map((c) => boostCard(c, eraRewardBoostAt(this.era)))
-      : drawn;
+    this.draftCards = this.drawDraft();
     this.onDraft?.(this.draftCards, this.preview);
   }
 
@@ -1054,14 +1051,16 @@ export class Game {
       this.level, // 레벨이 오를수록 높은 등급이 더 자주 뜬다(rarityWeightsAtLevel)
       this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
       this.draftBias(),
-      this.genome.pips, // 3장 중 최소 한 장은 어느 문턱이든 넘긴다(죽은 픽 방지)
     );
     // 「내 방향이 하나도 안 뜬 드래프트」를 센다 — 연달아 그러면 다음 확률이 오른다(안전장치).
     // ⚠ 이건 **가중치**이지 보장이 아니다. 가끔 내 길이 하나도 안 나오는 드래프트가 생기고, 그때
     //   갈아탈지 버틸지가 진짜 질문이 된다(**[사용자 2026-08-06]** "로그라이크는 그 무작위성이 핵심 재미").
     const bias = this.draftBias();
     if (bias) {
-      const hit = cards.some((c) => bias.cats.some((cat) => cardPips(c, cat) > 0));
+      // ⚠ **`drawCards` 가 가중치를 걸 때 쓴 바로 그 함수로 판정한다.** 여기에 조건을 다시 적으면
+      //   「내 방향이 떴는가」가 두 곳으로 갈라져, 가중은 걸렸는데 안 걸린 것으로 세는 일이 생긴다
+      //   (known_issues 「화면에 뜨는 숫자를 규칙에서 다시 유도하지 마라」와 같은 자리).
+      const hit = cards.some((c) => bias.cats.some((cat) => cardFavorsCategory(c, cat)));
       this.dryDrafts = hit ? 0 : this.dryDrafts + 1;
     }
     // 불씨 회복 카드 — **정확히 하나 남았을 때만**(미리 쟁여 두기 방지).
@@ -1112,15 +1111,18 @@ export class Game {
    */
   private recordDraft(outcome: number): void {
     const kind: DraftKind = this.firstChoice ? "preset" : this.eraReward ? "era" : "level";
-    // 강화 배수는 `beginEraRewardDraft`·`reroll` 이 실제로 쓰는 것과 **같은 함수·같은 반올림**이다
-    // (boostCard 가 Math.max(1, Math.round(boost)) 로 접는다).
-    const boost = this.eraReward ? Math.max(1, Math.round(eraRewardBoostAt(this.era))) : 1;
     this.runLog.push({
       t: "draft",
       kind,
-      boost,
+      // **강화 배수는 v9 에 없다 · 늘 1 이다.** v8 의 시대 보상은 뽑은 카드의 **도장을 곱하는 것**
+      // 이었는데(`boostCard`), 카드가 도장을 안 주므로 곱할 것 자체가 사라졌다. 여기에 계속
+      // `eraRewardBoostAt(era)` 를 적으면 분석 도구가 **없는 강화를 있다고 말한다.**
+      // ⚠ 칸은 남긴다 — 옛 판 코드에는 진짜 배수가 담겨 있고, 그 코드를 계속 읽으려면 스키마의
+      //   자리가 그대로여야 한다(`runCode.ts` 머리 주석: 자리를 재배열·삭제하지 않는다).
+      boost: 1,
       level: this.level,
-      // 강화 꼬리(`_x2`)는 떼고 원래 카드 id 로 적는다 · 배수는 바로 위 `boost` 가 들고 있다.
+      // v8 의 강화 사본은 id 끝에 `_x2` 같은 꼬리를 달았다. v9 에는 꼬리를 다는 자리가 없어
+      // `baseCardId` 가 사실상 아무 일도 안 하지만, 옛 id 가 섞여 들어와도 안전하도록 남겨 둔다.
       cards: this.draftCards.map((c) => baseCardId(c.id)),
       outcome,
     });
@@ -1428,8 +1430,9 @@ export class Game {
    * 이 범주의 **다음 단까지 드는 방울 수**. 이미 4단이면 0(= 더 살 것이 없다).
    *
    * ⚠ **여기서 새 가격표를 만들지 않는다.** 방울은 도장(pip)과 같은 단위라 값은 `tiers.ts` 의
-   *   `TIER_STEPS` 하나가 정하고, 이 함수는 `pipsToNext` 를 그대로 읽기만 한다. 카드로 이미 받은
-   *   도장이 비용을 그만큼 깎는 것도 저절로 따라온다(남은 거리 = 비용).
+   *   `TIER_STEPS` 하나가 정하고, 이 함수는 `pipsToNext` 를 그대로 읽기만 한다. 이미 찍혀 있는
+   *   도장(시작 갈래가 준 것)이 비용을 그만큼 깎는 것도 저절로 따라온다(남은 거리 = 비용).
+   *   ⚠ v9 부터 **드래프트 카드는 도장을 한 칸도 안 준다** — 「카드로 받은 도장」은 이제 없다.
    */
   tierCost(cat: Category): number {
     return pipsToNext(this.genome.pips[cat]);
@@ -2166,9 +2169,11 @@ export class Game {
   }
 
   /**
-   * 시대 보상 드래프트 — 시대를 넘을 때마다 강화된 카드(정상 ×eraRewardBoost 강도) 3장 중 하나를 고른다.
-   * 위협이 시대마다 세지는 만큼 성장에 큰 도약을 줘 난이도 루프를 "갈수록 재밌게"(어렵기만 하지 않게).
-   * 결정론: 시대 시드에서 파생한 독립 RNG. 보상 카드는 boostCard 사본이라 표시값=실제 적용값.
+   * 시대 보상 드래프트 — 시대를 넘을 때마다 카드 3장 중 하나를 더 고른다.
+   *
+   * ⚠ **v8 의 「강화 ×N」은 v9 에 없다.** 그건 뽑은 카드의 도장을 곱하는 것이었는데(`boostCard`),
+   *   카드가 도장을 안 주므로 곱할 것이 사라졌다 · 아래 본문 주석과 `recordDraft` 참조.
+   * 결정론: 시대 시드에서 파생한 독립 RNG.
    */
   private beginEraRewardDraft(): void {
     this.phase = "draft";
@@ -2193,9 +2198,13 @@ export class Game {
       this.level, // 시대 보상도 지금까지 키운 레벨의 보정을 받는다
       this.pickedCounts(), // 이미 고른 카드는 뜸하게(반복 완화)
     );
-    // 보상 배수는 시대마다 커진다(×2.0 → 2.7 → 3.6 → 4.9). 시대를 넘은 쾌감은 "다음 판이 세진다"가
-    // 아니라 그 자리에서 손에 쥐는 것이 만든다 — 배수가 고정이면 시대 5 보상이 시대 2 와 똑같다.
-    this.draftCards = drawn.map((c) => boostCard(c, eraRewardBoostAt(this.era)));
+    // ⚠ **v9 에서 「강화 ×N」이 사라졌다.** 그건 뽑은 카드의 도장을 곱하는 것이었는데(×2.0 → 4.9),
+    //   카드가 도장을 안 주므로 곱할 것이 없다. 특성은 있거나 없거나라 배수를 못 매긴다.
+    //   지금 이 화면은 **카드를 한 장 더 고르는 기회**일 뿐이고, 그만큼 시대를 넘은 보상이 얇아졌다.
+    //   → 성장은 이제 방울 한 갈래로만 들어오므로, 이 자리의 보상도 **방울로 옮기는 것**이 맞다.
+    //     값은 backlog 「2. 성장 속도 재측정」에서 프로브로 정한다 — 여기서 숫자를 지어내면
+    //     그 순간 근거 없는 밸런스 상수가 하나 생긴다(이 저장소가 네 번 데인 자리).
+    this.draftCards = drawn;
     this.rerollsLeft = this.metaRerollUnlocked ? GAME.rerollsPerDraft : 0;
     // 시대를 넘으면 온보딩 진도도 한 칸 오른다 → **이번에 새로 열린 것**을 여기서 한 줄로 알린다.
     // 시대 전환 직후 반드시 지나는 화면이라 가장 싼 자리다(따로 배너를 만들지 않는다). 진도가 안 올랐으면
@@ -2210,7 +2219,7 @@ export class Game {
       ? `${CATEGORY_LABELS[near.cat]} ${TIER_ROMAN[near.tier]}까지 도장 ${near.need}개 남았습니다.`
       : "";
     this.preview =
-      "새로운 시대에 들어섭니다. 지난 시대를 넘어선 보상으로, 도장을 여러 개 주는 카드 하나를 고르세요. 지금 무리에 바로 물려집니다. " +
+      "새로운 시대에 들어섭니다. 지난 시대를 넘어선 보상으로 카드 하나를 더 고르세요. 지금 무리에 바로 물려집니다. " +
       goalLine +
       (opened === "" ? "" : ` ${opened}`);
     this.onDraft?.(this.draftCards, this.preview);

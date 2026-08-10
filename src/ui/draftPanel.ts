@@ -4,22 +4,27 @@
 // 그 위에 뿌연 유리 3겹(블러 캔버스 + 김 서림 + 하단 가독성 그라데이션)을 얹는다. 마지막 프레임을 비트맵으로
 // 캡처하지 않는다: 캔버스에 CSS 필터만 건다(리사이즈·선명도 유지). 살아 움직이는 건 히어로 미리보기다.
 //
-// v8: 카드는 도장(pip)만 준다. 그래서 이 화면의 일은 「이 카드가 문턱을 넘기는가」를 말하는 것이다.
-//   · 카드 칩: 넘김(범주 색 + 발광) / 못 넘김(회색 · 몇 칸 남음) / 강등(붉은색) / 열쇠 / 불씨
-//   · 각주: 문턱을 넘으면 무엇이 켜지고 무엇을 잃는지 = tiers.tierLine 문구 그대로(단일 진실)
+// v9: **카드는 도장을 안 준다.** 카드가 주는 것은 조건부 특성(`sim/perks.ts`)과 열쇠 둘뿐이고,
+//   범주의 단은 오직 방울로만 오른다(`Game.buyTier`). 그래서 이 화면의 일이 바뀌었다 ▸
+//   「이 카드가 문턱을 넘기는가」가 아니라 「이 카드가 언제 무엇을 몇 배로 만드는가」를 말한다.
+//   · 카드 칩: 특성 한 줄(「밤에 보는 거리 ×1.45」) · 문구는 perks.perkLine 이 만든다(단일 진실) / 열쇠 / 불씨
 //   · 헤더: 다섯 범주 티어 한 줄 + 듀오 예고(「무리 III 이 되면 늑대의 법이 켜집니다」)
-//   · 내 종 팝업: 범주 5 도장 막대(문턱 눈금 3·8·14·20) + 유령 막대(이 카드를 고르면 여기까지)
+//   · 내 종 팝업: 지금 단과 도장 막대(문턱 눈금 3·8·14·20) + 「이 카드가 주는 것」 한 줄
+//   ⚠ 유령 막대(「이 카드를 고르면 여기까지 찹니다」)는 걷어냈다 · 카드로는 도장이 한 칸도 안 움직인다.
+//     빈 막대를 그려 두면 화면이 「고르면 뭔가 찬다」고 거짓말한다.
 
 import type { Renderer } from "pixi.js";
 import {
   applyCard,
   cardRarity,
+  cardSummary,
   CARD_POOL,
   PRESET_CARDS,
   type Card,
   type Rarity,
 } from "@/game/cards";
 import { cloneGenome, type Genome } from "@/sim/genome";
+import { AXIS_CATEGORY, PERK_BY_NAME, perkLine } from "@/sim/perks";
 import {
   CATEGORIES,
   CATEGORY_LABELS,
@@ -27,9 +32,11 @@ import {
   KEY_DESC,
   KEY_LABELS,
   KEY_NAMES,
+  MAX_TIER,
   TIER_ROMAN,
   activeDuos,
   nearDuo,
+  pipsToNext,
   SIZE_MEANING,
   tierLine,
   tierOf,
@@ -427,8 +434,13 @@ export function createDraftPanel(
   };
 
   /**
-   * 내 종 팝업 · 범주 5 의 도장 막대 위에 지금 보고 있는 카드의 변화를 유령 막대로 겹쳐 보여준다.
+   * 내 종 팝업 · 지금 내 종이 어디까지 왔는지(범주 다섯의 단 · 열쇠 · 듀오 · 유지비)와
+   * **이 카드가 주는 것 한 줄**을 나란히 둔다.
    * 문턱 눈금(3·8·14·20)은 tierTrackBackground 가 그린다 · 눈금 간격이 "다음 계단이 더 멀다"를 말한다.
+   *
+   * ⚠ v9 에서 **유령 막대를 걷어냈다.** 도장은 방울로만 오르므로 카드로는 한 칸도 안 움직인다 ▸
+   *   「이 카드를 고르면 여기까지 찹니다」는 이제 어느 카드에도 해당하지 않는 거짓말이다.
+   *   그 자리를 「이 카드가 주는 것」이 대신한다(문구는 `cardSummary` 하나가 만든다 · 단일 진실).
    */
   const renderPopup = (): void => {
     const c = ctx;
@@ -454,15 +466,22 @@ export function createDraftPanel(
     popup.appendChild(head);
 
     // 이 카드를 골랐을 때의 사본 · applyCard 그 함수를 그대로 쓴다(표시와 적용이 어긋날 수 없다).
+    // v9 에서 이 사본이 원본과 다른 곳은 **열쇠와 특성뿐**이다(도장·유지비는 그대로).
     const after = cloneGenome(c.genome);
     applyCard(after, card);
 
+    // 범주 다섯의 지금 단 · 여기는 **카드가 아니라 방울이 움직이는 자리**라 카드와 무관하게 현재만 그린다.
+    const tiersTitle = el("div", "draft-picked-title");
+    tiersTitle.textContent = "지금 내 종의 단 · 방울로 오릅니다";
+    // .draft-popup 은 블록이라 이웃 margin 이 붙는다(합쳐진다) · 제목 위아래 간격을 여기서 직접 잡는다.
+    tiersTitle.style.margin = "14px 0 0";
+    popup.appendChild(tiersTitle);
+
     const rows = el("div", "draft-stats");
+    rows.style.marginTop = "7px"; // 기본 18px 은 제목과 막대를 떼어 놓아 한 덩어리로 안 읽힌다
     for (const cat of CATEGORIES) {
-      const before = c.genome.pips[cat];
-      const now = after.pips[cat];
-      const fromTier = tierOfPips(c.genome.pips, cat);
-      const toTier = tierOfPips(after.pips, cat);
+      const pips = c.genome.pips[cat];
+      const t = tierOfPips(c.genome.pips, cat);
 
       const row = el("div", "draft-stat");
       const label = el("span", "draft-stat-label");
@@ -470,38 +489,17 @@ export function createDraftPanel(
       const track = el("div", "draft-stat-track");
       track.style.backgroundImage = tierTrackBackground();
       const fill = el("div", "draft-stat-fill");
-      fill.style.width = `${pipPct(Math.min(before, now))}%`;
+      fill.style.width = `${pipPct(pips)}%`;
       fill.style.background = categoryColor(cat);
       track.appendChild(fill);
 
-      if (now > before) {
-        // 유령 막대: 이 카드를 고르면 여기까지 찬다.
-        const ghost = el("div", "draft-stat-gain");
-        ghost.style.left = `${pipPct(before)}%`;
-        ghost.style.width = `${Math.max(0, pipPct(now) - pipPct(before))}%`;
-        track.appendChild(ghost);
-      } else if (now < before) {
-        const ghost = el("div", "draft-stat-loss");
-        ghost.style.left = `${pipPct(now)}%`;
-        ghost.style.width = `${Math.max(0, pipPct(before) - pipPct(now))}%`;
-        track.appendChild(ghost);
-      }
-
+      // 지금 단 + 다음 문턱까지 남은 칸. 남은 칸 수가 곧 다음 단을 사는 방울 값이다(`Game.tierCost`).
       const val = el("span", "draft-stat-val");
-      val.textContent = TIER_ROMAN[fromTier] || "·";
-      if (now !== before) {
+      val.textContent = TIER_ROMAN[t] || "·";
+      if (t < MAX_TIER) {
         const d = el("b");
-        if (toTier > fromTier) {
-          d.textContent = `▸ ${TIER_ROMAN[toTier]}`;
-          d.style.color = GAIN_COLOR;
-        } else if (toTier < fromTier) {
-          d.textContent = `▾ ${TIER_ROMAN[toTier] || "0"}`;
-          d.style.color = "#E85C43";
-        } else {
-          const delta = now - before;
-          d.textContent = delta > 0 ? `+${delta}` : `−${-delta}`;
-          d.style.color = delta > 0 ? SAVE_CHIP_COLOR : "#E85C43";
-        }
+        d.textContent = `${pipsToNext(pips)}칸`;
+        d.style.color = SAVE_CHIP_COLOR;
         val.append(" ", d);
       }
       row.append(label, track, val);
@@ -509,8 +507,19 @@ export function createDraftPanel(
     }
     popup.appendChild(rows);
 
-    // 열쇠 · 듀오 · 유지비. 전부 게놈(도장·열쇠)에서 파생된 값만 읽는다.
+    // 이 카드가 주는 것 · 열쇠 · 듀오 · 유지비.
     const lines = el("div", "draft-build-lines");
+
+    // **유령 막대가 있던 자리.** 카드가 실제로 주는 것을 그 카드의 말(cardSummary)로 그대로 옮긴다 ▸
+    // 특성이면 「밤에 보는 거리 ×1.45」, 전설이면 「열쇠 「물갈퀴」」, 불씨 카드면 「불씨 +1」.
+    const giveLine = el("div");
+    giveLine.textContent = "이 카드가 주는 것: ";
+    const giveVal = el("b");
+    giveVal.textContent = cardSummary(card);
+    giveVal.style.color = cardAccent(card);
+    giveLine.appendChild(giveVal);
+    lines.appendChild(giveLine);
+
     const keyLine = el("div");
     const owned = KEY_NAMES.filter((k) => c.genome.keys[k]).map((k) => KEY_LABELS[k]);
     // "+ 열쇠" 표시는 카드가 아니라 **적용된 사본**에서 읽는다. 열쇠 상한에 막혀 실제로는 안 열리는
@@ -528,38 +537,16 @@ export function createDraftPanel(
     }
     lines.appendChild(keyLine);
 
-    const duosNow = activeDuos(c.genome.pips);
-    const duosAfter = activeDuos(after.pips);
+    // 듀오와 유지비는 **도장에서만 나온다**(`activeDuos` 는 도장을, `derivedUpkeep` 도 도장을 읽는다) ▸
+    // 카드로는 안 움직이므로 「이 카드를 고르면」식 예고를 붙이지 않는다. 지금 상태만 적는다.
     const duoLine = el("div");
-    duoLine.textContent = `듀오: ${duosNow.map((d) => d.name).join(" · ") || "없음"}`;
-    const newDuo = duosAfter.find((d) => !duosNow.some((x) => x.id === d.id));
-    if (newDuo) {
-      const b = el("b");
-      b.textContent = `  + ${newDuo.name} 켜짐`;
-      b.style.color = GAIN_COLOR;
-      duoLine.appendChild(b);
-    }
+    duoLine.textContent = `듀오: ${activeDuos(c.genome.pips).map((d) => d.name).join(" · ") || "없음"}`;
     lines.appendChild(duoLine);
 
     const upkeepLine = el("div");
-    const u0 = c.genome.traits.upkeep;
-    const u1 = after.traits.upkeep;
-    upkeepLine.textContent = `유지비 ×${u0.toFixed(2)}`;
-    if (Math.abs(u1 - u0) > 1e-9) {
-      const b = el("b");
-      b.textContent = `  → ×${u1.toFixed(2)}`;
-      b.style.color = u1 > u0 ? "#E85C43" : GAIN_COLOR;
-      upkeepLine.appendChild(b);
-    }
+    upkeepLine.textContent = `유지비 ×${c.genome.traits.upkeep.toFixed(2)}`;
     lines.appendChild(upkeepLine);
     popup.appendChild(lines);
-
-    const legend = el("div", "draft-legend");
-    const swatch = el("span", "draft-legend-swatch");
-    const legendText = el("span");
-    legendText.textContent = `보고 있던 카드(${card.name})를 고르면 여기까지 차요.`;
-    legend.append(swatch, legendText);
-    popup.appendChild(legend);
 
     popup.appendChild(el("div", "draft-divider"));
 
@@ -578,6 +565,10 @@ export function createDraftPanel(
       dot.style.background = colorForCardName(name);
       const text = el("span");
       text.textContent = name;
+      // 특성 카드는 이름만으로 무엇을 하는지 알 수 없다(「밤눈」이 얼마나 세지는지가 이름에 없다).
+      // ⚠ 이건 마우스에서만 보이는 임시 손잡이다 · 폰에는 툴팁이 없으므로 눈에 보이는 자리가 따로 필요하다.
+      const line = perkLineForCardName(name);
+      if (line) chip.title = line;
       chip.append(dot, text);
       chips.appendChild(chip);
     }
@@ -768,14 +759,16 @@ export function createDraftPanel(
       if (raidChip) chips.appendChild(plainChipEl(raidChip, GAIN_COLOR));
       body.append(desc, chips);
 
-      // **이 카드를 고른 뒤의 게놈** · 각주도 몸집도 여기서 읽는다. 「고르면 무엇이 일어나는가」를
-      // 묻는 자리라 열쇠도 **고른 뒤 기준**이어야 한다: 전설 「박쥐의 귀」는 초음파를 열면서 눈에
-      // 도장 2 를 함께 찍으므로, 고르기 전 열쇠로 각주를 만들면 그 한 장이 자기 효과를 잘못 말한다.
+      // **이 카드를 고른 뒤의 게놈** · 몸집 변화가 여기서 나온다. 「고르면 무엇이 일어나는가」를
+      // 묻는 자리라 열쇠도 **고른 뒤 기준**이어야 한다: 열쇠는 몸집을 함께 바꾸므로(물갈퀴 +3 ·
+      // 날개 −4 · `derivedSize`), 고르기 전 게놈으로 재면 그 한 장이 자기 효과를 잘못 말한다.
       const after = cloneGenome(nextCtx.genome);
       applyCard(after, card);
 
       // 각주: 문턱을 넘으면 무엇이 켜지고(gain) 무엇을 잃는지(cost)를 tierLine 문구 **그대로** 두 줄로.
       // 수치를 여기서 다시 쓰지 않는다 · tiers.tierLine 이 단일 진실이다.
+      // ⚠ v9 의 드래프트 카드는 도장을 안 주므로 이 두 각주는 **도장을 주는 카드에만** 붙는다
+      //   (지금은 프리셋뿐이고 프리셋은 이 화면에 안 온다). 규칙이 되살아날 때를 위해 남겨 둔다.
       const firstUp = crossingMoves(card, nextCtx.genome.pips)[0];
       if (firstUp) {
         const tl = tierLine(firstUp.cat, firstUp.to, after.keys);
@@ -944,12 +937,17 @@ function tierChipEl(chip: TierChip): HTMLElement {
 }
 
 /**
- * 도장별 히어로 연출 · 무리 도장이 있으면 새끼 메달리온이 주위를 떠다니고, 다리 도장이 있으면
- * 속도 대시가 흐른다. 카드마다 손으로 짜지 않고 도장에서 뽑아내, 새 카드가 들어와도 알아서 붙는다.
+ * 범주별 히어로 연출 · 무리 계열이면 새끼 메달리온이 주위를 떠다니고, 다리 계열이면 속도 대시가 흐른다.
+ * 카드마다 손으로 짜지 않고 카드가 속한 범주에서 뽑아내, 새 카드가 들어와도 알아서 붙는다.
+ *
+ * ⚠ v9 에서 근거를 **도장 → 특성의 축**으로 옮겼다. 드래프트 카드는 도장을 안 주므로 예전 판정
+ *   (`card.pips.herd`)은 늘 0 이었고, 연출이 통째로 죽어 있었다. 축이 속한 범주는 `AXIS_CATEGORY`
+ *   가 정한다(카드 점 색·오라 색과 같은 근거라 색과 연출이 갈릴 수 없다).
  */
 function heroFlourish(card: Card, accent: string, spriteUrl: string): HTMLElement[] {
-  const herd = card.pips?.herd ?? 0;
-  const leg = card.pips?.leg ?? 0;
+  const cat = flourishCategory(card);
+  const herd = cat === "herd" ? 1 : 0;
+  const leg = cat === "leg" ? 1 : 0;
 
   const pup = (css: string, delay: number, flip: boolean): HTMLElement => {
     const node = el("div", "draft-pup");
@@ -1013,6 +1011,24 @@ function spawnConfetti(host: HTMLElement, burstDelayMs: number): void {
   }
 }
 
+/**
+ * 이 카드가 어느 범주의 카드인가 · 특성 카드는 그 축이 속한 범주(`AXIS_CATEGORY`),
+ * 도장 카드(프리셋)는 도장이 가장 큰 범주. 열쇠·불씨는 범주가 없다(null).
+ */
+function flourishCategory(card: Card): Category | null {
+  let top: Category | null = null;
+  for (const c of CATEGORIES) {
+    const n = card.pips?.[c] ?? 0;
+    if (n > 0 && (top === null || n > (card.pips?.[top] ?? 0))) top = c;
+  }
+  if (top !== null) return top;
+  if (card.perk !== undefined) {
+    const p = PERK_BY_NAME.get(card.perk);
+    if (p !== undefined) return AXIS_CATEGORY[p.axis];
+  }
+  return null;
+}
+
 const ALL_CARDS: readonly Card[] = [...CARD_POOL, ...PRESET_CARDS];
 
 /** 고른 형질 칩의 점 색 · 프리셋은 종 시작색, 일반 카드는 대표 범주 색. */
@@ -1021,6 +1037,17 @@ function colorForCardName(name: string): string {
   if (!card) return "#8C7C68"; // "건너뜀" 등 카드가 아닌 항목
   if (card.color !== undefined) return `#${card.color.toString(16).padStart(6, "0")}`;
   return cardAccent(card);
+}
+
+/**
+ * 그 이름의 카드가 특성 카드면 효과 한 줄(「밤에 보는 거리 ×1.45」), 아니면 null.
+ * 문구는 `sim/perks.perkLine` 이 만든다 · 여기서 배수를 다시 적지 않는다.
+ */
+function perkLineForCardName(name: string): string | null {
+  const card = ALL_CARDS.find((c) => c.name === name);
+  if (!card || card.perk === undefined) return null;
+  const p = PERK_BY_NAME.get(card.perk);
+  return p === undefined ? null : perkLine(p);
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(

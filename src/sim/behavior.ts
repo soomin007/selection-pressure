@@ -19,6 +19,7 @@ import { createEntity } from "@/sim/entity";
 import { areFriends } from "@/sim/species";
 import { bossCanHunt, isRaidFighter, isRaidRangedFighter, raidRangedPower, dealRaidHit, bossRaidTargetFor } from "@/sim/boss";
 import { ORDER, SIM } from "@/sim/params";
+import { perkCtxOf, perkMul } from "@/sim/perks";
 
 interface Vec {
   x: number;
@@ -332,7 +333,12 @@ function devour(e: Entity, prey: Entity, world: World): void {
   // 육식 빌드는 상한(maxEnergyFor)이 100 위로 올라 이 큰 사냥을 비축한다(긴 포만) — 초식은 상한 100 그대로.
   // 듀오 「큰 턱」(가죽 III + 이빨 III): 한 번 문 것으로 기력이 훨씬 많이 찬다.
   const jaw = hasDuo(e.genome.pips, "bigjaw") ? 1.5 : 1;
-  const huntGain = SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX) * et.hunt * gorgeFactor(carn) * jaw;
+  // 조건부 특성의 사냥 배수(「밤 사냥 ×1.3」 등)는 여기 한 자리에서만 걸린다.
+  // 무리 나눔(packShareGain)은 이 huntGain 을 밑으로 삼으므로 자동으로 함께 커진다 —
+  // 「내가 크게 잡으면 무리도 크게 나눈다」가 그대로 성립한다(따로 곱하면 두 번 걸린다).
+  const hMul = e.genome.perks.length > 0 ? perkMul(e.genome.perks, "hunt", perkCtxOf(e, world)) : 1;
+  const huntGain =
+    SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX) * et.hunt * gorgeFactor(carn) * jaw * hMul;
   e.energy = Math.min(maxEnergyFor(carn), e.energy + huntGain);
   // 무리사냥 먹이 나눔: 사냥감을 같은 종 무리가 함께 먹는다(늑대). 사냥감 주위 같은 종 순수 육식 무리에게
   // 카커스 몫을 지급 — 뭉친 팩은 소수의 사냥으로 다 같이 먹어 자생한다(herding 이 육식 생존 레버). 순수
@@ -395,6 +401,29 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
     if (prey.woundTicks <= 0 && hasDuo(pips, "ambush")) bite.damage *= 2;
     if (e.targetPrey === prey && hasDuo(pips, "pounce")) {
       bite.killChance = Math.min(SIM.killChanceMax, bite.killChance + 0.25);
+    }
+    // ── 조건부 특성의 무는 피해·버티는 힘 ──────────────────────────────────────────────
+    // **결과(피해·치명 확률)에 곧바로 곱한다.** 능치(attack·defense)를 키워 `biteOutcome` 을 다시
+    // 돌리지 않는 이유가 셋이다:
+    //  ① **카드에 적힌 수가 곧 실제여야 한다.** 물기 판정은 능치 차(`diff01`)를 거쳐 비선형이라,
+    //     「무는 힘 ×1.5」로 능치를 키우면 실제 피해는 ×1.5 가 아니다. 그 순간 화면이 거짓말한다
+    //     (이 저장소의 제1 규칙).
+    //  ② **규칙 면제를 특성이 공짜로 켜지 않는다.** 능치 100 이상은 「어떤 가죽도 못 막는다」인데
+    //     (`isApex`), 그건 이빨에 도장 스물을 들인 4단의 성취다. 3단(90) × 1.5 = 135 로 그 성취를
+    //     카드 한 장이 사 버리면 티어 설계가 무너진다.
+    //  ③ **화면의 관계 표식과 갈리지 않는다.** 「이빨이 박히는가」(`ignored`)는 위에서 이미 종의
+    //     기본 능치로 판정됐고, `leadRelation`(위험·먹잇감 표식)도 같은 값을 본다. 특성이 그 판정에
+    //     끼면 표식이 조건 따라 깜빡여 「물 수 있는가」가 화면에서 안 읽힌다.
+    // 특성이 없으면 배수가 1 이라 이 블록은 아무 일도 안 한다(부동소수점까지 예전 그대로).
+    const atkMul = e.genome.perks.length > 0 ? perkMul(e.genome.perks, "attack", perkCtxOf(e, world)) : 1;
+    const defMul =
+      prey.genome.perks.length > 0 ? perkMul(prey.genome.perks, "defense", perkCtxOf(prey, world)) : 1;
+    // 「받는 피해」축은 1 아래가 이득이라(`PERK_AXIS_INFO.defense.lower`) 그대로 곱하면 된다 —
+    // 무는 쪽은 키우고 물리는 쪽은 줄인다. 카드에 적힌 두 수의 곱이 정확히 여기 걸린다.
+    if (atkMul !== 1 || defMul !== 1) {
+      const m = atkMul * defMul;
+      bite.damage *= m;
+      bite.killChance = clamp(bite.killChance * m, 0, SIM.killChanceMax);
     }
   }
   // 이빨이 안 박혔다("일정 공격력 이하의 공격은 무시"). 판정상 아무 일도 안 일어나지만 **화면에는
@@ -502,6 +531,11 @@ export function leadBiteTarget(lead: Entity, world: World): Entity | null {
 
 export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const t = e.genome.traits;
+  // **조건부 특성**(`sim/perks.ts`) — 카드가 주는 것의 절반. 이 개체의 맥락을 한 번 만들어 아래
+  // 여러 축에서 돌려 쓴다. 특성이 하나도 없으면 `perkMul` 이 곧바로 1 을 돌려주므로, 야생종과
+  // 특성 없는 종이 겪는 세계는 **v8 과 부동소수점까지 같다**(x × 1 === x).
+  const perks = e.genome.perks;
+  const pctx = perkCtxOf(e, world);
   // 형질은 0~100 자연수 저장 → 계수 계산은 0~1 로 정규화(÷TRAIT_MAX)해 해석한다(임계 비교는 0~100 그대로).
   const speed01 = t.speed / TRAIT_MAX;
   const metabolism01 = t.metabolism / TRAIT_MAX;
@@ -523,21 +557,26 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 몸집이 크면 느리다(sizeSpeedFactor — 몸집 50 이면 1.0 이라 영향 없음).
   // **정점 속도(100)**: 험한 땅도 이 걸음을 늦추지 못한다(험지 감속 완전 면제).
   const roughFree = canFly || isApex(t.speed);
+  // 특성의 빠르기 배수는 **맨 끝에** 곱한다 — 앞의 다섯 항을 한 글자도 안 건드려야 특성 없는 종의
+  // 부동소수점 결과가 예전과 같다(known_issues 「덧셈 순서를 바꾸면 결정론 지문이 깨진다」).
   const maxSpeed =
     SIM.maxSpeedBase * (0.4 + speed01) *
     (roughFree ? 1 : roughSpeedFactor(world, e.x, e.y, speed01)) * sprintFactor *
-    sizeSpeedFactor(t.size);
+    sizeSpeedFactor(t.size) * perkMul(perks, "speed", pctx);
   // 이 자리에서 실제로 보는 반경. 밤·수풀 감쇠, 비행 보너스, 정점 시야(100) 면제가 전부 visionRadius
   // 안에 있다(렌더가 같은 함수로 안개 구멍을 뚫어 화면과 로직을 1:1 로 맞춘다).
-  const vision = visionRadius(t, world, e.x, e.y);
+  const vision = visionRadius(t, world, e.x, e.y) * perkMul(perks, "vision", pctx);
   // **공통 유지비(청구서)** — v8 의 두 겹 대가 중 (a). 티어가 오르면 이 배수가 오른다
   // (**[사용자 2026-08-06]** "대가는 두 겹. 공통 대사 유지비 + 범주마다 고유한 대가 하나씩").
   // 야생종은 `upkeep = 0.5 + 대사/100` 이라 v7 과 비트 단위로 같다.
   // 거기에 곱해지는 둘: 나는 것은 계속 비싸고(flyDrainMultiplier), 큰 몸은 많이 먹는다(sizeDrainFactor).
   // 그리고 **다리의 고유 대가** — 최고 속도에 가까울수록 배가 고파진다(질주 뒤 지침).
   const sprintDrain = t.sprintCost > 0 ? 1 + t.sprintCost * Math.min(1, Math.hypot(e.vx, e.vy) / Math.max(0.01, maxSpeed)) : 1;
+  // 특성의 기운 소모 배수는 **1 아래가 이득인 유일한 축**이다(「밤의 휴식 ×0.7」= 밤에 덜 먹는다).
+  // 그래서 카드에 적히는 수와 여기 곱해지는 수가 같다 — 화면이 ×0.7 이라 적으면 정확히 ×0.7 이다.
   const drain =
-    SIM.metabolismDrain * t.upkeep * flyDrainMultiplier(t.wings) * sizeDrainFactor(t.size) * sprintDrain;
+    SIM.metabolismDrain * t.upkeep * flyDrainMultiplier(t.wings) * sizeDrainFactor(t.size) * sprintDrain *
+    perkMul(perks, "upkeep", pctx);
   // ⚠ 수명은 **일부러 유지비와 안 묶었다.** 여기에 유지비를 곱하면 야생 전 종의 수명이 함께 움직여
   //   손으로 튜닝한 붐-버스트가 흔들린다. 유지비의 대가는 「굶주림」 한 축으로만 낸다(읽히는 축이 하나여야
   //   플레이어가 무엇 때문에 죽었는지 안다).
@@ -553,6 +592,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
 
   // 무리 이웃(3×3 칸) — cohesion(이동)과 huddle(보온)에 함께 쓴다.
   const nb = t.herding > 0 ? world.grid.neighborhood(e.x, e.y) : null;
+  // 특성 조건 「곁에 동료가 적을/많을 때」가 읽을 수 있게 개체에 남긴다(다음 틱부터 유효 · perkCtxOf 주석).
+  // 무리 성향 0 인 종은 이웃을 세지 않으므로 1(= 혼자)로 남는다.
+  e.neighbors = nb === null ? 1 : nb.count;
 
   // --- 원하는 속도(desired) 계산 ---
   let desired: Vec;
@@ -576,6 +618,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   }
   const flee = fighter ? null : computeFlee(e, world, t, maxSpeed, canSwim, canLand, canFly);
   const fleeing = flee !== null;
+  // 특성 조건 「달아나는 동안」이 읽을 수 있게 개체에 남긴다 — **다른 개체의 판정에서도 읽힌다**
+  // (「달아나는 등」은 물린 쪽의 도망 여부를 문 쪽의 판정 안에서 물어야 한다). entity.ts 주석 참조.
+  e.fleeing = fleeing;
   if (flee) {
     desired = flee;
     turn = SIM.fleeTurn; // 도망은 빠르게 반응
@@ -947,7 +992,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       } else {
         // 채집 수입 = 기본 × 풀 효율. 이빨 티어가 낮출수록 줄고(이빨의 고유 대가), 무리 티어가 높을수록
         // 개체당 몫이 준다(무리의 고유 대가 · "잡은 것은 함께 먹지만 풀은 나눠 뜯어 몫이 준다").
-        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy * t.graze);
+        // 특성의 풀 배수는 여기 한 자리에서만 걸린다(「수풀의 미식가 ×1.45」 등).
+        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy * t.graze * perkMul(perks, "graze", pctx));
         // 시대가 지날수록(foodScarcity) 먹힌 풀이 더 느리게 자란다 — 큰 무리일수록 고갈이 빨라 회복이 억제된다.
         food.regrowTimer = Math.round(SIM.foodRegrowTicks * world.foodRegrowMultiplier * world.foodScarcity);
         if (e.species.isPlayer) world.roundCounts.feeds += 1; // 시험 계수: 채집 섭취 확정(산 보물은 births 로 센다)
@@ -1019,7 +1065,11 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   if (
     world.entities.length + newborns.length < world.cap &&
     e.energy >= SIM.reproduceThreshold &&
-    world.rng.chance(SIM.reproduceRate * (0.3 + fertility01) * sizeFertilityFactor(t.size))
+    // ⚠ 특성 배수는 **확률 안에서** 곱한다 — rng 를 더 뽑지 않는다(새끼를 한 마리 더 낳는 식의 보상이
+    //   스트림을 밀어 시뮬을 통째로 다른 세계로 만든 적이 있다 · known_issues 「쌍둥이 실패」).
+    world.rng.chance(
+      SIM.reproduceRate * (0.3 + fertility01) * sizeFertilityFactor(t.size) * perkMul(perks, "fertility", pctx),
+    )
   ) {
     const childEnergy = e.energy * 0.5; // 새끼가 받는 기운 — 정점이어도 그대로(새끼를 더 살찌우는 게 아니다)
     e.energy -= isApex(t.fertility) ? childEnergy * SIM.apexBreedCost : childEnergy;

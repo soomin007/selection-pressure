@@ -1,29 +1,25 @@
-// 카드 = 종에 찍히는 **도장(pip)**. v8 에서 카드의 정체가 통째로 바뀌었다.
+// 카드 = 종이 얻는 **열쇠**와 **조건부 특성**. v9 에서 카드가 도장을 그만 준다.
 //
-// **지운 것과 그 이유** (v7 시절 계약 중 v8 에서 뜻이 사라진 것들):
-//   · 성장 스케일(CARD_GROWTH_SCALE)·상한 근접 감쇠(growthFalloff)·정점 고정 — 카드가 형질 숫자를
-//     직접 올리던 시절의 장치다. 카드가 도장만 찍는 지금은 "얼마나 붙는가"라는 질문 자체가 없다.
-//   · 희생(sacrifice)·전제 조건(requiresTrait)·효과 표(effects)·cardDelta/effectiveDelta —
-//     같은 이유로 사라졌다. 표시와 적용이 갈릴 수 있는 자리가 원리적으로 없어졌기 때문이다.
-//   · 갈래 전용 카드 풀(lineageCards) — 「3장 중 1장은 반드시 내 갈래」를 보장하면 내 범주만 계속
-//     쌓여 고르는 일이 사라진다. **[사용자 2026-08-06]** 보장이 아니라 확률 가중(`DraftBias`)으로 바꿨다.
-//   · CARD_RARITY 표 — 희귀도가 카드 객체의 필드가 되어 "표에 빠진 카드" 자체가 불가능해졌다.
+// **v9 에서 지운 것과 그 이유** (도장이 사라지면서 질문 자체가 없어진 것들):
+//   · `cardCrossesThreshold`(문턱 넘김)·「3장 중 한 장 보장」·`tierMove`/`cardTierMoves` —
+//     도장이 없으면 문턱이라는 개념이 없다. 표시용 도장 이동 계산은 프리셋 화면만 쓰므로
+//     `ui/traitDisplay.ts` 로 내려갔다.
+//   · `boostCard`(시대 보상 강화 ×N) — 뽑은 카드의 도장을 곱하던 것이라 곱할 것이 없어졌다.
+//   · 「주는 범주가 전부 최고 티어면 죽은 카드」 — 특성은 있거나 없거나라 판정이 「이미 가졌는가」
+//     하나로 줄었다. 만렙 뒤 후보가 0장이 되던 사고(2026-08-09)의 근본 원인이 여기 있었다.
 //
-// **살린 계약**은 전부 새 구조로 옮겼다: 뽑기 결정론 · 등급이 등장 빈도와 묶여 있다 · 대백과 표시
-// 확률이 실제 빈도와 맞는다 · 죽은 카드는 후보에 안 든다 · 같은 카드를 거듭 고르면 덜 뜬다.
+// **v8 에서 살린 계약**은 그대로다: 뽑기 결정론 · 등급이 등장 빈도와 묶여 있다 · 대백과 표시 확률이
+// 실제 빈도와 맞는다 · 죽은 카드는 후보에 안 든다 · 같은 카드를 거듭 고르면 덜 뜬다.
 import { describe, it, expect } from "vitest";
 import { Rng } from "@/sim/rng";
 import {
   drawCards,
   applyCard,
-  boostCard,
   cardCategories,
-  cardCrossesThreshold,
+  cardFavorsCategory,
   cardPips,
   cardRarity,
   cardSummary,
-  cardTierMoves,
-  tierMove,
   CARD_POOL,
   EMBER_CARD,
   PRESET_CARDS,
@@ -41,6 +37,7 @@ import {
   type Rarity,
 } from "@/game/cards";
 import { defaultGenome, genomeFromPips } from "@/sim/genome";
+import { PERKS, PERK_BY_NAME, perkLine, perkRarity, type PerkName } from "@/sim/perks";
 import {
   CATEGORIES,
   KEY_NAMES,
@@ -67,6 +64,19 @@ const card = (id: string): Card => {
 
 const pipsOf = (partial: Partial<Pips>): Pips => ({ ...emptyPips(), ...partial });
 
+/** 특성 이름 전부(순서는 `PERK_DEFS` 그대로). 「그릇을 다 채운 종」을 만들 때 쓴다. */
+const ALL_PERKS: PerkName[] = PERKS.map((p) => p.id);
+
+/** 최고 티어 다섯 + 열쇠 셋 — 도장 쪽으로는 더 갈 데가 없는 게놈. */
+const APEX_PIPS: Pips = pipsOf({
+  fang: TIER_STEPS[3],
+  leg: TIER_STEPS[3],
+  eye: TIER_STEPS[3],
+  hide: TIER_STEPS[3],
+  herd: TIER_STEPS[3],
+});
+const THREE_KEYS = { ...emptyKeys(), fin: true, wing: true, echo: true };
+
 describe("드래프트", () => {
   it("같은 시드는 같은 후보 3장", () => {
     const a = drawCards(new Rng("draft-1"), 3).map((c) => c.id);
@@ -85,20 +95,26 @@ describe("드래프트", () => {
   });
 
   it("allow 로 걸러낸 풀에서만 뽑는다", () => {
-    const only = new Set(["wc_fang1", "wc_leg1", "wc_eye1"]);
+    const only = new Set(["pk_vision_night", "pk_speed_night", "pk_graze_day"]);
     const ids = drawCards(new Rng("filtered"), 3, (c) => only.has(c.id)).map((c) => c.id);
     expect(new Set(ids)).toEqual(only);
   });
 
   it("풀보다 많이 요청해도 있는 만큼만 뽑는다", () => {
-    const drawn = drawCards(new Rng("small"), 5, (c) => c.id === "wc_fang1" || c.id === "wc_leg1");
+    const drawn = drawCards(
+      new Rng("small"),
+      5,
+      (c) => c.id === "pk_vision_night" || c.id === "pk_speed_night",
+    );
     expect(drawn.length).toBe(2);
   });
 
   it("불씨 카드는 일반 뽑기에 안 섞인다(game 이 따로 끼워 넣는다)", () => {
     expect(CARD_POOL.some((c) => c.id === EMBER_CARD.id)).toBe(false);
     expect(cardPrereqMet(EMBER_CARD, defaultGenome())).toBe(false);
-    // 도장은 0 이다 — 고르는 순간 이번 성장은 없다는 사실이 카드에 그대로 적혀 있다.
+    // 특성도 열쇠도 도장도 안 준다 — 고르는 순간 이번 성장은 없다는 사실이 카드에 그대로 적혀 있다.
+    expect(EMBER_CARD.perk).toBeUndefined();
+    expect(EMBER_CARD.key).toBeUndefined();
     expect(cardCategories(EMBER_CARD)).toEqual([]);
     expect(EMBER_CARD.ember).toBeGreaterThan(0);
   });
@@ -175,7 +191,7 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
   // ⚠ 「풀이 후보 수보다 작으면 있는 만큼만 뽑는 걸 반영한다」는 테스트를 지웠다. `rarityOdds` 의
   //   `inDraw` 는 **독립 3회 추첨 근사**(1-(1-p)³)라 풀 크기를 안 본다 — 2장짜리 풀에서는 둘 다 반드시
   //   뽑히는데 표시는 25% 로 나온다. 이건 v8 에서 생긴 결함이 아니라 처음부터 그런 근사였고, 대백과가
-  //   보여 주는 것은 늘 90장 풀이라 실제로는 안 드러난다. 실제 풀에서의 정확성은 바로 위
+  //   보여 주는 것은 늘 52장 풀이라 실제로는 안 드러난다. 실제 풀에서의 정확성은 바로 위
   //   몬테카를로 교차검증(오차 3%p 이내)이 못 박는다.
 
   it("등급 서열은 등장 확률로도 안 뒤집힌다 — 안 그러면 배지가 거짓말이다", () => {
@@ -184,9 +200,10 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
     //
     // ⚠ 이건 **가중치만의 성질이 아니라 풀 구성의 성질**이다. 등급이 뜰 확률 = 종류 수 × 가중치라,
     //   한 등급의 **종류 수**가 위 등급보다 많으면 가중치가 낮아도 더 자주 뜬다.
-    //   지금 풀은 흔함 26 · 드묾 24 · 귀함 5 · 아주 귀함 10 · 전설 7 이라 **아주 귀함(10장)이
-    //   귀함(5장)보다 자주 뜬다**(4.33% vs 4.11%). 고치는 길은 둘 중 하나다:
-    //   귀함 카드를 늘리거나, 아주 귀함 몇 장을 귀함으로 내리는 것.
+    //   v9 풀(52장)은 흔함 16 · 드묾 13 · 귀함 9 · 아주 귀함 7 · 전설 7 이라 서열이 지켜진다:
+    //   레벨 1 은 1600 > 845 > 342 > 140 > 70, 최대 레벨은 1600 > 1268 > 821 > 504 > 385.
+    //   ⚠ 특성 배수를 튜닝하면 `perkRarity` 가 등급을 다시 계산해 **장수가 저절로 움직인다.**
+    //     그때 이 서열이 깨지면 배수를 되돌리거나 띠(`PERK_VALUE_BANDS`)를 손봐야 한다.
     for (const level of [1, 3, 5, 7, 30]) {
       const o = rarityOdds(cardPoolFor(), 3, level);
       expect(o.legendary.perCard, `레벨 ${level}: 전설 < 아주 귀함`).toBeLessThan(o.epic.perCard);
@@ -197,43 +214,38 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
   });
 });
 
-describe("등급 기준 (cards.ts 주석의 규칙을 코드로 못 박는다)", () => {
+describe("등급 기준 (v9 — 등급을 손으로 안 적는다)", () => {
   it("전설은 열쇠 카드다 — 한 장으로 「못 하던 걸 하게 되는」 자리", () => {
     const legendary = CARD_POOL.filter((c) => cardRarity(c) === "legendary");
     expect(legendary.every((c) => c.key !== undefined)).toBe(true);
+    expect(legendary.length).toBe(KEY_NAMES.length);
     expect(new Set(legendary.map((c) => c.key))).toEqual(new Set(KEY_NAMES));
   });
 
-  it("열쇠 카드는 모 범주에도 도장을 하나 찍는다(세기가 곧 그 범주의 티어이므로)", () => {
+  it("특성 카드의 등급은 perkRarity 가 낸 값과 **정확히** 같다", () => {
+    // 등급을 손으로 적으면 배수를 튜닝할 때마다 배지가 조용히 거짓이 된다. 카드는 표에서 받아만 쓴다.
+    for (const p of PERKS) {
+      expect(cardRarity(card(`pk_${p.id}`)), `pk_${p.id} 의 등급이 손으로 적혀 있다`).toBe(perkRarity(p));
+    }
+    expect(CARD_POOL.filter((c) => c.perk !== undefined).length).toBe(PERKS.length);
+    expect(CARD_POOL.length).toBe(PERKS.length + KEY_NAMES.length);
+  });
+
+  it("모든 카드가 특성이나 열쇠 중 **정확히 하나**를 준다(도장은 안 준다)", () => {
     for (const c of CARD_POOL) {
-      if (c.key === undefined) continue;
-      expect(cardPips(c, KEY_PARENT[c.key]), `${c.id} 가 모 범주에 도장을 안 찍는다`).toBeGreaterThan(0);
+      const gives = (c.perk !== undefined ? 1 : 0) + (c.key !== undefined ? 1 : 0);
+      expect(gives, `${c.id} 가 주는 것이 하나가 아니다`).toBe(1);
+      // v9 에서 드래프트 카드는 도장을 안 준다 — 도장은 오직 방울로만 오른다.
+      expect(c.pips, `${c.id} 에 도장이 적혀 있다`).toBeUndefined();
+      expect(c.ember, `${c.id} 가 불씨를 준다(불씨는 풀 밖 카드다)`).toBeUndefined();
     }
   });
 
-  it("desc 에 효과를 안 적는다 — 효과는 티어 칩과 티어 줄이 말한다(두 곳에 적으면 어긋난다)", () => {
-    // 수치가 문구에 박히면 표와 문구가 언젠가 한쪽만 바뀐다. 도장 수·배수는 desc 에 없어야 한다.
+  it("desc 에 효과를 안 적는다 — 효과는 특성 줄이 말한다(두 곳에 적으면 어긋난다)", () => {
+    // 수치가 문구에 박히면 표와 문구가 언젠가 한쪽만 바뀐다. 배수는 desc 에 없어야 한다.
     for (const c of CARD_POOL) {
       expect(c.desc, `${c.id} 의 설명에 수치가 박혀 있다`).not.toMatch(/[+\-−]\s?\d|×\s?\d/);
-    }
-  });
-
-  it("맞바꿈 카드만 도장을 깎는다 — 그리고 주는 쪽이 확연히 크다", () => {
-    for (const c of CARD_POOL) {
-      const loses = CATEGORIES.filter((cat) => cardPips(c, cat) < 0);
-      if (loses.length === 0) continue;
-      const gain = CATEGORIES.reduce((s, cat) => s + Math.max(0, cardPips(c, cat)), 0);
-      const loss = loses.reduce((s, cat) => s - cardPips(c, cat), 0);
-      expect(gain, `${c.id}: 잃는 것보다 얻는 것이 커야 한다`).toBeGreaterThan(loss * 2);
-      // **[사용자 2026-08-06]** "다른 칸 수를 줄이는 거라면 그만큼 보상이 더욱 획기적이어야 할 거야."
-      expect(["epic", "legendary"], `${c.id}: 대가가 있는 카드가 흔한 등급이다`).toContain(cardRarity(c));
-    }
-  });
-
-  it("어떤 카드도 아무 도장도 안 찍지 않는다(죽은 카드가 풀에 없다)", () => {
-    for (const c of CARD_POOL) {
-      const touched = CATEGORIES.some((cat) => cardPips(c, cat) !== 0);
-      expect(touched || c.key !== undefined, `${c.id} 는 아무 일도 안 한다`).toBe(true);
+      expect(c.desc.length, `${c.id} 에 설명이 없다`).toBeGreaterThan(0);
     }
   });
 });
@@ -338,8 +350,6 @@ describe("시작 갈래(프리셋) — 시작 도장 다섯 + 시작 열쇠", ()
   it("느린 거인은 이빨에 도장이 하나도 없다 — 초식 거인 경로의 출발점", () => {
     // **[사용자 2026-08-06]** 「초식 거인 경로는 반드시 만든다」. 이빨 0단 = 풀 효율이 온전한 1.0 이고
     // 사냥은 영영 못 한다. 그게 벌이 아니라 **빌드**라는 것을 시작 갈래가 말한다.
-    const g = defaultGenome();
-    applyCard(g, card("lp_hide1") ?? PRESET_CARDS[0]!); // 자리표시 — 아래에서 진짜 프리셋으로 다시 만든다
     const giant = defaultGenome();
     const preset = PRESET_CARDS.find((c) => c.id === "preset_giant");
     expect(preset).toBeDefined();
@@ -353,54 +363,47 @@ describe("시작 갈래(프리셋) — 시작 도장 다섯 + 시작 열쇠", ()
   });
 });
 
-describe("카드 적용 — 도장을 찍고, 문턱을 넘으면 켜진다", () => {
-  it("적힌 도장이 정확히 그만큼 찍힌다(거짓말이 원리적으로 불가능하다)", () => {
+describe("카드 적용 — 특성이 붙고, 열쇠가 열리고, (프리셋만) 도장이 찍힌다", () => {
+  it("드래프트 카드는 도장을 1비트도 안 움직인다(v9 에서 도장은 방울로만 오른다)", () => {
     for (const c of CARD_POOL) {
       const g = genomeFromPips(pipsOf({ fang: 4, leg: 4, eye: 4, hide: 4, herd: 4 }), emptyKeys());
       const before = { ...g.pips };
       applyCard(g, c);
-      for (const cat of CATEGORIES) {
-        expect(g.pips[cat] - before[cat], `${c.id} / ${cat}`).toBe(cardPips(c, cat));
-      }
+      for (const cat of CATEGORIES) expect(g.pips[cat], `${c.id} / ${cat}`).toBe(before[cat]);
     }
   });
 
-  it("도장은 0 아래로 안 내려간다(맞바꿈이 마이너스를 만들지 않는다)", () => {
-    const trade = CARD_POOL.find((c) => CATEGORIES.some((cat) => cardPips(c, cat) < 0));
-    expect(trade).toBeDefined();
-    if (!trade) return;
+  it("프리셋에 적힌 도장은 정확히 그만큼 찍힌다(거짓말이 원리적으로 불가능하다)", () => {
+    for (const p of PRESET_CARDS) {
+      const g = defaultGenome();
+      applyCard(g, p);
+      for (const cat of CATEGORIES) expect(g.pips[cat], `${p.id} / ${cat}`).toBe(cardPips(p, cat));
+    }
+  });
+
+  it("고르면 genome.perks 에 **정확히 그 특성 하나**가 들어간다", () => {
+    for (const c of CARD_POOL) {
+      if (c.perk === undefined) continue;
+      const g = defaultGenome();
+      applyCard(g, c);
+      expect(g.perks, c.id).toEqual([c.perk]);
+    }
+  });
+
+  it("같은 특성을 두 번 넣어도 하나뿐이다 — 중복하면 배수가 곱해져 화면 한 줄과 갈린다", () => {
+    const c = card("pk_vision_night");
     const g = defaultGenome();
-    applyCard(g, trade);
-    for (const cat of CATEGORIES) expect(g.pips[cat]).toBeGreaterThanOrEqual(0);
+    applyCard(g, c);
+    applyCard(g, c);
+    expect(g.perks).toEqual([c.perk]);
   });
 
-  it("문턱을 안 넘으면 세계가 1비트도 안 움직인다(저축은 저축일 뿐)", () => {
-    const g = genomeFromPips(pipsOf({ fang: TIER_STEPS[0] }), emptyKeys());
+  it("특성은 파생 능치를 안 건드린다(상황마다 켜졌다 꺼지는 것이라 고정 표에 안 들어간다)", () => {
+    const g = defaultGenome();
     const before = { ...g.traits };
-    applyCard(g, card("wc_fang1")); // 이빨 +2 — 1단(3)에서 5 로, 2단(8)엔 못 닿는다
-    expect(tierOf(g.pips.fang)).toBe(1);
+    for (const c of CARD_POOL) if (c.perk !== undefined) applyCard(g, c);
+    expect(g.perks.length).toBe(PERKS.length);
     expect(g.traits).toEqual(before);
-  });
-
-  it("문턱을 넘기는 순간 그 범주가 통째로 켜진다", () => {
-    const g = genomeFromPips(pipsOf({ fang: TIER_STEPS[0] - 1 }), emptyKeys());
-    expect(g.traits.hunt).toBe(0); // 아직 사냥을 못 한다
-    applyCard(g, card("wc_fang1")); // +2 → 문턱을 넘는다
-    expect(tierOf(g.pips.fang)).toBe(1);
-    expect(g.traits.hunt).toBeGreaterThan(0); // 사냥이 열린다
-  });
-
-  it("맞바꿈은 티어를 실제로 강등시킨다(대가가 화면에도 그 자리에서 보이는 그 값)", () => {
-    const trade = CARD_POOL.find((c) => CATEGORIES.some((cat) => cardPips(c, cat) < 0));
-    expect(trade).toBeDefined();
-    if (!trade) return;
-    const loss = CATEGORIES.find((cat) => cardPips(trade, cat) < 0) as Category;
-    const g = genomeFromPips(pipsOf({ [loss]: TIER_STEPS[0] } as Partial<Pips>), emptyKeys());
-    const move = tierMove(trade, g.pips, loss);
-    expect(move.from).toBe(1);
-    expect(move.to).toBe(0); // 카드가 「▾」로 예고한 그 강등
-    applyCard(g, trade);
-    expect(tierOf(g.pips[loss])).toBe(0);
   });
 
   it("열쇠 카드는 열쇠를 열고, 상한(3개)을 넘겨 열지 않는다", () => {
@@ -409,63 +412,20 @@ describe("카드 적용 — 도장을 찍고, 문턱을 넘으면 켜진다", ()
     expect(keyCount(g.keys)).toBe(MAX_KEYS);
   });
 
-  it("티어 이동 예고(cardTierMoves)가 실제 적용과 정확히 같다 — 칩이 곧 결과다", () => {
+  it("한 줄 요약(cardSummary)이 perkLine 과 **글자 그대로** 같다", () => {
+    // ⚠ 여기에 배수를 적지 않는다 — 배수를 튜닝하면 그 자리가 조용히 낡는다. `perks.ts` 가 만든 줄과
+    //   카드가 내놓는 줄이 같은지만 본다(두 곳에 적으면 반드시 한쪽만 바뀐다).
     for (const c of CARD_POOL) {
-      for (const start of [0, 2, TIER_STEPS[0], TIER_STEPS[1], TIER_STEPS[2], TIER_STEPS[3]]) {
-        const pips = pipsOf({ fang: start, leg: start, eye: start, hide: start, herd: start });
-        const g = genomeFromPips(pips, emptyKeys());
-        const moves = cardTierMoves(c, pips);
-        applyCard(g, c);
-        for (const m of moves) {
-          expect(tierOf(g.pips[m.cat]), `${c.id} / ${m.cat} @${start}`).toBe(m.to);
-          expect(pipsToNext(g.pips[m.cat])).toBe(m.remain);
-        }
-      }
+      if (c.perk === undefined) continue;
+      const p = PERK_BY_NAME.get(c.perk);
+      expect(p, `${c.id} 의 특성이 표에 없다`).toBeDefined();
+      if (p) expect(cardSummary(c), c.id).toBe(perkLine(p));
     }
-  });
-
-  it("한 줄 요약(cardSummary)이 실제 도장·열쇠와 맞는다", () => {
-    // ⚠ 도장 수를 여기 적지 않는다 — 카드 풀을 손보면 그 자리가 조용히 낡는다(등급=크기로 재편할 때
-    //   실제로 깨졌다). **카드에서 읽어** 요약이 그것과 맞는지만 본다.
-    const well = card("wc_fang1");
-    expect(cardSummary(well)).toBe(`이빨 +${cardPips(well, "fang")}`);
-    const trade = card("td_hl");
-    expect(cardSummary(trade)).toBe(
-      `가죽 +${cardPips(trade, "hide")} · 다리 −${Math.abs(cardPips(trade, "leg"))}`,
-    );
     expect(cardSummary(card("ky_fin"))).toContain("열쇠 「지느러미」");
     expect(cardSummary(EMBER_CARD)).toContain("불씨 +1");
-  });
-});
-
-describe("시대 보상 카드 강화(boostCard)", () => {
-  it("도장이 배수만큼 커지고 대가(음수)는 안 커진다 — 보상이 벌이 되면 안 된다", () => {
-    const trade = CARD_POOL.find((c) => CATEGORIES.some((cat) => cardPips(c, cat) < 0));
-    expect(trade).toBeDefined();
-    if (!trade) return;
-    const boosted = boostCard(trade, 2);
-    for (const cat of CATEGORIES) {
-      const base = cardPips(trade, cat);
-      expect(cardPips(boosted, cat)).toBe(base > 0 ? base * 2 : base);
-    }
-    // 원본은 안 건드린다(사본).
-    expect(cardPips(trade, cardCategories(trade)[0] as Category)).toBeGreaterThan(0);
-  });
-
-  it("표시(칩)와 적용이 같은 객체에서 나온다 — 강화 카드도 갈릴 수 없다", () => {
-    const boosted = boostCard(card("wc_fang1"), 3);
-    const g = defaultGenome();
-    const moves = cardTierMoves(boosted, g.pips);
-    applyCard(g, boosted);
-    expect(g.pips.fang).toBe(cardPips(boosted, "fang"));
-    for (const m of moves) expect(tierOf(g.pips[m.cat])).toBe(m.to);
-  });
-
-  it("배수 1 이하는 도장을 안 키운다(음수 배수 방어)", () => {
-    const one = boostCard(card("wc_fang1"), 1);
-    expect(cardPips(one, "fang")).toBe(cardPips(card("wc_fang1"), "fang"));
-    const zero = boostCard(card("wc_fang1"), 0);
-    expect(cardPips(zero, "fang")).toBe(cardPips(card("wc_fang1"), "fang"));
+    // 프리셋만 도장을 말한다(드래프트 풀 밖이라 규칙이 다르다).
+    const omni = PRESET_CARDS.find((c) => c.id === "preset_omni") as Card;
+    expect(cardSummary(omni)).toBe(`이빨 +${cardPips(omni, "fang")} · 눈 +${cardPips(omni, "eye")}`);
   });
 });
 
@@ -478,109 +438,102 @@ describe("죽은 카드 필터(cardPrereqMet · cardRedundant)", () => {
   });
 
   it("열쇠 상한(3개)에 닿으면 열쇠 카드가 통째로 빠진다", () => {
-    const full = genomeFromPips(emptyPips(), { ...emptyKeys(), fin: true, wing: true, echo: true });
+    const full = genomeFromPips(emptyPips(), THREE_KEYS);
     for (const c of CARD_POOL.filter((x) => x.key !== undefined)) {
       expect(cardPrereqMet(c, full), c.id).toBe(false);
     }
   });
 
-  it("주는 범주가 전부 최고 티어면 그 카드는 아무 일도 못 한다", () => {
-    const maxed = genomeFromPips(pipsOf({ fang: TIER_STEPS[3] }), emptyKeys());
-    expect(cardPrereqMet(card("wc_fang1"), maxed)).toBe(false); // 이빨만 주는 카드
-    expect(cardRedundant(card("wc_fang1"), maxed)).toBe(true);
-    // 한 범주라도 남아 있으면 후보다(부분 무효는 후보다).
-    expect(cardPrereqMet(card("tw_fl"), maxed)).toBe(true); // 이빨 +1 · 다리 +1
-    expect(cardRedundant(card("tw_fl"), maxed)).toBe(false);
+  it("이미 가진 특성은 후보에 안 든다 — 같은 특성은 한 번뿐이다", () => {
+    const has = genomeFromPips(emptyPips(), emptyKeys(), ["vision_night"]);
+    expect(cardRedundant(card("pk_vision_night"), has)).toBe(true);
+    expect(cardPrereqMet(card("pk_vision_night"), has)).toBe(false);
+    // 같은 축의 다른 특성은 여전히 후보다(축을 판다고 그 축이 닫히지 않는다).
+    expect(cardRedundant(card("pk_vision_day"), has)).toBe(false);
+    expect(cardPrereqMet(card("pk_vision_day"), has)).toBe(true);
   });
 
-  it("문턱을 안 넘는 것 자체는 죽은 게 아니다(다음 장을 위한 저축이다)", () => {
-    const g = genomeFromPips(pipsOf({ fang: TIER_STEPS[0] }), emptyKeys());
-    expect(cardRedundant(card("wc_fang1"), g)).toBe(false);
+  it("도장은 후보 판정에 아무 영향이 없다 — 최고 티어 종에게도 카드 52장이 그대로 뜬다", () => {
+    // v8 에서 「주는 범주가 전부 최고 티어면 죽은 카드」였고, 그것이 만렙 뒤 빈 드래프트의 원인이었다.
+    const apex = genomeFromPips(APEX_PIPS, emptyKeys());
+    const bare = defaultGenome();
+    for (const c of CARD_POOL) {
+      expect(cardPrereqMet(c, apex), c.id).toBe(cardPrereqMet(c, bare));
+    }
+    expect(CARD_POOL.filter((c) => cardPrereqMet(c, apex)).length).toBe(CARD_POOL.length);
   });
 
   it("어떤 게놈에서도 후보에 남은 카드는 반드시 무언가를 바꾼다", () => {
     const genomes = [
       defaultGenome(),
       genomeFromPips(pipsOf({ fang: TIER_STEPS[3] }), emptyKeys()),
-      genomeFromPips(pipsOf({ fang: TIER_STEPS[3], leg: TIER_STEPS[3] }), { ...emptyKeys(), fin: true }),
-      genomeFromPips(
-        pipsOf({ fang: TIER_STEPS[3], leg: TIER_STEPS[3], eye: TIER_STEPS[3], hide: TIER_STEPS[3], herd: TIER_STEPS[3] }),
-        { ...emptyKeys(), fin: true, wing: true, echo: true },
-      ),
+      genomeFromPips(APEX_PIPS, { ...emptyKeys(), fin: true }, ALL_PERKS.slice(0, 20)),
+      genomeFromPips(APEX_PIPS, THREE_KEYS, ALL_PERKS),
     ];
     for (const g of genomes) {
       for (const c of CARD_POOL) {
         if (!cardPrereqMet(c, g) || cardRedundant(c, g)) continue;
-        const changes = c.key !== undefined || CATEGORIES.some((cat) => cardPips(c, cat) !== 0);
-        expect(changes, `${c.id}: 후보인데 아무것도 안 바꾼다`).toBe(true);
+        const opensKey = c.key !== undefined && !g.keys[c.key] && keyCount(g.keys) < MAX_KEYS;
+        const addsPerk = c.perk !== undefined && !g.perks.includes(c.perk);
+        expect(opensKey || addsPerk, `${c.id}: 후보인데 아무것도 안 바꾼다`).toBe(true);
       }
     }
   });
 
   it("한 런에 실제로 닿을 수 있는 최대 성장에서도 후보 3장이 채워진다(필터가 풀을 말리지 않는다)", () => {
-    // 한 런의 도장 공급은 넉넉해도 약 30 개다(tiers.ts 실측표) — 두 범주를 최고 티어까지 미는 것이
-    // 사실상 한계다. 그 지점에서 후보가 마르면 후반 드래프트가 빈 화면이 된다.
-    const maxed = genomeFromPips(pipsOf({ fang: TIER_STEPS[3], leg: TIER_STEPS[3] }), {
-      ...emptyKeys(),
-      fin: true,
-      wing: true,
-      echo: true,
-    });
+    // 한 런의 카드는 12~22장이다(tiers.ts 실측표). 22장을 **전부 특성으로만** 채우고 도장도 열쇠도
+    // 꽉 채운 자리 — 실제 플레이가 닿을 수 있는 가장 마른 지점이다.
+    const maxed = genomeFromPips(APEX_PIPS, THREE_KEYS, ALL_PERKS.slice(0, 22));
     const allow = (c: Card): boolean => cardPrereqMet(c, maxed) && !cardRedundant(c, maxed);
+    expect(CARD_POOL.filter(allow).length).toBe(PERKS.length - 22); // 남은 특성 23장
     const rng = new Rng("apex-pool");
     for (let i = 0; i < 40; i++) {
       expect(drawCards(rng, 3, allow, 7).length).toBe(3);
     }
   });
-});
 
-describe("죽은 카드 규칙 (나) — 3장 중 최소 한 장은 문턱을 넘긴다", () => {
-  it("도장 상황을 넘기면 문턱을 넘기는 카드가 반드시 한 장 들어간다", () => {
-    // 이게 없으면 "도장은 오르는데 아무 일도 안 일어나는 픽"이 쌓이고, 새끼를 확정으로 주는 스킵이
-    // 늘 정답이 된다. **[사용자 2026-08-06]** 은 보장이 아니라 확률이 재미라고 했지만, 그건 「내 방향
-    // 카드가 뜨는가」의 이야기다 — 「이번 판에 아무 일도 안 일어나는가」는 보장으로 막는다.
-    const rng = new Rng("cross");
-    for (const start of [0, 1, 2, TIER_STEPS[0], TIER_STEPS[1] - 1, TIER_STEPS[2] - 1]) {
-      const pips = pipsOf({ fang: start, leg: start, eye: start, hide: start, herd: start });
-      for (let i = 0; i < 40; i++) {
-        const drawn = drawCards(rng, 3, undefined, 5, undefined, undefined, pips);
-        expect(drawn.length).toBe(3);
-        expect(
-          drawn.some((c) => cardCrossesThreshold(c, pips)),
-          `도장 ${start}: 문턱을 넘기는 카드가 하나도 없다`,
-        ).toBe(true);
-      }
-    }
-  });
+  it("풀이 마르는 것은 **특성 마흔다섯을 전부 가졌을 때뿐**이고, 그건 한 런으로 못 닿는다", () => {
+    // v8 의 사고: 성장 그릇이 「도장 100 + 열쇠 3」뿐이라 5시대짜리 런이 시대 3에 그릇을 채웠고,
+    // 그 뒤 드래프트가 통째로 비었다(2026-08-09). v9 의 그릇은 「특성 45 + 열쇠 3」이라 한 런
+    // (카드 12~22장)으로는 절반도 못 채운다 — 즉 **정상 플레이에서 도달 불가능한 자리**다.
+    // 그래도 0장이 되는 것 자체는 사실이므로, 그 사실을 여기 못 박아 둔다(game 이 빈 후보를 받는
+    // 경우를 언젠가 다루게 될 때 근거가 된다).
+    const everything = genomeFromPips(emptyPips(), THREE_KEYS, ALL_PERKS);
+    const allow = (c: Card): boolean => cardPrereqMet(c, everything) && !cardRedundant(c, everything);
+    expect(CARD_POOL.filter(allow).length).toBe(0);
+    expect(drawCards(new Rng("everything"), 3, allow, 7)).toEqual([]);
 
-  it("도장을 안 넘기면 보장을 안 건다(기존 뽑기 그대로 · 결정론 보존)", () => {
-    const a = drawCards(new Rng("nopips"), 3, undefined, 5).map((c) => c.id);
-    const b = drawCards(new Rng("nopips"), 3, undefined, 5, undefined, undefined, undefined).map((c) => c.id);
-    expect(a).toEqual(b);
-  });
-
-  it("문턱을 넘기는 장이 늘 첫 자리에 오지 않는다(위치만 보고 알아버리면 안 된다)", () => {
-    const pips = emptyPips();
-    const rng = new Rng("shuffle");
-    const positions = new Set<number>();
-    for (let i = 0; i < 200; i++) {
-      const drawn = drawCards(rng, 3, undefined, 5, undefined, undefined, pips);
-      drawn.forEach((c, idx) => {
-        if (cardCrossesThreshold(c, pips)) positions.add(idx);
-      });
-    }
-    expect(positions.size).toBeGreaterThan(1);
+    // 한 장만 모자라면 정확히 그 한 장이 뜬다 — 마르는 것은 「전부 가졌을 때」 딱 한 지점뿐이다.
+    const almost = genomeFromPips(emptyPips(), THREE_KEYS, ALL_PERKS.slice(1));
+    const allowAlmost = (c: Card): boolean => cardPrereqMet(c, almost) && !cardRedundant(c, almost);
+    expect(CARD_POOL.filter(allowAlmost).map((c) => c.id)).toEqual([`pk_${ALL_PERKS[0] as string}`]);
   });
 });
 
 describe("내가 판 방향이 조금 더 자주 뜬다(DraftBias — 보장이 아니라 가중)", () => {
+  // ⚠ 판정 근거가 v9 에서 바뀌었다: 카드가 도장을 안 주므로 `cardPips` 로는 「내 방향」을 알 수 없다.
+  //   대신 `cardFavorsCategory` 가 특성의 **축**(이빨 ↔ 무는·사냥)과 열쇠의 **모 범주**로 판정한다.
+  //   드래프트 가중과 game.ts 의 「내 방향이 몇 판째 안 떴나」 집계가 **둘 다 이 함수 하나**를 쓴다.
+
+  it("판정은 축과 모 범주가 한다 — 카드 한 장은 정확히 한 범주만 편든다", () => {
+    for (const c of CARD_POOL) {
+      const favored = CATEGORIES.filter((cat) => cardFavorsCategory(c, cat));
+      expect(favored.length, `${c.id} 가 편드는 범주가 하나가 아니다`).toBe(1);
+      if (c.key !== undefined) expect(favored[0], c.id).toBe(KEY_PARENT[c.key]);
+    }
+    // 이빨을 판 사람에게는 무는·사냥 카드가 뜬다(축 표가 그렇게 이어 준다).
+    expect(cardFavorsCategory(card("pk_attack_night"), "fang")).toBe(true);
+    expect(cardFavorsCategory(card("pk_attack_night"), "eye")).toBe(false);
+    expect(cardFavorsCategory(card("ky_fin"), "leg")).toBe(true); // 지느러미의 모 범주는 다리
+  });
+
   it("가중을 걸면 그 범주의 카드가 뚜렷이 자주 뜬다", () => {
     const count = (weight: number): number => {
       const rng = new Rng("bias");
       let seen = 0;
       for (let i = 0; i < 1500; i++) {
         const drawn = drawCards(rng, 3, undefined, 5, undefined, { cats: ["fang"], weight });
-        seen += drawn.filter((c) => cardPips(c, "fang") > 0).length;
+        seen += drawn.filter((c) => cardFavorsCategory(c, "fang")).length;
       }
       return seen;
     };
@@ -593,31 +546,45 @@ describe("내가 판 방향이 조금 더 자주 뜬다(DraftBias — 보장이 
     let empty = 0;
     for (let i = 0; i < 400; i++) {
       const drawn = drawCards(rng, 3, undefined, 5, undefined, { cats: ["fang"], weight: 2.5 });
-      if (!drawn.some((c) => cardPips(c, "fang") > 0)) empty += 1;
+      if (!drawn.some((c) => cardFavorsCategory(c, "fang"))) empty += 1;
     }
     expect(empty).toBeGreaterThan(0);
   });
 
   it("가중 1 은 보정 없음과 완전히 같다(결정론 보존)", () => {
     const a = drawCards(new Rng("b1"), 3, undefined, 5).map((c) => c.id);
-    const b = drawCards(new Rng("b1"), 3, undefined, 5, undefined, { cats: ["fang"], weight: 1 }).map((c) => c.id);
+    const b = drawCards(new Rng("b1"), 3, undefined, 5, undefined, { cats: ["fang"], weight: 1 }).map(
+      (c) => c.id,
+    );
     expect(a).toEqual(b);
   });
 });
 
 describe("반복 완화(소프트 디듑)", () => {
-  const commons = ["wc_fang1", "wc_leg1", "wc_eye1", "wc_hide1", "wc_herd1", "tw_fl"];
+  // 전부 흔함 등급이라 가중치가 같다 — 차이가 나면 그건 오직 「몇 번 골랐나」 때문이다.
+  const commons = [
+    "pk_graze_day",
+    "pk_graze_crowd",
+    "pk_hunt_always",
+    "pk_hunt_hungry",
+    "pk_attack_always",
+    "pk_attack_hunting",
+  ];
   const allow = (c: { id: string }): boolean => commons.includes(c.id);
 
+  it("고른 여섯 장이 모두 같은 등급이다(이 테스트의 전제)", () => {
+    for (const id of commons) expect(cardRarity(card(id)), id).toBe("common");
+  });
+
   it("이미 여러 장 고른 카드는 뚜렷이 덜 뜬다(안 고른 같은 등급 카드보다)", () => {
-    const picked = new Map([["wc_fang1", 3]]); // 세 번 골랐다
+    const picked = new Map([["pk_graze_day", 3]]); // 세 번 골랐다
     let pickedSeen = 0;
     let freshSeen = 0;
     const rng = new Rng("dedup");
     for (let i = 0; i < 4000; i++) {
-      const id = (drawCards(rng, 1, allow, 1, picked)[0] as { id: string }).id;
-      if (id === "wc_fang1") pickedSeen += 1;
-      else if (id === "wc_leg1") freshSeen += 1;
+      const id = (drawCards(rng, 1, allow, 1, picked)[0] as Card).id;
+      if (id === "pk_graze_day") pickedSeen += 1;
+      else if (id === "pk_graze_crowd") freshSeen += 1;
     }
     expect(pickedSeen).toBeGreaterThan(0); // 0 이 아니다 — 스택은 여전히 가능(뜸할 뿐)
     expect(pickedSeen * 2).toBeLessThan(freshSeen); // 고른 쪽이 뚜렷이 덜
@@ -630,10 +597,10 @@ describe("반복 완화(소프트 디듑)", () => {
   });
 });
 
-describe("갈래 전용 풀은 폐기됐다 — 90장 전부가 누구에게나 나온다", () => {
+describe("갈래 전용 풀은 폐기됐다 — 52장 전부가 누구에게나 나온다", () => {
   it("cardPoolFor 는 늘 풀 전체를 준다", () => {
     expect(cardPoolFor().length).toBe(CARD_POOL.length);
-    expect(CARD_POOL.length).toBe(90);
+    expect(CARD_POOL.length).toBe(52);
   });
 
   it("최고 티어 상한은 넷이다(사다리 끝이 곧 성장의 끝)", () => {

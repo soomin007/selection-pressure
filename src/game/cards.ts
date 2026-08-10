@@ -1,34 +1,44 @@
-// 카드 = 종에 찍히는 **도장(pip)**. 런 내 영구, 런 종료 시 리셋(로그라이크).
-// 매 드래프트에 풀에서 3장 후보(운 요소)를 뽑고 하나를 고른다.
+// 카드 = 종이 얻는 **열쇠**(없던 능력)와 **조건부 특성**(이미 있는 것이 특정 맥락에서 세진다).
+// 런 내 영구, 런 종료 시 리셋(로그라이크). 매 드래프트에 풀에서 3장 후보(운 요소)를 뽑고 하나를 고른다.
 //
-// **v8 에서 카드의 정체가 바뀌었다** (2026-08-06 회의 · **[사용자]** 확정).
-//   예전: 카드가 형질 숫자를 직접 올렸다(속도 +15). 그런데 그 +15 가 실제로 무슨 일을 하는지는
-//         지금 값이 얼마냐에 따라 달랐고(상한 근접 감쇠), 효과도 시드 노이즈에 묻혔다.
-//   지금: 카드는 **범주에 도장을 찍을 뿐**이고, 세계는 **문턱을 넘었는가**만 본다.
+// **v9 에서 카드가 도장을 그만 준다** (**[사용자 2026-08-07]** "카드에서 도장을 완전히 뺀다" ·
+// **[사용자 2026-08-08]** "카드는 유지하고 도장만 뺀다").
+//   v8: 카드가 범주에 도장을 찍었다. 그런데 성장 그릇이 「도장 100 + 열쇠 3」뿐이라 5시대짜리 런이
+//       **시대 3에 그릇을 채웠고**, 채운 뒤로는 카드 100장이 전부 죽은 카드가 되어 드래프트가
+//       통째로 비었다(2026-08-09 판 분석 · 사용자 눈에는 화면이 고장난 것으로 보였다).
+//       「성장이 빠르다」·「만렙 뒤 빈 드래프트」·「아주 귀함이 흔하다」가 전부 같은 뿌리였다.
+//   v9: **도장은 오직 방울로만 오른다**(`Game.buyTier`). 카드는 성장의 축이 아니라 **판의 색**을
+//       담당한다 — 같은 티어라도 어떤 특성을 모았느냐로 판이 갈린다.
 //
-// 이 구조의 값어치는 **거짓말이 원리적으로 불가능해진 것**이다. 카드에 「이빨 +2」라 적히면 정확히
-// 도장 두 개가 찍히고, 그 두 개가 문턱을 넘기면 티어 효과가 통째로 켜지며, 못 넘기면 아무 일도
-// 안 일어난다 — 그리고 **넘기는지 못 넘기는지가 카드에 그대로 적혀 있다**(`draftPanel` 의 티어 칩).
+// 그래서 조절 손잡이가 하나가 됐다. v8 에서는 카드와 방울이 각자 성장을 밀어서 **어느 쪽을 조여도
+// 다른 쪽이 메웠다.**
 //
-// ⚠ 성장 스케일(CARD_GROWTH_SCALE) · 상한 근접 감쇠(growthFalloff) · 정점 고정 · 갈래 전용 40장은
-//   **전부 폐기했다.** 셋은 서로 물려 있어 한 묶음으로만 버릴 수 있었다.
+// 거짓말이 원리적으로 불가능한 구조는 그대로다: 카드에 적히는 한 줄을 `sim/perks.ts` 가 만들고,
+// sim 이 곱하는 배수도 같은 표에서 나온다. 두 곳에 적힌 규칙은 반드시 조용히 어긋난다.
+//
+// ⚠ **프리셋(시작 갈래)만 아직 도장을 준다.** 그건 카드가 아니라 「어떤 종으로 시작하는가」이고,
+//   드래프트 풀에 안 들어간다(`CARD_POOL` 과 `PRESET_CARDS` 는 다른 배열이다).
 
 import type { Rng } from "@/sim/rng";
 import type { Genome } from "@/sim/genome";
 import { refreshDerived } from "@/sim/genome";
+import {
+  CATEGORY_AXES,
+  PERKS,
+  PERK_BY_NAME,
+  perkLine,
+  perkRarity,
+  type PerkName,
+} from "@/sim/perks";
 import {
   CATEGORIES,
   CATEGORY_LABELS,
   KEY_LABELS,
   KEY_PARENT,
   MAX_KEYS,
-  MAX_TIER,
   keyCount,
-  pipsToNext,
-  tierOf,
   type Category,
   type KeyName,
-  type Pips,
 } from "@/sim/tiers";
 
 /**
@@ -83,7 +93,7 @@ export function rarityWeightsAtLevel(level: number): Record<Rarity, number> {
  *
  * ⚠ **갈래 전용 카드 풀은 폐기했다.** 티어 구조에서 "3장 중 1장은 반드시 내 갈래"를 보장하면
  * "내 범주만 계속 쌓인다"로 굳어 고르는 일이 사라진다. 갈래는 이제 **시작 도장의 배분과 시작 열쇠**만
- * 다르게 하고, 카드는 90장 전부가 누구에게나 나온다. 대신 **[사용자 2026-08-06]** 내가 판 방향의
+ * 다르게 하고, 카드는 풀 전체가 누구에게나 나온다. 대신 **[사용자 2026-08-06]** 내가 판 방향의
  * 카드가 조금 더 자주 뜬다(보장이 아니라 확률 가중 · `drawCards` 의 `bias`).
  */
 export type Lineage = "omni" | "herd" | "scout" | "hunter" | "giant" | "ranged" | "sea" | "sky" | "venom";
@@ -112,16 +122,21 @@ export const LINEAGE_NAME: Record<Lineage, string> = {
   venom: "독 살갗",
 };
 
-/** 카드 한 장. **도장과 열쇠 말고는 아무것도 안 준다** — 그래서 표시와 실제가 갈릴 수 없다. */
+/** 카드 한 장. **열쇠와 특성 말고는 아무것도 안 준다** — 그래서 표시와 실제가 갈릴 수 없다. */
 export interface Card {
   id: string;
   name: string;
-  /** 플레이버 한 줄. **효과를 여기 적지 않는다** — 효과는 티어 칩이 말한다(두 곳에 적으면 어긋난다). */
+  /** 플레이버 한 줄. **효과를 여기 적지 않는다** — 효과는 특성 줄이 말한다(두 곳에 적으면 어긋난다). */
   desc: string;
-  /** 이 카드가 찍는 도장. 음수는 「맞바꿈」 카드의 대가다(티어가 내려갈 수 있다). */
+  /**
+   * 이 카드가 찍는 도장 — **프리셋(시작 갈래) 전용이다.**
+   * v9 부터 드래프트 카드는 도장을 안 준다(파일 머리 주석 참조). 도장은 방울로만 오른다.
+   */
   pips?: Partial<Record<Category, number>>;
   /** 이 카드가 여는 열쇠(능력). 세기는 모 범주의 티어가 정한다. */
   key?: KeyName;
+  /** 이 카드가 주는 **조건부 특성**(`sim/perks.ts`). 이름·설명·효과 한 줄이 전부 거기서 온다. */
+  perk?: PerkName;
   rarity: Rarity;
   /** 시작 프리셋의 내 종 시작 색(프리셋 전용). */
   color?: number;
@@ -132,7 +147,7 @@ export interface Card {
   ember?: number;
 }
 
-/** 이 카드가 실제로 찍는 도장 수(없는 범주는 0). */
+/** 이 카드가 실제로 찍는 도장 수(없는 범주는 0). **프리셋 전용** — 드래프트 카드는 늘 0 이다. */
 export function cardPips(card: Card, cat: Category): number {
   return card.pips?.[cat] ?? 0;
 }
@@ -145,69 +160,28 @@ export function cardCategories(card: Card): Category[] {
 }
 
 /**
- * 이 카드를 고르면 이 범주가 **어느 티어에서 어느 티어로** 가는가.
- * 카드 칩 · 내 종 패널 · 대백과가 전부 이 하나를 부른다(UI 에서 문턱을 다시 유도하면 조용히 어긋난다).
- */
-export interface TierMove {
-  cat: Category;
-  from: number;
-  to: number;
-  /** 이 카드를 고른 뒤 다음 문턱까지 남는 도장. 최고 티어면 0. */
-  remain: number;
-  /** 도장 변화량(음수 가능). */
-  delta: number;
-}
-
-export function tierMove(card: Card, pips: Pips, cat: Category): TierMove {
-  const d = cardPips(card, cat);
-  const before = pips[cat];
-  const after = Math.max(0, before + d);
-  return { cat, from: tierOf(before), to: tierOf(after), remain: pipsToNext(after), delta: d };
-}
-
-export function cardTierMoves(card: Card, pips: Pips): TierMove[] {
-  return cardCategories(card).map((c) => tierMove(card, pips, c));
-}
-
-/** 이 카드가 **어떤 범주의 문턱이든 넘기는가.** 드래프트의 「죽은 카드」 규칙이 이걸 본다. */
-export function cardCrossesThreshold(card: Card, pips: Pips): boolean {
-  if (card.key !== undefined) return true; // 열쇠는 그 자체로 새 능력이다
-  if (card.ember) return true;
-  return cardTierMoves(card, pips).some((m) => m.to > m.from);
-}
-
-/**
- * 이 카드가 후보로 나올 수 있는가.
- * · 열쇠 카드는 **이미 가진 열쇠**이거나 **상한(3개)에 닿았으면** 안 나온다.
- * · 도장이 **전부 최고 티어인 범주로만** 가는 카드는 안 나온다(죽은 카드 규칙 (가)).
+ * 이 카드가 후보로 나올 수 있는가 · 그리고 **이 종에게 아무 일도 안 하는가**(죽은 카드).
+ *
+ * v9 에서 이 판정이 단순해졌다. v8 에서는 「도장은 오르는데 문턱을 안 넘는 저축 카드」와 「이미 최고
+ * 티어라 아무 일도 안 하는 카드」를 갈라야 해서 규칙이 셋이었고(`cardCrossesThreshold` 의 문턱 넘김
+ * 보장까지 넷), 그 셋이 서로 물려 **만렙 뒤에 후보가 0장이 되는 사고**를 냈다.
+ * 지금은 **이미 가졌는가** 하나뿐이다 — 특성은 있거나 없거나이고, 열쇠도 그렇다.
+ *
+ * ⚠ 그래서 `cardCrossesThreshold`(문턱 넘김 보장)는 **걷어냈다.** 도장이 없으면 문턱이라는 개념
+ *   자체가 없다. 억지로 남기면 판정만 뒤처지는 축약본이 된다(known_issues 「규칙이 여럿인 판정을
+ *   주효과 하나로 줄여 재면 샌다」).
  */
 export function cardPrereqMet(card: Card, genome: Genome): boolean {
-  if (card.key !== undefined) {
-    if (genome.keys[card.key]) return false;
-    if (keyCount(genome.keys) >= MAX_KEYS) return false;
-    return true;
-  }
   if (card.ember) return false; // 불씨 카드는 game 이 따로 끼워 넣는다(일반 뽑기에 안 섞인다)
-  const cats = cardCategories(card);
-  if (cats.length === 0) return true;
-  // 주는 쪽(양수)이 전부 이미 최고 티어면 이 카드는 아무 일도 못 한다.
-  const gains = cats.filter((c) => cardPips(card, c) > 0);
-  if (gains.length > 0 && gains.every((c) => tierOf(genome.pips[c]) >= MAX_TIER)) return false;
-  return true;
+  return !cardRedundant(card, genome);
 }
 
-/**
- * 이 카드가 **이 종에게 아무 일도 안 하는가**(죽은 카드).
- * 도장은 오르는데 문턱을 하나도 안 넘고, 그러면서 잃는 것만 있는 경우가 여기 걸린다.
- * ⚠ 문턱을 안 넘는 것 자체는 죽은 게 아니다(다음 장을 위한 저축이다) — 그래서 여기서는
- *   **주는 도장이 하나도 없는 경우**만 잡고, "이번에 문턱을 넘기는 장이 3장 중 하나는 있어야 한다"는
- *   보장은 `drawCards` 가 맡는다. 둘을 섞으면 저축 카드가 통째로 사라져 사다리가 안 올라간다.
- */
 export function cardRedundant(card: Card, genome: Genome): boolean {
   if (card.key !== undefined) return genome.keys[card.key] || keyCount(genome.keys) >= MAX_KEYS;
-  const gains = CATEGORIES.filter((c) => cardPips(card, c) > 0);
-  if (gains.length === 0) return false;
-  return gains.every((c) => tierOf(genome.pips[c]) >= MAX_TIER);
+  // **같은 특성은 한 번만.** 중복을 허용하면 배수가 곱해져 다시 「카드 운의 곱」이 되고,
+  // 그러면 도장을 뺀 이유(성장 손잡이를 하나로)가 통째로 사라진다.
+  if (card.perk !== undefined) return genome.perks.includes(card.perk);
+  return false;
 }
 
 // ─────────────────────────────── 시작 갈래(프리셋) ───────────────────────────────
@@ -315,169 +289,37 @@ export const PRESET_CARDS: readonly Card[] = [
   },
 ];
 
-// ─────────────────────────────── 카드 풀 90장 ───────────────────────────────
+// ─────────────────────────────── 카드 풀 52장 ───────────────────────────────
 //
-// ★ **등급이 곧 크기다** (2026-08-06 사용자 제안).
-//   원문: "초반에는 레벨업을 금방금방 할 거니까 카드가 칸 수를 한 칸씩만 채워주는 흔함 단계 카드가
-//   대부분으로 뜨게 하고, 시대가 높아질수록 높은 희귀도의 카드 확률이 높아지게 하고, 늘려주는 칸 수도
-//   조금 더 파격적이게 하는 게 어때? 초기에 운이 좋게 높은 희귀도 카드를 얻으면 말그대로 운이 좋은 거니
-//   초반부터 칸 수를 많이 채워가는 거고, 후반에도 운이 안 좋으면 칸수 하나짜리 흔한 카드만 만나는 거고."
+// **카드 하나 = 특성 하나**(1:1). 이름·설명·효과 한 줄이 전부 `sim/perks.ts` 에서 온다.
+// 여기에 다시 적지 않는 이유는 늘 같다 — 두 곳에 적힌 규칙은 반드시 조용히 어긋난다.
 //
-//   예전에는 등급과 도장 수가 느슨하게만 붙어 있었다 — 전설인데 도장 1개(열쇠)가 있고 흔함인데 2개가
-//   있었다. 그러면 **배지가 카드의 크기를 안 말한다.** 이제 등급 하나만 보면 크기를 안다:
-//
-// | 등급 | 장수 | 주는 도장 |
+// | 등급 | 장수 | 무엇인가 |
 // |---|---|---|
-// | 흔함     | 30 (5범주 × 6) | 한 범주 **+1** |
-// | 드묾     | 25 (한 우물 15 + 두 갈래 10) | 한 범주 **+2** / 두 범주 각 +1 |
-// | 귀함     | 20 (도약 10 + 치우침 10) | 한 범주 **+3** / 주 +2 · 부 +1 |
-// | 아주 귀함 |  8 (도약 5 + 맞바꿈 3) | 한 범주 **+4** / **+5 에 다른 범주 −1** |
-// | 전설     |  7 (능력 7종) | 능력 하나 + 모 범주 **+2** |
+// | 흔함      | 16 | 조건이 넓고 배수가 작다(늘 · 낮에 · 배가 절반 아래일 때) |
+// | 드묾      | 13 | 조건이 좁아지고 배수가 커진다 |
+// | 귀함      |  9 | |
+// | 아주 귀함 |  7 | 조건이 아주 좁고 배수가 크거나(달아나는 동안 ×3.5) 늘 켜지며 크다 |
+// | 전설      |  7 | **열쇠** · 배수가 아니라 없던 규칙을 연다 |
 //
-//   이 구조가 초반과 후반의 **질감을 가른다**: 초반은 레벨업이 잦지만 한 장이 한 칸이라 티어가 천천히
-//   오르고, 후반은 카드가 뜸하지만 한 장이 크게 뛴다(`rarityWeightsAtLevel` 이 레벨에 따라 윗 등급을
-//   키운다). 그리고 **운의 진폭이 커진다** — 초반에 전설이 뜨면 그건 말 그대로 운이 좋은 것이고,
-//   후반에 흔함만 만나면 그것도 로그라이크다(사용자 확정: 무작위성이 이 장르의 핵심 재미).
+// ★ **등급을 손으로 안 적는다.** `perkRarity` 가 「조건 성립 빈도 × 효과 크기」로 계산한다.
+//   손으로 적으면 배수를 튜닝할 때마다 등급이 조용히 거짓이 되고, 그 순간 배지가 거짓말을 한다.
+//   (v8 에서는 「등급 = 도장 크기」였는데, 도장이 사라지면서 그 척도 자체가 없어졌다.)
 //
 // ⚠ **등급별 「종류 수」가 서열을 뒤집을 수 있다.** 한 등급이 뜰 확률은 `종류 수 × 가중치` 라,
 //   윗 등급의 종류가 많으면 아랫 등급보다 자주 뜬다 — 그 순간 배지가 거짓말이 된다.
 //   레벨이 오르면 윗 등급에 배수가 붙으므로(RARITY_BOOST_MAX) **레벨 1 과 최대 레벨 양쪽에서** 봐야 한다.
-//   지금 구성(90장): 레벨 1 은 3000 > 1625 > 760 > 160 > 70, 최대 레벨은 3000 > 2437 > 1824 > 576 > 385.
+//   지금 구성(52장): 레벨 1 은 1600 > 845 > 342 > 140 > 70, 최대 레벨은 1600 > 1268 > 821 > 504 > 385.
 //   **장수를 바꾸면 이 산수를 다시 하라**(cards.test 가 레벨 1·3·5·7·30 에서 잡는다).
-//
-// 문구 규칙: **desc 에 효과를 적지 않는다.** 「이빨 +2」는 칩이 말하고, 「무는 힘 ×1.7 이 켜집니다」는
-// 티어 줄(`tiers.tierLine`)이 말한다. 여기 또 적으면 언젠가 한쪽만 바뀌어 화면이 거짓말을 한다.
-const ONE_WELL: readonly [Category, string, string][] = [
-  ["fang", "wc_fang1", "날카로운 앞니|물면 살점이 뜯깁니다"],
-  ["fang", "wc_fang2", "굽은 송곳니|한 번 박히면 잘 안 빠집니다"],
-  ["fang", "wc_fang3", "벌어지는 턱|입이 더 크게 벌어집니다"],
-  ["fang", "wc_fang4", "물어뜯는 버릇|물고 흔드는 법을 익힙니다"],
-  ["fang", "wc_fang5", "갈아 붙인 어금니|씹는 자리가 단단해집니다"],
-  ["fang", "wc_fang6", "핏내를 아는 코|다친 것을 멀리서 알아챕니다"],
-  ["leg", "wc_leg1", "긴 정강이|한 걸음이 멀어집니다"],
-  ["leg", "wc_leg2", "단단한 발굽|땅을 차는 소리가 달라집니다"],
-  ["leg", "wc_leg3", "마른 몸통|군더더기가 빠집니다"],
-  ["leg", "wc_leg4", "튼튼한 뒷다리|밀어내는 힘이 붙습니다"],
-  ["leg", "wc_leg5", "가벼운 뼈|뼛속이 비어 갑니다"],
-  ["leg", "wc_leg6", "지치지 않는 걸음|오래 달려도 숨이 덜 찹니다"],
-  ["eye", "wc_eye1", "커다란 눈망울|더 많은 빛이 들어옵니다"],
-  ["eye", "wc_eye2", "밤에 뜨는 눈|어두운 것이 덜 어두워집니다"],
-  ["eye", "wc_eye3", "높이 달린 눈|풀 너머가 보입니다"],
-  ["eye", "wc_eye4", "맑은 수정체|멀리 있는 것이 또렷해집니다"],
-  ["eye", "wc_eye5", "두 겹 눈꺼풀|모래바람에도 눈을 뜹니다"],
-  ["eye", "wc_eye6", "먼 데를 보는 버릇|고개를 들고 오래 봅니다"],
-  ["hide", "wc_hide1", "굳은 살가죽|부딪힌 자리가 굳어 두꺼워집니다"],
-  ["hide", "wc_hide2", "두꺼운 지방층|추운 밤이 견딜 만해집니다"],
-  ["hide", "wc_hide3", "겹친 비늘|이빨이 미끄러집니다"],
-  ["hide", "wc_hide4", "뭉친 근육|맞아도 덜 밀립니다"],
-  ["hide", "wc_hide5", "촘촘한 털|살갗에 바람이 안 닿습니다"],
-  ["hide", "wc_hide6", "단단한 등뼈|무거운 것을 지고도 섭니다"],
-  ["herd", "wc_herd1", "서로 부르는 소리|멀리 떨어진 동료가 대답합니다"],
-  ["herd", "wc_herd2", "잦은 출산|새끼 보는 날이 잦아집니다"],
-  ["herd", "wc_herd3", "함께 자는 밤|붙어 자면 덜 춥습니다"],
-  ["herd", "wc_herd4", "새끼를 돌보는 버릇|어린 것이 덜 죽습니다"],
-  ["herd", "wc_herd5", "넓어진 목청|목소리가 골짜기를 넘습니다"],
-  ["herd", "wc_herd6", "큰 배|한 배에 여럿을 품습니다"],
-];
-
-// ⚠ **열 장 전부 「귀함」이다. 등급을 섞지 말 것.**
-//   처음엔 절반을 「아주 귀함」으로 뒀는데, 그러면 풀 구성이 귀함 5 · 아주 귀함 10 이 되어
-//   **아주 귀함이 귀함보다 자주 뜬다**(등급 확률 = 종류 수 × 가중치 · 5×38=190 vs 10×20=200).
-//   그 순간 배지가 거짓말을 한다 — 이 저장소에서 희귀도는 반드시 뽑기 확률과 묶여 있어야 한다.
-//   「아주 귀함」은 맞바꿈 다섯 장이 맡는다(대가가 있는 대신 보상이 크다).
-/**
- * **드묾 (+2)** — 한 범주에 두 칸. 5범주 × 3.
- * 「한 우물」의 큰 형이다: 같은 자리를 파는데 한 번에 두 칸 간다.
- */
-const WELL2: readonly [Category, string, string][] = [
-  ["fang", "w2_fang1", "갈아 붙인 어금니|씹는 자리가 단단해집니다"],
-  ["fang", "w2_fang2", "핏내를 아는 코|다친 것을 멀리서 알아챕니다"],
-  ["fang", "w2_fang3", "휘어 박히는 송곳니|한 번에 깊이 들어갑니다"],
-  ["leg", "w2_leg1", "가벼운 뼈|뼛속이 비어 갑니다"],
-  ["leg", "w2_leg2", "지치지 않는 걸음|오래 달려도 숨이 덜 찹니다"],
-  ["leg", "w2_leg3", "탄력 있는 힘줄|디딜 때마다 되튑니다"],
-  ["eye", "w2_eye1", "두 겹 눈꺼풀|모래바람에도 눈을 뜹니다"],
-  ["eye", "w2_eye2", "먼 데를 보는 버릇|고개를 들고 오래 봅니다"],
-  ["eye", "w2_eye3", "빛을 모으는 막|어스름이 대낮 같아집니다"],
-  ["hide", "w2_hide1", "촘촘한 털|살갗에 바람이 안 닿습니다"],
-  ["hide", "w2_hide2", "단단한 등뼈|무거운 것을 지고도 섭니다"],
-  ["hide", "w2_hide3", "겹겹이 굳은 살|이빨이 겉만 스칩니다"],
-  ["herd", "w2_herd1", "넓어진 목청|목소리가 골짜기를 넘습니다"],
-  ["herd", "w2_herd2", "큰 배|한 배에 여럿을 품습니다"],
-  ["herd", "w2_herd3", "서로 지키는 버릇|어린 것을 가운데 둡니다"],
-];
-
-/** **드묾 (+1/+1)** — 두 범주에 한 칸씩. 열 쌍 전부. 두 길을 나란히 파는 사람의 카드다. */
-const TWO_WAY: readonly [Category, Category, string, string][] = [
-  ["fang", "leg", "tw_fl", "몰이꾼의 다리|쫓아가서 뭅니다"],
-  ["fang", "eye", "tw_fe", "매복꾼의 자세|먼저 보고 기다렸다가 뭅니다"],
-  ["fang", "hide", "tw_fh", "맞물리는 몸|밀면서 뭅니다"],
-  ["fang", "herd", "tw_fd", "함께 무는 법|하나가 물면 둘이 붙습니다"],
-  ["leg", "eye", "tw_le", "앞서 보는 걸음|보면서 달립니다"],
-  ["leg", "hide", "tw_lh", "지구력|오래 걷고 잘 안 지칩니다"],
-  ["leg", "herd", "tw_ld", "같이 달리는 무리|한 무리가 한 방향으로 뜁니다"],
-  ["eye", "hide", "tw_eh", "참는 눈|가만히 오래 지켜봅니다"],
-  ["eye", "herd", "tw_ed", "파수 서기|누군가는 늘 깨어 있습니다"],
-  ["hide", "herd", "tw_hd", "서로 기대기|붙어 서면 벽이 됩니다"],
-];
-
-/** **귀함 (+3)** — 한 범주에 세 칸. 5범주 × 2. 문턱 하나를 통째로 넘기는 일이 잦다. */
-const BIG_LEAP: readonly [Category, string, string][] = [
-  ["fang", "lp_fang1", "톱니 어금니|뼈까지 갈아 넘깁니다"],
-  ["fang", "lp_fang2", "뼈를 부수는 턱|한 번에 끝냅니다"],
-  ["leg", "lp_leg1", "폭발하는 뒷다리|첫 세 걸음이 다릅니다"],
-  ["leg", "lp_leg2", "바람을 가르는 몸|달리는 소리가 사라집니다"],
-  ["eye", "lp_eye1", "매의 눈|점 하나가 짐승으로 보입니다"],
-  ["eye", "lp_eye2", "밤을 꿰뚫는 눈|한밤이 저녁처럼 보입니다"],
-  ["hide", "lp_hide1", "네 칸짜리 위|풀만 먹고도 산이 됩니다"],
-  ["hide", "lp_hide2", "바위 같은 등|위에서 떨어지는 것을 그냥 받습니다"],
-  ["herd", "lp_herd1", "한배에 여럿|한 번에 여러 마리가 태어납니다"],
-  ["herd", "lp_herd2", "사방으로 퍼지는 목소리|골짜기 건너까지 명령이 갑니다"],
-];
 
 /**
- * **귀함 (+2/+1)** — 치우침. 주 범주에 둘, 부 범주에 하나. 총 세 칸이라 위의 「큰 도약」과 같은 크기다.
- * 두 기둥을 나란히 키우는 사람의 카드 — 이게 없으면 두 범주를 함께 파는 길이 「두 갈래」(+1/+1)뿐이라
- * 너무 얇아진다(듀오가 사실상 안 열린다).
+ * **전설 — 열쇠.** 없던 규칙 하나를 연다(물에 들어간다 · 산을 날아 넘는다 · 어둠 속에서 소리로 본다).
+ * 배수 카드와 값어치를 견줄 수 없어서 `perkRarity` 의 띠 밖에 있고, 등급이 여기 고정으로 적힌다.
+ *
+ * ⚠ v8 에서는 열쇠 카드가 **모 범주에 도장 +2** 도 함께 줬다. v9 에서 그 도장은 사라졌다.
+ *   열쇠의 세기는 여전히 모 범주의 티어가 정하므로(`KEY_PARENT`), 열쇠를 살린 뒤 그 범주를
+ *   **방울로 키우는 것**이 자연스러운 다음 수가 된다.
  */
-const LEAN: readonly [Category, Category, string, string][] = [
-  ["fang", "leg", "ln_fl", "쫓아가 무는 법|따라잡는 것까지가 사냥입니다"],
-  ["fang", "herd", "ln_fd", "나눠 먹는 사냥|잡은 것을 함께 뜯습니다"],
-  ["leg", "eye", "ln_le", "달리며 보기|속도를 안 줄이고 살핍니다"],
-  ["leg", "hide", "ln_lh", "버티는 걸음|넘어져도 다시 뜁니다"],
-  ["eye", "fang", "ln_ef", "먼저 보고 무는 법|보이면 이미 늦은 쪽은 상대입니다"],
-  ["eye", "herd", "ln_ed", "망보는 자리|높은 데 하나가 섭니다"],
-  ["hide", "fang", "ln_hf", "밀어붙이는 몸|몸으로 밀고 이빨로 끝냅니다"],
-  ["hide", "herd", "ln_hd", "울타리가 되는 몸|바깥에 서서 막습니다"],
-  ["herd", "leg", "ln_dl", "함께 옮겨 다니기|먹을 것을 따라 무리째 움직입니다"],
-  ["herd", "eye", "ln_de", "서로 알리는 무리|본 것을 곧바로 전합니다"],
-];
-
-/**
- * **아주 귀함 (+4)** — 한 범주에 네 칸. 5범주 × 1.
- * **[사용자 2026-08-06]** "늘려주는 칸 수도 조금 더 파격적이게." 문턱 하나는 거의 확실히 넘고,
- * 운이 좋으면 두 단계를 한 번에 지나간다. 초반에 이게 뜨면 그 판은 그것만으로 달라진다.
- */
-const SURGE: readonly [Category, string, string][] = [
-  ["fang", "sg_fang", "짐승을 삼키는 턱|한 입에 통째로 뭅니다"],
-  ["leg", "sg_leg", "땅을 밀어내는 다리|한 번 뛰면 언덕을 넘습니다"],
-  ["eye", "sg_eye", "지평선을 보는 눈|산 너머가 보입니다"],
-  ["hide", "sg_hide", "산 같은 몸|무엇도 이 살을 못 뚫습니다"],
-  ["herd", "sg_herd", "끝없이 불어나는 무리|한 철에 세대가 바뀝니다"],
-];
-
-/**
- * **아주 귀함 (+5 / 다른 범주 −1)** — 맞바꿈. 셋뿐이라 귀하다.
- * **[사용자 2026-08-06]** 강등을 허용하되 조건이 있었다: "다른 칸 수를 줄이는 거라면 그만큼 보상이
- * 더욱 획기적이어야 할 거야." 그래서 +5 다 — 같은 등급의 순수 도약(+4)보다 한 칸 더 준다.
- */
-const TRADE: readonly [Category, Category, string, string][] = [
-  ["hide", "leg", "td_hl", "등에 진 껍질|무거운 것을 지고 다니기로 합니다"],
-  ["fang", "hide", "td_fh", "전부 이빨로|살을 덜어 이빨에 몰아줍니다"],
-  ["herd", "fang", "td_df", "수로 밀어붙이기|이빨 대신 머릿수로 갚습니다"],
-];
-
-/** **전설** — 능력 하나 + 모 범주 +2. 능력은 그 자체로 새 규칙이라 도장이 작아도 크다. */
 const KEY_CARDS: readonly [KeyName, string, string][] = [
   ["fin", "ky_fin", "물갈퀴|물이 더는 벽이 아닙니다"],
   ["wing", "ky_wing", "넓은 날개|산도 바다도 밑으로 지나갑니다"],
@@ -495,18 +337,15 @@ const split = (s: string): [string, string] => {
 
 function buildPool(): Card[] {
   const out: Card[] = [];
-  const push = (id: string, text: string, pips: Partial<Record<Category, number>>, rarity: Rarity, key?: KeyName): void => {
+  // 특성 카드 마흔다섯 — 카드가 이름을 따로 안 갖는다. 특성이 곧 카드다.
+  for (const p of PERKS) {
+    out.push({ id: `pk_${p.id}`, name: p.name, desc: p.flavor, perk: p.id, rarity: perkRarity(p) });
+  }
+  // 열쇠 카드 일곱.
+  for (const [key, id, text] of KEY_CARDS) {
     const [name, desc] = split(text);
-    out.push(key === undefined ? { id, name, desc, pips, rarity } : { id, name, desc, pips, rarity, key });
-  };
-  for (const [cat, id, text] of ONE_WELL) push(id, text, { [cat]: 1 }, "common");
-  for (const [cat, id, text] of WELL2) push(id, text, { [cat]: 2 }, "uncommon");
-  for (const [a, b, id, text] of TWO_WAY) push(id, text, { [a]: 1, [b]: 1 }, "uncommon");
-  for (const [cat, id, text] of BIG_LEAP) push(id, text, { [cat]: 3 }, "rare");
-  for (const [main, sub, id, text] of LEAN) push(id, text, { [main]: 2, [sub]: 1 }, "rare");
-  for (const [cat, id, text] of SURGE) push(id, text, { [cat]: 4 }, "epic");
-  for (const [gain, loss, id, text] of TRADE) push(id, text, { [gain]: 5, [loss]: -1 }, "epic");
-  for (const [key, id, text] of KEY_CARDS) push(id, text, { [KEY_PARENT[key]]: 2 }, "legendary", key);
+    out.push({ id, name, desc, key, rarity: "legendary" });
+  }
   return out;
 }
 
@@ -516,12 +355,17 @@ export const CARD_POOL: readonly Card[] = buildPool();
 /**
  * 불씨 회복 카드 — **[사용자 2026-08-06]** 불씨가 **정확히 하나** 남았을 때만 뜬다(미리 쟁여 두기 방지).
  * **첫 한 번은 확정, 그 뒤로는 확률.** 첫 한 번이 "이 규칙이 존재한다"를 가르치고(화면 안에서 알아채게),
- * 그 뒤로는 긴장이 남는다. 도장은 0 이라 **고르는 순간 이번 성장은 없다** — 그 사실을 카드에 그대로 적는다.
+ * 그 뒤로는 긴장이 남는다.
+ *
+ * ⚠ **대가의 정체가 v9 에서 바뀌었다.** v8 에서는 「도장이 0 이라 이번 성장이 없다」였는데, 이제는
+ *   어떤 카드도 도장을 안 주므로 그 대비가 성립하지 않는다. 지금의 대가는 **이번 드래프트의 특성이나
+ *   열쇠를 못 받는 것**이다 — 이 카드를 고르면 그 자리에서 고를 수 있었던 한 장이 사라진다.
+ *   문구도 그에 맞춰 고쳤다(「자라지 않습니다」는 도장 시절의 말이었다).
  */
 export const EMBER_CARD: Card = {
   id: "ember_relight",
   name: "꺼지지 않은 자리",
-  desc: "불씨 하나가 되살아납니다. 대신 이번엔 자라지 않습니다.",
+  desc: "불씨 하나가 되살아납니다. 대신 이번엔 아무것도 못 얻습니다.",
   ember: 1,
   rarity: "epic",
 };
@@ -530,23 +374,7 @@ export function cardRarity(card: Card): Rarity {
   return card.rarity;
 }
 
-/**
- * 시대 보상 카드 — **효과 배수가 아니라 도장을 곱한다.**
- * 표시값과 적용값이 갈릴 수 없는 구조가 그대로 보존된다(사본을 만들어 그 사본의 도장을 곱하므로,
- * 화면이 읽는 카드와 적용되는 카드가 **같은 객체**다).
- */
-export function boostCard(card: Card, boost: number): Card {
-  const mul = Math.max(1, Math.round(boost));
-  if (card.pips === undefined) return { ...card, id: `${card.id}_x${mul}` };
-  const pips: Partial<Record<Category, number>> = {};
-  for (const c of CATEGORIES) {
-    const v = cardPips(card, c);
-    if (v !== 0) pips[c] = v > 0 ? v * mul : v; // 대가(음수)는 안 키운다 — 보상 카드가 벌이 되면 안 된다
-  }
-  return { ...card, id: `${card.id}_x${mul}`, name: `${card.name} (강화 ×${mul})`, pips };
-}
-
-/** 갈래 전용 풀은 폐기됐다 — 90장 전부가 누구에게나 나온다. (대백과 호환용으로 남긴다.) */
+/** 갈래 전용 풀은 폐기됐다 — 52장 전부가 누구에게나 나온다. (대백과 호환용으로 남긴다.) */
 export function cardPoolFor(): Card[] {
   return CARD_POOL.slice();
 }
@@ -575,6 +403,21 @@ export interface DraftBias {
   weight: number;
 }
 
+/**
+ * 「내가 판 방향」의 카드인가 — **v9 에서 판정 근거가 바뀌었다.**
+ * v8 에서는 카드가 그 범주에 도장을 주는지 봤는데, 이제 카드는 도장을 안 준다. 대신 특성의 **축**이
+ * 그 범주가 하는 일과 맞는지 본다(`CATEGORY_AXES` · 이빨을 판 사람에게 무는 카드가 더 자주 뜬다).
+ * 열쇠 카드는 모 범주(`KEY_PARENT`)로 판정한다.
+ */
+export function cardFavorsCategory(card: Card, cat: Category): boolean {
+  if (card.key !== undefined) return KEY_PARENT[card.key] === cat;
+  if (card.perk !== undefined) {
+    const p = PERK_BY_NAME.get(card.perk);
+    return p !== undefined && CATEGORY_AXES[cat].includes(p.axis);
+  }
+  return cardPips(card, cat) > 0; // 프리셋(드래프트에는 안 나온다)
+}
+
 export function drawCards(
   rng: Rng,
   n: number,
@@ -582,14 +425,12 @@ export function drawCards(
   level = 1,
   pickedCounts?: ReadonlyMap<string, number>,
   bias?: DraftBias,
-  /** 지금 도장 상황 — 「3장 중 최소 한 장은 문턱을 넘긴다」 보장에 쓴다. 없으면 보장을 안 건다. */
-  pips?: Pips,
 ): Card[] {
   const eligible = CARD_POOL.filter((c) => (allow ? allow(c) : true));
   const weights = rarityWeightsAtLevel(level);
   const biasOf = (c: Card): number => {
     if (!bias || bias.weight === 1) return 1;
-    return bias.cats.some((cat) => cardPips(c, cat) > 0) ? bias.weight : 1;
+    return bias.cats.some((cat) => cardFavorsCategory(c, cat)) ? bias.weight : 1;
   };
   const weightOf = (c: Card): number =>
     weights[cardRarity(c)] * PICK_DECAY ** (pickedCounts?.get(c.id) ?? 0) * biasOf(c);
@@ -616,26 +457,19 @@ export function drawCards(
   const out: Card[] = [];
   const rest = eligible.slice();
 
-  // **죽은 카드 규칙 (나) — 3장 중 최소 한 장은 지금 어느 범주의 문턱을 넘길 수 있어야 한다**
-  // (그런 카드가 풀에 남아 있는 한). 이게 없으면 "도장은 오르는데 아무 일도 안 일어나는 픽"이 쌓이고,
-  // 새끼를 확정으로 주는 스킵이 늘 정답이 된다.
-  if (pips) {
-    const crossing = rest.filter((c) => cardCrossesThreshold(c, pips));
-    const first = take(crossing);
-    if (first) {
-      out.push(first);
-      const i = rest.indexOf(first);
-      if (i >= 0) rest.splice(i, 1);
-    }
-  }
-
+  // ⚠ **「3장 중 한 장은 문턱을 넘긴다」 보장은 v9 에서 걷어냈다.** 도장이 없으면 문턱이라는 개념이
+  //   없다. 그 보장은 원래 「도장은 오르는데 아무 일도 안 일어나는 픽」을 막으려던 것인데, 지금은
+  //   **모든 카드가 고르는 즉시 무언가를 켠다** — 특성은 조건이 맞으면 그 순간부터 작동하고, 열쇠는
+  //   없던 규칙을 연다. 막을 죽은 픽이 애초에 없다.
+  //   (그 보장이 등급 필터로 변질돼 레벨업 드래프트의 59%에 아주 귀함·전설이 끼던 문제도 함께 사라진다.)
   while (out.length < n) {
     const c = take(rest);
     if (!c) break;
     out.push(c);
   }
 
-  // 자리를 섞는다 — 안 섞으면 「문턱을 넘기는 장」이 늘 첫 자리라 위치만 보고 알아버린다.
+  // 자리를 섞는다 — 뽑기 순서가 곧 자리가 되면 위치만 보고 무엇이 좋은 장인지 알아버린다.
+  // ⚠ 섞기를 지우지 말 것: rng 소비 횟수가 바뀌어 그 뒤 모든 드래프트가 다른 세계가 된다.
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(rng.unit() * (i + 1));
     const a = out[i] as Card;
@@ -677,10 +511,16 @@ export function rarityOdds(pool: readonly Card[], draws = 3, level = 1): Record<
 }
 
 /**
- * 카드를 종에 적용한다 — **도장을 찍고, 열쇠를 열고, 파생 능치를 다시 낸다.**
+ * 카드를 종에 적용한다 — **특성을 더하고, 열쇠를 열고, (프리셋이면) 도장을 찍고, 파생 능치를 다시 낸다.**
  *
- * 이 세 줄이 성장의 전부다. 예전에는 여기에 성장 스케일 · 상한 근접 감쇠 · 정점 고정 · 수영 뚜껑이
- * 겹겹이 얹혀 있었고, 그래서 "카드에 적힌 값"과 "실제로 붙는 값"이 달랐다.
+ * 이 네 줄이 카드가 하는 전부다. 예전에는 여기에 성장 스케일 · 상한 근접 감쇠 · 정점 고정 · 수영
+ * 뚜껑이 겹겹이 얹혀 있었고, 그래서 "카드에 적힌 값"과 "실제로 붙는 값"이 달랐다.
+ *
+ * ⚠ **같은 특성을 두 번 더하지 않는다.** 후보 필터(`cardRedundant`)가 이미 막지만, 여기서도 막는다 —
+ *   중복이 들어가면 배수가 곱해져 카드 한 장의 값어치가 조용히 달라진다(화면은 한 줄만 보여 준다).
+ * ⚠ **파생 능치(`refreshDerived`)는 특성과 무관하다.** 특성은 상황에 따라 켜졌다 꺼지는 것이라
+ *   고정된 능치 표에 안 들어간다(`sim/perks.ts` 참조). 그래도 여기서 부르는 이유는 프리셋의 도장
+ *   때문이다.
  */
 export function applyCard(genome: Genome, card: Card): void {
   if (card.pips) {
@@ -690,15 +530,25 @@ export function applyCard(genome: Genome, card: Card): void {
     }
   }
   if (card.key !== undefined && keyCount(genome.keys) < MAX_KEYS) genome.keys[card.key] = true;
+  if (card.perk !== undefined && !genome.perks.includes(card.perk)) genome.perks.push(card.perk);
   refreshDerived(genome);
 }
 
-/** 카드 한 장을 한 줄로 요약 — 대백과·런 보고서가 쓴다. 예: 「이빨 +2」 · 「가죽 +3 · 다리 −1」 */
+/**
+ * 카드 한 장을 한 줄로 요약 — 대백과·런 보고서·드래프트 카드가 전부 이 하나를 쓴다.
+ * 예: 「밤에 보는 거리 ×1.45」 · 「열쇠 「지느러미」」 · (프리셋) 「이빨 +4 · 눈 +3」
+ *
+ * ⚠ 특성 줄은 **`sim/perks.ts` 가 만든다.** 여기서 배수를 다시 적으면 언젠가 한쪽만 바뀐다.
+ */
 export function cardSummary(card: Card): string {
   const parts: string[] = [];
   for (const c of cardCategories(card)) {
     const v = cardPips(card, c);
     parts.push(`${CATEGORY_LABELS[c]} ${v > 0 ? "+" : "−"}${Math.abs(v)}`);
+  }
+  if (card.perk !== undefined) {
+    const p = PERK_BY_NAME.get(card.perk);
+    if (p !== undefined) parts.push(perkLine(p));
   }
   if (card.key !== undefined) parts.push(`열쇠 「${KEY_LABELS[card.key]}」`);
   if (card.ember) parts.push(`불씨 +${card.ember}`);

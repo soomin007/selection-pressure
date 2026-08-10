@@ -13,11 +13,40 @@ import {
   MAX_TIER,
   TIER_ROMAN,
   TIER_STEPS,
+  pipsToNext,
   tierOf,
   type Category,
   type Pips,
 } from "@/sim/tiers";
-import { cardPips, cardTierMoves, type Card, type TierMove } from "@/game/cards";
+import { AXIS_CATEGORY, PERK_BY_NAME, perkLine } from "@/sim/perks";
+import { cardCategories, cardPips, type Card } from "@/game/cards";
+
+// ─────────────────────────────── 도장 이동(프리셋 전용) ───────────────────────────────
+//
+// ⚠ **v9 에서 이 계산이 `game/cards.ts` 에서 여기로 내려왔다.** 드래프트 카드가 도장을 안 주게 되면서
+//   「이 카드를 고르면 어느 티어에서 어느 티어로 가는가」가 필요한 곳은 **시작 갈래(프리셋) 화면**
+//   하나만 남았다. 규칙이 아니라 표시가 된 것이라 표시 계층에 있는 편이 맞다.
+
+export interface TierMove {
+  cat: Category;
+  from: number;
+  to: number;
+  /** 이 카드를 고른 뒤 다음 문턱까지 남는 도장. 최고 티어면 0. */
+  remain: number;
+  /** 도장 변화량(음수 가능). */
+  delta: number;
+}
+
+export function tierMove(card: Card, pips: Pips, cat: Category): TierMove {
+  const d = cardPips(card, cat);
+  const before = pips[cat];
+  const after = Math.max(0, before + d);
+  return { cat, from: tierOf(before), to: tierOf(after), remain: pipsToNext(after), delta: d };
+}
+
+export function cardTierMoves(card: Card, pips: Pips): TierMove[] {
+  return cardCategories(card).map((c) => tierMove(card, pips, c));
+}
 
 /** 0xRRGGBB → "#rrggbb". 범주 색(숫자)을 CSS 색으로. */
 export function hexColor(c: number): string {
@@ -39,12 +68,14 @@ export const DOWN_CHIP_COLOR = "#E85C43";
 export const GAIN_COLOR = "#8FD14F";
 
 /**
- * 카드 칩 하나: 「이 카드가 문턱을 넘기는가」를 말하는 최소 단위.
- * cross: 문턱을 넘긴다(범주 색 + 발광) / save: 못 넘긴다(회색 · 몇 칸 남는지) /
- * down: 티어가 내려가거나 도장을 잃는다(붉은색) / key: 열쇠를 연다 / ember: 불씨를 되살린다.
+ * 카드 칩 하나: 「이 카드가 무엇을 하는가」를 말하는 최소 단위.
+ *
+ * v9 에서 주역이 바뀌었다. 드래프트 카드는 이제 **특성(perk)** 을 주므로 `perk` 칩이 기본이고,
+ * 도장 칩(cross/save/down)은 **시작 갈래(프리셋)** 에만 남는다.
+ * key: 열쇠를 연다 / ember: 불씨를 되살린다.
  */
 export interface TierChip {
-  kind: "cross" | "save" | "down" | "key" | "ember";
+  kind: "cross" | "save" | "down" | "key" | "ember" | "perk";
   text: string;
   color: string;
 }
@@ -80,6 +111,14 @@ function moveChip(m: TierMove): TierChip {
  */
 export function cardTierChips(card: Card, pips: Pips): TierChip[] {
   const chips: TierChip[] = cardTierMoves(card, pips).map(moveChip);
+  // **특성 칩 — v9 드래프트 카드의 본체다.** 문구는 `sim/perks.ts` 가 만든다(두 곳에 적지 않는다).
+  // 색은 그 축이 속한 범주의 색이라, 이빨을 파는 사람이 이빨 계열 카드를 색으로 먼저 알아본다.
+  if (card.perk !== undefined) {
+    const p = PERK_BY_NAME.get(card.perk);
+    if (p !== undefined) {
+      chips.push({ kind: "perk", text: perkLine(p), color: categoryColor(AXIS_CATEGORY[p.axis]) });
+    }
+  }
   if (card.key !== undefined) {
     chips.push({ kind: "key", text: `열쇠 · ${KEY_LABELS[card.key]}`, color: KEY_CHIP_COLOR });
   }
@@ -109,7 +148,12 @@ export function cardAccent(card: Card): string {
   );
   const top = cats[0];
   if (top !== undefined) return categoryColor(top);
-  if (card.ember) return KEY_CHIP_COLOR;
+  // 특성 카드는 그 축이 속한 범주 색(`AXIS_CATEGORY`). 열쇠·불씨는 금빛.
+  if (card.perk !== undefined) {
+    const p = PERK_BY_NAME.get(card.perk);
+    if (p !== undefined) return categoryColor(AXIS_CATEGORY[p.axis]);
+  }
+  if (card.key !== undefined || card.ember) return KEY_CHIP_COLOR;
   return GAIN_COLOR;
 }
 

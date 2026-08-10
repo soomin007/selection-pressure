@@ -52,6 +52,16 @@ export interface Entity {
   // 다음 반격까지 남은 틱(런타임, 직렬화 안 함). 이게 0 이어야 근접 전사가 한 번 되받아친다.
   // 없으면 떼 한복판에 선 한 마리가 매 틱 깎아 격퇴가 접촉 면적에 지배당한다(전부 아니면 전무).
   raidCounterCd: number;
+  // 지금 도망 중인가(런타임, 직렬화 안 함). `stepEntity` 가 매 틱 판정해 여기 남긴다 — `raidFighter` 와
+  // 같은 패턴이다. 조건부 특성(`sim/perks.ts`)의 「달아나는 동안」이 이 값을 읽는다.
+  //
+  // ⚠ **다른 개체가 읽는다는 것이 이 필드의 존재 이유다.** 「달아나는 등」(물릴 때 버티는 힘이 오른다)은
+  //   물린 쪽의 도망 여부를 문 쪽의 판정 안에서 물어야 하는데, 그건 그 개체의 stepEntity 밖이라
+  //   지역 변수로는 닿을 수 없다. 자기 자신이 읽을 때는 **한 틱 전 값**이다(아래 주석 참조).
+  fleeing: boolean;
+  // 3×3 칸의 이웃 수(자기 포함 · 런타임, 직렬화 안 함). 위와 같은 이유로 개체에 남긴다.
+  // 이웃 정보를 안 만드는 종(무리 성향 0)은 1 로 남는다 = 「혼자」.
+  neighbors: number;
 }
 
 export function createEntity(
@@ -92,5 +102,7 @@ export function createEntity(
     stuckTicks: 0,
     raidFighter: false,
     raidCounterCd: 0,
+    fleeing: false,
+    neighbors: 1,
   };
 }

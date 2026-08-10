@@ -1,44 +1,53 @@
-// 만렙 뒤 「줄 게 없는 드래프트」가 열리지 않는가.
+// 「줄 게 없는 드래프트」가 열리지 않는가.
 //
 // **[사용자 2026-08-09]** "이번 판은 시대 3에서 모든 범주 만렙을 찍어버렸어. 그랬더니 업그레이드
 // 드래프트 화면이 고장나버렸고, 건너뛰어 새끼 치기만 겨우 클릭이 가능한 덕분에 그거만 매번
 // 누르다가 시대를 클리어했어."
 //
-// 화면이 깨진 게 아니라 **게임에 남은 내용이 없었다.** 카드는 도장만 주는데(`cardRedundant`),
-// 범주 다섯이 전부 4단이고 열쇠도 MAX_KEYS(3)를 채우면 카드 100장이 전부 죽은 카드가 된다.
-// 그러면 후보 0장짜리 드래프트가 그냥 열려 「고장난 화면」이 된다.
+// 화면이 깨진 게 아니라 **게임에 남은 내용이 없었다.** 후보가 0장인 드래프트가 그냥 열려
+// 「고장난 화면」이 됐다.
 //
-// ⚠ 이 테스트는 **증상 방어**를 지킨다. 근본(카드가 도장 말고 줄 게 없다)은 카드 재설계가 답이고
-//   (**[사용자 2026-08-08]**), 재설계 뒤에도 이 가드는 남는다 — 어떤 이유로든 후보가 빌 수 있고
-//   그때 빈 화면을 띄우는 것보다 조용히 넘기는 편이 언제나 낫다.
+// ⚠ **v8 의 원인은 v9 에서 사라졌다.** 그때는 카드가 도장만 줬으므로 범주 다섯이 만렙이고 열쇠가
+//   차면 카드 100장이 전부 죽은 카드가 됐다. 지금 카드는 도장을 한 칸도 안 주고 **특성**을 주므로,
+//   만렙과 후보 수는 아무 관계가 없다. 그래서 이 테스트가 재는 것도 「만렙」이 아니라 **가드 그 자체**다:
+//   **후보가 0장이면 드래프트를 안 연다.** v9 에서 그 상태가 되는 자리는 하나뿐이라(특성 45개를
+//   전부 가졌고 열쇠도 상한까지 찼을 때) 그 상태를 만들어 잰다.
+//
+// 가드는 그래서 v9 에서도 남긴다 — 어떤 이유로든 후보가 빌 수 있고, 그때 빈 화면을 띄우는 것보다
+// 조용히 넘기는 편이 언제나 낫다.
 import { describe, it, expect } from "vitest";
 import { Game } from "@/game/game";
 import { CARD_POOL, cardRedundant } from "@/game/cards";
-import { CATEGORIES, MAX_KEYS, MAX_TIER, KEY_NAMES, pipsForTier, tierOf } from "@/sim/tiers";
+import { MAX_KEYS, KEY_NAMES, keyCount } from "@/sim/tiers";
+import { PERKS } from "@/sim/perks";
 import { refreshDerived } from "@/sim/genome";
 
-/** 범주 다섯을 만렙으로, 열쇠도 상한까지 채운 종. 사용자 판이 도달한 바로 그 상태다. */
-function maxOut(g: Game): void {
-  for (const c of CATEGORIES) g.genome.pips[c] = pipsForTier(MAX_TIER);
-  let put = 0;
+/**
+ * 카드 풀이 줄 수 있는 것을 이미 다 가진 종. v9 에서 후보가 0장이 되는 **유일한** 상태다:
+ * 특성 45개를 전부 가졌고(특성 카드가 전부 중복), 열쇠도 상한까지 찼다(열쇠 카드가 전부 중복).
+ */
+function takeEverything(g: Game): void {
+  for (const p of PERKS) {
+    if (!g.genome.perks.includes(p.id)) g.genome.perks.push(p.id);
+  }
   for (const k of KEY_NAMES) {
-    if (put >= MAX_KEYS) break;
+    if (keyCount(g.genome.keys) >= MAX_KEYS) break;
     g.genome.keys[k] = true;
-    put += 1;
   }
   refreshDerived(g.genome);
 }
 
-describe("만렙 뒤 드래프트 · 줄 게 없으면 열지 않는다", () => {
-  it("범주 다섯이 만렙이고 열쇠가 꽉 차면 카드 풀 전체가 죽은 카드가 된다", () => {
+describe("드래프트 가드 · 줄 게 없으면 열지 않는다", () => {
+  it("특성을 전부 가지고 열쇠도 차면 후보가 0장이 된다", () => {
     const g = new Game(240, 400, 1);
     g.fixedSeed = "empty-draft-1";
     g.beginRun();
     g.pickCard(0);
-    maxOut(g);
+    takeEverything(g);
 
     // 전제 확인 — 이 판정이 무너지면 아래 가드 테스트가 무엇을 재는지 알 수 없게 된다.
-    for (const c of CATEGORIES) expect(tierOf(g.genome.pips[c])).toBe(MAX_TIER);
+    expect(g.genome.perks).toHaveLength(PERKS.length);
+    expect(keyCount(g.genome.keys)).toBeGreaterThanOrEqual(MAX_KEYS);
     const alive = CARD_POOL.filter((c) => !cardRedundant(c, g.genome));
     expect(alive).toHaveLength(0);
   });
@@ -48,7 +57,7 @@ describe("만렙 뒤 드래프트 · 줄 게 없으면 열지 않는다", () => 
     g.fixedSeed = "empty-draft-2";
     g.beginRun();
     g.pickCard(0);
-    maxOut(g);
+    takeEverything(g);
 
     let opened = 0;
     g.onDraft = () => {
@@ -63,7 +72,7 @@ describe("만렙 뒤 드래프트 · 줄 게 없으면 열지 않는다", () => 
     expect(g.phase).not.toBe("draft");
   });
 
-  it("만렙이 아니면 드래프트는 평소대로 열린다(가드가 기능을 통째로 끄지 않았다)", () => {
+  it("줄 것이 남아 있으면 드래프트는 평소대로 열린다(가드가 기능을 통째로 끄지 않았다)", () => {
     // 이 확인이 없으면 "드래프트를 영영 안 여는 것"과 구별되지 않는다.
     let opened = 0;
     for (let k = 0; k < 12 && opened === 0; k += 1) {

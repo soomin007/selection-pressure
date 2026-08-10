@@ -328,8 +328,10 @@ export function createPresetPanel(
     } else {
       leadEl.style.display = "none";
     }
-    // 시작 도장 배분 · 도장이 있는 범주만 티어 칩으로. 3개(1단 켜짐)는 범주 색,
-    // 2개(문턱 하나 앞)는 회색에 "1칸 남음" · 첫 드래프트부터 문턱이 눈앞에 있다는 것이 읽힌다.
+    // 시작 도장 배분 · 도장이 있는 범주만 티어 칩으로. 3개 이상(1단 켜짐)은 범주 색,
+    // 문턱에 못 미치면 회색에 "N칸 남음".
+    // ⚠ **프리셋은 v9 에서도 도장을 준다**(드래프트 카드만 안 준다 · cards.ts 머리 주석).
+    //   시작 도장은 첫 단을 사는 방울 값을 그만큼 깎아 준다 ▸ 여기 적힌 「N칸 남음」이 곧 그 값이다.
     traitsEl.replaceChildren();
     for (const cat of TIER_CATEGORIES) {
       const n = cardPips(card, cat);

@@ -22,20 +22,10 @@ import {
 } from "@/game/config";
 import { MAP_SCALE, MOBILE } from "@/config";
 import { createBoss } from "@/sim/boss";
-import {
-  CARD_POOL,
-  PRESET_CARDS,
-  applyCard,
-  boostCard,
-  cardCategories,
-  cardPips,
-  cardPrereqMet,
-  cardRedundant,
-  drawCards,
-  type Card,
-} from "@/game/cards";
+import { CARD_POOL, cardPrereqMet, cardRedundant, drawCards } from "@/game/cards";
+import type { PerkName } from "@/sim/perks";
 import { Rng } from "@/sim/rng";
-import { MUTABLE_TRAITS, defaultGenome, genomeFromPips, refreshDerived } from "@/sim/genome";
+import { MUTABLE_TRAITS, genomeFromPips, refreshDerived } from "@/sim/genome";
 import {
   CATEGORIES,
   CATEGORY_LABELS,
@@ -51,7 +41,6 @@ import {
   pipsToNext,
   tierOf,
   type Category,
-  type Pips,
 } from "@/sim/tiers";
 import { GENE_AWARD, milestonesCrossed, type CrisisWatch, type GeneReason } from "@/sim/gene";
 import { SIM } from "@/sim/params";
@@ -302,10 +291,13 @@ describe("다시 뽑기(리롤)", () => {
     }
   });
 
-  it("시대 보상을 다시 뽑아도 강화 배수가 안 떨어진다", () => {
-    // 배수는 시대마다 커지는데(×2.0 · 2.7 · 3.6 · 4.9) 리롤 경로만 고정 ×2 를 썼다.
-    // 그래서 후반 시대에 다시 뽑으면 배수가 조용히 반토막 나는 **숨은 벌칙**이었다(2026-08-07).
-    // 시대 2 진입은 배수가 마침 2 라 버그가 안 드러난다 → 그 위 시대까지 올라가서 잰다.
+  // ⚠ **「시대 보상을 다시 뽑아도 강화 배수가 안 떨어진다」를 갈아엎었다.** 그 시험이 재던 것은
+  //   카드 이름에 박히던 "(강화 ×N)" 이었는데, v9 에서 카드가 도장을 안 주므로 곱할 것이 없어져
+  //   `boostCard` 와 함께 배수 자체가 사라졌다(그래서 그 자리의 숨은 벌칙도 구조적으로 없어졌다).
+  //   **살아남은 절반은 이것이다** — 시대 보상 드래프트에서도 다시 뽑기가 같은 일을 한다(3장을 새로
+  //   주고, 그 뒤로도 정상적으로 고를 수 있다). 리롤이 드래프트 종류에 따라 다른 길을 타면 그 순간
+  //   또 한쪽만 낡는다.
+  it("시대 보상 드래프트에서도 다시 뽑기가 3장을 새로 준다", () => {
     const store: Record<string, string> = {
       selpress_meta_v1: JSON.stringify({ metaXp: 300, conquered: false }),
     };
@@ -313,16 +305,9 @@ describe("다시 뽑기(리롤)", () => {
     const prev = gl.localStorage;
     gl.localStorage = memStorage(store);
     try {
-      /** 카드 이름에 박히는 "(강화 ×N)" 의 N 들. 열쇠 카드는 도장이 없어 이름이 안 바뀐다 → 빠진다. */
-      const muls = (g: Game): number[] =>
-        g.draftCards
-          .map((c) => /강화 ×(\d+)/.exec(c.name)?.[1])
-          .filter((m): m is string => m !== undefined)
-          .map(Number);
-
       let checked = 0;
       for (let s = 0; s < 20 && checked === 0; s++) {
-        const g = startRun(`era-reroll-boost-${s}`);
+        const g = startRun(`era-reroll-${s}`);
         for (let e = 0; e < 3; e++) {
           g.result = "win"; // 승리 직후 상태를 흉내(continueToNextEra 의 가드)
           g.continueToNextEra();
@@ -332,13 +317,15 @@ describe("다시 뽑기(리롤)", () => {
           }
         }
         if (g.phase !== "draft" || !g.canReroll) continue;
-        const want = Math.round(eraRewardBoostAt(g.era));
-        expect(want).toBeGreaterThan(2); // 이 시대에선 고정 ×2 와 값이 갈린다(안 갈리면 시험이 무의미)
-        expect(muls(g).every((m) => m === want)).toBe(true);
+        expect(g.era).toBeGreaterThan(1); // 시대를 실제로 넘어온 자리다
+        const before = g.draftCards.length;
+        expect(before).toBe(3);
         g.reroll();
-        const after = muls(g);
-        if (after.length === 0) continue; // 셋 다 열쇠 카드였다 → 다음 시드로
-        expect(after.every((m) => m === want)).toBe(true);
+        expect(g.draftCards.length).toBe(before); // 여전히 3장(새로 뽑음)
+        expect(g.canReroll).toBe(false); // 드래프트당 1회 제한은 여기서도 같다
+        let picks = 0;
+        while (g.phase === "draft" && picks++ < 8) g.pickCard(0);
+        expect(g.phase).toBe("watch"); // 리롤 뒤에도 고르고 나면 관전으로 돌아온다
         checked += 1;
       }
       expect(checked).toBeGreaterThan(0); // 실제로 검사한 판이 있었다(빈 통과 방지)
@@ -506,7 +493,7 @@ describe("런 통계(도전 과제 판정의 재료)", () => {
 //   세기는 짝지어진 범주의 티어가 읽는다(`tiers.KEY_PARENT`). 그래서 "관문 한 장 + 강화 여러 장"이라는
 //   구조 자체가 사라졌고, 전제 조건도 「이미 가졌는가 · 상한에 닿았는가」 둘로 단순해졌다.
 //   같은 계약(못 쓰는 카드는 후보에 안 든다)을 새 구조에서 그대로 잰다.
-describe("열쇠 카드의 전제 조건(드래프트 후보 필터)", () => {
+describe("카드의 전제 조건(드래프트 후보 필터)", () => {
   const keyCards = CARD_POOL.filter((c) => c.key !== undefined);
 
   it("풀에 열쇠 카드가 일곱 종류 있다(열쇠마다 정확히 한 장)", () => {
@@ -549,14 +536,27 @@ describe("열쇠 카드의 전제 조건(드래프트 후보 필터)", () => {
     }
   });
 
-  it("도장이 최고 티어인 범주로만 가는 카드는 후보에서 빠진다(죽은 카드)", () => {
-    const maxed = genomeFromPips({ ...emptyPips(), fang: TIER_STEPS[3] }, emptyKeys());
-    const fangOnly = CARD_POOL.filter(
-      (c) => c.key === undefined && cardCategories(c).length === 1 && cardPips(c, "fang") > 0,
-    );
-    expect(fangOnly.length).toBeGreaterThan(0); // 전제: 이빨 한 우물 카드가 실제로 있다
-    for (const c of fangOnly) {
-      expect(cardPrereqMet(c, maxed), `${c.id} 가 최고 티어인데 후보에 남았다`).toBe(false);
+  // ⚠ **「도장이 최고 티어인 범주로만 가는 카드는 후보에서 빠진다」를 v9 구조로 옮겼다.**
+  //   카드가 도장을 안 주므로 「최고 티어라 더 못 받는 카드」라는 것이 없어졌다. 지금 죽은 카드는
+  //   **이미 가진 특성**뿐이다(같은 특성을 두 번 주면 배수가 곱해져 다시 카드 운의 곱이 된다 →
+  //   `cards.ts` 의 `cardRedundant`). 재는 계약은 그대로다: **아무 일도 안 하는 카드는 후보에 안 든다.**
+  it("이미 가진 특성 카드는 후보에서 빠진다(죽은 카드)", () => {
+    const perkCards = CARD_POOL.filter((c) => c.perk !== undefined);
+    expect(perkCards.length).toBeGreaterThan(0); // 전제: 특성 카드가 실제로 있다
+    const ownedCards = perkCards.slice(0, 3);
+    const owned: PerkName[] = [];
+    for (const c of ownedCards) if (c.perk !== undefined) owned.push(c.perk);
+    const g = genomeFromPips(emptyPips(), emptyKeys(), owned);
+    for (const c of ownedCards) {
+      expect(cardPrereqMet(c, g), `${c.id} 를 이미 가졌는데 후보에 남았다`).toBe(false);
+      expect(cardRedundant(c, g)).toBe(true);
+    }
+    const ownedIds = new Set(ownedCards.map((c) => c.id));
+    const rng = new Rng("perk-dup");
+    for (let i = 0; i < 500; i++) {
+      const drawn = drawCards(rng, 3, (c) => cardPrereqMet(c, g) && !cardRedundant(c, g), 7);
+      expect(drawn.some((c) => ownedIds.has(c.id))).toBe(false);
+      expect(drawn.length).toBe(3); // 그래도 후보 3장은 채워진다(풀이 안 마른다)
     }
   });
 });
@@ -1072,114 +1072,18 @@ describe("지수 난이도 (성장 곡선과 난이도 곡선의 경주)", () =>
     // 첫 시대는 1마리 = 완전 멸종만 패배 → 겁주는 문구를 붙이지 않는다.
     expect(bossPassNeeded(0)).toBe(1);
   });
-
-  it("최고 티어는 한 런에 「닿을 만한」 목표다 — 파면 열리고, 뿌리면 안 열린다", () => {
-    // **무엇을 못박는 테스트인가:** 4단은 ① 실재하는 목표이고(파면 열린다) ② 공짜가 아니며
-    // (손 놓은 판에서는 파도 절반 이하) ③ **정책이 연다**(다섯에 고루 뿌리면 사실상 못 닿는다).
-    //
-    // ⚠ 예전 이 테스트는 「카드 한 장 = 1.09 도장」이라는 **손으로 박은 상수**로
-    //   `12 × 1.09 = 13.1 < 20` 을 계산해 "손 놓은 판은 4단에 못 닿는다"를 통과시켰다. 그 식에는
-    //   프리셋 시작 도장(주 4 + 부 3)도, 시대 보상 드래프트(3장 전부 ×2.0~4.9 강화)도 없었다.
-    //   실제 경로로 굴리면 한 우물 12장도 4단에 **약 30%** 닿는다 — 즉 그 초록불은 거짓이었다.
-    //   그래서 이제 상수를 지우고 **진짜 뽑기 경로**(runLadder)의 결과로 판정한다.
-    const focus12 = tierReachRate(12, "focus", MAX_TIER);
-    const focus17 = tierReachRate(17, "focus", MAX_TIER);
-    const focus22 = tierReachRate(22, "focus", MAX_TIER);
-    const random12 = tierReachRate(12, "random", MAX_TIER);
-
-    // ① 목표가 실재한다 — 한 우물을 판 잘한 판(22장)은 거의 반드시 4단을 연다.
-    expect(focus22).toBeGreaterThan(0.9);
-    // ② 정책이 값을 한다 — 다섯에 고루 뿌린 손 놓은 판은 사실상 못 연다.
-    expect(random12).toBeLessThan(0.1);
-    // ③ 공짜가 아니다 — 파더라도 손 놓은 판(12장)이면 절반도 못 닿는다.
-    expect(focus12).toBeLessThan(0.5);
-    // ④ 성장이 예산에 반응한다(단조) — 잘 굴릴수록 확실히 가까워진다.
-    expect(focus17).toBeGreaterThan(focus12);
-    expect(focus22).toBeGreaterThan(focus17);
-    // ⑤ 같은 예산이면 파는 쪽이 뿌리는 쪽을 뚜렷이 앞선다(뿌리는 성장에는 보상이 없다).
-    expect(focus12).toBeGreaterThan(random12 + 0.15);
-  });
 });
 
-// ─────────────────── 사다리 검산에 쓰는 「진짜 뽑기 경로」 (위 테스트가 쓴다) ───────────────────
+// ⚠ **「최고 티어는 한 런에 닿을 만한 목표다」 테스트와 그 사다리 모델(`runLadder`·`tierReachRate`·
+//   `eraRewardCount`)을 통째로 지웠다.** 그 시험은 **카드를 고르면 도장이 오른다**를 전제로,
+//   드래프트를 12·17·22장 굴려 4단 도달률을 재고 「파는 정책 vs 뿌리는 정책」을 비교했다.
+//   v9 에서 카드는 도장을 한 개도 안 준다 — 도장은 **방울 구입(`Game.buyTier`)** 으로만 오른다.
+//   그래서 이 모델은 무엇을 굴리든 도달률 0 을 뱉는, 잴 것이 없는 시험이 됐다.
 //
-// **왜 모델을 새로 안 만들고 실제 함수를 태우는가:** 이 저장소는 "판정을 축약하면 규칙이 늘 때마다
-// 판정만 뒤처진다"를 이미 겪었다(known_issues 의 무의미 카드 필터). 사다리도 똑같다 — 「카드 한 장이
-// 몇 도장」이라는 축약본은 프리셋 시작 도장과 시대 보상이 생긴 순간 조용히 거짓이 됐다.
-//
-// ⚠ **이 모델에 없는 것 셋**(전부 실제 게임에는 있고, 전부 성장을 **더 빠르게** 한다):
-//   ① 은근한 보정(`Game.draftBias` · 내가 판 범주가 최대 1.9배 자주 뜬다)
-//   ② 다시 뽑기(메타 레벨 2 부터)
-//   ③ 방울로 사는 티어(`Game.buyTier`)
-//   그래서 여기서 나오는 도달률은 **하한**이다. 「닿는다」 단언은 안전하고(실제는 더 잘 닿는다),
-//   「못 닿는다」 단언은 하한에서만 참이라 **정책**(고루 뿌리기)으로만 걸었다.
-// ⚠ 시대 보상 횟수만 추정이다 — 카드 예산에서 넘긴 시대 수를 뽑는 식이 프로브(`tiers` 모드)와 같다.
-//   실제 위치·횟수까지 재려면 `npm run probe -- growth` 로 런을 통째로 태워야 한다(테스트엔 너무 느리다).
-
-/** 한 런의 카드 예산에서 시대 보상 드래프트가 몇 번 도는가(프로브 tiers 모드와 같은 추정식). */
-function eraRewardCount(cards: number): number {
-  return Math.max(0, Math.min(4, Math.round((cards - 7) / 5)));
-}
-
-/**
- * 시작 프리셋 하나에서 출발해 카드를 `cards` 장 고른 뒤의 도장. 뽑기·필터·강화가 전부 게임과 같은 함수다.
- * policy: focus = 지금 가장 많이 판 범주에 가장 크게 들어가는 장 · random = 아무거나.
- */
-function runLadder(tag: string, cards: number, policy: "focus" | "random", presetIdx: number): Pips {
-  const rng = new Rng(tag);
-  const g = defaultGenome();
-  const preset = PRESET_CARDS[presetIdx % PRESET_CARDS.length];
-  if (preset === undefined) throw new Error("프리셋 풀이 비어 있다 — 사다리를 잴 출발점이 없다");
-  applyCard(g, preset);
-  const eras = eraRewardCount(cards);
-  const rewardAt = new Map<number, number>();
-  for (let k = 1; k <= eras; k++) rewardAt.set(Math.round((k * cards) / (eras + 1)), k);
-  const picked = new Map<string, number>();
-  for (let i = 0; i < cards; i++) {
-    const level = 1 + Math.floor((i / cards) * 12); // 레벨이 오를수록 높은 등급이 자주 뜬다
-    let cs = drawCards(
-      rng,
-      3,
-      (c) => cardPrereqMet(c, g) && !cardRedundant(c, g),
-      level,
-      picked,
-      undefined, // 은근한 보정 없음(위 ⚠ 참조 — 이 값이 하한인 이유)
-      g.pips,
-    );
-    if (cs.length === 0) break;
-    const rk = rewardAt.get(i);
-    if (rk !== undefined) cs = cs.map((c) => boostCard(c, eraRewardBoostAt(rk)));
-    let idx = 0;
-    if (policy === "focus") {
-      const target = [...CATEGORIES].sort((a, b) => g.pips[b] - g.pips[a])[0] as Category;
-      let best = -1;
-      for (let k = 0; k < cs.length; k++) {
-        const v = cardPips(cs[k] as Card, target);
-        if (v > best) {
-          best = v;
-          idx = k;
-        }
-      }
-    } else {
-      idx = rng.int(0, cs.length - 1);
-    }
-    const chosen = cs[idx] as Card;
-    picked.set(chosen.id, (picked.get(chosen.id) ?? 0) + 1);
-    applyCard(g, chosen);
-  }
-  return g.pips;
-}
-
-/** 이 예산·정책으로 굴린 런 중 **어느 범주든** 그 티어에 닿은 비율. 시드가 고정이라 결정론이다. */
-function tierReachRate(cards: number, policy: "focus" | "random", tier: number): number {
-  const RUNS = 200; // 이 정도면 도달률이 소수점 첫째 자리에서 안정된다(±3%p 이내로 확인)
-  let hit = 0;
-  for (let r = 0; r < RUNS; r++) {
-    const pips = runLadder(`ladder-${policy}-${cards}-${r}`, cards, policy, r);
-    if (CATEGORIES.some((c) => tierOf(pips[c]) >= tier)) hit += 1;
-  }
-  return hit / RUNS;
-}
+//   **같은 계약을 v9 로 옮기려면 재야 하는 것이 달라진다**: 한 런에 방울이 얼마나 들어오고
+//   (`sim/gene.ts` 의 사건별 지급) 그것으로 문턱을 몇 개 살 수 있는가. 그 값은 아직 안 정해졌다
+//   (backlog 「성장 속도 재측정」 · 프로브가 정할 몫). 여기서 숫자를 지어내면 근거 없는 밸런스 상수가
+//   하나 생기므로, **다시 세우지 않고 비워 둔다.**
 
 /**
  * 2단계 — **성장과 난이도가 화면에서 읽히는가**의 계약.

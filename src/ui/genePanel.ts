@@ -224,8 +224,11 @@ export function createGenePanel(shop: GeneShop): GenePanel {
 
   const lead = document.createElement("div");
   lead.className = "gene-lead";
+  // ⚠ **v9 에서 이 줄이 거짓말이 됐던 자리다.** 예전 문구는 "카드로 받은 도장은 그만큼 값을
+  //   깎습니다"였는데, 드래프트 카드는 이제 도장을 한 칸도 안 준다(도장은 방울 구입과 시작 갈래뿐).
+  //   값이 남은 거리라는 사실은 그대로이므로, 그 사실만 말한다(`Game.tierCost` = `pipsToNext`).
   lead.textContent =
-    "모은 방울로 범주의 다음 단을 삽니다. 단이 오르면 능력이 통째로 바뀝니다. 카드로 받은 도장은 그만큼 값을 깎습니다.";
+    "모은 방울로 범주의 다음 단을 삽니다. 단이 오르면 능력이 통째로 바뀝니다. 값은 다음 단까지 남은 도장 수입니다.";
 
   // 방울이 어디서 나오는지 · 값은 `GENE_AWARD`, 이름은 `GENE_REASON_LABELS`, 조건은 `REASON_NOTE`
   // (게이트가 읽는 상수에서 만든다). 여기서 손으로 적으면 표를 튜닝하는 순간 화면이 거짓말을 한다.

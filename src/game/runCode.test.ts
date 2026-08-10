@@ -22,9 +22,18 @@ import {
   type RunCodeData,
 } from "@/game/runCode";
 import { Game } from "@/game/game";
-import { CARD_POOL, PRESET_CARDS, boostCard } from "@/game/cards";
+import { CARD_POOL, PRESET_CARDS } from "@/game/cards";
 import { CATEGORIES } from "@/sim/tiers";
 import { GENOME_VERSION } from "@/sim/genome";
+
+/**
+ * 풀에서 i 번째 카드의 id.
+ *
+ * ⚠ **풀 번호를 그냥 박지 말 것.** 예전엔 `CARD_POOL[88]!.id` 처럼 적어 뒀는데, v9 에서 카드 풀이
+ *   90장(도장) → 52장(특성 45 + 열쇠 7)으로 줄자 그 자리가 undefined 가 되어 이 파일의 시험 아홉이
+ *   한꺼번에 터졌다. 카드 풀 크기는 앞으로도 바뀐다 → 나머지로 감아 **범위를 안 벗어나게** 한다.
+ */
+const poolId = (i: number): string => (CARD_POOL[i % CARD_POOL.length] as (typeof CARD_POOL)[number]).id;
 
 /** 있을 법한 한 판을 손으로 지어낸다(모든 기록 종류가 한 번씩 들어가게). */
 function sampleData(): RunCodeData {
@@ -66,7 +75,7 @@ function sampleData(): RunCodeData {
         kind: "level",
         boost: 1,
         level: 2,
-        cards: [CARD_POOL[0]!.id, CARD_POOL[35]!.id, CARD_POOL[88]!.id],
+        cards: [poolId(0), poolId(20), poolId(48)],
         outcome: DRAFT_REROLLED,
       },
       {
@@ -74,7 +83,7 @@ function sampleData(): RunCodeData {
         kind: "level",
         boost: 1,
         level: 2,
-        cards: [CARD_POOL[3]!.id, CARD_POOL[40]!.id, CARD_POOL[70]!.id],
+        cards: [poolId(3), poolId(25), poolId(41)],
         outcome: DRAFT_SKIPPED,
       },
       { t: "buy", cat: "fang", cost: 5, tier: 2, stage: 2, tick: 140 },
@@ -109,8 +118,9 @@ function sampleData(): RunCodeData {
         kind: "era",
         boost: 2,
         level: 6,
-        // 강화 꼬리는 기록 단계에서 이미 떼인다(`baseCardId`) · 배수는 boost 가 들고 있다.
-        cards: [CARD_POOL[5]!.id, CARD_POOL[6]!.id, CARD_POOL[7]!.id],
+        // 옛 강화 꼬리는 기록 단계에서 이미 떼였다(`baseCardId`) · 배수는 boost 가 들고 있었다.
+        // v9 에는 강화가 없어 boost 는 늘 1 이지만, 옛 판 코드를 읽으려면 자리는 남아 있어야 한다.
+        cards: [poolId(5), poolId(6), poolId(7)],
         outcome: 0,
       },
       {
@@ -234,9 +244,14 @@ describe("판 분석 코드 · 카드 번호", () => {
     for (const c of CODE_CARDS) expect(cardByCode(cardCodeIndex(c.id))?.id).toBe(c.id);
   });
 
-  it("시대 보상의 강화 꼬리(_x3)를 떼고 원래 카드를 찾는다", () => {
+  // v9 에서 「강화 ×N」(`boostCard`)은 사라졌다 — 카드가 도장을 안 주니 곱할 것이 없다.
+  // 하지만 **꼬리를 떼는 규칙은 살아 있다**(`runCode.ts` 의 `baseCardId`): 그 시절에 뽑아 둔 판 코드가
+  // 아직 돌아다니고, 디코더가 꼬리 붙은 id 를 못 읽으면 「모르는 카드」로 조용히 뭉갠다.
+  // 그래서 `boostCard` 대신 꼬리를 직접 붙여 같은 계약을 잰다.
+  it("옛 시대 보상의 강화 꼬리(_x3)를 떼고 원래 카드를 찾는다", () => {
     const base = CARD_POOL[12] as (typeof CARD_POOL)[number];
-    expect(cardCodeIndex(boostCard(base, 3).id)).toBe(cardCodeIndex(base.id));
+    expect(cardCodeIndex(`${base.id}_x3`)).toBe(cardCodeIndex(base.id));
+    expect(cardCodeIndex(base.id)).toBeGreaterThanOrEqual(0); // 대조군: 원래 카드는 실제로 번호가 있다
   });
 
   it("모르는 카드는 -1 이다(0 번 카드로 조용히 둔갑하지 않는다)", () => {

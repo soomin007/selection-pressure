@@ -80,10 +80,10 @@ describe("티어 사다리 — 문턱에서만 켜진다", () => {
 });
 
 describe("기본 게놈 — 중립점 검산(밸런스 보존의 열쇠)", () => {
-  it("도장 하나 없는 종은 버전 8 · 도장 0 · 열쇠 0", () => {
+  it("도장 하나 없는 종은 버전 9 · 도장 0 · 열쇠 0 · 특성 0", () => {
     const g = defaultGenome();
     expect(g.genomeVersion).toBe(GENOME_VERSION);
-    expect(GENOME_VERSION).toBe(8);
+    expect(GENOME_VERSION).toBe(9);
     for (const c of CATEGORIES) expect(g.pips[c]).toBe(0);
     expect(tierSum(g.pips)).toBe(0);
     expect(Object.values(g.keys).some((v) => v)).toBe(false);
@@ -225,7 +225,7 @@ describe("마이그레이션 — 지난 런의 챔피언이 옛 모습 그대로
       genomeVersion: 1,
       traits: { speed: 0.7, attack: 0.3, vision: 0.6, herding: 0.4, metabolism: 0.5, fertility: 0.2, diet: 0.8 },
     });
-    expect(g.genomeVersion).toBe(8);
+    expect(g.genomeVersion).toBe(GENOME_VERSION);
     expect(g.traits.speed).toBe(70);
     expect(g.traits.diet).toBe(80);
     expect(g.traits.swimming).toBe(50); // v1 엔 없던 축은 기본값
@@ -257,7 +257,7 @@ describe("마이그레이션 — 지난 런의 챔피언이 옛 모습 그대로
   it("v8 왕복 — 도장 게놈은 도장에서 능치를 다시 낸다(저장된 값이 낡아도 규칙이 이긴다)", () => {
     const g = genomeFromPips(pipsOf({ fang: TIER_STEPS[1], herd: TIER_STEPS[0] }), { ...emptyKeys(), venom: true });
     const round = deserializeGenome(serializeGenome(g));
-    expect(round.genomeVersion).toBe(8);
+    expect(round.genomeVersion).toBe(GENOME_VERSION);
     expect(round.pips).toEqual(g.pips);
     expect(round.keys).toEqual(g.keys);
     expect(round.traits).toEqual(g.traits);
@@ -337,7 +337,7 @@ describe("무작위 게놈 — 도장을 뿌린다(결정론)", () => {
     const a = randomGenome(new Rng("rnd-1"));
     const b = randomGenome(new Rng("rnd-1"));
     expect(a).toEqual(b);
-    expect(a.genomeVersion).toBe(8);
+    expect(a.genomeVersion).toBe(GENOME_VERSION);
     for (const c of CATEGORIES) expect(a.pips[c]).toBeGreaterThanOrEqual(0);
   });
 });

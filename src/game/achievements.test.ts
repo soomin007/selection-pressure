@@ -60,7 +60,7 @@ describe("도전 과제 정의", () => {
   it("카드 보상은 딱 하나다(나머지는 전부 효과 없는 꾸밈)", () => {
     const cards = ACHIEVEMENTS.filter((a) => a.reward.kind === "card");
     expect(cards.length).toBe(1);
-    expect(ACHIEVEMENT_CARDS.has("lp_hide2")).toBe(true);
+    expect(ACHIEVEMENT_CARDS.size).toBe(1);
   });
 
   it("몸 꾸밈 목록에 이름 목록(mythicNames)은 안 들어간다", () => {
@@ -111,16 +111,28 @@ describe("판정", () => {
 });
 
 describe("카드 문지기", () => {
+  // ⚠ **카드 id 를 손으로 박지 않는다.** 이 자리는 카드 풀이 개편될 때마다 조용히 죽었다
+  //   (2026-08-07 v8 전환 · 2026-08-10 v9 전환 · 둘 다 죽어도 게임이 멀쩡히 돌아가 아무도 못 알아챘다).
+  //   보상 목록에서 꺼내 쓰면 id 가 바뀌어도 검사가 따라온다.
+  const rewardCard = [...ACHIEVEMENT_CARDS][0] as string;
+
+  it("도전 과제 보상 카드가 **실제 카드 풀에 있다** — 없으면 그 과제의 보상이 허공이다", () => {
+    const ids = new Set(CARD_POOL.map((c) => c.id));
+    for (const id of ACHIEVEMENT_CARDS) {
+      expect(ids.has(id), `보상 카드 「${id}」 가 카드 풀에 없다`).toBe(true);
+    }
+  });
+
   it("보상 카드는 도전 과제 전이면 어떤 레벨에서도 안 열린다", () => {
-    expect(isAchievementCardUnlocked("lp_hide2")).toBe(false);
-    expect(cardAvailable("lp_hide2", 1)).toBe(false);
-    expect(cardAvailable("lp_hide2", 99)).toBe(false);
+    expect(isAchievementCardUnlocked(rewardCard)).toBe(false);
+    expect(cardAvailable(rewardCard, 1)).toBe(false);
+    expect(cardAvailable(rewardCard, 99)).toBe(false);
   });
 
   it("과제를 달성하면 보상 카드가 열린다", () => {
     debugUnlockAchievement("titan_born");
-    expect(isAchievementCardUnlocked("lp_hide2")).toBe(true);
-    expect(cardAvailable("lp_hide2", 1)).toBe(true);
+    expect(isAchievementCardUnlocked(rewardCard)).toBe(true);
+    expect(cardAvailable(rewardCard, 1)).toBe(true);
   });
 
   it("두 문지기를 모두 통과해야 한다 · 레벨로 잠긴 카드는 과제와 무관하게 닫혀 있다", () => {
@@ -136,7 +148,7 @@ describe("카드 문지기", () => {
   });
 
   it("보상 카드를 여는 과제를 이름으로 찾을 수 있다(대백과 잠금 문구)", () => {
-    expect(achievementForCard("lp_hide2")?.id).toBe("titan_born");
+    expect(achievementForCard(rewardCard)?.id).toBe("titan_born");
     expect(achievementForCard("swift")).toBeNull();
   });
 });
