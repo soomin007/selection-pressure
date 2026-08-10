@@ -71,6 +71,20 @@ export class WorldView {
   private readonly creatureLayer = new Container();
   // 맞서는 개체(전사) 표식 · 스프라이트 **위** 레이어. 아래에 깔면 몸에 가려 "누가 싸우는가"가 사라진다.
   private readonly fighterG = new Graphics();
+  /**
+   * **다친 개체의 기운 선** — 물린 뒤 얼마 동안만 몸 위에 뜬다(**[사용자 2026-08-10]** 확정).
+   *
+   * 왜 「다친 애만」인가: **[사용자]** "애들 각각의 체력을 다 보여주면 그건 너무 화면이 난잡할 것
+   * 같은데, 그렇다고 지금처럼 개체별 체력을 아예 숨겨버리면 애들이 공격을 하는지를 모르니 피해
+   * 관련 특성은 뭐 얼마나 도움이 되는지 가늠이 안 돼."
+   * 무리 서른 마리 중 지금 싸우는 것은 보통 한둘이라, 그 한둘만 그리면 **평소 화면은 그대로 깨끗하고
+   * 싸움이 붙은 자리만 눈에 들어온다.**
+   *
+   * ⚠ 이 표시가 뜻을 가지려면 **전투가 여러 번의 물기로 진행되어야 한다.** 같은 날 전투를
+   *   「즉사 판정」에서 「피해 싸움」으로 옮긴 것(`params.ts`)과 한 몸이다 — 옛 값에서는 사냥이
+   *   0.17초에 끝나 선이 뜨기도 전에 개체가 사라졌다.
+   */
+  private readonly woundG = new Graphics();
   private readonly moveTargetG = new Graphics(); // 이동 명령 목표 깃발(탭 명령 조종) — 도착까지 서 있다
   private readonly trialZoneG = new Graphics(); // 시험이 세계에 찍은 자리(「표시된 자리에 N마리」)
   private readonly trialMarkG = new Graphics(); // 표식이 찍힌 야생(「표시된 것 N마리 사냥」)
@@ -142,6 +156,9 @@ export class WorldView {
     this.container.addChild(this.creatureLayer);
     // 전사 표식도 스프라이트 위 · 몸 아래(바깥)에 그리므로 몸을 안 덮으면서 절대 안 가려진다.
     this.container.addChild(this.fighterG);
+    // 다친 기운 선은 스프라이트 **위** · 몸 **바깥 위쪽**에 눕는다. 지금 벌어지는 일을 말하는
+    // 표시라 다른 개체에 파묻히면 안 되고, 몸 위가 아니라 머리 위라 무슨 종인지도 안 가린다.
+    this.container.addChild(this.woundG);
     // 이동 목표 깃발은 스프라이트 **위** — 무리가 목표 지점을 밟고 지나가도 깃발이 파묻히지 않아야
     // "어디로 가는 중인가"를 잃지 않는다(작은 표식이라 몸을 가려도 한 마리 일부다).
     this.container.addChild(this.trialZoneG);
@@ -229,6 +246,15 @@ export class WorldView {
     this.container.scale.set(zoom);
     this.container.pivot.set(cx, cy);
     this.container.position.set(screenW / 2, screenH / 2);
+  }
+
+  /**
+   * **화면에 실제로 반영된** 카메라 중심(월드 밖으로 안 나가게 잘린 값)과 배율.
+   * 떨림 계측(`?camprobe` · scripts/camera-probe.mjs)이 읽는 유일한 창구다 — 눈이 보는 것은
+   * 클램프 **뒤**의 값이라, main 의 camX/camY 를 재면 맵 가장자리에서 없는 떨림을 재게 된다.
+   */
+  cameraCenter(): { x: number; y: number; zoom: number } {
+    return { x: this.viewCX, y: this.viewCY, zoom: this.viewZoom };
   }
 
   /** 런이 바뀌면 호출 — 텍스처 캐시를 비운다. 텍스처는 sync 에서 개체 게놈별로 lazy 생성한다(세대별). */
@@ -770,6 +796,7 @@ export class WorldView {
 
     // 이동 명령 목표 깃발 — 명령이 사는 동안(도착 전) 계속 서 있다.
     this.drawMoveTarget();
+    this.drawWounded(world);
     this.drawTrialZone(world);
     this.drawTrialMarks(world);
 
@@ -968,6 +995,43 @@ export class WorldView {
    * 깃발이 서도 색이 섞이지 않는다. 월드 좌표 레이어라 카메라와 함께 움직인다.
    * 바닥 링이 부드럽게 맥동해 "아직 유효한 명령"임이 읽힌다(멎은 표식은 잔상으로 오독된다).
    */
+  /**
+   * **다친 개체의 기운 선** — 물린 뒤 `woundTicks` 가 도는 동안만 머리 위에 뜬다.
+   *
+   * **[사용자 2026-08-10]**: "애들 각각의 체력을 다 보여주면 그건 너무 화면이 난잡할 것 같은데,
+   * 그렇다고 지금처럼 개체별 체력을 아예 숨겨버리면 애들이 공격을 하는지를 모르니 피해 관련 특성은
+   * 뭐 얼마나 도움이 되는지 가늠이 안 돼." → **다친 애만** 그린다.
+   *
+   * 왜 `woundTicks` 인가: 그 값은 sim 이 **물린 순간에만** 세우는 것이라(`resolveBite`),
+   * 「지금 싸움이 붙었다」와 정확히 같은 뜻이다. 기운이 낮다고 그리면 **굶주린 개체가 전부 켜져**
+   * 평소 화면이 난잡해진다 — 그건 사용자가 싫다고 한 바로 그 그림이다.
+   *
+   * 색은 **내 무리와 남을 가른다**: 내 애가 다치면 붉게(위험 색), 남이 다치면 옅은 흰색으로
+   * (「내가 물어 놓은 것」이 눈에 덜 급하게). 길이는 몸 크기를 따라가되 상한을 둔다.
+   * ⚠ 이 선은 지형·다른 개체 위에 뜨지만 **머리 위**라 몸(=무슨 종인가)을 안 덮는다.
+   */
+  private drawWounded(world: World): void {
+    this.woundG.clear();
+    for (const e of world.entities) {
+      if (!e.alive || e.woundTicks <= 0) continue;
+      // 평활된 렌더 좌표를 쓴다(몸이 그려지는 바로 그 자리) · 없으면 sim 좌표로 떨어진다.
+      const p = this.dispPos.get(e.id) ?? { x: e.x, y: e.y };
+      const r = bodyRadiusOf(e);
+      const w = Math.min(26, Math.max(12, r * 1.7)); // 선 길이 — 몸을 따라가되 너무 길어지지 않게
+      const y = p.y - r - 5;
+      const x = p.x - w / 2;
+      const hp = Math.max(0, Math.min(1, e.energy / SIM.maxEnergy));
+      // 물린 직후가 가장 진하고 부상이 아물면서 옅어진다 — 「방금 맞았다」가 세기로도 읽힌다.
+      const fade = Math.min(1, e.woundTicks / SIM.woundTicks);
+      const alpha = 0.35 + 0.5 * fade;
+      this.woundG.rect(x, y, w, 2.2).fill({ color: 0x120d09, alpha: alpha * 0.75 });
+      if (hp > 0) {
+        const col = e.species.isPlayer ? 0xe85c43 : 0xf5ebdc;
+        this.woundG.rect(x, y, w * hp, 2.2).fill({ color: col, alpha });
+      }
+    }
+  }
+
   private drawMoveTarget(): void {
     this.moveTargetG.clear();
     const p = this.moveTarget;

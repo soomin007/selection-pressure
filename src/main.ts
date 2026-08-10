@@ -30,7 +30,9 @@ import { setMythicNames } from "@/ui/creatureName";
 import { describeSpecies } from "@/game/runReport";
 import { Highlights } from "@/render/highlights";
 import { Effects } from "@/render/effects";
-import { Minimap } from "@/render/minimap";
+// ⚠ 실제 파일은 `miniMap.ts` 다 · 대소문자를 맞춰 적는다. 윈도우·맥은 파일 이름의 대소문자를
+//   안 가려서 `minimap` 으로 적어도 돌아가지만, **리눅스(배포 빌드)에서는 못 찾는다.**
+import { Minimap } from "@/render/miniMap";
 import { ThreatBanner } from "@/render/threatBanner";
 import { publishPixiTextRects } from "@/render/pixiTextRects";
 import {
@@ -55,7 +57,12 @@ import { leadCapsOf } from "@/render/leadVision";
 // 측정 도구(boss.test.ts·balance-probe.mjs)도 같은 근원을 읽는다(복사본 금지, 2026-08-04 사고).
 
 // --- 무리 지시(기본 모드) 전용 화면 상수. 밸런스가 아니라 카메라·안내 표시에만 쓰인다. ---
-const LEAD_CAM_EASE = 9; // 지시 모드 카메라 이징(기본 3.5 는 시상수 286ms 라 물먹은 느낌의 주범)
+// ── 카메라 추종 상수 셋 (2026-08-10 · 「시대가 갈수록 카메라가 어정쩡하게 움찔거린다」 실측 후) ──
+// 재는 법과 그때의 숫자는 `scripts/camera-probe.mjs` 주석에 있다. 셋을 따로 두는 이유는 각각 다른
+// 원인을 맡기 때문이다: 이징=따라붙는 속도 · 평활=목표점 자체의 잔떨림 · 데드존=안 움직여도 되는 범위.
+const LEAD_CAM_EASE = 10; // 지시 모드 카메라 이징(1/s · 시상수 100ms). 기본 3.5 는 286ms 라 물먹은 느낌
+const CAM_FOCUS_SMOOTH = 12; // 무리 초점 저역통과(1/s · 시상수 83ms) · 초점이 매 틱 떠는 것을 여기서 먹는다
+const CAM_DEADZONE = 22; // 카메라를 안 움직이는 창의 반지름(**논리 화면 px** · 540 폭 기준 ≈ 4%)
 const LEAD_BANNER_DELAY_MS = 3000; // "아무도 안 따라옵니다" 안내까지의 유예(바로 띄우면 잔소리)
 const PEEK_RETURN_MS = 1500; // 훔쳐보기(드래그·미니맵·2손가락 팬) 입력이 끝나고 무리로 복귀까지의 시간
 const ORDER_DENY_MS = 1800; // 갈 수 없는 곳을 탭했을 때 목표 줄에 그 사실을 남겨 두는 시간
@@ -648,6 +655,10 @@ async function boot(): Promise<void> {
   let camX = game.width / 2;
   let camY = game.height / 2;
   let camZoom = 1;
+  // 저역통과된 무리 초점 · 카메라가 실제로 겨누는 자리다(원본 초점은 매 틱 다시 계산돼 떤다).
+  // camX/camY 와 같은 이유로 onWorldChanged 보다 먼저 선언한다(그 콜백이 새 세계에서 스냅한다).
+  let camFocusX = camX;
+  let camFocusY = camY;
   // 사용자 줌 배율 — 자동/수동 시점 무관하게 모든 모드의 목표 줌에 곱한다(버튼·휠·핀치로 조절).
   let userZoom = 1;
   // 줌아웃 하한은 절대값이 아니라 **맵이 화면을 꽉 채우는 배율**이다 — 그보다 물러나면 맵 바깥의
@@ -657,6 +668,44 @@ async function boot(): Promise<void> {
   const minUserZoom = (): number =>
     Math.max(0.5, layout.width / game.width, layout.height / game.height);
   const clampUserZoom = (z: number): number => Math.max(minUserZoom(), Math.min(3.5, z));
+  // ?camprobe — 카메라 떨림 계측 표본. `scripts/camera-probe.mjs` 가 `window.__camProbe` 를 읽어
+  // 「연속 프레임 사이 이동 방향이 뒤집히는 횟수」와 이동량 분포를 낸다. 붙이지 않으면 null 이라
+  // 평소 플레이엔 분기 하나 값만 든다. 렌더 전용이라 sim 결정론과 무관하다.
+  // 기록하는 값은 **클램프 뒤**의 화면 반영값(view.cameraCenter)이다 — 눈이 보는 그 값이라야
+  // 맵 가장자리에서 「camX 는 흔들리는데 화면은 멀쩡한」 가짜 떨림을 안 세게 된다.
+  // 표본에 **목표점(tx,ty)도 함께** 넣는다 · 「카메라가 떤다」와 「목표가 떤다」는 처방이 정반대라
+  // (전자는 이징·데드존, 후자는 목표 평활) 한 표본에서 갈라 볼 수 있어야 한다.
+  // 시대(era) · 무리 크기(n) · 무리 평균 속력(v)도 함께 싣는다 — 제보가 「시대가 갈수록」이므로
+  // 떨림이 시대와 함께 커지는지를 **같은 표본 안에서** 확인할 수 있어야 한다.
+  const camProbe:
+    | {
+        t: number; dt: number; a: number;
+        x: number; y: number; z: number; tx: number; ty: number;
+        era: number; n: number; v: number; w: boolean;
+      }[]
+    | null = new URLSearchParams(window.location.search).has("camprobe") ? [] : null;
+  if (camProbe) {
+    (window as unknown as { __camProbe: typeof camProbe }).__camProbe = camProbe;
+  }
+  const recordCamSample = (dtMS: number, tx: number, ty: number): void => {
+    if (!camProbe || camProbe.length >= 40000) return;
+    const c = view.cameraCenter();
+    let n = 0;
+    let vsum = 0;
+    for (const e of game.world.entities) {
+      if (!e.species.isPlayer || !e.alive) continue;
+      n += 1;
+      vsum += Math.hypot(e.x - e.prevX, e.y - e.prevY);
+    }
+    camProbe.push({
+      t: performance.now(), dt: dtMS, a: game.interpAlpha,
+      x: c.x, y: c.y, z: c.zoom, tx, ty,
+      era: game.era, n, v: n > 0 ? vsum / n : 0,
+      // 지금 세계가 실제로 도는 중인가 · 드래프트·결과 화면에서는 sim 이 멈춰 카메라도 정지한다.
+      // 그 프레임을 「안 떨렸다」로 세면 떨림이 실제보다 낮게 나온다(3배속에서 절반이 그런 프레임이었다).
+      w: game.phase === "watch" && !game.paused,
+    });
+  };
   // 무리 지시 표시 상태 · onWorldChanged 가 game.start()에서 곧장 불려 이 값들을 초기화하므로,
   // 그 콜백보다 반드시 먼저 선언한다(아래쪽에 두면 TDZ ReferenceError 로 부팅이 죽는다 — known_issues).
   let leadZeroMs = 0; // 아무도 안 따라오는 상태가 이어진 시간(ms)
@@ -685,6 +734,9 @@ async function boot(): Promise<void> {
     const c0 = world.playerCentroid();
     camX = c0.x;
     camY = c0.y;
+    // 평활 초점도 함께 스냅 · 안 맞추면 첫 프레임에 옛 세계의 초점에서 미끄러져 들어온다.
+    camFocusX = c0.x;
+    camFocusY = c0.y;
     // 재현용: 이 맵의 시드를 콘솔에 남긴다(?seed=… 로 다시 불러올 수 있음).
     console.info(`[seed] ${game.seed}  (재현: ?seed=${game.seed})`);
   };
@@ -1477,17 +1529,55 @@ async function boot(): Promise<void> {
     let tx: number;
     let ty: number;
     let tz: number;
+    // 계측용 원본 목표(평활·데드존을 **거치기 전**). 고치기 전후를 같은 잣대로 견주려면 이 값이라야 한다 —
+    // 데드존을 지난 값을 기록하면 「목표가 안 떨린다」가 당연해져 처방의 효과를 못 잰다.
+    let rawTx: number;
+    let rawTy: number;
     if (manualCam) {
       // 수동 조망(넓게 보도록 줌 1). 잠시 뒤 자동으로 무리에게 돌아간다(위).
       tx = manualCam.x;
       ty = manualCam.y;
+      rawTx = tx;
+      rawTy = ty;
       tz = 1;
+      // 훔쳐보는 동안 평활 초점을 카메라에 붙여 둔다 — 손을 뗐을 때 옛 초점에서 미끄러져 오지 않게.
+      // (데드존·평활은 자동 추종에만 건다. 손가락으로 끄는 화면에 데드존을 걸면 끈 만큼 안 따라와
+      //  「끈적이는」 드래그가 된다 — 훔쳐보기 계약을 깨지 않으려면 이 갈래는 손대지 않는 것이 맞다.)
+      camFocusX = camX;
+      camFocusY = camY;
     } else {
       // 흩어진 낙오자 대신 "지금 시점 근처의 주 무리"를 부드럽게 따라간다(hint=현재 카메라). 번식으로 초점이
       // 홱 튀지 않게 가중 평균을 쓴다.
       const focus = game.world.playerFocus(camX, camY);
-      tx = focus.x;
-      ty = focus.y;
+      rawTx = focus.x;
+      rawTy = focus.y;
+      // ① **목표점 저역통과** · 무리 초점은 매 틱 다시 계산되는 가중 평균이라 **그 자체가 떤다**.
+      //    실측(scripts/camera-probe.mjs · 폰 390x844 · 60fps): 초점의 방향이 초당 4.2회(1배속) ~
+      //    10.4회(3배속) 뒤집혔고, 카메라는 그 경로의 90~93% 를 그대로 베끼고 있었다(경로비).
+      //    즉 지금까지 카메라에는 저역통과가 사실상 없었다. 시상수 83ms(=12/s)면 개체 렌더 평활
+      //    (worldView 의 dispPos ≈ 47ms)보다 느슨해 「무리가 어디 있나」는 안 흔들리면서 잔떨림만 먹는다.
+      const fk = 1 - Math.exp(-CAM_FOCUS_SMOOTH * (dtMS / 1000));
+      camFocusX += (focus.x - camFocusX) * fk;
+      camFocusY += (focus.y - camFocusY) * fk;
+      // ② **데드존** · 초점이 이 창 안에 있는 동안은 카메라를 아예 안 움직인다. 창을 벗어난 만큼만
+      //    목표로 삼으므로(빼기식) 창을 넘는 순간에 튀지 않는다(문턱을 지나며 오차가 0 에서 이어진다).
+      //    반경은 **논리 화면 px** 이라 줌을 당기든 물리든 화면에서 보이는 창 크기가 같다 → 월드 px 로 환산.
+      //    실측 근거: 같은 궤적에 데드존 하나만 더해도 카메라 방향 뒤집힘이 0.71 → 0.24회/초로 줄었다
+      //    (3배속 · 평활 없이 잰 값이다 · 평활까지 더하면 0 이 된다). 22 를 고른 근거는 잔떨림 크기다:
+      //    목표점이 자기 150ms 이동평균에서 벗어나는 양이 RMS 0.8~1.7px 였고, 그보다 넉넉해야 잔떨림을
+      //    통째로 삼킨다. 더 키우면(26·32) 떨림은 조금 더 줄지만 무리가 화면에서 그만큼 밀려난다.
+      const r = CAM_DEADZONE / Math.max(0.001, camZoom);
+      const ex = camFocusX - camX;
+      const ey = camFocusY - camY;
+      const d = Math.hypot(ex, ey);
+      if (d <= r) {
+        tx = camX;
+        ty = camY;
+      } else {
+        const s = (d - r) / d;
+        tx = camX + ex * s;
+        ty = camY + ey * s;
+      }
       tz = 1;
     }
     // 사용자 줌을 모든 모드의 목표 줌에 곱한다(자동/수동 무관). 하한은 맵 크기 기준(minUserZoom) —
@@ -1497,12 +1587,18 @@ async function boot(): Promise<void> {
     tz = Math.max(minUserZoom(), Math.min(5, tz * userZoom));
     // 지시 모드에선 카메라가 무리에 바짝 붙는다(기본 3.5 는 시상수 286ms 라 화면이 물먹은 느낌이 된다).
     const ease = leadMode ? LEAD_CAM_EASE : 3.5;
-    const k = Math.min(1, (dtMS / 1000) * ease); // 시간 기반 이징
+    // ③ **프레임률 정확 보정.** 예전 식 `min(1, dt·ease)` 는 지수 감쇠의 1차 근사라 프레임이 길어질수록
+    //    실제보다 세게 당긴다(dt 16.7ms 에서 +8%, 33.4ms 에서 +16%, 50ms 에서 +24%). 폰은 프레임 시간이
+    //    고르지 않아 그 과다 보정이 프레임마다 다른 크기로 들어오고, 그것이 곧 「움찔」로 보인다.
+    //    실측(CPU 4배 감속 · dt p95 66ms): 이 한 줄만 지수식으로 바꿔도 가속도 잡음 p95 가
+    //    1.52 → 1.27 px/프레임² 로 줄었다. 개체 위치 평활(worldView 의 smoothK)이 이미 쓰는 식과 같다.
+    const k = 1 - Math.exp(-ease * (dtMS / 1000));
     camX += (tx - camX) * k;
     camY += (ty - camY) * k;
     camZoom += (tz - camZoom) * k;
     // 월드(game.width/height)와 화면(layout) 분리 — 큰 월드의 일부만 화면에 보여준다.
     view.setCamera(camX, camY, camZoom, game.width, game.height, layout.width, layout.height);
+    recordCamSample(dtMS, rawTx, rawTy);
   }
 
   function detectEvents(fighters: number): void {

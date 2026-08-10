@@ -14,7 +14,8 @@
     "boss-preview": "node scripts/boss-preview.mjs",
     "gene-preview": "node scripts/gene-preview.mjs",
     "overlap": "node scripts/overlap-check.mjs",
-    "probe": "node scripts/balance-probe.mjs"
+    "probe": "node scripts/balance-probe.mjs",
+    "camera": "node scripts/camera-probe.mjs"
   },
   "dependencies": {
     "pixi.js": "^8.6.0"
