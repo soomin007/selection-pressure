@@ -196,7 +196,8 @@ export function createGoalBar(cb: GoalBarCallbacks): GoalBar {
   // 문구와 순종/생존 칩이 이미 나눠 쓰고 있고, 관문 동안에는 "생존 21/8마리"가 그 줄을 거의 다
   // 먹는다. 알약 옆에 제 칸으로 두면 **줄이 안 늘어나고**(세로 압박 0 · 폰 세로 화면 제약),
   // 알약 탭(상세 펼치기)과 겹치지 않는 제 손잡이가 생긴다.
-  // 높이는 .goal-head 의 stretch 가 알약과 맞춰 주므로 따로 잡지 않는다.
+  // 높이는 CSS 에서 44px 로 고정한다 — 예전엔 `.goal-head` 의 stretch 가 알약에 맞춰 줬는데,
+  // 그러면 할 일 문구가 두 줄이 될 때 이 칸이 함께 세로로 늘어난다(2026-08-10 사용자 지적).
   const geneBtn = document.createElement("button");
   geneBtn.className = "goal-gene";
   geneBtn.type = "button";
@@ -426,7 +427,11 @@ function ensureGoalStyles(): void {
   .goal-root { position: fixed; top: 8px; left: 8px; right: 8px; z-index: 9; display: flex;
     flex-direction: column; gap: 6px; pointer-events: none; font-family: var(--font-body);
     zoom: var(--ui-zoom, 1); }
-  .goal-head { display: flex; gap: 6px; align-items: stretch; }
+  /* ⚠ **stretch 가 아니다** (2026-08-10 사용자 지적: "옆의 방울 칸과 일시정지/메뉴 버튼도 길어져서
+     못생겨지는 문제"). 할 일 문구가 두 줄이 되면 알약이 51 → 69px 로 커지는데, stretch 면 옆의
+     방울 칸과 멈춤 버튼이 **함께 늘어나 세로로 길쭉한 직사각형**이 된다(실측).
+     center 로 두면 알약만 커지고 버튼은 제 크기로 가운데 선다 — 문구 길이와 무관하게 모양이 같다. */
+  .goal-head { display: flex; gap: 6px; align-items: center; }
   .goal-pill { pointer-events: auto; flex: 1; min-width: 0; text-align: left; cursor: pointer;
     position: relative; /* 경험치 밑선(goal-xpline)의 기준 상자 */
     display: flex; align-items: center; gap: 9px;
@@ -475,8 +480,15 @@ function ensureGoalStyles(): void {
   /* 첫 줄 = 할 일 + 순종 칩. 글이 늘어나는 쪽(goal-text)에 min-width:0 을 줘야 칩을 밀어내지 않고
      제 안에서 잘린다(안 주면 flex 기본 min-width:auto 라 칩이 알약 밖으로 밀려난다). */
   .goal-line { display: flex; align-items: baseline; gap: 6px; }
+  /* 두 줄까지 접히고 그걸 넘기면 그때 자른다(goal-sub 와 같은 규칙). 예전엔 한 줄 ellipsis 였는데
+     white-space 를 안 줘서 실제로는 **줄 수 제한 없이 늘어났다** · 긴 안내에서 알약이 계속
+     커졌다(2026-08-10 사용자 지적 "그 칸도 잘려서 나오고"). 늘어나는 데 상한을 둔다.
+     ⚠ 문구 자체를 한 줄에 들어오게 짧게 쓰는 것이 먼저다(main 의 goalText 참고).
+     ⚠⚠ **이 블록은 템플릿 리터럴 안이다. 주석에도 백틱을 쓰지 마라** · 문자열이 거기서 끊긴다
+        (방금 그렇게 깨뜨렸다). 코드 이름을 인용할 땐 따옴표나 맨글자로 적는다. */
   .goal-text { flex: 1; min-width: 0; font-family: var(--font-title); font-size: 14.5px; line-height: 1.25;
-    overflow: hidden; text-overflow: ellipsis; }
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .goal-follow { flex: none; font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap;
     padding: 2px 6px; border-radius: 999px; background: rgba(255,255,255,0.09); opacity: 0.85; }
   /* 관문 동안 이 칩은 "생존 21/8"이 된다 · 기준에 다가갈수록 색이 세진다(숫자를 읽기 전에 먼저 보인다).
@@ -493,7 +505,10 @@ function ensureGoalStyles(): void {
   /* 방울 카운터 · 알약과 멈춤 사이의 제 칸. flex:none 이라 알약이 대신 줄어들고, 알약 안의 글은
      min-width:0 + ellipsis 라 밀려 나가지 않는다(첫 줄 계산: goal-line 주석 참고).
      색은 티어 구입 화면과 같은 --gene(genePanel 이 :root 에 싣는다) · 두 곳에 색을 적지 않는다. */
-  .goal-gene { pointer-events: auto; flex: none; align-items: center; gap: 4px; padding: 0 8px;
+  /* 높이를 고정한다 · .goal-head 가 center 라 알약을 안 따라간다(위 주석 참조).
+     44px 은 손가락으로 누르는 최소 크기이자 짧은 알약(실측 51px)과 나란히 놓아도 안 어색한 값이다. */
+  .goal-gene { pointer-events: auto; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 8px;
+    height: 44px; box-sizing: border-box;
     border-radius: 12px; cursor: pointer; background: var(--panel); border: 1px solid var(--line);
     color: var(--ink); font-family: var(--font-mono);
     backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
@@ -514,7 +529,8 @@ function ensureGoalStyles(): void {
     font-family: var(--font-body); font-size: 12.5px; text-shadow: inherit;
     transition: transform 0.07s ease, background 0.12s ease; }
   .goal-generow:active { transform: translateY(1px); background: rgba(255,255,255,0.10); }
-  .goal-pause { pointer-events: auto; width: 42px; border-radius: 12px; cursor: pointer;
+  .goal-pause { pointer-events: auto; width: 44px; height: 44px; box-sizing: border-box;
+    border-radius: 12px; cursor: pointer;
     background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: 15px;
     backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); flex: none;
     transition: transform 0.07s ease; }
