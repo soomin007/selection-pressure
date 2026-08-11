@@ -557,6 +557,18 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
   }
   prey.energy -= bite.damage;
   prey.woundTicks = SIM.woundTicks; // 다쳤다 — 이 동안 쓰러지면 "부상"이지 굶주림이 아니다
+  // 몸부림(2026-08-11 치고 빠지기) — 물린 순간 공격자 반대쪽으로 몸을 뿌리친다. 근접 물기만이다
+  // (원거리 명중은 몸이 안 닿았다). 속도 충격이라 다음 몇 틱 관성으로 잦아들고, 벽·물이면 이동
+  // 적분의 축 취소가 그대로 받는다. rng 무소비 · 순수 기하라 굴림 수 불변.
+  if (!ranged) {
+    const fdx = prey.x - e.x;
+    const fdy = prey.y - e.y;
+    const fd = Math.hypot(fdx, fdy);
+    if (fd > 0.001) {
+      prey.vx += (fdx / fd) * SIM.biteFlinchImpulse;
+      prey.vy += (fdy / fd) * SIM.biteFlinchImpulse;
+    }
+  }
   // ── 물린 쪽의 고유 카드(2026-08-11) · 전부 rng 없는 가산이라 굴림 수가 안 변한다 ──────────────
   if (prey.genome.perks.length !== 0) {
     const pp = prey.genome.perks;
@@ -808,6 +820,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 격퇴 체력을 깎는다(boss.memberKills·killRadius 가 dealRaidHit). 카운터가 공격·속도·무리·시야면 전사가
   // 되고, 약한 개체는 그대로 도망(computeFlee) — "전사와 도망자". 접근·kiting 이 아니라 그 자리 반격인
   // 이유: 떼가 내 종보다 빨라 kiting 이 원천적으로 안 통한다(도망 차단이 설계). 전사만 맞서 전멸도 없다.
+  // 2026-08-11 부터 그 자리 「반격」에 리듬이 붙었다(아래 raidRhythm · 반 보 물러났다 다시 붙는 국소
+  // 움직임) — 원칙(멀리 안 쫓는다)은 그대로다.
   const raidBoss = world.boss;
   const fighter = raidBoss !== null && isRaidFighter(raidBoss, e, world); // 근접(공격·카운터) 또는 원거리
   // **원거리 전사** — 보스가 사거리 안에 들면 쏜다(격퇴 체력 깎기). 근접 전사가 제자리에서 반격하듯, 원거리도
@@ -839,15 +853,60 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     desired = flee;
     turn = SIM.fleeTurn; // 도망은 빠르게 반응
   } else {
-    const goal = chooseGoal(e, world, vision, SIM.echoBase * (t.echo / TRAIT_MAX), canHunt, canGraze);
-    if (goal) {
+    // ── 보스전 전사의 반격 리듬(2026-08-11 치고 빠지기) — 보스와 맞물린 근접 전사는 반격 직후
+    //    반 보 물러나 이를 고르고, 반격 쿨타임이 절반을 돌면 다시 붙는다. 추격·kiting 이 아니라
+    //    **보스 가장자리의 국소 리듬**이다(위 「그 자리 반격」 원칙은 유지 — 멀리는 안 쫓는다).
+    //    정적으로 뭉개지던 스크럼의 답 · **[사용자 2026-08-11]** "특히 지금은 보스전에서 그 문제가
+    //    좀 있어보이는데". 보스 없는 세계는 이 분기가 통째로 안 돈다(스트림 불변) · rng 무소비.
+    let raidRhythm: Vec | null = null;
+    if (fighter && raidBoss !== null && !isRaidRangedFighter(raidBoss, e, world)) {
+      const bdx = e.x - raidBoss.x;
+      const bdy = e.y - raidBoss.y;
+      const near = raidBoss.counterRadius * SIM.raidRecoilNear;
+      if (bdx * bdx + bdy * bdy <= near * near) {
+        raidRhythm =
+          e.raidCounterCd > SIM.raidCounterCooldown * 0.5
+            ? toward(bdx, bdy, maxSpeed * SIM.raidRecoilFactor, 0) // 물러나 이를 고른다
+            : toward(-bdx, -bdy, maxSpeed, raidBoss.counterRadius * 0.4); // 다시 붙는다
+      }
+    }
+    const goal =
+      raidRhythm !== null
+        ? null
+        : chooseGoal(e, world, vision, SIM.echoBase * (t.echo / TRAIT_MAX), canHunt, canGraze);
+    if (raidRhythm !== null) {
+      desired = raidRhythm;
+    } else if (goal) {
       // 지형 길찾기: 목표가 직선으로 보이면 직진, 막혀 있으면 격자 BFS 경로를 따라 우회한다.
       const nav = navTo(e, world, goal, canSwim, canLand, canFly);
       // 최종 목표가 직선으로 보일 때만 도착 감속(arrive) — 가까울수록 줄여 오버슈트(와리가리)를 없앤다.
       // 사냥: 원거리 종은 사거리에서 멈춰 쏜다(붙지 않음 — kiting). 근접 종은 사정거리(공격 사거리)까지 바짝.
       const huntR = Math.max(SIM.huntArriveRadius, atkRange * 0.85);
-      const r = nav.final ? (e.targetPrey !== null ? huntR : SIM.arriveRadius) : 0;
-      desired = toward(nav.x - e.x, nav.y - e.y, maxSpeed, r);
+      let r = nav.final ? (e.targetPrey !== null ? huntR : SIM.arriveRadius) : 0;
+      let chaseSpeed = maxSpeed;
+      // ── 몸싸움의 리듬 · 간 보기 → 파고들기(2026-08-11 치고 빠지기) ──────────────────────
+      // 근접 사냥의 쿨다운 동안은 도착 감속 반경을 간격(사거리 + standoffPad)으로 넓혀 **반 보
+      // 뒤에서 발을 맞추고**(몸부림으로 벌어진 거리를 억지로 안 좁힌다), 쿨다운 마지막 몇 틱에
+      // **대시로 파고들어** 문다. 후진이 없는 이유는 params 의 설계 제약 주석 참조(속도 차가 얇아
+      // 물러난 거리를 영영 못 되찾는다). 원거리는 원래 멈춰 쏘므로 해당 없음 · rng 무소비.
+      if (nav.final && meleeHunter && e.targetPrey !== null && e.targetPrey.alive) {
+        if (e.attackCd > SIM.huntLungeTicks) {
+          r = Math.max(huntR, atkRange + SIM.huntStandoffPad); // 간을 본다
+        } else {
+          // ⚠ 대시는 **몸싸움 반경 안에서만** 붙는다. 거리 게이트 없이는 첫 물기 전(attackCd 0)의
+          //   모든 접근 추격이 부스트를 받아, 속도로 달아나던 먹잇감이 원리적으로 못 달아나게 된다
+          //   (실측: 워밍업 750틱 생태에서 내 종 15→5마리 붕괴 · 「빠름 = 도망」 계약 파괴).
+          //   게이트 밖(따돌려진 거리)은 예전 그대로의 추격이다 — 리듬은 몸싸움의 것이지 추격의 것이 아니다.
+          const gdx = e.targetPrey.x - e.x;
+          const gdy = e.targetPrey.y - e.y;
+          const reach = atkRange + SIM.huntStandoffPad * 2;
+          if (gdx * gdx + gdy * gdy <= reach * reach) {
+            chaseSpeed = maxSpeed * SIM.huntLungeBoost; // 파고드는 대시
+            turn = SIM.fleeTurn; // 대시는 반응도 빨라야 6틱 안에 속도가 실린다
+          }
+        }
+      }
+      desired = toward(nav.x - e.x, nav.y - e.y, chaseSpeed, r);
       // ── 무리사냥 · 에워싸기(2026-08-11 행동 분화) — 잠행 중 접근 각을 좌우로 벌린다(늑대의 법 ·
       //    id 짝홀이라 무리의 절반이 왼쪽, 절반이 오른쪽에서 조인다). 돌진이 켜지면 곧장 직진.
       //    rng 무소비 · 순수 회전이라 결정론 안전 · 특성 없는 종은 첫 조건에서 빠진다.

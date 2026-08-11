@@ -210,12 +210,21 @@ describe("Phase 5 — 보스/대멸종이 형질을 거른다 (다종 환경)", 
     // v7: 기본 게놈은 herding 0(능력 형질로 강등)이라 **뭉치지 않는다**. 떼 보스는 killRadius 가 작아
     // (4px) 흩어진 개체를 잘 못 잡으므로, 떼가 무는 메커니즘 자체를 보려면 뭉치는 종으로 재야 한다.
     // (뭉치지 않는 종이 떼 공격에 덜 당하는 것 자체는 사실이고 의도된 결과 — 집중 포화를 피한다.)
-    const w = new World("env-1", W, H, tune({ herding: 50 }));
-    for (let i = 0; i < 750; i++) w.step();
-    w.boss = createBoss("swarm", W, H);
-    expect(w.boss.members.length).toBe(6); // 무리 대형으로 몰려드는 떼 6마리
-    for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) w.step();
-    expect(w.deaths.boss).toBeGreaterThan(0); // 떼가 문 사망이 실제로 발생
+    // ⚠ 단일 시드(env-1) · 「사망 > 0」 이진 단언은 세계 표류에 취약하다 — 2026-08-12 치고 빠지기
+    //   도입 때 env-1 만 0 이 됐다(6시드 실측 0·5·16·1·3·3 = 메커니즘은 살아 있다). 옆 테스트가
+    //   2026-08-10 에 같은 이유로 여섯 시드 합계로 바꾼 선례를 그대로 따른다.
+    let bossDeaths = 0;
+    let membersOk = true;
+    for (const seed of ["env-1", "env-2", "env-3", "env-4", "env-5", "env-6"]) {
+      const w = new World(seed, W, H, tune({ herding: 50 }));
+      for (let i = 0; i < 750; i++) w.step();
+      w.boss = createBoss("swarm", W, H);
+      if (w.boss.members.length !== 6) membersOk = false; // 무리 대형으로 몰려드는 떼 6마리
+      for (let i = 0; i < GAME.bossSeconds * SIM.stepsPerSecond; i++) w.step();
+      bossDeaths += w.deaths.boss;
+    }
+    expect(membersOk).toBe(true);
+    expect(bossDeaths).toBeGreaterThan(0); // 떼가 문 사망이 실제로 발생(여섯 시드 합계)
   });
 
   // ⚠ **여섯 시드 합계로 바꿨다**(2026-08-10). 단일 시드(env-1)로 재던 것이 전투 재설계
