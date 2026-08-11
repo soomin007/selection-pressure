@@ -123,11 +123,15 @@ describe("방울 값", () => {
       milestone: 2.75,
       recovery: 0.2,
       trialExceed: 1.75,
+      // 새 시대 진입(2026-08-11 신설) · 위 실측(도달 시대 평균 2.5 안팎)에서 시대 전환은 판당
+      // 약 1.5회다. **발생 횟수는 기존 실측에서 유도한 추정**이라 econ 프로브로 다시 재야 한다.
+      era: 1.5,
     };
     let total = 0;
     for (const k of Object.keys(perRun) as GeneReason[]) total += GENE_AWARD[k] * perRun[k];
     expect(total).toBeGreaterThan(24);
-    expect(total).toBeLessThan(29);
+    // 상한을 29 → 34 로 올렸다(시대 방울 +4.5 몫 · [사용자 2026-08-11] 「4단은 찍지도 못했어」의 처방).
+    expect(total).toBeLessThan(34);
   });
 
   it("판당 공급이 한 범주를 0에서 4단까지 올리고도 남는다", () => {

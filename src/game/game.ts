@@ -6,6 +6,7 @@
 // 멸종(개체 0)하면 그 자리에서 패배. 게놈은 런 내 누적, 새 런에서 리셋.
 
 import { World } from "@/sim/world";
+import { easeChampionGenome } from "@/sim/species";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, refreshDerived, MUTABLE_TRAITS, type Genome, type MutableTrait } from "@/sim/genome";
 import {
@@ -1618,7 +1619,11 @@ export class Game {
       // 마지막 진도 전에는 지난 챔피언(비동기 생물)을 부르지 않는다 — 08-05 실측에서 챔피언 2종이
       // 100초 시점 내 종을 22.9 → 9.8마리로 깎았다. this.champions 자체는 그대로 두고(진도가 차면
       // 다시 쓴다), 챔피언 경로는 이미 독립 rng 라 끄는 비용이 0이다.
-      stepHasChampions(step) ? this.champions : [],
+      // **시대 눈높이로 눌러 데려온다**(2026-08-11 · **[사용자 2026-08-11]** "생태계 교란종" 지적 →
+      // 「시대 천장 + 특성 몰수」 결정). 첫 시대는 1단 수준, 시대 4에 본모습(easeChampionGenome 주석).
+      stepHasChampions(step)
+        ? this.champions.map((c) => ({ ...c, genome: easeChampionGenome(c.genome, this.era + 1) }))
+        : [],
       this.stepMapType(step),
       eraScarcity(this.era), // 시대가 지날수록 세계가 척박(먹이↓·재생↓) — era 0 = 1.0 = 기존과 동일
       // 진도가 해석한 세계 옵션(남길 종·친척·기후·포식자 자리). sim 은 진도도 시대도 모른다.
@@ -2176,6 +2181,11 @@ export class Game {
     // 옛 세계에서 못 주운 방울을 새 무리 곁에 다시 놓는다(위 carriedDrops 주석 참고).
     // 자리는 새 세계의 `geneRng` 가 정하므로 기존 스트림을 1비트도 안 건드린다.
     for (const d of carriedDrops) this.dropGene(d.amount, d.reason);
+    // **시대 보상 방울**(2026-08-11 · **[사용자 2026-08-11]** "4단은 찍지도 못했어" → 「시대 보상을
+    // 방울로」 결정). v8 의 강화 ×N 이 사라진 자리를 방울이 잇는다 — 성장이 방울 한 갈래로 들어오는
+    // v9 구조 그대로다(backlog 「시대 보상이 비어 있다 → 방울 보상으로 옮기는 것이 맞다」).
+    // 새 무리 곁 필드에 떨어지므로 여전히 **걸어가 밟아야** 주워진다(지갑 직행 아님).
+    this.awardGenes("era");
     this.onWorldChanged?.(this.world);
     // 첫 채집 단계로 바로 가지 않고, 먼저 "시대 보상" 드래프트를 띄운다(강해진 형질 하나 = 난이도 도약 보상).
     this.beginEraRewardDraft();

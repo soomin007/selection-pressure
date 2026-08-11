@@ -1036,17 +1036,21 @@ export class WorldView {
       // 평활된 렌더 좌표를 쓴다(몸이 그려지는 바로 그 자리) · 없으면 sim 좌표로 떨어진다.
       const p = this.dispPos.get(e.id) ?? { x: e.x, y: e.y };
       const r = bodyRadiusOf(e);
-      const w = Math.min(26, Math.max(12, r * 1.7)); // 선 길이 — 몸을 따라가되 너무 길어지지 않게
-      const y = p.y - r - 5;
+      // 폰 실기 판정(2026-08-11 사용자: "체력바 잘 안 보이고") — 길이·두께·불투명도를 한 단씩 올렸다.
+      // 전투가 3물기(약 1초)라 이 선이 사는 시간 자체가 짧으니, 뜨는 동안은 확실히 보여야 한다.
+      const w = Math.min(30, Math.max(16, r * 2.0)); // 선 길이 — 몸을 따라가되 너무 길어지지 않게
+      const h = 3.2; // 두께(월드 px · 기본 줌 2.2 에서 화면 약 7px)
+      const y = p.y - r - 6;
       const x = p.x - w / 2;
       const hp = Math.max(0, Math.min(1, e.energy / SIM.maxEnergy));
       // 물린 직후가 가장 진하고 부상이 아물면서 옅어진다 — 「방금 맞았다」가 세기로도 읽힌다.
       const fade = Math.min(1, e.woundTicks / SIM.woundTicks);
-      const alpha = 0.35 + 0.5 * fade;
-      this.woundG.rect(x, y, w, 2.2).fill({ color: 0x120d09, alpha: alpha * 0.75 });
+      const alpha = 0.55 + 0.4 * fade;
+      // 어두운 밑판을 반 px 크게 깔아 밝은 지형(사막·눈) 위에서도 선이 안 사라진다(방울 빛살과 같은 수법).
+      this.woundG.rect(x - 0.6, y - 0.6, w + 1.2, h + 1.2).fill({ color: 0x120d09, alpha: alpha * 0.85 });
       if (hp > 0) {
         const col = e.species.isPlayer ? 0xe85c43 : 0xf5ebdc;
-        this.woundG.rect(x, y, w * hp, 2.2).fill({ color: col, alpha });
+        this.woundG.rect(x, y, w * hp, h).fill({ color: col, alpha });
       }
     }
   }

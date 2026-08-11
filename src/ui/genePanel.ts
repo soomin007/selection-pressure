@@ -164,7 +164,7 @@ export interface GenePanel {
 }
 
 /** 방울이 나오는 사건을 적는 순서(표시 전용 · 규칙이 아니다). 값과 이름은 `sim/gene.ts` 가 정한다. */
-const REASON_ORDER: readonly GeneReason[] = ["boss", "extinction", "milestone", "recovery", "trialExceed"];
+const REASON_ORDER: readonly GeneReason[] = ["boss", "extinction", "era", "milestone", "recovery", "trialExceed"];
 
 /** 시험 종류의 한국어 낱말 · 아래 제외 문구를 사람 말로 만들기 위한 것뿐이다(규칙은 안 담는다).
  *  `Record<TrialKind, …>` 라 시험이 늘면 여기서 컴파일이 막힌다 = 조용히 빠지는 일이 없다. */
@@ -191,6 +191,7 @@ const EXCLUDED_TRIAL_WORDS: string = TRIAL_EXCEED_EXCLUDED.map((k) => TRIAL_KIND
 const REASON_NOTE: Readonly<Record<GeneReason, string>> = {
   boss: "",
   extinction: "",
+  era: "",
   milestone: "",
   // 「최고 20마리」로 줄이면 「많아야 20마리」로 읽힌다 · 뜻이 뒤집히므로 풀어 쓴다.
   recovery: `가장 많았을 때 ${GAME.geneCrisisMinPeak}마리 이상`,

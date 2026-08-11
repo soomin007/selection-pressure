@@ -29,11 +29,14 @@ import { MUTABLE_TRAITS, genomeFromPips, refreshDerived } from "@/sim/genome";
 import {
   CATEGORIES,
   CATEGORY_LABELS,
+  FANG_ATTACK,
   KEY_NAMES,
+  LEG_SPEED,
   MAX_KEYS,
   MAX_TIER,
   TIER_STEPS,
   emptyKeys,
+  emptyPips,
   keyCount,
   nearestTierGoal,
   pipsForTier,
@@ -42,6 +45,7 @@ import {
   type Category,
   type Pips,
 } from "@/sim/tiers";
+import { easeChampionGenome } from "@/sim/species";
 import { GENE_AWARD, milestonesCrossed, type CrisisWatch, type GeneReason } from "@/sim/gene";
 import { SIM } from "@/sim/params";
 import { biteOutcome } from "@/sim/behavior";
@@ -1712,5 +1716,49 @@ describe("방울 구입 화면 · 열려 있는 동안 시간이 멈춘다", () 
     // 닫기도 안전하다. 열려 있지 않은데 닫아도 남의 단계를 덮어쓰지 않는다.
     g.closeGeneShop();
     expect(g.phase).toBe("draft");
+  });
+});
+
+describe("챔피언은 시대 눈높이로 눌려 들어온다 (2026-08-11 · [사용자] 「생태계 교란종」 지적)", () => {
+  const maxed = (): ReturnType<typeof genomeFromPips> => {
+    const pips = emptyPips();
+    for (const c of CATEGORIES) pips[c] = TIER_STEPS[3] as number;
+    const g = genomeFromPips(pips, emptyKeys(), ["famished", "speed_night"]);
+    return g;
+  };
+
+  it("낮은 시대에는 능치가 그 시대 티어까지 눌리고, 정점 면제도 함께 사라진다", () => {
+    const eased = easeChampionGenome(maxed(), 1);
+    expect(eased.traits.attack).toBeLessThanOrEqual(FANG_ATTACK[1] as number);
+    expect(eased.traits.speed).toBeLessThanOrEqual(LEG_SPEED[1] as number);
+    expect(eased.traits.attack).toBeLessThan(100); // isApex(체급 무시)가 벗겨진다
+    expect(eased.traits.speed).toBeLessThan(112); // 사냥꾼 표적 제외도 벗겨진다
+  });
+
+  it("시대 4에는 본모습이다 · 단 카드 특성은 어느 시대든 몰수된다", () => {
+    const original = maxed();
+    const eased = easeChampionGenome(original, 4);
+    expect(eased.traits.attack).toBe(original.traits.attack);
+    expect(eased.traits.speed).toBe(original.traits.speed);
+    expect(eased.perks).toEqual([]);
+    expect(easeChampionGenome(original, 1).perks).toEqual([]);
+    // 원본은 안 건드린다(저장된 챔피언이 다음 런에서도 본모습을 기억해야 한다).
+    expect(original.perks.length).toBeGreaterThan(0);
+  });
+});
+
+describe("시대를 넘으면 방울이 필드에 떨어진다 (2026-08-11 · [사용자] 「4단은 찍지도 못했어」)", () => {
+  it("새 시대의 세계에 「새 시대 진입」 방울이 놓인다 · 지갑 직행이 아니다", () => {
+    const g = startRun("era-gene-award");
+    const bankBefore = g.geneBank;
+    g.result = "win";
+    g.continueToNextEra();
+    expect(g.era).toBe(1);
+    const eraDrops = g.world.geneDrops.filter((d) => d.reason === "era");
+    expect(eraDrops.length).toBe(1);
+    expect(eraDrops[0]?.amount).toBe(GENE_AWARD.era);
+    expect(eraDrops[0]?.taken).toBe(false);
+    // 밟아야 주워진다 — 떨어지는 순간 지갑은 안 는다(방울 설계의 계약 그대로).
+    expect(g.geneBank).toBe(bankBefore);
   });
 });

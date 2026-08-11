@@ -3,7 +3,18 @@
 // 식성(diet): 0=초식(식물 섭취), 1=육식(다른 종 사냥). 0.5 초과면 육식.
 
 import type { Rng } from "@/sim/rng";
-import { clampGenome, genomeFromTraits, type Genome, type Traits } from "@/sim/genome";
+import { clampGenome, cloneGenome, genomeFromTraits, type Genome, type Traits } from "@/sim/genome";
+import {
+  EYE_VISION,
+  FANG_ATTACK,
+  FANG_CARN,
+  FANG_HUNT,
+  HERD_FERT,
+  HERD_HERDING,
+  HIDE_DEFENSE,
+  LEG_SPEED,
+  MAX_TIER,
+} from "@/sim/tiers";
 import { SIM } from "@/sim/params";
 import type { Biome } from "@/sim/environment";
 
@@ -50,10 +61,41 @@ export function makePlayerSpecies(genome: Genome, initialCount: number): Species
 }
 
 /**
+ * **챔피언 게놈을 시대 눈높이로 눌러 데려온다** (2026-08-11 · **[사용자 2026-08-11]** 폰 실기
+ * "이전 판에서 만렙을 찍은 개체가 나오니까 걔네가 완전 생태계 교란종급으로 쓸어먹고 다녀서 너무
+ * 어려워" → 「시대 천장 적용 + 특성 몰수」 결정).
+ *
+ * · 여섯 능치(공격·속도·시야·방어·무리·번식)와 사냥 파생(hunt·carnivory)을 **그 시대 티어의
+ *   파생값까지만** 허용한다 — 첫 시대는 1단 수준으로 눌려 들어오고, 시대가 갈수록 예전 모습에
+ *   가까워져 네 번째 시대에 본모습이 된다. 낮은 시대에는 정점 면제(isApex · 체급 무시·표적 제외)도
+ *   자연히 사라져 야생이 챔피언을 사냥할 수 있다(생태가 스스로 견제한다).
+ * · **카드 특성(perks)은 몰수한다.** 열쇠가 만든 이동·감각 정체성(날개·지느러미·초음파)은
+ *   traits 스냅샷에 이미 배어 있어 그대로 남는다 — 나는 챔피언은 여전히 난다.
+ * · capTier 는 game 이 시대에서 계산해 넘긴다(sim 은 era 를 모른다 · foodScarcity 와 같은 구조).
+ * rng 무소비 · 순수 클램프라 결정론 안전.
+ */
+export function easeChampionGenome(genome: Genome, capTier: number): Genome {
+  const g = cloneGenome(genome);
+  const tier = Math.max(1, Math.min(MAX_TIER, Math.round(capTier)));
+  const cap = (v: number, table: readonly number[]): number => Math.min(v, table[tier] as number);
+  g.traits.attack = cap(g.traits.attack, FANG_ATTACK);
+  g.traits.speed = cap(g.traits.speed, LEG_SPEED);
+  g.traits.vision = cap(g.traits.vision, EYE_VISION);
+  g.traits.defense = cap(g.traits.defense, HIDE_DEFENSE);
+  g.traits.herding = cap(g.traits.herding, HERD_HERDING);
+  g.traits.fertility = cap(g.traits.fertility, HERD_FERT);
+  g.traits.hunt = Math.min(g.traits.hunt, FANG_HUNT[tier] as number);
+  g.traits.carnivory = Math.min(g.traits.carnivory, FANG_CARN[tier] as number);
+  g.perks = [];
+  return g;
+}
+
+/**
  * 비동기 생물(S2) — 지난 런의 내 종("예전의 나")이 다시 등장. 밸런스 안전을 위해 친척(kin)과 똑같은
  * 취급을 받는다: friendly + faction 1(내 편이라 서로 사냥·도망 안 함) + champion 표식. 독립 rng 로 소수만
  * 스폰(spawnChampions)하고, friendly 라 야생 보강·이주·진화 루프가 건드리지 않아(기존 친척과 동일) 메인
- * 밸런스에 안 걸린다. 게놈은 저장본(마이그레이션된) 그대로 — 예전 그 모습으로 살아난다.
+ * 밸런스에 안 걸린다. 게놈은 저장본(마이그레이션된)을 **시대 눈높이로 누른 것**이다 —
+ * game 이 `easeChampionGenome` 을 거쳐 넘긴다(위 주석 · 2026-08-11 전에는 그대로 살아났다).
  */
 export function makeChampionSpecies(id: number, genome: Genome, name: string, color: number): Species {
   return {

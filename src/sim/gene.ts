@@ -55,10 +55,12 @@ export function createGeneDrop(
 // ─────────────────────────────── 방울이 나오는 자리 ───────────────────────────────
 
 /**
- * 방울을 주는 다섯 사건. **양이 아니라 사건**에 붙인다 · 「사냥 N회」처럼 양에 붙이면 그 행동을
+ * 방울을 주는 여섯 사건. **양이 아니라 사건**에 붙인다 · 「사냥 N회」처럼 양에 붙이면 그 행동을
  * 많이 하는 빌드만 자라서, 카드를 어떻게 골라도 결국 같은 종이 된다.
+ * "era"(새 시대 진입)는 2026-08-11 신설 — **[사용자 2026-08-11]** "4단은 찍지도 못했어" ·
+ * v8 의 시대 보상(강화 ×N)이 사라져 비어 있던 자리를 방울로 잇는다(backlog 방향 그대로).
  */
-export type GeneReason = "boss" | "extinction" | "milestone" | "recovery" | "trialExceed";
+export type GeneReason = "boss" | "extinction" | "milestone" | "recovery" | "trialExceed" | "era";
 
 /**
  * 사건별 방울 수 · **econ 프로브 실측으로 정한 값.**
@@ -97,6 +99,10 @@ export const GENE_AWARD: Readonly<Record<GeneReason, number>> = {
   milestone: 2,
   recovery: 5,
   trialExceed: 2,
+  // 시대 진입 · **미실측 추정값이다**(2026-08-11 신설). 시대 4 도달 판이면 +9 로, 판당 수입이
+  // 약 26 → 35 가 되어 한 우물 4단(20)에 여유가 생긴다는 산수. 구입 정책 자가 서면 다시 재라
+  // (backlog 「2. 성장 속도 재측정」).
+  era: 3,
 };
 
 /** 사건 한국어 이름 · 방울이 뜰 때 화면이 그대로 쓴다. 다섯 에이전트가 각자 다른 말을 짓지 않게 한 곳에 둔다. */
@@ -106,6 +112,7 @@ export const GENE_REASON_LABELS: Readonly<Record<GeneReason, string>> = {
   milestone: "개체 수 돌파",
   recovery: "위기 회복",
   trialExceed: "시험 초과 달성",
+  era: "새 시대 진입",
 };
 
 // ─────────────────────────────── 개체 수 문턱 사다리 ───────────────────────────────
