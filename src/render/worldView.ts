@@ -70,8 +70,8 @@ export class WorldView {
   private readonly leadTerrain = new LeadTerrainLayer(); // 못 가는 지형(정적 — 통행 능력이 바뀔 때만 재생성)
   private readonly relG = new Graphics(); // 관계 고리(위험 톱니 링 / 먹잇감 브래킷) — 스프라이트 아래
   private readonly creatureLayer = new Container();
-  // 맞서는 개체(전사) 표식 · 스프라이트 **위** 레이어. 아래에 깔면 몸에 가려 "누가 싸우는가"가 사라진다.
-  private readonly fighterG = new Graphics();
+  // (전사 쐐기 레이어(fighterG)는 2026-08-11 에 걷어냈다 — **[사용자]** "주황색 콘 굳이 필요한가?" ·
+  //  「맞설 개체 0」의 경고 한 줄이 그 정보의 유일한 생존자다 · drawRaidBar 주석 참조.)
   /**
    * **다친 개체의 기운 선** — 물린 뒤 얼마 동안만 몸 위에 뜬다(**[사용자 2026-08-10]** 확정).
    *
@@ -155,8 +155,6 @@ export class WorldView {
     // 관계 고리도 스프라이트 아래 — 몸 바깥 반경에만 그리므로 안 가려지고, 몸(=무슨 종인지)을 안 덮는다.
     this.container.addChild(this.relG);
     this.container.addChild(this.creatureLayer);
-    // 전사 표식도 스프라이트 위 · 몸 아래(바깥)에 그리므로 몸을 안 덮으면서 절대 안 가려진다.
-    this.container.addChild(this.fighterG);
     // 다친 기운 선은 스프라이트 **위** · 몸 **바깥 위쪽**에 눕는다. 지금 벌어지는 일을 말하는
     // 표시라 다른 개체에 파묻히면 안 되고, 몸 위가 아니라 머리 위라 무슨 종인지도 안 가린다.
     this.container.addChild(this.woundG);
@@ -277,7 +275,6 @@ export class WorldView {
     // (시대 전환은 geneLayer 가 방울 배열 참조가 바뀐 것으로 스스로 알아채 비운다.)
     this.geneLayer.reset();
     // 격퇴 바 상태도 런 단위로 리셋 · 안 그러면 지난 런의 잔상·번쩍임이 새 보스의 첫 프레임에 뜬다.
-    this.fighterG.clear();
     this.raidBossRef = null;
     this.raidHpPrev = 0;
     this.raidGhostHp = 0;
@@ -483,12 +480,9 @@ export class WorldView {
 
     // 생물 스프라이트 풀 — sim(30/s)과 화면(60fps) 사이를 prev→현재로 보간해 드득거림을 없앤다.
     this.playerG.clear();
-    this.fighterG.clear();
     const ringPulse = 0.5 + 0.5 * Math.sin((this.frame % 70) / 70 * Math.PI * 2);
     // 위험 표식용 맥동 — 다른 고리들(70프레임)보다 빨라 "급하다"로 읽힌다. 조종 모드에서만 쓴다.
     const threatPulse = 0.5 + 0.5 * Math.sin((this.frame % 44) / 44 * Math.PI * 2);
-    // 전사 표식용 맥동 · 가장 빠르다(36프레임 ≈ 0.6초). "지금 싸우는 중"이 다른 고리들과 리듬으로도 갈린다.
-    const fightPulse = 0.5 + 0.5 * Math.sin((this.frame % 36) / 36 * Math.PI * 2);
     // 이번 프레임에 **맞설 수 있는** 내 종 개체 수(아래 개체 루프에서 sim 판정으로 센다).
     // 이 수가 0 이면 격퇴 바를 아예 안 그린다 · 못 깎는 판에 가득 찬 바를 띄우는 건 화면의 거짓말이다.
     let raidFighters = 0;
@@ -624,13 +618,11 @@ export class WorldView {
             .circle(rx, ry, 17.5)
             .stroke({ color: 0xcfe6ff, width: 2, alpha: 0.38 + 0.28 * sh });
         }
-        // **맞서는 개체(전사) 표식** · 보스가 떠 있는 동안, 이 개체가 지금 보스를 때릴 수 있는가.
-        // 판정은 sim 의 isRaidFighter 그대로다 · 여기서 조건을 다시 쓰면 "표식은 있는데 안 때린다"가
-        // 된다. 이게 없으면 전사가 0인 종으로 플레이할 때 아무 단서 없이 체력이 1도 안 깎이는 것만
-        // 겪는다(사용자가 겪은 그것). 물에 든 개체에 표식이 없는 것도 그대로 정보다(층이 달라 못 친다).
+        // **맞설 수 있는 개체 수 집계** · 판정은 sim 의 isRaidFighter 그대로다(렌더가 조건을 다시
+        // 쓰면 화면과 실제가 갈린다). 개체마다 붙이던 전사 쐐기는 걷어냈다(**[사용자 2026-08-11]**
+        // "주황색 콘 굳이 필요한가?") — 이 수가 0 인 순간만 격퇴 바 자리가 한 줄로 말한다(drawRaidBar).
         if (raidBoss !== null && isRaidFighter(raidBoss, e, world)) {
           raidFighters++;
-          drawFighterMark(this.fighterG, rx, ry, fightPulse);
         }
         // 도전 과제 꾸밈 — 효과는 전혀 없다. 무지갯빛은 몸 색이라 아래 sp.tint 에서 처리한다.
         this.drawCosmetic(rx, ry, e.id);
@@ -1242,7 +1234,7 @@ export class WorldView {
   private drawRaidBar(
     boss: Boss | null, fighters: number, ax: number, ay: number, fx: number, fy: number,
   ): void {
-    if (boss === null || fighters <= 0 || boss.maxHp <= 0) {
+    if (boss === null || boss.maxHp <= 0) {
       this.hideRaidText();
       return;
     }
@@ -1266,6 +1258,21 @@ export class WorldView {
       if (Math.abs(nx - x) > 0.5 || Math.abs(ny - y) > 0.5) clamped = true;
       x = nx;
       y = ny;
+    }
+    // **맞설 수 있는 개체가 하나도 없으면 바 대신 그 사실을 말한다**(2026-08-11).
+    // 개체마다 붙던 전사 쐐기(주황 콘)는 걷어냈다 — **[사용자 2026-08-11]** "그게 굳이 필요한가?" ·
+    // 그 표식이 진짜 필요한 순간은 「아무도 못 맞서는 판」 하나뿐이라(도입 사유가 그 사고였다),
+    // 그 한 순간만 여기 한 줄로 남긴다. 못 깎는 판에 가득 찬 바를 띄우는 거짓말도 그대로 막힌다.
+    if (fighters <= 0) {
+      const t0 = this.ensureRaidText();
+      t0.text = "맞설 수 있는 개체가 없습니다";
+      t0.x = x - w / 2;
+      t0.y = y + h / 2;
+      if (this.viewHalfW < 1e8 && t0.x + t0.width > this.viewCX + this.viewHalfW - 4) {
+        t0.x = this.viewCX + this.viewHalfW - 4 - t0.width;
+      }
+      t0.visible = true;
+      return;
     }
     // 바탕 판 · 어떤 지형 위에서도 바가 뜨게.
     g.roundRect(x - w / 2 - 1.6, y - 1.6, w + 3.2, h + 3.2, 4).fill({ color: 0x0b0e14, alpha: 0.78 });
@@ -1339,31 +1346,6 @@ export class WorldView {
       }
     }
   }
-}
-
-/**
- * 맞서는 개체(전사) 표식 · 몸 **아래**에 눕는 짧은 밑줄 + 위로 향한 쐐기. "이 놈은 지금 보스를 칠 수 있다"를
- * 그 자체로 보이게 한다(전달 규칙 1순위). 표식이 하나도 없으면 그게 곧 "아무도 못 맞선다"는 답이다.
- *
- * 형태를 고리로 안 한 이유: 내 종 초록 고리(12.5)·무리 방패 링(17.5)·독 오라가 전부 동심원이라
- * 폰 화면에서 한 덩어리로 뭉친다. 몸 아래 가로선 + 쐐기는 형태부터 달라 겹쳐도 갈린다.
- * 그리는 자리는 몸(반지름 ~15) 바깥이라 스프라이트 위 레이어여도 몸을 안 덮는다.
- */
-function drawFighterMark(g: Graphics, x: number, y: number, pulse: number): void {
-  const y0 = y + 20 + pulse * 1.2; // 맥동으로 살짝 오르내려 "살아 있는 표식"으로 읽힌다
-  // 짧은 받침선 · 길게 그으면 생물이 금빛 받침대 위에 선 것처럼 보인다(초기 시안의 문제). 쐐기를
-  // 떠받칠 만큼만 짧게 두고, 진짜 의미는 위로 솟은 쐐기가 진다.
-  const half = 5.8;
-  g.moveTo(x - half, y0)
-    .lineTo(x + half, y0)
-    .stroke({ color: FIGHT_OUTLINE, width: 4.6, alpha: 0.45, cap: "round" });
-  g.moveTo(x - half, y0)
-    .lineTo(x + half, y0)
-    .stroke({ color: FIGHT_COLOR, width: 2.2, alpha: 0.85 + 0.15 * pulse, cap: "round" });
-  // 위로 솟은 쐐기(칼끝) · 받침선만 있으면 다른 지면 표식과 헷갈린다. 뾰족한 게 "친다"로 읽힌다.
-  g.poly([x, y0 - 10.5, x - 4.6, y0 - 1.2, x + 4.6, y0 - 1.2])
-    .fill({ color: FIGHT_COLOR, alpha: 0.78 + 0.22 * pulse })
-    .stroke({ color: FIGHT_OUTLINE, width: 1.2, alpha: 0.55 });
 }
 
 /**
@@ -1743,8 +1725,6 @@ const RAID_GHOST_EASE = 0.06; // 잔상이 따라 내려오는 세기(60fps 1프
 // 맞서는 개체(전사) 표식 색 · 반격 스파크(effects drawCounter 0xffb524)와 같은 금빛 계열이다.
 // "금빛 표식이 붙은 놈 = 치는 놈, 금빛 스파크 = 방금 쳤다" 로 색이 이어져 읽힌다.
 // 붉은 계열을 안 쓴 이유: 보스·물기·즉사 반경이 전부 붉은색이라 내 편 표식이 위협으로 오독된다.
-const FIGHT_COLOR = 0xffb02e;
-const FIGHT_OUTLINE = 0x1a0c00; // 밝은 지형(사막·눈) 위에서 표식이 사라지는 걸 막는 밑선
 
 // 회전 떨림 방지: 이만큼(px/스텝)보다 실제로 더 움직일 때만 진행 방향을 갱신한다.
 // (느린 종은 미세 변위의 방향이 노이즈라, 낮으면 제자리에서 몸이 떤다.)

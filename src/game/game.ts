@@ -6,7 +6,7 @@
 // 멸종(개체 0)하면 그 자리에서 패배. 게놈은 런 내 누적, 새 런에서 리셋.
 
 import { World } from "@/sim/world";
-import { easeChampionGenome } from "@/sim/species";
+import { easeChampionGenome, fadeChampionColor } from "@/sim/species";
 import { Rng } from "@/sim/rng";
 import { defaultGenome, cloneGenome, refreshDerived, MUTABLE_TRAITS, type Genome, type MutableTrait } from "@/sim/genome";
 import {
@@ -1621,8 +1621,13 @@ export class Game {
       // 다시 쓴다), 챔피언 경로는 이미 독립 rng 라 끄는 비용이 0이다.
       // **시대 눈높이로 눌러 데려온다**(2026-08-11 · **[사용자 2026-08-11]** "생태계 교란종" 지적 →
       // 「시대 천장 + 특성 몰수」 결정). 첫 시대는 1단 수준, 시대 4에 본모습(easeChampionGenome 주석).
+      // 색도 빛바랜 잿빛으로 — 계통색 그대로면 지금 내 종과 헷갈린다(fadeChampionColor 주석).
       stepHasChampions(step)
-        ? this.champions.map((c) => ({ ...c, genome: easeChampionGenome(c.genome, this.era + 1) }))
+        ? this.champions.map((c) => ({
+            ...c,
+            genome: easeChampionGenome(c.genome, this.era + 1),
+            color: fadeChampionColor(c.color),
+          }))
         : [],
       this.stepMapType(step),
       eraScarcity(this.era), // 시대가 지날수록 세계가 척박(먹이↓·재생↓) — era 0 = 1.0 = 기존과 동일

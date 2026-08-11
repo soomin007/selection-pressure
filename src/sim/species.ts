@@ -91,6 +91,24 @@ export function easeChampionGenome(genome: Genome, capTier: number): Genome {
 }
 
 /**
+ * 챔피언의 몸 색 — 계통색을 그대로 쓰면 지금 내 종과 헷갈린다(**[사용자 2026-08-11]** "원래 갈래
+ * 시작할 때 나오던 그 색깔을 그대로 쓰는 바람에 내 거랑 너무 헷갈려. 왕관 표시가 있긴 하지만 식별에
+ * 큰 도움이 되진 않고"). 그래서 **빛바랜 잿빛**으로 크게 바랜다 · 계통색의 흔적은 4분의 1만 남는다.
+ * 「예전의 나」라는 서사와도 맞는 색이다(오래된 것은 바랜다). 순수 계산 · rng 무소비.
+ * (계수는 내 판단 값이다 · 폰에서 더/덜 바래야 하면 0.25 를 움직여라.)
+ */
+export function fadeChampionColor(color: number): number {
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8) & 0xff;
+  const b = color & 0xff;
+  const l = 0.3 * r + 0.55 * g + 0.15 * b;
+  // 밝기에서 따온 따뜻한 잿빛(r>g>b)으로 4분의 3 을 당긴다 — 어두운 계통색도 빛바랜 티가 난다.
+  const fade = (c: number, warm: number): number =>
+    Math.max(0, Math.min(255, Math.round(c * 0.25 + (l * warm + 46) * 0.75)));
+  return (fade(r, 0.72) << 16) | (fade(g, 0.66) << 8) | fade(b, 0.52);
+}
+
+/**
  * 비동기 생물(S2) — 지난 런의 내 종("예전의 나")이 다시 등장. 밸런스 안전을 위해 친척(kin)과 똑같은
  * 취급을 받는다: friendly + faction 1(내 편이라 서로 사냥·도망 안 함) + champion 표식. 독립 rng 로 소수만
  * 스폰(spawnChampions)하고, friendly 라 야생 보강·이주·진화 루프가 건드리지 않아(기존 친척과 동일) 메인
