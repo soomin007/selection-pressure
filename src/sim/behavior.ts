@@ -419,6 +419,8 @@ function devour(e: Entity, prey: Entity, world: World): void {
   e.targetPrey = null;
   // 잡아먹힌 자리에도 먹다 남긴 몫이 남는다(썩은 고기를 먹는 위가 있는 판에서만 · world 가 게이트).
   world.legacyDeath(prey, true);
+  // 그리고 그 자리는 얼마간 무서운 곳이 된다(초식의 위험 기억 · 2026-08-11 행동 분화).
+  world.noteDanger(prey.x, prey.y);
 }
 
 /**
@@ -693,10 +695,36 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     perks.length !== 0 && hasRule(perks, "famished") && whenHolds("hungry", pctx)
       ? atkRangeBase * FAMISHED_RANGE_MUL
       : atkRangeBase;
-  // 사냥 스퍼트(질주형 육식): 순수 육식이 먹잇감을 추격 중이면 속도가 오른다 — 도망치는 초식을 speed 50
-  // 으론 못 잡던 병목을 speed 형질로 푼다(치타의 폭발적 추격). 순수 육식일수록·추격 중일 때만이라 야생
-  // 초식·잡식은 영향 0.
-  const sprintFactor = huntSprintFactor(t.carnivory, e.targetPrey !== null);
+  // ── 사냥의 3막(2026-08-11 · **[사용자]** "사냥은 여전히 사냥이라는 느낌이 안 들고") ─────────────
+  // 발견 즉시 전속 직진이던 사냥을 「잠행 → 폭발 돌진 → 몸싸움」으로 나눈다. 근접 사냥만이다(원거리
+  // 전문종은 멈춰 쏘는 kiting 이 제 방식). 표적이 덮칠 거리에 들거나 **달아나기 시작하면**(들켰다)
+  // 돌진이 켜지고, 유지 반경을 벗어나면 다시 잠행이다. rng 무소비 · 판정은 순수 거리·상태 비교라
+  // 결정론 안전. 야생 포식자도 같은 리듬을 탄다(의도된 세계 변화 · 골든 지문 재기준선).
+  const preyNow = e.targetPrey;
+  const meleeHunter = t.ranged < SIM.rangedThreshold;
+  // **사람의 지시·조종을 받는 중인가** — 잠행(3막)은 자율 사냥의 리듬이지 명령의 리듬이 아니다.
+  // 이 게이트가 없으면 「가라」로 이동 중인 개체가 사냥감을 감지하는 순간 걸음이 0.62배로 죽어
+  // 조종감이 통째로 무너진다(실측: 벽 판 지시 도달 160 → 263px 후퇴 · 테스트가 잡았다).
+  const commanded =
+    e.species.isPlayer &&
+    ((world.herdOrder !== null && world.hearsOrder(e.x, e.y)) ||
+      (world.lead.cmd !== null && world.lead.cmd.throttle > 0 && e.id === world.lead.leaderId));
+  if (preyNow !== null && preyNow.alive && meleeHunter && !commanded) {
+    const d2p = dist2(e, preyNow);
+    const enter2 = SIM.huntBurstRange * SIM.huntBurstRange;
+    const keep2 = SIM.huntBurstKeep * SIM.huntBurstKeep;
+    e.bursting = e.bursting ? d2p <= keep2 || preyNow.fleeing : d2p <= enter2 || preyNow.fleeing;
+  } else {
+    // 명령 아래에서는 3막을 접는다 · 사람이 시킨 사냥은 예전처럼 곧장 전속이다(아래 sprint 도 같이).
+    e.bursting = preyNow !== null && preyNow.alive && commanded;
+  }
+  // 사냥 스퍼트(질주형 육식): 순수 육식이 먹잇감을 **돌진 단계에서** 추격하면 속도가 오른다(치타의
+  // 폭발적 추격). 잠행 중에는 안 붙는다 — 그게 3막의 뼈대다. 순수 육식일수록·추격 중일 때만이라
+  // 야생 초식·잡식은 영향 0.
+  const sprintFactor = huntSprintFactor(
+    t.carnivory,
+    e.targetPrey !== null && (!meleeHunter || e.bursting),
+  );
   // 험지(거친 땅)에선 이동이 느려진다 — speed 형질이 높을수록 덜 느려진다(속도가 지형에서 가치). 비행은 무시.
   // 몸집이 크면 느리다(sizeSpeedFactor — 몸집 50 이면 1.0 이라 영향 없음).
   // **정점 속도(100)**: 험한 땅도 이 걸음을 늦추지 못한다(험지 감속 완전 면제).
@@ -707,6 +735,12 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     SIM.maxSpeedBase * (0.4 + speed01) *
     (roughFree ? 1 : roughSpeedFactor(world, e.x, e.y, speed01)) * sprintFactor *
     sizeSpeedFactor(t.size) * perkMul(perks, "speed", pctx);
+  // 사냥의 3막 · **잠행** — 표적은 잡았지만 아직 덮칠 거리 밖이면 몸을 낮춰 슬금슬금 다가간다.
+  // ⚠ 「따라오는 발소리」의 하한(아래 perk 블록)보다 **앞**에 곱는다 · 그 카드의 「언제나 반 걸음
+  //   빠릅니다」가 잠행 감속에 깎이면 문구가 거짓이 된다(발소리 보유 종은 잠행을 그 하한이 받친다).
+  if (preyNow !== null && preyNow.alive && meleeHunter && !e.bursting) {
+    maxSpeed *= SIM.huntStalkFactor;
+  }
   // ── 고유 카드의 걸음 규칙(2026-08-11) · 전부 기존 식 **뒤에서만** 곱하거나 덮는다 ──────────────
   if (perks.length !== 0) {
     if (e.fleeing) {
@@ -787,7 +821,16 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       world.emit("spit", e.x, e.y, e.species.isPlayer, tgt.x, tgt.y); // 연출: 발사체가 보스로 날아간다(원거리)
     }
   }
-  const flee = fighter ? null : computeFlee(e, world, t, maxSpeed, canSwim, canLand, canFly);
+  let flee = fighter ? null : computeFlee(e, world, t, maxSpeed, canSwim, canLand, canFly);
+  // ── 빠른 종의 지그재그 도주(2026-08-11 행동 분화) — 직선 도주는 직선 추격에 진다. 빠른 종
+  //    (가젤·영양 급)은 좌우로 흔들며 달아나 추격선을 자꾸 꺾는다. sin(틱+id) 라 결정론이고 rng 무소비 ·
+  //    개체마다 위상이 어긋나 무리가 한 박자로 안 흔들린다. 야생도 같이 탄다(의도된 세계 변화).
+  if (flee !== null && t.speed >= SIM.zigzagSpeedMin) {
+    const za = Math.sin((world.tick + e.id * 13) * 0.35) * SIM.zigzagAngle;
+    const cz = Math.cos(za);
+    const sz = Math.sin(za);
+    flee = { x: flee.x * cz - flee.y * sz, y: flee.x * sz + flee.y * cz };
+  }
   const fleeing = flee !== null;
   // 특성 조건 「달아나는 동안」이 읽을 수 있게 개체에 남긴다 — **다른 개체의 판정에서도 읽힌다**
   // (「달아나는 등」은 물린 쪽의 도망 여부를 문 쪽의 판정 안에서 물어야 한다). entity.ts 주석 참조.
@@ -805,10 +848,34 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       const huntR = Math.max(SIM.huntArriveRadius, atkRange * 0.85);
       const r = nav.final ? (e.targetPrey !== null ? huntR : SIM.arriveRadius) : 0;
       desired = toward(nav.x - e.x, nav.y - e.y, maxSpeed, r);
+      // ── 무리사냥 · 에워싸기(2026-08-11 행동 분화) — 잠행 중 접근 각을 좌우로 벌린다(늑대의 법 ·
+      //    id 짝홀이라 무리의 절반이 왼쪽, 절반이 오른쪽에서 조인다). 돌진이 켜지면 곧장 직진.
+      //    rng 무소비 · 순수 회전이라 결정론 안전 · 특성 없는 종은 첫 조건에서 빠진다.
+      if (
+        e.targetPrey !== null && !e.bursting && meleeHunter &&
+        perks.length !== 0 && hasRule(perks, "wolflaw")
+      ) {
+        const fl = e.id % 2 === 0 ? SIM.packFlankAngle : -SIM.packFlankAngle;
+        const cf = Math.cos(fl);
+        const sf = Math.sin(fl);
+        desired = { x: desired.x * cf - desired.y * sf, y: desired.x * sf + desired.y * cf };
+      }
     } else {
       e.path.length = 0; // 목표가 없으면 경로 버림(배회로 전환)
       e.pathGoalTile = -1;
-      desired = wanderDesired(e, world, maxSpeed);
+      // ── 매복형 잠복(2026-08-11 행동 분화) · 쏘다니지 않는 포식자 ────────────────────────────
+      // 매복(듀오)·바위(듀오)는 수풀에서, 물가의 매복자는 물가에서 · 목표가 없고 배가 부르면
+      // 웅크려 기다린다(배회 대신 정지 · 바위의 정지 은신과 저절로 맞물린다). 배가 절반 아래로
+      // 꺼지면 웅크림을 풀고 먹이를 찾는다 — 굶으면서 기다리는 매복은 없다.
+      // ⚠ 배회의 rng(wanderDesired)를 건너뛰므로 **보유 종 세계의 난수 열이 갈린다**(정당한 분기 ·
+      //   특성 없는 세계는 이 게이트에 영영 안 들어와 1비트도 안 바뀐다).
+      const lurking =
+        perks.length !== 0 &&
+        e.energy >= SIM.maxEnergy * HUNGRY_AT &&
+        (((hasRule(perks, "ambush") || hasRule(perks, "stone")) &&
+          world.terrain.isGrass(e.x, e.y)) ||
+          (hasRule(perks, "riverjaw") && nearShore(world, e.x, e.y)));
+      desired = lurking ? { x: 0, y: 0 } : wanderDesired(e, world, maxSpeed);
     }
     // 무리 cohesion: 무리에서 충분히 벗어났을 때만 무게중심으로 끌어당긴다.
     // 무리 안(comfort)에선 cohesion 0 — COM 이 격자 양자화로 매 틱 튀어, 늘 적용하면 무리 종이
@@ -1626,6 +1693,32 @@ function chooseGoal(
       }
       if (picked !== null) prey = picked;
     }
+    // ── 무리사냥 · 표적 공유(2026-08-11 행동 분화 · 늑대의 법 보유 종) ──────────────────────────
+    // 내 눈에 사냥감이 없어도 곁의 동료가 쫓는 놈을 함께 쫓는다 — 「같이 물면 1.5배」가 실제로
+    // 자주 서는 밑돌이다. 감지 검사만 빼고 나머지 자격(통행·정점 제외·무리 방어)은 그대로 묻는다.
+    // rng 무소비 · 특성 없는 종은 첫 조건에서 빠져 예전과 같다.
+    if (prey === null && e.genome.perks.length !== 0 && hasRule(e.genome.perks, "wolflaw")) {
+      const mate = world.grid.nearestMatching(
+        e.x,
+        e.y,
+        SIM.packShareRadius * 2,
+        (m) =>
+          m.alive && m !== e && m.species.id === e.species.id &&
+          m.targetPrey !== null && m.targetPrey.alive,
+      );
+      const shared = mate !== null ? mate.targetPrey : null;
+      if (
+        shared !== null &&
+        shared.alive &&
+        shared.species.id !== e.species.id &&
+        !areFriends(e.species, shared.species) &&
+        world.terrain.isPassable(shared.x, shared.y, canSwim, canLand, canFly) &&
+        !outrunsHunters(shared) &&
+        !herdShielded(shared, world)
+      ) {
+        prey = shared;
+      }
+    }
   }
   if (canGraze) food = nearestFood(e, world, senseRange, canSense);
   if (prey && food) {
@@ -1760,8 +1853,7 @@ function nearestFood(
   const canSwim = e.genome.traits.swimming >= SIM.swimThreshold;
   const aquaticOnly = e.genome.traits.swimming >= SIM.aquaticOnlyThreshold; // 물 전용(진짜 물고기)
   const canFly = e.genome.traits.wings >= SIM.flyThreshold;
-  // 먹이 공간 격자로 감지 반경 안만 검사(완전탐색 대신 — 큰 맵 성능). available·종류·감지는 pred 로.
-  return world.foodGrid.nearest(e.x, e.y, senseRange, (f) => {
+  const edible = (f: Food): boolean => {
     if (!f.available) return false;
     if (f.deep) {
       if (!aquaticOnly) return false; // 깊은 바다 먹이는 물 전용 종(물고기)만 — 양용 종(바다 풀뜯이) 배제
@@ -1773,7 +1865,18 @@ function nearestFood(
       return false; // 이 종이 못 먹는 먹이 종류는 건너뛴다(먹이 분할)
     }
     return canSense(f.x, f.y); // 시야(전방 부채꼴) 또는 초음파(전방위)로 감지되는 먹이만
-  });
+  };
+  // ── 초식의 위험 기억(2026-08-11 행동 분화) — 동료가 잡아먹힌 자리 곁의 먹이는 얼마간 피한다.
+  //    「먹다가 옆에서 잡아먹혀도 계속 뜯는」 멍청함을 지운다. 배가 절반 아래면 무시한다 · 굶주림이
+  //    공포를 이긴다(안 그러면 죽음이 잦은 판에서 피할 먹이만 남아 굶는다). 야생도 같이 배운다
+  //    (의도된 세계 변화). rng 무소비 · 선택만 바꾼다.
+  if (e.energy >= SIM.maxEnergy * 0.5 && world.dangerSpots.length > 0) {
+    const brave = world.foodGrid.nearest(e.x, e.y, senseRange, (f) => edible(f) && !world.dangerNear(f.x, f.y));
+    if (brave !== null) return brave;
+    // 피할 수 없으면(안전한 먹이가 하나도 없으면) 아래 일반 탐색으로 떨어진다 — 겁이 밥을 이기진 않는다.
+  }
+  // 먹이 공간 격자로 감지 반경 안만 검사(완전탐색 대신 — 큰 맵 성능). available·종류·감지는 pred 로.
+  return world.foodGrid.nearest(e.x, e.y, senseRange, edible);
 }
 
 /**

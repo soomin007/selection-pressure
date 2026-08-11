@@ -79,6 +79,9 @@ export interface Entity {
   tailUsed: boolean;
   // 「열병의 흉터」로 돌림병을 앓아 넘겼는가(남은 평생 새끼를 못 친다).
   feverScarred: boolean;
+  // 사냥의 3막(2026-08-11) — 지금 돌진 단계인가. 표적이 덮칠 거리(huntBurstRange)에 들거나 달아나기
+  // 시작하면 켜지고, 유지 반경(huntBurstKeep)을 벗어나면 꺼진다(히스테리시스 · 런타임, 직렬화 안 함).
+  bursting: boolean;
 }
 
 export function createEntity(
@@ -128,5 +131,6 @@ export function createEntity(
     revived: false,
     tailUsed: false,
     feverScarred: false,
+    bursting: false,
   };
 }

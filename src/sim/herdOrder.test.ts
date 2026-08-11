@@ -542,8 +542,8 @@ function flatTerrain(): Terrain {
  * 지형을 갈아 끼운 세계. 먹이는 새 지형에 맞춰 정리한다 · 진짜 게임에서 뭍 먹이는 물 타일에 절대
  * 안 놓이므로(world 의 spawnFoodOnTiles), 안 맞추면 "물 건너 먹이에 머리를 박는" 인공 결함이 계측을 덮는다.
  */
-function worldOn(terrain: Terrain, seed: string): World {
-  const w = new World(seed, W, H, tune({ herding: 40 }));
+function worldOn(terrain: Terrain, seed: string, over: Partial<Traits> = {}): World {
+  const w = new World(seed, W, H, tune({ herding: 40, ...over }));
   (w as unknown as { terrain: Terrain }).terrain = terrain;
   for (let i = w.food.length - 1; i >= 0; i--) {
     const f = w.food[i];
@@ -695,7 +695,12 @@ function wallRun(
   order: HerdOrder | null,
   steps: number,
 ): { taken: boolean; stalled: number; alive: boolean; toTarget: number; snap: string } {
-  const w = worldOn(terrain, seed);
+  // 사냥 성향 0 — 이 블록이 재는 것은 **지시 순종**이지 사냥이 아니다. 사냥감은 지시보다 위라는
+  // 우선순위(아래 order 블록의 `hunting`)가 설계라서, 잡식 게놈으로 재면 이주해 온 야생을 쫓는
+  // 틱이 순종 계측을 흐린다(실측 2026-08-11: 행동 분화 배치 뒤 wall-a 세계가 바뀌며 플레이어가
+  // 600틱 중 146틱을 사냥에 써 도달 거리가 160 → 263 으로 물러났다 · 잠행·TTK·지그재그 상수는
+  // 전부 무관함을 갈라 쟀다). 헬퍼의 취지 그대로다: "야생이 계측을 흐리지 않게".
+  const w = worldOn(terrain, seed, { hunt: 0 });
   const start = { x: 270, y: 450 }; // 타일 (13,22) 중심 · 벽(24행)에서 두 칸 북쪽
   let kept = false;
   for (let i = w.entities.length - 1; i >= 0; i--) {

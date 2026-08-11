@@ -313,6 +313,32 @@ export class World {
   pendingBirths: Entity[] = [];
 
   /**
+   * **잡아먹힘이 남긴 공포의 자리**(2026-08-11 행동 분화 · 초식의 위험 기억). devour 가 push 하고
+   * 초식의 먹이 선택(`behavior.nearestFood`)이 읽는다 — 동료가 죽은 자리 곁의 풀을 얼마간 피한다.
+   * 상한(`SIM.dangerSpotsMax`)을 넘으면 오래된 것부터 밀려나고, 낡은 기억은 판정에서 걸러진다.
+   * rng 무소비 · 순수 배열이라 결정론 안전.
+   */
+  dangerSpots: { x: number; y: number; tick: number }[] = [];
+
+  /** 공포의 자리 하나를 남긴다(잡아먹힘의 자리 · devour 가 부른다). */
+  noteDanger(x: number, y: number): void {
+    this.dangerSpots.push({ x, y, tick: this.tick });
+    if (this.dangerSpots.length > SIM.dangerSpotsMax) this.dangerSpots.shift();
+  }
+
+  /** 이 자리가 아직 무서운가 — 신선한 기억(`dangerMemoryTicks`) 반경 안인가. 먹이 선택이 읽는다. */
+  dangerNear(x: number, y: number): boolean {
+    const r2 = SIM.dangerMemoryRadius * SIM.dangerMemoryRadius;
+    for (const s of this.dangerSpots) {
+      if (this.tick - s.tick >= SIM.dangerMemoryTicks) continue;
+      const dx = s.x - x;
+      const dy = s.y - y;
+      if (dx * dx + dy * dy <= r2) return true;
+    }
+    return false;
+  }
+
+  /**
    * 무리에게 내린 뜻(신탁). null 이면 무리는 완전히 자율로 산다 = 관전.
    * 입력층이 세팅하고 behavior 가 읽는다. 계약·설계 의도는 `sim/herdOrder.ts` 주석에 있다.
    * rng 미소비 · null 이면 관련 분기가 통째로 안 돌아 기존 세계와 부동소수점까지 같다.

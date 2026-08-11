@@ -31,6 +31,7 @@ import {
   NEWFLESH_SHARE,
   PANGOLIN_CD_MUL,
   RATEL_FLEE_MUL,
+  RATEL_REFLECT,
   SALMON_MIN_ENERGY,
   SALMON_SHARE,
   SHEDTAIL_EAT_CD_MUL,
@@ -184,7 +185,9 @@ function makeDefend(
 
 /**
  * 물기 한 번의 기운 변화량. 매 틱 두 개체를 제자리에 고정하고 기운을 70 으로 되돌린 뒤,
- * 먹잇감 기운이 크게(5 넘게) 떨어진 첫 틱의 변화량을 돌려준다. 못 물면 null.
+ * 먹잇감 기운이 물기만큼(감지 문턱 = 절반 물기의 절반 · 상수 유도) 떨어진 첫 틱의 변화량을
+ * 돌려준다. 못 물면 null. 문턱을 상수(-5)로 박으면 biteDamage 튜닝 때 절반 물기가 문턱 아래로
+ * 내려가 감지가 통째로 죽는다(2026-08-11 재발: 25→10 에서 절반 4.2 < 5 → null 다섯 건).
  * 70 인 이유: 번식 문턱(78) 아래라 번식 굴림이 안 섞이고, 배부름 문턱(80) 아래라 famished 류
  * 조건도 안 섞인다.
  */
@@ -206,7 +209,7 @@ function firstBiteDelta(
     w.step();
     if (!victim.alive) return null; // 이 계열 실험에서는 안 일어나야 한다(즉사 확률 0 배치)
     const d = victim.energy - 70;
-    if (d < -5) return d;
+    if (d < -FULL_BITE / 4) return d; // 절반 물기(FULL_BITE/2)도 잡되, 제자리 유지비(틱당 ≪1)는 안 잡는 값
   }
   return null;
 }
@@ -219,9 +222,9 @@ function snapshot(world: World): string {
   return `t${world.tick}|p${world.population}|${ents.join(";")}`;
 }
 
-// 기준 물기: 공격 50 이 방어 66 을 물면 즉사 0 · 피해 25 × 0.84 = 21 (완전 결정론).
+// 기준 물기: 공격 50 이 방어 66 을 물면 즉사 0 · 피해 = biteDamage × 0.84 (완전 결정론).
 const PREY66: Partial<Traits> = { diet: 10, attack: 66, speed: 1 };
-const FULL_BITE = SIM.biteDamage * (1 + (50 - 66) / 100); // 21
+const FULL_BITE = SIM.biteDamage * (1 + (50 - 66) / 100);
 
 // ─────────────────────────────── 죽지 않는 것 (undying) ───────────────────────────────
 
@@ -338,14 +341,15 @@ describe("꼬리 자르기(shedtail) · 다리 4단", () => {
 
 describe("산 같은 몸(mountain) · 가죽 4단", () => {
   it("물기 피해가 상한(최대 기운의 4분의 1)으로 잘리고 즉사 굴림에 안 죽는다 · 대조는 죽는다", () => {
-    // 공격 90 vs 방어 50: 피해 35(상한 25 초과) · 즉사 확률 0.28 · 대조 먹잇감은 굴림에 곧 죽는다.
-    // 시드 고정: 대조 세계에서 250틱 안에 즉사 굴림이 성공하고, 죽기 전에 상한 초과 피해(-35)가
-    // 최소 한 번은 관측되는 시드다.
+    // 공격 90(몸집 100) vs 방어 0(몸집 20): diff01 = 0.9 + 1.4×0.8 = 2.02 → 피해 10×3.02 ≈ 30
+    // (상한 25 초과) · 즉사 확률 0.03 + 2.02×0.3 ≈ 0.64 · 대조 먹잇감은 굴림에 곧 죽는다.
+    // ⚠ 2026-08-11 TTK 재조정(biteDamage 25→10)으로 공격·몸집 차를 다 얹어야 상한(25)을 넘는
+    //   피해가 나온다 — 이 시나리오는 「상한이 실제로 자른다」를 보이는 극단 대결이다.
     const run = (perks: readonly PerkName[]): { alive: boolean; minDelta: number } => {
       const { w, pred, prey, spot } = makeDefend(
         "rule-mtn-1",
-        perkGenome({ diet: 10, speed: 1 }, perks),
-        { diet: 90, attack: 90, speed: 1 },
+        perkGenome({ diet: 10, speed: 1, size: 20, defense: 0 }, perks),
+        { diet: 90, attack: 90, speed: 1, size: 100 },
       );
       let minDelta = 0;
       for (let i = 0; i < 250 && prey.alive; i++) {
@@ -366,7 +370,7 @@ describe("산 같은 몸(mountain) · 가죽 4단", () => {
 
     const plain = run([]);
     expect(plain.alive).toBe(false); // 특성 없으면 옛날처럼 즉사 굴림에 잡힌다
-    expect(plain.minDelta).toBeLessThan(-cap - 5); // 그리고 피해도 상한 없이(-35) 박혔었다
+    expect(plain.minDelta).toBeLessThan(-cap - 4); // 그리고 피해도 상한 없이(약 -30) 박혔었다
   });
 });
 
@@ -374,7 +378,7 @@ describe("산 같은 몸(mountain) · 가죽 4단", () => {
 
 describe("숨통을 보는 눈(cull) · 눈 4단", () => {
   it("기운이 문턱 아래인 상대는 한 입에 죽는다(대조: 같은 배치에서 못 잡는다)", () => {
-    // 먹잇감 기운 24 는 문턱(25) 바로 아래이면서 기본 물기 피해(21)보다는 커서,
+    // 먹잇감 기운 24 는 문턱(25) 바로 아래이면서 기본 물기 피해(FULL_BITE)보다는 커서,
     // 「한 입」이 처형(killChance 1) 때문임을 대가리부터 발끝까지 결정론으로 가른다.
     expect(24).toBeLessThan(SIM.maxEnergy * CULL_THRESHOLD);
     expect(24).toBeGreaterThan(FULL_BITE);
@@ -778,7 +782,7 @@ describe("천산갑의 비늘(pangolin) · 가죽 3단", () => {
 
 describe("라텔의 맞물기(ratel) · 이빨 4단", () => {
   it("나를 문 상대는 내 무는 피해의 절반만큼 기운을 잃는다", () => {
-    // 먹잇감(내 종) 무는 힘 50 vs 문 쪽 방어 50: 반사 밑피해 25 → 절반 12.5.
+    // 먹잇감(내 종) 무는 힘 50 vs 문 쪽 방어 50 · 체급 동률: 반사 밑피해 = biteDamage 그대로 → 절반.
     const run = (perks: readonly PerkName[]): number => {
       const { w, pred, prey, spot } = makeDefend(
         "rule-ratel-1",
@@ -798,8 +802,9 @@ describe("라텔의 맞물기(ratel) · 이빨 4단", () => {
       return minPredDelta;
     };
     const reflected = run(["ratel"]);
-    expect(reflected).toBeLessThan(-10); // ≈ -12.5 (마주 물렸다)
-    expect(reflected).toBeGreaterThan(-15);
+    const base = SIM.biteDamage * RATEL_REFLECT; // 상수 유도 · biteDamage 를 튜닝해도 이 줄은 참말이다
+    expect(reflected).toBeLessThan(-base + 0.6); // 마주 물렸다(+ 문 쪽 제 소모 약간)
+    expect(reflected).toBeGreaterThan(-base - 2.5);
     expect(run([])).toBeGreaterThan(-2); // 특성 없으면 문 쪽은 제 소모 말고 잃는 게 없다
   });
 
@@ -864,7 +869,9 @@ describe("얼룩말의 뒷발질(zebrakick) · 다리 3단", () => {
       }
       return minPredDelta;
     };
-    expect(run(["zebrakick"])).toBeLessThan(-20); // 입은 피해(25)만큼 되갚았다
+    // 입은 피해(체급 동률 = biteDamage 그대로)만큼 되갚았다 · 상수 유도라 튜닝에도 참말.
+    expect(run(["zebrakick"])).toBeLessThan(-SIM.biteDamage + 1);
+    expect(run(["zebrakick"])).toBeGreaterThan(-SIM.biteDamage - 3);
     expect(run([])).toBeGreaterThan(-5); // 특성 없으면 문 쪽이 잃는 건 제 소모뿐
   });
 

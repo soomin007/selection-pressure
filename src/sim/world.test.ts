@@ -860,18 +860,23 @@ describe("비행 유지비 — 나는 것은 끝까지 비싸다", () => {
 
 describe("사냥 판정 — 물기(쿨다운 + 기운 깎기)", () => {
   // ⚠ **2026-08-10 에 계약이 바뀌었다.** 전투를 「즉사 판정」에서 「피해 싸움」으로 옮기면서
-  //   기울기(`killChanceScale`)를 1.5 → 0.5 로 낮췄다 · **[사용자]** "애초에 지금 애들 공격 속도가
+  //   기울기(`killChanceScale`)를 낮췄다 · **[사용자]** "애초에 지금 애들 공격 속도가
   //   하도 빨라서 뭐 대미지 배수가 의미가 있나 싶기도 하고".
-  //   그래서 **압도해도 한 번에 안 잡는다** — 공격 100 대 방어 0 이라는 극단에서도 58% 다.
-  //   상한(95%)은 여전히 살아 있지만 **닿으려면 몸집 차까지 겹쳐야 한다**(아래에서 함께 잰다).
-  it("압도해도 한 번에는 못 잡는다 · 상한은 몸집 차까지 겹쳐야 닿는다", () => {
+  //   그래서 **압도해도 한 번에 안 잡는다** — 2026-08-11 TTK 재조정(1배속 2.5~3초 목표 · [사용자])
+  //   이후로는 상한(95%)이 **어떤 조합으로도 닿지 않는 가드레일**이다: 극단(공격 100 vs 0 + 몸집
+  //   100 vs 0)에서도 bias + (1 + sizeBiteWeight) × scale 이 상한 아래다. 한 방 사냥은 없다.
+  it("압도해도 한 번에는 못 잡는다 · 상한은 이제 닿지 않는 가드레일이다", () => {
     const b = biteOutcome(100, 0);
     expect(b.ignored).toBe(false);
     expect(b.killChance).toBeGreaterThan(SIM.killChanceBias); // 압도가 확률을 올리긴 한다
     expect(b.killChance).toBeLessThan(SIM.killChanceMax); // 그래도 한 방은 아니다
-    // 공격력 차에 몸집 차까지 얹으면 상한에 닿는다(체급이 곧 힘이다).
+    // 몸집 차를 얹으면 확률이 더 오르긴 한다(체급이 곧 힘이다).
     const huge = biteOutcome(100, 0, 100, 20);
-    expect(huge.killChance).toBe(SIM.killChanceMax);
+    expect(huge.killChance).toBeGreaterThan(b.killChance);
+    // 이론상 최대치조차 상한 아래 — 상한은 튜닝 실수를 막는 안전핀으로만 남는다.
+    const theoreticalMax = SIM.killChanceBias + (1 + SIM.sizeBiteWeight) * SIM.killChanceScale;
+    expect(theoreticalMax).toBeLessThan(SIM.killChanceMax);
+    expect(huge.killChance).toBeLessThanOrEqual(theoreticalMax);
   });
 
   it("호각이면 즉사 확률은 기준값, 물기 피해는 biteDamage 그대로", () => {
