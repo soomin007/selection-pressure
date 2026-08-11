@@ -54,7 +54,7 @@ import {
 } from "@/sim/tiers";
 import type { Category, Pips } from "@/sim/tiers";
 import type { Genome } from "@/sim/genome";
-import { PERK_BY_NAME, perkLine } from "@/sim/perks";
+import { PERK_BY_NAME, perkCost, perkLine } from "@/sim/perks";
 import { GENE_AWARD, GENE_REASON_LABELS } from "@/sim/gene";
 import type { GeneReason } from "@/sim/gene";
 import { TRIAL_EXCEED_EXCLUDED, type TrialKind } from "@/game/game";
@@ -262,7 +262,12 @@ function cardEffectLine(card: Card): string {
   if (card.key !== undefined) return KEY_DESC[card.key];
   if (card.perk !== undefined) {
     const p = PERK_BY_NAME.get(card.perk);
-    if (p !== undefined) return perkLine(p);
+    if (p !== undefined) {
+      // 고유 카드(3단·4단)는 **대가까지 한 줄에** 잇는다 · 열쇠(KEY_DESC)가 대가를 함께 적는 것과
+      // 같은 규칙이다(2026-08-11). 효과·대가 문장 둘 다 자립형이라 그대로 이어도 말이 된다.
+      const cost = perkCost(p);
+      return cost === undefined ? perkLine(p) : `${perkLine(p)} ${cost}`;
+    }
   }
   return card.desc;
 }

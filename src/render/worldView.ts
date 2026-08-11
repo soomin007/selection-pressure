@@ -41,6 +41,7 @@ import type { CosmeticId } from "@/game/achievements";
 // 방울(유전자 점수) · 그리기·줍기 연출·화면 밖 쐐기가 전부 그 파일 안에 산다. 여기서는 레이어를
 // 올바른 z 순서에 끼우고 프레임마다 한 번 부르기만 한다(worldView 가 이미 1900줄이다).
 import { GeneDropLayer } from "@/render/geneDrops";
+import { CARRION_ROT_TICKS, carcassEdible } from "@/sim/carrion";
 import {
   LeadTerrainLayer,
   bodyRadiusOf,
@@ -460,6 +461,24 @@ export class WorldView {
         // 정보(예: 이 바다는 통째로 남의 밥상)까지 같이 사라진다.
         this.foodG.circle(f.x, f.y, 3).fill({ color, alpha: 0.22 });
       }
+    }
+
+    // ── 사체 · 「썩은 고기를 먹는 위」(이빨 4단 카드)가 있는 판에서만 쌓인다(world.legacyDeath).
+    //    없는 판은 배열이 늘 비어 있어 이 루프가 0회다. 갈비뼈 실루엣이면 「죽은 것이 남긴 것」이
+    //    설명 없이 읽히고(전달 규칙 1순위), 부패의 마지막 4분의 1에서 스러져 「곧 없어진다」도 보인다.
+    for (const c of world.carcasses) {
+      if (!carcassEdible(c, world.tick)) continue;
+      if (lead && !this.inView(c.x, c.y, 24)) continue;
+      const rot = (world.tick - c.bornTick) / CARRION_ROT_TICKS;
+      const a = rot > 0.75 ? (1 - rot) / 0.25 : 1;
+      this.foodG.ellipse(c.x, c.y + 1, 7, 3).fill({ color: 0x1a140e, alpha: 0.35 * a });
+      for (let i = -1; i <= 1; i += 1) {
+        this.foodG
+          .moveTo(c.x + i * 3, c.y - 3)
+          .lineTo(c.x + i * 3.6, c.y + 3)
+          .stroke({ color: 0xe8dcc4, width: 1.4, alpha: 0.9 * a });
+      }
+      this.foodG.circle(c.x - 5.5, c.y - 1, 2).fill({ color: 0xe8dcc4, alpha: 0.9 * a });
     }
 
     // 생물 스프라이트 풀 — sim(30/s)과 화면(60fps) 사이를 prev→현재로 보간해 드득거림을 없앤다.

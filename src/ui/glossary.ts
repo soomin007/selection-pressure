@@ -18,8 +18,10 @@ import {
   PERKS,
   PERK_AXES,
   PERK_AXIS_INFO,
+  PERK_BY_NAME,
   PERK_WHENS,
   PERK_WHEN_INFO,
+  perkCost,
 } from "@/sim/perks";
 import {
   CATEGORIES,
@@ -566,7 +568,7 @@ const SECTIONS: readonly Section[] = [
       {
         term: "카드 고르기",
         svg: SVG.card,
-        desc: "카드는 특성 하나를 줍니다. 특성은 정해진 때에만 켜져서 한 가지를 몇 배로 만듭니다. 「밤에 보는 거리 ×1.45」처럼 언제 무엇이 얼마나 달라지는지가 카드의 칩에 그대로 적혀 있고, 그 수가 게임이 실제로 곱하는 수입니다. 전설 카드만은 특성 대신 열쇠(없던 능력)를 엽니다. 한 판 동안 누적되고, 새 판에서 리셋됩니다.",
+        desc: "카드는 특성 하나를 줍니다. 낮은 단계의 특성은 정해진 때에만 켜져서 한 가지를 몇 배로 만듭니다. 「수풀에서 보는 거리 ×1.55」처럼 언제 무엇이 얼마나 달라지는지가 카드의 칩에 그대로 적혀 있고, 그 수가 게임이 실제로 곱하는 수입니다. 티어 3단부터 열리는 카드는 저마다 고유한 규칙과 대가를 갖습니다. 전설은 없던 규칙을 여는 자리입니다. 열쇠 카드와, 4단이 여는 규칙 카드가 거기 있습니다. 한 판 동안 누적되고, 새 판에서 리셋됩니다.",
         note: "범주의 단은 카드가 아니라 방울로 올립니다. 판에 떨어진 방울을 무리가 밟아 주우면, 목표 줄 옆의 방울 카운터에서 다음 단을 살 수 있습니다.",
       },
       {
@@ -606,7 +608,7 @@ function pct(v: number): string {
   return `${p.toFixed(2)}%`;
 }
 
-/** 카드 한 줄 요약 칩 · cardSummary(단일 진실)를 그대로 보여준다. 예: 「밤에 보는 거리 ×1.45」 */
+/** 카드 한 줄 요약 칩 · cardSummary(단일 진실)를 그대로 보여준다. 예: 「수풀에서 보는 거리 ×1.55」 */
 function chipRow(card: Card): HTMLElement {
   const wrap = document.createElement("div");
   wrap.style.cssText = "display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; max-width:100%;";
@@ -617,6 +619,19 @@ function chipRow(card: Card): HTMLElement {
     `display:inline-flex; align-items:center; font-family:var(--font-mono); font-size:10.5px;` +
     `border-radius:8px; padding:3px 8px; color:${color}; background:${withAlpha(color, 0.13)};`;
   wrap.appendChild(chip);
+  // 고유 카드(3단·4단)의 **대가 칩**(2026-08-11) · `perks.perkCost` 가 단일 진실이다.
+  if (card.perk !== undefined) {
+    const p = PERK_BY_NAME.get(card.perk);
+    const cost = p !== undefined ? perkCost(p) : undefined;
+    if (cost !== undefined) {
+      const costChip = document.createElement("span");
+      costChip.textContent = `대가 · ${cost}`;
+      costChip.style.cssText =
+        `display:inline-flex; align-items:center; font-size:10.5px; border-radius:8px;` +
+        `padding:3px 8px; color:var(--down, #e07a6a); background:${withAlpha("#e07a6a", 0.12)};`;
+      wrap.appendChild(costChip);
+    }
+  }
   return wrap;
 }
 

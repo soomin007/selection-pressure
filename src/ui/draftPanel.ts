@@ -7,7 +7,7 @@
 // v9: **카드는 도장을 안 준다.** 카드가 주는 것은 조건부 특성(`sim/perks.ts`)과 열쇠 둘뿐이고,
 //   범주의 단은 오직 방울로만 오른다(`Game.buyTier`). 그래서 이 화면의 일이 바뀌었다 ▸
 //   「이 카드가 문턱을 넘기는가」가 아니라 「이 카드가 언제 무엇을 몇 배로 만드는가」를 말한다.
-//   · 카드 칩: 특성 한 줄(「밤에 보는 거리 ×1.45」) · 문구는 perks.perkLine 이 만든다(단일 진실) / 열쇠 / 불씨
+//   · 카드 칩: 특성 한 줄(「수풀에서 보는 거리 ×1.55」) · 문구는 perks.perkLine 이 만든다(단일 진실) / 열쇠 / 불씨
 //   · 헤더: 다섯 범주 티어 한 줄 + 듀오 예고(「무리 III 이 되면 늑대의 법이 켜집니다」)
 //   · 내 종 팝업: 지금 단과 도장 막대(문턱 눈금 3·8·14·20) + 「이 카드가 주는 것」 한 줄
 //   ⚠ 유령 막대(「이 카드를 고르면 여기까지 찹니다」)는 걷어냈다 · 카드로는 도장이 한 칸도 안 움직인다.
@@ -24,7 +24,7 @@ import {
   type Rarity,
 } from "@/game/cards";
 import { cloneGenome, type Genome } from "@/sim/genome";
-import { AXIS_CATEGORY, PERK_BY_NAME, ownedDuos, perkLine } from "@/sim/perks";
+import { AXIS_CATEGORY, PERK_BY_NAME, ownedDuos, perkCost, perkLine } from "@/sim/perks";
 import {
   CATEGORIES,
   CATEGORY_LABELS,
@@ -509,7 +509,7 @@ export function createDraftPanel(
     const lines = el("div", "draft-build-lines");
 
     // **유령 막대가 있던 자리.** 카드가 실제로 주는 것을 그 카드의 말(cardSummary)로 그대로 옮긴다 ▸
-    // 특성이면 「밤에 보는 거리 ×1.45」, 전설이면 「열쇠 「물갈퀴」」, 불씨 카드면 「불씨 +1」.
+    // 특성이면 「수풀에서 보는 거리 ×1.55」, 전설이면 「열쇠 「물갈퀴」」, 불씨 카드면 「불씨 +1」.
     const giveLine = el("div");
     giveLine.textContent = "이 카드가 주는 것: ";
     const giveVal = el("b");
@@ -795,6 +795,17 @@ export function createDraftPanel(
           (lost.gain ? ` · ${lost.gain}` : "");
         body.appendChild(note);
       }
+      // 고유 카드(3단·4단)의 **대가 한 줄** — `perks.perkCost` 가 단일 진실(2026-08-11 ·
+      // **[사용자 2026-08-10]** "공짜 점심은 없다"). 효과 줄은 칩(perkLine)이 이미 말한다.
+      if (card.perk !== undefined) {
+        const perkDef = PERK_BY_NAME.get(card.perk);
+        const costLine = perkDef ? perkCost(perkDef) : undefined;
+        if (costLine !== undefined) {
+          const note = el("span", "draft-note cost");
+          note.textContent = `대가 · ${costLine}`;
+          body.appendChild(note);
+        }
+      }
       // **몸집 변화는 중립으로, 전후 값으로만.** 좋고 나쁨이 갈리지 않는 축이라 「얻는 것 / 잃는 것」
       // 어느 쪽에도 못 넣는다(넣으면 그 자체가 거짓말이다 · tiers.ts SIZE_MEANING 주석).
       // 무엇을 뜻하는지는 툴팁 한 줄이 맡고, **무엇보다 히어로 미리보기의 생물이 실제로 커지거나 작아진다.**
@@ -1042,7 +1053,7 @@ function colorForCardName(name: string): string {
 }
 
 /**
- * 그 이름의 카드가 특성 카드면 효과 한 줄(「밤에 보는 거리 ×1.45」), 아니면 null.
+ * 그 이름의 카드가 특성 카드면 효과 한 줄(「수풀에서 보는 거리 ×1.55」), 아니면 null.
  * 문구는 `sim/perks.perkLine` 이 만든다 · 여기서 배수를 다시 적지 않는다.
  */
 function perkLineForCardName(name: string): string | null {
