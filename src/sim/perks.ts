@@ -12,12 +12,14 @@
 // 이 파일이 지키는 것 여섯:
 //  ① **특성은 두 종류뿐이다.** (a) **배수 특성** = 「조건 · 축 · 배수」 · 새 sim 메커니즘을 안 만든다
 //     (**[사용자 2026-07-11]** "새 형질을 만들기보다 이미 있는 형질이 그 맥락에서 작동하게 한다").
-//     (b) **규칙 특성**(`rule`) = 배수로 표현이 안 되는 것 · 듀오 열 개가 여기 산다
-//     (「이웃이 하나만 있어도 무리 방어가 켜진다」는 어떤 축에도 안 곱해진다).
-//     규칙 특성은 **새로 만들지 않는다** · 이미 sim 에 있던 듀오 열 개를 카드로 옮긴 것이 전부다.
-//     그리고 규칙 이름은 반드시 sim 어딘가에서 `hasRule` 로 읽혀야 한다(`perks.test.ts` 가 검사한다).
-//  ② **대가를 안 붙인다. 조건 자체가 대가다** — 「밤에」는 판의 40%에서만 켜진다. 한 특성에 대가를
-//     겹치면 함정 카드가 된다(known_issues 「새 형질의 대가를 여러 개 겹치면」 · 몸집이 그랬다).
+//     (b) **규칙 특성**(`rule`) = 배수로 표현이 안 되는 것 · 듀오 열 개와 **3단·4단 고유 카드 스물**이
+//     여기 산다(2026-08-11 · **[사용자 2026-08-10]** "카드는 고유 효과 + 대가" · 한 장 = sim 분기 하나).
+//     규칙 이름은 반드시 sim 어딘가에서 `hasRule` 로 읽혀야 한다(`perks.test.ts` 가 소스를 읽어 검사한다).
+//  ② **대가는 자리마다 다르다.** 낮은 단(0~2단)의 배수 특성은 **조건 자체가 대가**라 따로 안 붙인다
+//     (「밤에」는 판의 40%에서만 켜진다 · 대가를 겹치면 함정 카드다 · known_issues 「대가를 여러 개
+//     겹치면」). **3단부터의 규칙 특성은 명시된 대가(`cost`) 한 겹을 반드시 갖는다** — 「공짜 점심은
+//     없다 · 하이 리스크 하이 리턴」(**[사용자 2026-08-10]**). 옛 원칙 「대가를 안 붙인다」는 내(Claude)
+//     판단이었고 사용자 방향과 충돌해 걷어냈다(경위: session_logs/2026-08-10.md 세션 2).
 //  ③ **rng 를 한 번도 안 쓴다.** 순수 판정 + 곱셈이라 난수 스트림을 안 민다(결정론 · 기획서 §3.4).
 //  ④ **특성이 없으면 배수가 정확히 1.** 야생종과 특성 0개인 종은 기존 세계와 비트 단위로 같다.
 //     이게 「새 축의 기본값은 중립」(known_issues)의 이 파일판이다.
@@ -219,8 +221,12 @@ export function perkCtxOf(e: Entity, world: World): PerkCtx {
   return { world, e, hunting: e.targetPrey !== null, fleeing: e.fleeing, neighbors: e.neighbors };
 }
 
-/** 물가인가 — 네 방향으로 타일 하나씩 짚어 물이 있는지 본다. rng 미사용(결정론 안전). */
-function nearShore(world: World, x: number, y: number): boolean {
+/**
+ * 물가인가 — 네 방향으로 타일 하나씩 짚어 물이 있는지 본다. rng 미사용(결정론 안전).
+ * export 인 이유: 「물가의 매복자」의 물기 판정(`behavior.resolveBite`)이 **같은 판정**을 써야
+ * 카드의 「물가에서」와 화면의 「지금 켜짐」이 한 글자도 안 갈린다(두 곳에 적으면 어긋난다).
+ */
+export function nearShore(world: World, x: number, y: number): boolean {
   const r = world.terrain.cellSize * SHORE_REACH;
   return (
     world.terrain.isWater(x + r, y) ||
@@ -294,12 +300,12 @@ export function gateDepth(gate: PerkGate | undefined): number {
 // ─────────────────────────────── 특성 목록 ───────────────────────────────
 
 /**
- * **규칙 특성의 이름** · 배수로 표현이 안 되는 것. 지금은 듀오 열 개가 전부이고, 이름은 듀오 id 와
- * 글자까지 같다(`tiers.DUOS`).
+ * **규칙 특성의 이름** · 배수로 표현이 안 되는 것. 듀오 열 개(이름이 듀오 id 와 글자까지 같다 ·
+ * `tiers.DUOS`)와 **3단·4단 고유 카드 스물**(2026-08-11 · 사용자 승인 목록)이 여기 산다.
  *
  * ⚠ **여기 이름을 늘리면 sim 에 `hasRule(perks, "그이름")` 을 부르는 자리가 반드시 있어야 한다.**
- *   `perks.test.ts` 가 `behavior.ts`·`boss.ts` 를 읽어 그것을 검사한다 · 적어만 놓고 안 만든 규칙은
- *   「카드에 적힌 것이 세계에서 아무 일도 안 하는」 상태이고, 그건 이 저장소가 금지한 거짓말이다.
+ *   `perks.test.ts` 가 `behavior.ts`·`boss.ts`·`world.ts` 를 읽어 그것을 검사한다 · 적어만 놓고 안 만든
+ *   규칙은 「카드에 적힌 것이 세계에서 아무 일도 안 하는」 상태이고, 그건 이 저장소가 금지한 거짓말이다.
  */
 export const PERK_RULES = [
   "pounce",
@@ -312,6 +318,28 @@ export const PERK_RULES = [
   "stone",
   "bigjaw",
   "wave",
+  // ── 3단 고유 카드 열 (2026-08-11) ──────────────────────────────────────
+  "famished",
+  "riverjaw",
+  "hamstring",
+  "zebrakick",
+  "eyespot",
+  "noshine",
+  "pangolin",
+  "newflesh",
+  "bloodgift",
+  "greenwake",
+  // ── 4단 규칙 카드 열 (2026-08-11 · 등급 전설) ──────────────────────────
+  "carrion",
+  "ratel",
+  "footsteps",
+  "shedtail",
+  "cull",
+  "transfix",
+  "undying",
+  "mountain",
+  "salmonrun",
+  "feverscar",
 ] as const;
 export type PerkRule = (typeof PERK_RULES)[number];
 
@@ -334,10 +362,18 @@ interface PerkDef {
   rule?: PerkRule;
   /** 규칙 특성이 화면에 뜨는 한 줄(듀오의 `desc` 를 그대로 쓴다). 배수 특성은 `perkLine` 이 만든다. */
   gain?: string;
+  /**
+   * **명시된 대가 한 줄** — 3단·4단 고유 카드만 갖는다(**[사용자 2026-08-10]** "공짜 점심은 없다").
+   * 효과(`gain`)처럼 자립형이고, 적힌 수는 sim 상수와 글자까지 같아야 한다(제1 규칙).
+   * ⚠ **글로만 있는 대가는 거짓말이다** — cost 를 적었으면 sim 에 그 대가를 실제로 무는 분기가
+   *   반드시 있어야 한다(`perks.test.ts` 가 gain 과 같은 잣대로 지킨다).
+   */
+  cost?: string;
 }
 
 /**
- * 특성 마흔다섯. **등급은 여기 안 적는다** — `perkRarity` 가 「조건 성립 빈도 × 효과 크기」로
+ * 배수 특성 서른여섯(2026-08-11 · 옛 3단 열 장을 지우고 도전 과제 보상 「바위 살갗」만 남았다).
+ * **등급은 여기 안 적는다** — `perkRarity` 가 「조건 성립 빈도 × 효과 크기」로
  * 계산한다. 손으로 적으면 배수를 튜닝할 때마다 등급이 조용히 거짓이 된다.
  *
  * 축 여덟에 고르게 뿌렸다(축마다 5~6). 한 축만 두꺼우면 그 축을 안 파는 빌드에게 드래프트의
@@ -350,16 +386,11 @@ const PERK_DEFS = [
   { id: "graze_grass", name: "수풀의 미식가", flavor: "덤불 속의 연한 것만 골라 먹습니다.", when: "grass", axis: "graze", mul: 1.45 },
   { id: "graze_shore", name: "물가의 풀", flavor: "물을 낀 땅의 풀은 늘 무성합니다.", when: "shore", axis: "graze", mul: 1.75 },
   { id: "graze_hungry", name: "허기가 부지런을 만든다", flavor: "배가 고프면 없던 자리에서도 찾아냅니다.", when: "hungry", axis: "graze", mul: 1.5 },
-  { id: "graze_always", name: "되새김", flavor: "한 번 삼킨 것을 다시 꺼내 씹습니다.", when: "always", axis: "graze", mul: 1.28 },
 
   // ── 사냥으로 얻는 것 ───────────────────────────────────────────────────
   { id: "hunt_always", name: "남김없이", flavor: "뼈에 붙은 것까지 발라 먹습니다.", when: "always", axis: "hunt", mul: 1.07 },
   { id: "hunt_hungry", name: "굶주린 뱃속", flavor: "곯은 배가 더 많이 받아들입니다.", when: "hungry", axis: "hunt", mul: 1.2 },
   { id: "hunt_night", name: "밤 사냥", flavor: "잠든 것은 저항하지 않습니다.", when: "night", axis: "hunt", mul: 1.3 },
-  { id: "hunt_alone", name: "혼자 먹는 몫", flavor: "나눌 입이 없으면 전부 내 것입니다.", when: "alone", axis: "hunt", mul: 1.9 },
-  // ⚠ 이름을 「긴 포만」으로 붙이지 말 것 — sim 에 이미 그 이름의 규칙이 있다(`gorgeFactor` ·
-  //   육식성이 정하는 기운 상한). 같은 낱말이 두 가지를 가리키면 어휘가 갈라진다(known_issues).
-  { id: "hunt_gorge", name: "배불리 먹는 법", flavor: "한 번 잡으면 남기지 않고 실컷 먹습니다.", when: "always", axis: "hunt", mul: 1.3 },
 
   // ── 무는 힘 ────────────────────────────────────────────────────────────
   { id: "attack_always", name: "굳은 턱", flavor: "턱뼈가 두꺼워집니다.", when: "always", axis: "attack", mul: 1.05 },
@@ -376,6 +407,8 @@ const PERK_DEFS = [
   { id: "defense_grass", name: "수풀이 막아 준다", flavor: "덤불이 이빨을 한 번 걸러 줍니다.", when: "grass", axis: "defense", mul: 0.67 },
   { id: "defense_wounded", name: "물린 자리가 굳는다", flavor: "한 번 물린 곳은 쉽게 안 뚫립니다.", when: "wounded", axis: "defense", mul: 0.3 },
   { id: "defense_crowd", name: "등을 맞대고", flavor: "바깥을 보고 둘러서면 안쪽이 안전합니다.", when: "crowd", axis: "defense", mul: 0.67 },
+  // ⚠ 「바위 살갗」만 옛 3단 배수 카드 중 유일하게 살아남았다(2026-08-11) — 도전 과제 「거인의 태동」의
+  //   보상 카드라서다(achievements.ts · 과제로만 열린다). 풀에서 유일한 「아주 귀함」 배수 카드.
   { id: "defense_rock", name: "바위 살갗", flavor: "살갗이 돌처럼 굳습니다.", when: "always", axis: "defense", mul: 0.79 },
 
   // ── 빠르기 ─────────────────────────────────────────────────────────────
@@ -386,10 +419,6 @@ const PERK_DEFS = [
   { id: "speed_rough", name: "험한 땅의 걸음", flavor: "돌밭을 평지처럼 딛습니다.", when: "rough", axis: "speed", mul: 1.5 },
   { id: "speed_night", name: "밤길", flavor: "어두워도 걸음을 안 줄입니다.", when: "night", axis: "speed", mul: 1.25 },
   { id: "speed_hungry", name: "굶주린 추격", flavor: "배가 고프면 다리가 먼저 움직입니다.", when: "hungry", axis: "speed", mul: 1.35 },
-  { id: "speed_hunting", name: "쫓을 때의 걸음", flavor: "쫓기 시작하면 다른 짐승이 됩니다.", when: "hunting", axis: "speed", mul: 3.0 },
-  // ⚠ 배수 3.5 는 등급 경계(0.24)를 **부동소수점 여유를 두고** 넘기려는 값이다. 3.4 면 값어치가
-  //   정확히 0.24 라 띠 비교가 반올림 오차에 걸린다(0.1 × 2.4 = 0.24000000000000002).
-  { id: "speed_fleeing", name: "죽을힘", flavor: "쫓길 때 내는 속도는 평생 한 번뿐입니다.", when: "fleeing", axis: "speed", mul: 3.5 },
 
   // ── 보는 거리 ──────────────────────────────────────────────────────────
   { id: "vision_always", name: "높이 든 고개", flavor: "고개를 들고 오래 봅니다.", when: "always", axis: "vision", mul: 1.06 },
@@ -399,8 +428,6 @@ const PERK_DEFS = [
   { id: "vision_alone", name: "혼자 서는 파수", flavor: "곁에 아무도 없으면 스스로 살핍니다.", when: "alone", axis: "vision", mul: 1.3 },
   { id: "vision_grass", name: "수풀 너머", flavor: "덤불 사이로 보는 법을 익힙니다.", when: "grass", axis: "vision", mul: 1.55 },
   { id: "vision_day", name: "맑은 낮", flavor: "밝을 때 가장 멀리 봅니다.", when: "day", axis: "vision", mul: 1.3 },
-  { id: "vision_night", name: "밤눈", flavor: "어두운 것이 덜 어두워집니다.", when: "night", axis: "vision", mul: 1.45 },
-  { id: "vision_far", name: "지평선을 보는 눈", flavor: "점 하나가 짐승으로 보입니다.", when: "always", axis: "vision", mul: 1.3 },
 
   // ── 기운 소모 ──────────────────────────────────────────────────────────
   { id: "upkeep_always", name: "아끼는 몸", flavor: "쓸데없는 데 기운을 안 씁니다.", when: "always", axis: "upkeep", mul: 0.95 },
@@ -408,15 +435,18 @@ const PERK_DEFS = [
   { id: "upkeep_grass", name: "수풀의 그늘", flavor: "덤불 그늘에서는 덜 지칩니다.", when: "grass", axis: "upkeep", mul: 0.7 },
   { id: "upkeep_night", name: "밤의 휴식", flavor: "어두우면 움직임을 줄이고 쉽니다.", when: "night", axis: "upkeep", mul: 0.7 },
   { id: "upkeep_crowd", name: "붙어 자는 밤", flavor: "몸을 맞대면 덜 춥습니다.", when: "crowd", axis: "upkeep", mul: 0.65 },
-  { id: "upkeep_slow", name: "느린 신진대사", flavor: "숨이 길고 심장이 느립니다.", when: "always", axis: "upkeep", mul: 0.78 },
 
   // ── 새끼 확률 ──────────────────────────────────────────────────────────
   { id: "fertility_always", name: "잦은 출산", flavor: "새끼 보는 날이 잦아집니다.", when: "always", axis: "fertility", mul: 1.06 },
   { id: "fertility_day", name: "긴 낮", flavor: "해가 긴 철에 새끼를 칩니다.", when: "day", axis: "fertility", mul: 1.16 },
   { id: "fertility_grass", name: "수풀의 보금자리", flavor: "덤불 안쪽에 자리를 봅니다.", when: "grass", axis: "fertility", mul: 1.5 },
   { id: "fertility_full", name: "배부른 어미", flavor: "기운이 넉넉해야 새끼를 칩니다.", when: "full", axis: "fertility", mul: 1.7 },
-  { id: "fertility_crowd", name: "함께 기른다", flavor: "여럿이 돌보면 어린 것이 덜 죽습니다.", when: "crowd", axis: "fertility", mul: 1.85 },
 ] as const satisfies readonly PerkDef[];
+// ⚠ **옛 3단 배수 카드 열 장은 2026-08-11 에 지웠다**(혼자 먹는 몫 · 배불리 먹는 법 · 쫓을 때의 걸음 ·
+//   죽을힘 · 밤눈 · 지평선을 보는 눈 · 바위 살갗 · 느린 신진대사 · 함께 기른다 · 되새김).
+//   **[사용자 2026-08-10]** "다 너무 ~할 때 ~ 몇 배 이런 식이라 직관적이지도 않고 매력도 없네" ·
+//   그 자리는 아래 RULE_CARD_DEFS(고유 효과 + 대가)가 잇는다. 옛 저장 데이터의 그 이름들은
+//   게놈 마이그레이션이 조용히 버린다(모르는 이름 무시 · v9 규칙 그대로).
 
 // ─────────────────────────────── 듀오 = 규칙 특성 열 개 ───────────────────────────────
 //
@@ -444,7 +474,321 @@ const DUO_PERK_DEFS = [
   { id: "duo_ring", rule: "ring", axis: "fertility", when: "always" },
 ] as const satisfies readonly { id: string; rule: PerkRule; axis: PerkAxis; when: PerkWhen }[];
 
-export type PerkName = (typeof PERK_DEFS)[number]["id"] | (typeof DUO_PERK_DEFS)[number]["id"];
+// ─────────────────────────── 3단·4단 고유 카드 스물 (2026-08-11 · 사용자 승인) ───────────────────────────
+//
+// **[사용자 2026-08-10]** "카드는 고유 효과 + 대가" · "'공짜 점심은 없다'와 '하이 리스크 하이 리턴'" ·
+// 설계자 5 + 심판 3(취향·구현·전달) 워크플로에서 후보 37장 중 선발, 2026-08-11 사용자 승인.
+// 3단 = 아주 귀함(범주당 2) · 4단 = **전설**(범주당 2 · 규칙을 바꾸는 카드).
+//
+// **수치는 전부 아래 상수에서 나온다.** 카드 글자와 sim 이 같은 상수를 읽어야 「수치가 화면 표시와
+// 다르면 거짓말」 규칙이 원리적으로 안 깨진다. 문장 속 말수(「절반」 「열에 아홉」)는 상수와의 일치를
+// `perks.test.ts` 가 못 박는다.
+//
+// **[사용자 2026-08-11]** "능력이 있으면 그걸 활용할 줄도 알아야지" — 행동이 달라져야 뜻이 사는
+// 카드는 행동 분기까지가 카드다: 굶주린 사냥꾼(배부르면 사냥을 안 시작한다) · 썩은 고기를 먹는 위
+// (사체를 먹이 목표로 삼아 걸어간다) · 숨통을 보는 눈(가장 가까운 놈이 아니라 다 죽어 가는 놈을
+// 고른다) · 물가의 매복자(사냥감을 고를 때 물가 쪽을 우선한다).
+
+/** 굶주린 사냥꾼 · 배가 절반 아래면 물 수 있는 거리가 이만큼 늘어난다. */
+export const FAMISHED_RANGE_MUL = 2;
+/** 물가의 매복자 · 물가에서 무는 즉사 확률(고정 · 「열에 아홉」). */
+export const RIVERJAW_KILL = 0.9;
+/** 물가의 매복자 · 물가 밖에서 무는 피해 배수(「절반」). */
+export const RIVERJAW_AWAY_MUL = 0.5;
+/** 썩은 고기를 먹는 위 · 갓 잡은 사냥 수입 배수(「절반」). */
+export const CARRION_FRESH_MUL = 0.5;
+/** 라텔의 맞물기 · 반사량 = 내 무는 피해 × 이 값(「절반」). */
+export const RATEL_REFLECT = 0.5;
+/** 라텔의 맞물기 · 달아나는 동안 걸음 배수(「30% 줄어든다」). */
+export const RATEL_FLEE_MUL = 0.7;
+/** 힘줄을 무는 법 · 절뚝임 지속 틱(「3초」 · sim 30틱 = 1초). */
+export const HAMSTRING_TICKS = 90;
+/** 힘줄을 무는 법 · 절뚝이는 걸음 배수(「절반」). */
+export const HAMSTRING_SLOW = 0.5;
+/** 힘줄을 무는 법 · 내 무는 피해 배수(「절반」). */
+export const HAMSTRING_DMG_MUL = 0.5;
+/** 얼룩말의 뒷발질 · 달아나는 빠르기 배수(「20% 줄어든다」). */
+export const ZEBRA_FLEE_MUL = 0.8;
+/** 따라오는 발소리 · 상대 현재 걸음에 대한 내 걸음 하한 배수(「반 걸음 빠르다」). */
+export const FOOTSTEPS_EDGE = 1.05;
+/** 꼬리 자르기 · 빠져나올 때의 기운(최대 기운 대비 · 「4분의 1」). */
+export const SHEDTAIL_ENERGY = 0.25;
+/** 꼬리 자르기 · 꼬리 잃은 걸음 배수(「20% 줄어든다」). */
+export const SHEDTAIL_SLOW = 0.8;
+/** 꼬리 자르기 · 꼬리를 먹느라 멈추는 시간(공격자 쿨타임 배수). */
+export const SHEDTAIL_EAT_CD_MUL = 3;
+/** 꼬리 자르기 · 공격자가 꼬리를 먹느라 실제로 멈춰 서는 틱(「멈춥니다」가 화면에서 참말이 되는 근거). */
+export const SHEDTAIL_EAT_TICKS = 30;
+/** 등에 그린 눈 · 안 다친 개체가 받는 피해 배수(「절반」). */
+export const EYESPOT_DMG_MUL = 0.5;
+/** 등에 그린 눈 · 포식자가 알아채는 거리 배수(「1.3배 멀리서」). */
+export const EYESPOT_SEEN_MUL = 1.3;
+/** 빛나지 않는 눈 · 밤에 사냥감이 이쪽을 알아채는 거리 배수(「절반」). */
+export const NOSHINE_STEALTH = 0.5;
+/** 빛나지 않는 눈 · 쫓는 동안 내 위협 감지 거리 배수(「절반」). */
+export const NOSHINE_GUARD = 0.5;
+/** 숨통을 보는 눈 · 처형 문턱(기본 기운 `SIM.maxEnergy` 대비 · 「4분의 1」).
+ *  ⚠ 개체별 상한(maxEnergyFor)이 아니라 **화면 기운 선과 같은 밑**을 쓴다 — 막대가 4분의 1 아래로
+ *  보일 때 정확히 발동해야 화면이 참말을 한다(검증 지적 · 육식 상대 기준 불일치). */
+export const CULL_THRESHOLD = 0.25;
+/** 숨통을 보는 눈 · 문턱 위의 상대에게 무는 피해 배수(「절반」). */
+export const CULL_DMG_MUL = 0.5;
+/** 뱀의 응시 · 상대가 얼어붙는 틱(「1초」). */
+export const TRANSFIX_FREEZE_TICKS = 30;
+/** 뱀의 응시 · 이쪽이 굳는 틱(「반 초」). */
+export const TRANSFIX_SELF_TICKS = 15;
+/** 천산갑의 비늘 · 나를 문 상대의 다음 물기까지 걸리는 시간 배수(「두 배」). */
+export const PANGOLIN_CD_MUL = 2;
+/** 천산갑의 비늘 · 내가 무는 피해 배수(「절반」). */
+export const PANGOLIN_DMG_MUL = 0.5;
+/** 돋는 새살 · 잃은 기운 중 돌아오는 몫(「절반」). 회복 속도는 남은 상처 시간에 비례해
+ *  아무는 순간 정확히 다 돌아온다(고정 속도로 하면 큰 피해의 「절반」이 잘려 거짓말이 된다 · 검증 지적). */
+export const NEWFLESH_SHARE = 0.5;
+/** 죽지 않는 것 · 되살아날 때의 기운(최대 기운 대비 · 「절반」). */
+export const UNDYING_ENERGY = 0.5;
+/** 산 같은 몸 · 물기 한 번의 피해 상한(기본 기운 `SIM.maxEnergy` 대비 · 「4분의 1」 ·
+ *  CULL_THRESHOLD 와 같은 이유로 화면 기운 선과 같은 밑을 쓴다). */
+export const MOUNTAIN_CAP = 0.25;
+/** 산 같은 몸 · 기운 소모 배수(「1.3배」). */
+export const MOUNTAIN_UPKEEP = 1.3;
+/** 입에서 입으로 · 받는 쪽이 틱당 얻는 기운. 주는 쪽은 그 두 배를 잃는다(「절반이 샌다」). */
+export const BLOODGIFT_GIVE = 0.2;
+/** 입에서 입으로 · 주는 쪽 손실 배수(「받는 것의 두 배」). */
+export const BLOODGIFT_LOSS_MUL = 2;
+/** 푸른 발자국 · 뜯은 풀자리의 재생 시간 배수(「두 배 빨리」). */
+export const GREENWAKE_REGROW = 0.5;
+/** 푸른 발자국 · 한 입에서 얻는 것 배수(「20% 줄어든다」). */
+export const GREENWAKE_GAIN = 0.8;
+/** 연어의 귀향 · 새끼가 태어나는 최소 잔여 기운(「40」). */
+export const SALMON_MIN_ENERGY = 40;
+/** 연어의 귀향 · 새끼가 받는 몫(「절반」). */
+export const SALMON_SHARE = 0.5;
+/** 연어의 귀향 · 살아 있는 몸의 새끼 확률 배수(「절반」). */
+export const SALMON_FERT_MUL = 0.5;
+/** 열병의 흉터 · 앓아 넘길 때 남는 기운의 몫(「3분의 2를 잃는다」 = 3분의 1이 남는다). */
+export const FEVER_KEEP = 1 / 3;
+
+/**
+ * 고유 카드 스물. 듀오와 달리 이름·문구가 다른 표에 없으므로 여기가 단일 진실이다.
+ * `cost` 는 반드시 sim 에 그 대가를 실제로 무는 분기가 있어야 한다(글로만 있는 대가는 거짓말).
+ */
+const RULE_CARD_DEFS = [
+  // ── 이빨 3단 ──────────────────────────────────────────────────────────
+  {
+    id: "famished",
+    name: "굶주린 사냥꾼",
+    flavor: "굶은 늑대는 엄두도 못 낼 거리에서 달려들고, 배부른 사자는 코앞의 얼룩말을 지나칩니다.",
+    when: "hungry",
+    axis: "hunt",
+    rule: "famished",
+    gain: "배가 절반 아래일 때는 물 수 있는 거리가 2배가 됩니다.",
+    cost: "기운이 넉넉할 때는 사냥감을 알아보지 못합니다. 스스로 사냥을 시작하지 않고, 쫓던 것도 놓아줍니다.",
+  },
+  {
+    id: "riverjaw",
+    name: "물가의 매복자",
+    flavor: "나일악어. 물가에서는 가장 무서운 턱, 물에서 멀어지면 둔한 짐승입니다.",
+    when: "shore",
+    axis: "attack",
+    rule: "riverjaw",
+    gain: "물가에서 문 이빨은 급소로 가, 열에 아홉은 단숨에 끝냅니다. 사냥감도 물가 쪽부터 고릅니다.",
+    cost: "물가에서 떨어져 있으면 무는 피해가 절반이 됩니다.",
+  },
+  // ── 이빨 4단 (전설) ───────────────────────────────────────────────────
+  {
+    id: "carrion",
+    name: "썩은 고기를 먹는 위",
+    flavor: "대머리수리와 하이에나. 남들이 못 먹는 것을 삭이는 위는 신선한 피 맛을 잊습니다.",
+    when: "always",
+    axis: "hunt",
+    rule: "carrion",
+    gain: "죽은 것이 사체로 남고, 내 종은 사체를 찾아가 먹습니다. 남이 잡다 남긴 것도.",
+    cost: "갓 잡은 사냥에서 얻는 기운이 절반이 됩니다.",
+  },
+  {
+    id: "ratel",
+    name: "라텔의 맞물기",
+    flavor: "라텔. 사자가 물어도 마주 무는 짐승입니다.",
+    when: "always",
+    axis: "attack",
+    rule: "ratel",
+    gain: "물리면 그 자리에서 마주 뭅니다. 나를 문 상대는 내 이빨 힘의 절반만큼 기운을 잃습니다.",
+    cost: "달아날 때도 등을 돌리지 못해, 달아나는 동안 걸음이 30% 줄어듭니다.",
+  },
+  // ── 다리 3단 ──────────────────────────────────────────────────────────
+  {
+    id: "hamstring",
+    name: "힘줄을 무는 법",
+    flavor: "늑대와 하이에나. 큰 사냥감은 먼저 뒷다리 힘줄을 끊어 세웁니다.",
+    when: "always",
+    axis: "speed",
+    rule: "hamstring",
+    gain: "내가 문 상대는 힘줄을 물려, 3초 동안 걸음이 절반이 됩니다.",
+    cost: "목 대신 다리를 노리므로, 내 무는 피해가 절반입니다.",
+  },
+  {
+    id: "zebrakick",
+    name: "얼룩말의 뒷발질",
+    flavor: "얼룩말. 뒷발 한 방이 사자의 턱을 부숩니다.",
+    when: "fleeing",
+    axis: "speed",
+    rule: "zebrakick",
+    gain: "달아나는 동안 나를 문 상대는 뒷발에 차여, 내가 입은 피해만큼 저도 기운을 잃습니다.",
+    cost: "뒷발질을 하느라, 달아나는 빠르기가 20% 줄어듭니다.",
+  },
+  // ── 다리 4단 (전설) ───────────────────────────────────────────────────
+  {
+    id: "footsteps",
+    name: "따라오는 발소리",
+    flavor: "인간의 걷는 사냥. 해 질 녘까지 따라가면 어떤 영양도 쓰러집니다.",
+    when: "hunting",
+    axis: "speed",
+    rule: "footsteps",
+    gain: "쫓는 동안 내 걸음은 상대보다 언제나 반 걸음 빠릅니다. 아무리 빠른 것도 언젠가는 잡힙니다.",
+    cost: "한번 시작한 추격은 그만둘 수 없습니다. 상대가 무리 속에 숨거나 닿을 수 없는 곳으로 사라지지 않는 한, 잡거나 쓰러지거나 둘뿐입니다.",
+  },
+  {
+    id: "shedtail",
+    name: "꼬리 자르기",
+    flavor: "도마뱀. 꼬리는 다시 자라지만, 이 판에서는 아닙니다.",
+    when: "always",
+    axis: "speed",
+    rule: "shedtail",
+    gain: "잡아먹히기 직전, 꼬리를 내주고 기운 4분의 1로 빠져나옵니다. 쫓던 것은 꼬리를 먹느라 멈춥니다. 한 개체에 한 번뿐입니다.",
+    cost: "꼬리를 잃은 몸은 죽을 때까지 걸음이 20% 줄어듭니다.",
+  },
+  // ── 눈 3단 ────────────────────────────────────────────────────────────
+  {
+    id: "eyespot",
+    name: "등에 그린 눈",
+    flavor: "공작나비와 네눈박이고기. 가짜 눈이 첫 이빨을 급소 밖으로 이끕니다.",
+    when: "always",
+    axis: "vision",
+    rule: "eyespot",
+    gain: "아직 안 다친 개체가 물리면, 이빨이 등의 가짜 눈을 뭅니다. 받는 피해가 절반이 됩니다.",
+    cost: "무늬가 커서 숨어도 소용이 없습니다. 숨은 몸도 포식자가 1.3배 멀리서 알아챕니다.",
+  },
+  {
+    id: "noshine",
+    name: "빛나지 않는 눈",
+    flavor: "올빼미의 검은 눈. 빛을 삼키는 눈만 어둠에 숨습니다.",
+    when: "night",
+    axis: "vision",
+    rule: "noshine",
+    gain: "밤에는 눈이 달빛을 되비치지 않아, 사냥감이 절반 거리까지 와서야 이쪽을 알아챕니다.",
+    cost: "쫓는 동안은 곁눈이 죽어, 밤이든 낮이든 나를 노리는 것을 알아채는 거리가 절반이 됩니다.",
+  },
+  // ── 눈 4단 (전설) ─────────────────────────────────────────────────────
+  {
+    id: "cull",
+    name: "숨통을 보는 눈",
+    flavor: "늑대와 매. 무리에서 처지는 것만 골라 칩니다.",
+    when: "hunting",
+    axis: "vision",
+    rule: "cull",
+    gain: "기운이 4분의 1 아래로 떨어진 상대를 물면 반드시 잡습니다. 사냥감도 그런 놈부터 고릅니다.",
+    cost: "죽어 가는 것만 눈에 들어와, 그보다 성한 상대에게는 무는 피해가 절반이 됩니다.",
+  },
+  {
+    id: "transfix",
+    name: "뱀의 응시",
+    flavor: "뱀 앞의 개구리. 눈이 마주치면 몸이 먼저 굳습니다.",
+    when: "hunting",
+    axis: "vision",
+    rule: "transfix",
+    gain: "사냥감을 노리기 시작한 순간, 눈이 마주친 상대가 1초 얼어붙습니다.",
+    cost: "그 눈은 이쪽도 붙듭니다. 같은 순간 나도 반 초 굳습니다.",
+  },
+  // ── 가죽 3단 ──────────────────────────────────────────────────────────
+  {
+    id: "pangolin",
+    name: "천산갑의 비늘",
+    flavor: "천산갑. 사자가 물다 지쳐 떠나는 갑옷입니다.",
+    when: "always",
+    axis: "defense",
+    rule: "pangolin",
+    gain: "나를 문 상대는 비늘에 이가 상해, 다음 물기까지 두 배로 오래 걸립니다.",
+    cost: "이빨 대신 비늘을 골랐습니다. 내가 무는 피해는 절반이 됩니다.",
+  },
+  {
+    id: "newflesh",
+    name: "돋는 새살",
+    flavor: "아홀로틀. 잃은 살을 도로 길러 냅니다.",
+    when: "wounded",
+    axis: "defense",
+    rule: "newflesh",
+    gain: "물려서 잃은 기운의 절반이, 상처가 아무는 동안 천천히 돌아옵니다.",
+    cost: "새살을 기르는 동안은 새끼를 치지 않습니다.",
+  },
+  // ── 가죽 4단 (전설) ───────────────────────────────────────────────────
+  {
+    id: "undying",
+    name: "죽지 않는 것",
+    flavor: "물곰. 말라 죽은 몸이 물 한 방울에 다시 깨어납니다.",
+    when: "always",
+    axis: "defense",
+    rule: "undying",
+    gain: "기운이 다해 쓰러져도 한 번은 죽지 않고, 기운 절반으로 다시 일어납니다(잡아먹힌 때는 빼고).",
+    cost: "되살아난 몸은 새끼를 치지 못합니다.",
+  },
+  {
+    id: "mountain",
+    name: "산 같은 몸",
+    flavor: "코끼리. 사자 무리도 한 입으로는 못 쓰러뜨립니다.",
+    when: "always",
+    axis: "upkeep",
+    rule: "mountain",
+    gain: "한 입에는 죽지 않습니다. 아무리 깊은 이빨도 물기 한 번에 내 기운의 4분의 1까지만 앗아 갑니다.",
+    cost: "그 몸을 먹여 살리느라 기운 소모가 언제나 1.3배입니다.",
+  },
+  // ── 무리 3단 ──────────────────────────────────────────────────────────
+  {
+    id: "bloodgift",
+    name: "입에서 입으로",
+    flavor: "흡혈박쥐. 굶어 죽어 가는 동료에게 먹은 피를 게워 나눠 줍니다.",
+    when: "always",
+    axis: "fertility",
+    rule: "bloodgift",
+    gain: "배를 곯는 동료가 곁에 있으면, 기운이 넉넉한 개체가 제 기운을 흘려 넣어 살립니다.",
+    cost: "옮기는 길에 절반이 새어, 주는 쪽은 동료가 받는 것의 두 배를 잃습니다.",
+  },
+  {
+    id: "greenwake",
+    name: "푸른 발자국",
+    flavor: "아메리카들소. 떼가 지나간 자리의 풀이 더 짙게 돋습니다.",
+    when: "always",
+    axis: "graze",
+    rule: "greenwake",
+    gain: "내 무리가 뜯어 비운 풀자리는 두 배 빨리 다시 자랍니다.",
+    cost: "짧게 끊어 뜯는 입이라, 한 입에서 얻는 것이 20% 줄어듭니다.",
+  },
+  // ── 무리 4단 (전설) ───────────────────────────────────────────────────
+  {
+    id: "salmonrun",
+    name: "연어의 귀향",
+    flavor: "연어. 낳고 죽으며, 그 몸이 새로 깬 것들을 먹입니다.",
+    when: "always",
+    axis: "fertility",
+    rule: "salmonrun",
+    gain: "동료가 기운을 40 넘게 남기고 죽으면(잡아먹힌 때는 빼고), 그 자리에서 새끼가 태어나 남긴 기운의 절반을 받습니다.",
+    cost: "죽음으로 낳는 종이라, 살아 있는 몸의 새끼 확률은 절반이 됩니다.",
+  },
+  {
+    id: "feverscar",
+    name: "열병의 흉터",
+    flavor: "유럽토끼. 열병을 앓아 넘긴 것들이 빈 들판을 도로 채웠습니다.",
+    when: "always",
+    axis: "graze",
+    rule: "feverscar",
+    gain: "돌림병이 목숨을 거두러 오면, 죽는 대신 기운의 3분의 2를 잃고 앓아 넘깁니다. 한 몸에 한 번뿐입니다.",
+    cost: "앓아 넘긴 몸에는 흉터가 남아, 남은 평생 새끼를 못 칩니다.",
+  },
+] as const satisfies readonly PerkDef[];
+
+export type PerkName =
+  | (typeof PERK_DEFS)[number]["id"]
+  | (typeof DUO_PERK_DEFS)[number]["id"]
+  | (typeof RULE_CARD_DEFS)[number]["id"];
 
 /** 듀오 하나를 꺼낸다. 표에 없으면 배치가 어긋난 것이라 조용히 넘기지 않고 그 자리에서 터뜨린다. */
 function duoOf(rule: PerkRule): Duo {
@@ -492,8 +836,6 @@ const BASE_GATES: Record<(typeof PERK_DEFS)[number]["id"], PerkGate> = {
   attack_crowd: { tiers: [{ cat: "fang", tier: 2 }] },
   hunt_night: { tiers: [{ cat: "fang", tier: 2 }] },
   attack_hungry: { tiers: [{ cat: "fang", tier: 2 }] },
-  hunt_alone: { tiers: [{ cat: "fang", tier: 3 }] },
-  hunt_gorge: { tiers: [{ cat: "fang", tier: 3 }] },
 
   // ── 다리 ─────────────────────────────────────────────────────────────
   speed_always: {},
@@ -503,8 +845,6 @@ const BASE_GATES: Record<(typeof PERK_DEFS)[number]["id"], PerkGate> = {
   speed_night: { tiers: [{ cat: "leg", tier: 2 }] },
   speed_shore: { tiers: [{ cat: "leg", tier: 2 }] },
   speed_hungry: { tiers: [{ cat: "leg", tier: 2 }] },
-  speed_hunting: { tiers: [{ cat: "leg", tier: 3 }] },
-  speed_fleeing: { tiers: [{ cat: "leg", tier: 3 }] },
 
   // ── 눈 ───────────────────────────────────────────────────────────────
   vision_always: {},
@@ -514,8 +854,6 @@ const BASE_GATES: Record<(typeof PERK_DEFS)[number]["id"], PerkGate> = {
   vision_shore: { tiers: [{ cat: "eye", tier: 2 }] },
   vision_day: { tiers: [{ cat: "eye", tier: 2 }] },
   vision_grass: { tiers: [{ cat: "eye", tier: 2 }] },
-  vision_night: { tiers: [{ cat: "eye", tier: 3 }] },
-  vision_far: { tiers: [{ cat: "eye", tier: 3 }] },
 
   // ── 가죽 ─────────────────────────────────────────────────────────────
   defense_always: {},
@@ -528,8 +866,8 @@ const BASE_GATES: Record<(typeof PERK_DEFS)[number]["id"], PerkGate> = {
   defense_crowd: { tiers: [{ cat: "hide", tier: 2 }] },
   upkeep_crowd: { tiers: [{ cat: "hide", tier: 2 }] },
   upkeep_night: { tiers: [{ cat: "hide", tier: 2 }] },
+  // 도전 과제 「거인의 태동」 보상 전용(과제 잠금은 cardAvailable 이 건다 · 여긴 티어 게이트만).
   defense_rock: { tiers: [{ cat: "hide", tier: 3 }] },
-  upkeep_slow: { tiers: [{ cat: "hide", tier: 3 }] },
 
   // ── 무리 ─────────────────────────────────────────────────────────────
   fertility_always: {},
@@ -541,8 +879,33 @@ const BASE_GATES: Record<(typeof PERK_DEFS)[number]["id"], PerkGate> = {
   graze_shore: { tiers: [{ cat: "herd", tier: 2 }] },
   fertility_full: { tiers: [{ cat: "herd", tier: 2 }] },
   graze_hungry: { tiers: [{ cat: "herd", tier: 2 }] },
-  fertility_crowd: { tiers: [{ cat: "herd", tier: 3 }] },
-  graze_always: { tiers: [{ cat: "herd", tier: 3 }] },
+};
+
+/**
+ * **고유 카드 스물의 게이트** — 범주당 3단 2장 · 4단 2장(**[사용자 2026-08-10]** 칸 수 확정).
+ * 순수 티어 게이트만 쓴다(열쇠 게이트를 섞으면 「모든 티어를 연 종 = 풀 전체」 계약이 깨진다).
+ */
+const RULE_CARD_GATES: Record<(typeof RULE_CARD_DEFS)[number]["id"], PerkGate> = {
+  famished: { tiers: [{ cat: "fang", tier: 3 }] },
+  riverjaw: { tiers: [{ cat: "fang", tier: 3 }] },
+  carrion: { tiers: [{ cat: "fang", tier: 4 }] },
+  ratel: { tiers: [{ cat: "fang", tier: 4 }] },
+  hamstring: { tiers: [{ cat: "leg", tier: 3 }] },
+  zebrakick: { tiers: [{ cat: "leg", tier: 3 }] },
+  footsteps: { tiers: [{ cat: "leg", tier: 4 }] },
+  shedtail: { tiers: [{ cat: "leg", tier: 4 }] },
+  eyespot: { tiers: [{ cat: "eye", tier: 3 }] },
+  noshine: { tiers: [{ cat: "eye", tier: 3 }] },
+  cull: { tiers: [{ cat: "eye", tier: 4 }] },
+  transfix: { tiers: [{ cat: "eye", tier: 4 }] },
+  pangolin: { tiers: [{ cat: "hide", tier: 3 }] },
+  newflesh: { tiers: [{ cat: "hide", tier: 3 }] },
+  undying: { tiers: [{ cat: "hide", tier: 4 }] },
+  mountain: { tiers: [{ cat: "hide", tier: 4 }] },
+  bloodgift: { tiers: [{ cat: "herd", tier: 3 }] },
+  greenwake: { tiers: [{ cat: "herd", tier: 3 }] },
+  salmonrun: { tiers: [{ cat: "herd", tier: 4 }] },
+  feverscar: { tiers: [{ cat: "herd", tier: 4 }] },
 };
 
 /**
@@ -563,7 +926,7 @@ const DUO_GATES: Record<(typeof DUO_PERK_DEFS)[number]["id"], PerkGate> = (() =>
   return out;
 })();
 
-const GATES: Record<PerkName, PerkGate> = { ...BASE_GATES, ...DUO_GATES };
+const GATES: Record<PerkName, PerkGate> = { ...BASE_GATES, ...DUO_GATES, ...RULE_CARD_GATES };
 
 /** 이 특성이 열리는 자리. 표에 없으면 처음부터 열려 있다. */
 export function perkGate(id: PerkName): PerkGate | undefined {
@@ -588,7 +951,16 @@ const DUO_PERKS: readonly Perk[] = DUO_PERK_DEFS.map((d): Perk => {
   };
 });
 
-export const PERKS: readonly Perk[] = [...(PERK_DEFS as readonly Perk[]), ...DUO_PERKS];
+export const PERKS: readonly Perk[] = [
+  ...(PERK_DEFS as readonly Perk[]),
+  ...DUO_PERKS,
+  ...(RULE_CARD_DEFS as readonly Perk[]),
+];
+
+/** 듀오에서 온 규칙 특성인가 — 카드 테스트가 듀오와 고유 카드를 가를 때 쓴다(rule 유무로 갈라선 안 된다). */
+export function isDuoPerk(id: PerkName): boolean {
+  return DUO_PERK_DEFS.some((d) => d.id === id);
+}
 
 export const PERK_BY_NAME: ReadonlyMap<PerkName, Perk> = new Map(PERKS.map((p) => [p.id, p]));
 
@@ -625,6 +997,10 @@ export function perkValue(p: Perk): number {
  * 그 순간 배지가 거짓말을 한다(이 저장소에서 희귀도는 반드시 값어치·확률과 묶여 있어야 한다).
  * 전설은 열쇠 전용이라 이 표에 없다(열쇠는 배수가 아니라 없던 규칙을 연다).
  */
+// ⚠ 띠 경계에 정확히 걸리는 배수를 만들지 마라 — 0.1 × 2.4 = 0.24000000000000002 처럼 부동소수점이
+//   경계 비교를 뒤집는다(옛 「죽을힘」 ×3.5 가 이 여유 때문에 3.4 가 아니었다 · 2026-08-11 카드 삭제와
+//   함께 근거를 여기로 옮김). 2026-08-11 이후 배수 특성은 귀함(rare)까지만 나온다 — 아주 귀함부터는
+//   고유 효과(듀오·3단 카드)와 전설(열쇠·4단 카드)의 자리다.
 export const PERK_VALUE_BANDS = [
   { max: 0.08, rarity: "common" },
   { max: 0.14, rarity: "uncommon" },
@@ -632,22 +1008,25 @@ export const PERK_VALUE_BANDS = [
   { max: Infinity, rarity: "epic" },
 ] as const;
 
-export type PerkRarity = (typeof PERK_VALUE_BANDS)[number]["rarity"];
+export type PerkRarity = (typeof PERK_VALUE_BANDS)[number]["rarity"] | "legendary";
 
 /**
- * **규칙 특성(듀오)의 등급은 값어치 산식 밖에서 고정한다.** 배수가 없어 「빈도 × 크기」로 못 재기
- * 때문이다. 대신 게이트 자체가 값어치의 증거다 · 두 범주를 함께 3단까지 올려야 후보에 뜬다.
+ * **규칙 특성의 등급은 값어치 산식 밖에서, 게이트 깊이가 정한다.** 배수가 없어 「빈도 × 크기」로
+ * 못 재기 때문이다. 대신 게이트 자체가 값어치의 증거다:
+ *   깊이 3(듀오 · 3단 고유 카드) = 아주 귀함 · 깊이 4(4단 규칙 카드) = **전설**.
  *
- * ⚠ 왜 전설이 아닌가: **전설은 열쇠 전용**이다(열쇠는 없던 규칙을 열고, 듀오는 이미 판 두 범주가
- *   맞물리는 것이다). 이 경계는 `cards.test.ts` 가 지킨다.
- * ⚠ 이 열 장은 **풀 전체로 세면** 「아주 귀함」의 종류 수를 갑절로 만든다. 그런데 한 종이 동시에 볼 수
- *   있는 듀오 카드는 사실상 한둘이다(3단 두 개를 만드는 데 도장 28개가 든다). 그래서 등급 서열
- *   검사는 **한 종이 실제로 보는 후보 풀**에서 해야 뜻이 있다(`cards.test.ts` 의 두 테스트).
+ * ⚠ 전설의 뜻이 넓어졌다(2026-08-11): 옛 경계 「전설은 열쇠 전용」은 내(Claude) 판단이었는데,
+ *   **[사용자 2026-08-10]** 이 「죽지 않는 것」을 전설 예시로 들며 4단 카드에 그 무게를 줬다.
+ *   지금 경계는 **「전설 = 없던 규칙」**(열쇠 + 4단 규칙 카드)이고 `cards.test.ts` 가 지킨다.
+ * ⚠ 등급 서열 검사는 **한 종이 실제로 보는 후보 풀**에서 해야 뜻이 있다(`cards.test.ts`) —
+ *   깊은 게이트 카드는 풀 전체 종류 수를 부풀리지만 동시에 보이는 것은 한둘이다.
  */
 export const RULE_PERK_RARITY: PerkRarity = "epic";
 
 export function perkRarity(p: Perk): PerkRarity {
-  if (p.rule !== undefined) return RULE_PERK_RARITY;
+  if (p.rule !== undefined) {
+    return gateDepth(perkGate(p.id)) >= 4 ? "legendary" : RULE_PERK_RARITY;
+  }
   const v = perkValue(p);
   for (const band of PERK_VALUE_BANDS) if (v < band.max) return band.rarity;
   return "epic";
@@ -678,7 +1057,12 @@ export function perkMul(perks: Perks, axis: PerkAxis, ctx: PerkCtx): number {
 /** 규칙 이름 → 그 규칙을 주는 특성 id. 규칙 하나는 정확히 카드 하나에서만 나온다. */
 const PERK_ID_BY_RULE: Record<PerkRule, PerkName> = (() => {
   const out = {} as Record<PerkRule, PerkName>;
-  for (const d of DUO_PERK_DEFS) out[d.rule] = d.id;
+  // 듀오만이 아니라 **PERKS 전체**를 훑는다(2026-08-11 · 3단·4단 고유 카드도 규칙을 준다).
+  for (const p of PERKS) {
+    if (p.rule === undefined) continue;
+    if (out[p.rule] !== undefined) throw new Error(`규칙 «${p.rule}» 을 주는 카드가 둘이다`);
+    out[p.rule] = p.id;
+  }
   for (const r of PERK_RULES) {
     if (out[r] === undefined) throw new Error(`규칙 «${r}» 을 주는 카드가 없다`);
   }
@@ -732,7 +1116,7 @@ function fmtMul(mul: number): string {
 }
 
 /**
- * 카드·내 종 패널·대백과가 쓰는 **한 줄**. 예: 「밤에 보는 거리 ×1.45」 · 「기운 소모 ×0.78」.
+ * 카드·내 종 패널·대백과가 쓰는 **한 줄**. 예: 「수풀에서 보는 거리 ×1.55」 · 「기운 소모 ×0.65」.
  *
  * ⚠ **모든 줄은 자립형이다** — 이 문구는 카드 · 도감 · 패널에 단독으로 뜨므로, 무엇이 언제 얼마나
  *   달라지는지가 그 줄 안에 다 있어야 한다(`tiers.tierLine` 과 같은 규칙).
@@ -746,4 +1130,28 @@ export function perkLine(p: Perk): string {
   const axis = PERK_AXIS_INFO[p.axis].label;
   const body = `${axis} ${fmtMul(p.mul as number)}`;
   return when === "" ? body : `${when} ${body}`;
+}
+
+/**
+ * **대가 한 줄** — 3단·4단 고유 카드만 갖는다. 없으면 undefined(0~2단 배수 카드 · 조건이 곧 대가).
+ * 카드·구입 화면 예고·대백과가 전부 이 함수만 불러야 「대가가 자리마다 다르게 적히는」 일이 없다.
+ */
+export function perkCost(p: Perk): string | undefined {
+  return p.cost;
+}
+
+/**
+ * 「죽지 않는 것」 — 기운이 다한 죽음을 한 번 무른다. **죽음 판정 자리에서, recordDeath·emit 이전에**
+ * 부른다(그러면 통계·연출 정리가 아예 필요 없다). true 면 되살아난 것이니 죽음 처리를 건너뛴다.
+ *
+ * 여기(순수 규칙 파일)에 있는 이유: 기운이 다하는 죽음 자리가 둘이다(`behavior.stepEntity` 의 소모사 ·
+ * `boss` 의 전역 흡수). 두 곳에 각자 적으면 반드시 어긋난다. rng 를 안 쓴다(결정론 안전).
+ * ⚠ 독(poison)을 비운다 — 안 비우면 다음 틱 독 피해로 곧바로 다시 쓰러진다(정찰 확인).
+ */
+export function tryRevive(e: Entity): boolean {
+  if (e.genome.perks.length === 0 || e.revived || !hasRule(e.genome.perks, "undying")) return false;
+  e.revived = true;
+  e.energy = SIM.maxEnergy * UNDYING_ENERGY;
+  e.poison = 0;
+  return true;
 }

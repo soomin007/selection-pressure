@@ -23,7 +23,7 @@ import type { Terrain } from "@/sim/terrain";
 import type { Traits } from "@/sim/genome";
 import { TRAIT_MAX } from "@/sim/genome";
 import { SIM } from "@/sim/params";
-import { hasRule } from "@/sim/perks";
+import { hasRule, tryRevive } from "@/sim/perks";
 
 export type BossType =
   | "chaser"
@@ -886,6 +886,7 @@ function stepSingleBoss(boss: Boss, world: World): void {
         e.alive = false;
         world.recordDeath(e.species, "boss");
         world.emit("kill", e.x, e.y, e.species.isPlayer); // 연출: 보스 즉사 반경
+        world.legacyDeath(e, false); // 사체 + 연어의 귀향(보스가 잡은 죽음은 「잡아먹힘」이 아니다)
       }
     }
   }
@@ -908,9 +909,16 @@ function stepSingleBoss(boss: Boss, world: World): void {
       if (boss.drainShelter && world.terrain.isGrass(e.x, e.y)) continue;
       e.energy -= boss.globalDrain * (0.3 + e.genome.traits.metabolism / TRAIT_MAX);
       if (e.energy <= 0) {
-        e.alive = false;
-        world.recordDeath(e.species, "boss");
-        world.emit("death", e.x, e.y, e.species.isPlayer); // 보스 기력 고갈 = 자연사 톤
+        // 「죽지 않는 것」 — 전역 흡수도 「기운이 다한 죽음」이라 한 번 무른다(behavior 소모사와 같은
+        // 규칙 · tryRevive 하나만 부른다). 안개 안이면 다음 틱 또 빨리므로 사실상 몇 초의 유예다.
+        if (tryRevive(e)) {
+          world.emit("birth", e.x, e.y, e.species.isPlayer);
+        } else {
+          e.alive = false;
+          world.recordDeath(e.species, "boss");
+          world.emit("death", e.x, e.y, e.species.isPlayer); // 보스 기력 고갈 = 자연사 톤
+          world.legacyDeath(e, false); // 기운 0 죽음이라 사체만 남는다
+        }
       }
     }
   }
@@ -966,6 +974,7 @@ function stepMemberHorde(boss: Boss, world: World): void {
         e.alive = false;
         world.recordDeath(e.species, "boss");
         world.emit("kill", e.x, e.y, e.species.isPlayer); // 연출: 떼 개체가 문 자리
+        world.legacyDeath(e, false); // 사체 + 연어의 귀향(굴림 뒤 자리라 rng 열 불변 · 정찰 확인)
       }
     }
   }

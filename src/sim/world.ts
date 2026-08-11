@@ -5,7 +5,7 @@
 // 초식은 식물(food)을, 육식은 다른 종을 먹는다. 먹이/사냥 경쟁이 창발한다.
 
 import { Rng } from "@/sim/rng";
-import { TRAIT_MAX, type Genome, type Traits } from "@/sim/genome";
+import { TRAIT_MAX, cloneGenome, mutateGenome, type Genome, type Traits } from "@/sim/genome";
 import { carnivory01, grazeEfficiency, huntEfficiency } from "@/sim/diet";
 import { createEntity, type Entity } from "@/sim/entity";
 import { createFood, type Food } from "@/sim/food";
@@ -29,6 +29,15 @@ import {
   type GeneReason,
 } from "@/sim/gene";
 import type { HerdOrder } from "@/sim/herdOrder";
+import {
+  CARRION_FROM_DEATH,
+  CARRION_LEFTOVER,
+  carcassEdible,
+  carcassReached,
+  createCarcass,
+  type Carcass,
+} from "@/sim/carrion";
+import { FEVER_KEEP, SALMON_MIN_ENERGY, SALMON_SHARE, hasRule } from "@/sim/perks";
 import { SIM, LEAD } from "@/sim/params";
 
 /** 한 마리가 죽은 이유 (가독성 §7: "왜 내 종이 죽었나"). 사람이 읽는 한글 라벨은 game 층에서. */
@@ -290,6 +299,18 @@ export class World {
    *   `lastHuntKills` 가 바로 그 짝을 놓쳐 시대 전환마다 경험치가 −85~−2410 씩 깎였다.
    */
   geneCollected = 0;
+
+  /**
+   * **필드에 남은 사체들** — 「썩은 고기를 먹는 위」(이빨 4단 카드)가 있는 판에서만 쌓인다.
+   * 구조·수명 규칙은 `geneDrops` 와 같은 결(`sim/carrion.ts` 참조). 카드가 없는 판에서는
+   * 빈 배열 그대로라 순회 비용도 렌더도 0 이다.
+   */
+  carcasses: Carcass[] = [];
+  /**
+   * **개체 루프 밖에서 태어난 새끼들**(「연어의 귀향」 · 보스·역병 죽음 자리). behavior 의
+   * `newborns` 와 같은 규칙로 이번 틱 끝(`step` 의 합류 지점)에 세계에 들어간다.
+   */
+  pendingBirths: Entity[] = [];
 
   /**
    * 무리에게 내린 뜻(신탁). null 이면 무리는 완전히 자율로 산다 = 관전.
@@ -734,9 +755,19 @@ export class World {
         const rate =
           this.plagueRate * (1 - SIM.plagueFertilityResist * (et.fertility / TRAIT_MAX)) * et.plague;
         if (rate > 0 && this.rng.unit() < rate) {
-          e.alive = false;
-          this.recordDeath(e.species, "plague");
-          this.emit("death", e.x, e.y, e.species.isPlayer);
+          // 「열병의 흉터」(무리 4단 카드) — 죽는 대신 기운의 3분의 2를 잃고 앓아 넘긴다.
+          // ⚠ **굴림 뒤 자리다** · 굴림(위 unit)은 그대로 소비돼 특성 없는 세계와 rng 열이 같다.
+          //   가죽 4단의 공짜 면제(위 continue · 굴림 전)와 달리 이쪽은 값을 치르는 생존이다.
+          if (e.genome.perks.length !== 0 && !e.feverScarred && hasRule(e.genome.perks, "feverscar")) {
+            e.feverScarred = true;
+            e.energy *= FEVER_KEEP;
+            this.emit("block", e.x, e.y, e.species.isPlayer); // 앓아 넘긴 순간(튕김 반짝)
+          } else {
+            e.alive = false;
+            this.recordDeath(e.species, "plague");
+            this.emit("death", e.x, e.y, e.species.isPlayer);
+            this.legacyDeath(e, false); // 역병 사체 · 연어의 귀향(기운이 남아 있는 죽음)
+          }
         }
       }
     }
@@ -749,6 +780,11 @@ export class World {
     }
 
     for (const n of newborns) this.entities.push(n);
+    // 개체 루프 밖(보스·역병 죽음 자리)에서 태어난 새끼들 — 「연어의 귀향」.
+    if (this.pendingBirths.length > 0) {
+      for (const n of this.pendingBirths) this.entities.push(n);
+      this.pendingBirths.length = 0;
+    }
 
     let hasDead = false;
     for (const e of this.entities) {
@@ -771,6 +807,8 @@ export class World {
     //   방울 바깥 루프 · 개체 안쪽 루프 + 첫 개체에서 break 인 이유: 이미 주운 방울은 첫 줄에서
     //   통째로 건너뛰므로, 한 시대에 30개 남짓인 방울이 다 주워진 뒤에는 사실상 공짜다(격자 불필요).
     this.collectGeneDrops();
+    // ── 사체 먹기(썩은 고기를 먹는 위) ── 방울 줍기와 같은 자리·같은 규칙(순회 순서 무관 · rng 0).
+    this.collectCarrion();
 
     this.maybeImmigrate();
     this.maybeEvolveWild();
@@ -959,6 +997,106 @@ export class World {
   recordDeath(species: Species, cause: DeathCause): void {
     if (!species.isPlayer) return;
     this.deaths[cause] += 1;
+  }
+
+  /**
+   * **죽음이 세계에 남기는 것** — 죽음 판정 자리 전부(behavior 소모사·노화, devour, 보스 셋, 역병)가
+   * 죽음 확정 직후 이 하나를 부른다. 두 가지를 처리한다:
+   * · **사체**(썩은 고기를 먹는 위 · 이빨 4단 카드): 내 종이 그 카드를 가진 판에서만 남는다.
+   *   잡아먹힌 죽음(devoured)은 먹다 남긴 몫만 남는다 — 「남이 잡다 남긴 것도」가 참말이 되는 자리.
+   * · **연어의 귀향**(무리 4단 카드): 기운을 40 넘게 남기고 죽은 내 종 개체 자리에서 새끼가 태어난다.
+   *   잡아먹힌 죽음은 제외(카드 문구 그대로). 굶어 죽은 죽음은 기운이 0 이라 자연히 제외된다.
+   *
+   * ⚠ rng 규율: 사체는 rng 0. 새끼의 게놈 변이는 **독립 mutRng** 만 쓰고(일반 출산과 같은 규칙),
+   *   자리·첫걸음 방향은 죽은 개체의 값을 재사용해 메인 스트림을 1비트도 안 민다.
+   */
+  legacyDeath(e: Entity, devoured: boolean): void {
+    // 사체는 **내 종 기준선**(world.genome)이 그 카드를 가진 판에서만 세계에 남는다.
+    // ⚠ 지난 런의 챔피언만 carrion 을 가진 판에서는 사체가 안 생겨, 그 챔피언은 대가(갓 사냥 절반)만
+    //   물게 된다 — 알고 둔 비대칭이다(챔피언 게놈까지 뒤져 세계 상태를 켜는 값어치가 없다고 판단).
+    if (hasRule(this.genome.perks, "carrion")) {
+      this.carcasses.push(
+        createCarcass(e.x, e.y, devoured ? CARRION_LEFTOVER : CARRION_FROM_DEATH, this.tick),
+      );
+    }
+    // ⚠ isPlayer 를 요구하지 않는다(2026-08-11 검증 반영) — 지난 런의 챔피언도 perks 째 저장되므로,
+    //   효과와 대가가 **같은 집합**(그 규칙을 가진 개체)에 걸려야 한다. 대가만 물고 보상은 못 받는
+    //   비대칭이 검증에서 잡혔다. 시험 계수·연출의 「내 것」 표시만 isPlayer 로 가른다.
+    // ⚠ 되살아난 몸(revived)·앓은 몸(feverScarred)은 죽어서도 새끼를 못 남긴다 — 그 두 카드의
+    //   대가 문구가 절대형이라, 여기서 우회되면 카드가 거짓말이 된다(검증 지적).
+    // ⚠ cap 검사는 이번 틱 behavior 쪽 newborns 를 못 본다 — 한 틱에 몇 마리 초과가 가능하나
+    //   다음 틱부터 출산이 잠기므로 폭주는 없다(정확한 합산은 비용 대비 값어치가 없다고 판단).
+    if (
+      !devoured &&
+      !e.revived &&
+      !e.feverScarred &&
+      e.genome.perks.length !== 0 &&
+      hasRule(e.genome.perks, "salmonrun") &&
+      e.energy > SALMON_MIN_ENERGY &&
+      this.entities.length + this.pendingBirths.length < this.cap
+    ) {
+      // 내 종 새끼만 개체 변이(일반 출산과 같은 규칙 · behavior 참조). 챔피언·야생은 종 게놈 공유.
+      const childGenome = e.species.isPlayer
+        ? mutateGenome(cloneGenome(e.genome), this.mutRng, SIM.mutationStrength)
+        : undefined;
+      const child = createEntity(this.nextId(), e.x, e.y, e.species, e.energy * SALMON_SHARE, childGenome);
+      child.wanderAngle = e.wanderAngle; // 죽은 몸이 향하던 방향 그대로(rng 0)
+      this.pendingBirths.push(child);
+      this.emit("birth", e.x, e.y, e.species.isPlayer);
+      if (e.species.isPlayer) this.roundCounts.births += 1;
+    }
+  }
+
+  /**
+   * **사체를 먹는다**(썩은 고기를 먹는 위) · `collectGeneDrops` 와 같은 자리에서 돈다.
+   * 그 규칙을 가진 개체만 먹는다(내 종 + perks 째 저장된 챔피언 · 야생은 perks 가 비어 늘 빠진다 —
+   * 효과와 대가가 같은 집합에 걸려야 한다는 검증 지적 반영). rng 0.
+   *
+   * ⚠ 방울 줍기와 달리 **순회 순서에 이득 귀속이 의존한다**(결정론은 유지 · 배열 순서가 곧 규칙이다).
+   *   방울은 세계의 점수라 누가 밟든 같지만, 사체는 특정 개체의 기운으로 들어간다. 순회를 재배열하면
+   *   다른 개체가 먹는 다른 세계가 된다 — 재배열하지 마라(검증이 옛 주석의 「순서 무관」을 반증했다).
+   * ⚠ 기운이 이미 기본 상한(SIM.maxEnergy) 이상인 개체는 **먹지 않고 지나간다** — 비축(gorge) 중인
+   *   육식의 기운을 min() 이 아래로 끌어내리는 자기파괴와, 배부른 개체가 사체를 낭비하는 것을 함께
+   *   막는다(검증 blocker). 섭취 상한도 SIM.maxEnergy 다 · 사체는 「비축」이 아니라 「끼니」다.
+   */
+  private collectCarrion(): void {
+    if (this.carcasses.length === 0) return;
+    // 삭은 사체가 시대 내내 쌓이면 이 순회와 렌더가 함께 느려진다 — 넘치면 못 먹는 것을 걷어낸다
+    // (렌더는 bornTick 나이 기반이라 배열에서 빠져도 연출이 안 깨진다 · 검증 지적).
+    if (this.carcasses.length > 256) {
+      this.carcasses = this.carcasses.filter((c) => carcassEdible(c, this.tick));
+    }
+    for (const c of this.carcasses) {
+      if (!carcassEdible(c, this.tick)) continue;
+      for (const e of this.entities) {
+        if (e.genome.perks.length === 0 || !hasRule(e.genome.perks, "carrion")) continue;
+        if (e.energy >= SIM.maxEnergy) continue;
+        if (!carcassReached(c, e.x, e.y)) continue;
+        c.taken = true;
+        e.energy = Math.min(SIM.maxEnergy, e.energy + c.amount);
+        // 사체도 끼니다 — 채집과 같은 경험치 축. 단 내 종이 먹은 것만 센다(챔피언은 경험치 밖).
+        if (e.species.isPlayer) this.playerFoodEaten += 1;
+        this.emit("gene", c.x, c.y, e.species.isPlayer); // 삼키는 반짝임(자리는 사체 자리)
+        break;
+      }
+    }
+  }
+
+  /** 감지 범위 안에서 가장 가까운, 아직 먹을 수 있는 사체(행동이 찾아갈 목표). rng 0 · 선형 탐색. */
+  nearestCarcass(x: number, y: number, range: number, senses: (cx: number, cy: number) => boolean): Carcass | null {
+    let best: Carcass | null = null;
+    let best2 = range * range;
+    for (const c of this.carcasses) {
+      if (!carcassEdible(c, this.tick)) continue;
+      const dx = c.x - x;
+      const dy = c.y - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < best2 && senses(c.x, c.y)) {
+        best2 = d2;
+        best = c;
+      }
+    }
+    return best;
   }
 
   /** 연출용 사건 1건(전 종, 위치 포함). mine=내 무리가 얽힌 사건(렌더의 소음 다이어트 근거).

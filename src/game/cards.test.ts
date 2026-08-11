@@ -38,7 +38,18 @@ import {
   type Rarity,
 } from "@/game/cards";
 import { defaultGenome, genomeFromPips } from "@/sim/genome";
-import { AXIS_CATEGORY, PERKS, PERK_BY_NAME, perkLine, perkRarity, type PerkName } from "@/sim/perks";
+import { ACHIEVEMENT_CARDS } from "@/game/achievements";
+import {
+  AXIS_CATEGORY,
+  PERKS,
+  PERK_BY_NAME,
+  gateDepth,
+  isDuoPerk,
+  perkGate,
+  perkLine,
+  perkRarity,
+  type PerkName,
+} from "@/sim/perks";
 import {
   CATEGORIES,
   KEY_NAMES,
@@ -68,9 +79,12 @@ const pipsOf = (partial: Partial<Pips>): Pips => ({ ...emptyPips(), ...partial }
 /** 특성 이름 전부(순서는 `PERK_DEFS` 그대로). 「그릇을 다 채운 종」을 만들 때 쓴다. */
 const ALL_PERKS: PerkName[] = PERKS.map((p) => p.id);
 
-/** 듀오 카드인가 · 규칙 특성(`rule`)을 주는 카드. 두 범주 3단에서만 열린다. */
-const isDuoCard = (c: Card): boolean =>
+/** 규칙 특성 카드(듀오 + 3단·4단 고유 카드) — 전부 깊은 게이트라 「전체 풀」 서열 셈에서 뺀다. */
+const isRuleCard = (c: Card): boolean =>
   c.perk !== undefined && PERK_BY_NAME.get(c.perk)?.rule !== undefined;
+/** 그중 듀오 카드 — 두 범주 3단에서만 열리고, 이름·문구가 tiers.DUOS 에 산다.
+ *  ⚠ rule 유무로 가르면 안 된다(2026-08-11 · 고유 카드 스물도 rule 을 준다). */
+const isDuoCard = (c: Card): boolean => c.perk !== undefined && isDuoPerk(c.perk);
 
 /** 최고 티어 다섯 + 열쇠 셋 — 도장 쪽으로는 더 갈 데가 없는 게놈. */
 const APEX_PIPS: Pips = pipsOf({
@@ -100,7 +114,7 @@ describe("드래프트", () => {
   });
 
   it("allow 로 걸러낸 풀에서만 뽑는다", () => {
-    const only = new Set(["pk_vision_night", "pk_speed_night", "pk_graze_day"]);
+    const only = new Set(["pk_vision_day", "pk_speed_night", "pk_graze_day"]);
     const ids = drawCards(new Rng("filtered"), 3, (c) => only.has(c.id)).map((c) => c.id);
     expect(new Set(ids)).toEqual(only);
   });
@@ -109,7 +123,7 @@ describe("드래프트", () => {
     const drawn = drawCards(
       new Rng("small"),
       5,
-      (c) => c.id === "pk_vision_night" || c.id === "pk_speed_night",
+      (c) => c.id === "pk_vision_day" || c.id === "pk_speed_night",
     );
     expect(drawn.length).toBe(2);
   });
@@ -213,11 +227,14 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
     //   3단으로 올려야(도장 28개) 후보에 뜨고, 다섯 범주를 전부 3단으로 만드는 판은 존재하지 않는다
     //   (tiers.ts 사다리표: 가장 후한 판도 두 범주가 한계다). 한 종이 실제로 보는 후보 풀에서
     //   서열이 지켜지는지는 **바로 아래 테스트**가 따로 못 박는다.
-    const noDuo = cardPoolFor().filter((c) => !isDuoCard(c));
+    // ⚠⚠ 2026-08-11 부터 이 셈에서 빼는 것이 「듀오」에서 「규칙 카드 전부」(듀오 + 3단·4단 고유
+    //   카드 스물)로 넓어졌다. 이유는 같다 — 전부 깊은 티어 게이트 뒤에 있어, 풀 전체로 세면
+    //   **아무도 겪지 않는 세계의 수**가 서열을 뒤집는다(전설이 열쇠 7 + 4단 카드 10 = 17종이 된다).
+    //   그리고 배수 특성은 이제 귀함(rare)까지만 나온다 — 아주 귀함·전설은 게이트 등급이라
+    //   이 사다리는 흔함~귀함 세 단만 잰다. 실제 종이 보는 풀은 아래 테스트가 따로 못 박는다.
+    const noRule = cardPoolFor().filter((c) => !isRuleCard(c) && c.key === undefined);
     for (const level of [1, 3, 5, 7, 30]) {
-      const o = rarityOdds(noDuo, 3, level);
-      expect(o.legendary.perCard, `레벨 ${level}: 전설 < 아주 귀함`).toBeLessThan(o.epic.perCard);
-      expect(o.epic.perCard, `레벨 ${level}: 아주 귀함 < 귀함`).toBeLessThan(o.rare.perCard);
+      const o = rarityOdds(noRule, 3, level);
       expect(o.rare.perCard, `레벨 ${level}: 귀함 < 드묾`).toBeLessThan(o.uncommon.perCard);
       expect(o.uncommon.perCard, `레벨 ${level}: 드묾 < 흔함`).toBeLessThan(o.common.perCard);
     }
@@ -238,24 +255,36 @@ describe("등급별 등장 확률(rarityOdds — 대백과 표시값)", () => {
     ];
     for (const [label, pips] of cases) {
       const g = genomeFromPips(pips, emptyKeys());
-      const pool = CARD_POOL.filter((c) => cardPrereqMet(c, g));
+      // 도전 과제 보상 카드는 뺀다 — 실제 드래프트(`drawDraft`)도 cardAvailable 로 거른다.
+      const pool = CARD_POOL.filter((c) => cardPrereqMet(c, g) && !ACHIEVEMENT_CARDS.has(c.id));
       const duos = pool.filter(isDuoCard);
       // 두 기둥이면 듀오는 정확히 하나, 세 기둥이어도 셋이다(짝의 수 = 기둥 수 C 2).
       expect(duos.length, `${label}: 후보에 드는 듀오 수`).toBeLessThanOrEqual(3);
-      for (const level of [1, 30]) {
-        const o = rarityOdds(pool, 3, level);
-        expect(o.epic.perCard, `${label} 레벨 ${level}: 아주 귀함 < 귀함`).toBeLessThan(o.rare.perCard);
-      }
+      // 레벨 1 에서는 실제 후보 풀에서도 사다리가 선다(전설 < 아주 귀함 < 귀함).
+      // ⚠ **레벨 30 은 일부러 안 잰다**(2026-08-11): 깊게 판 종은 3단 고유 카드가 여럿 열려 있고
+      //   레벨 보정이 위 등급을 밀어 올려, 후반에는 아주 귀함이 귀함보다 잦아진다. 그건 배지의
+      //   거짓말이 아니라 **티어를 올린 보상**이다(**[사용자 2026-08-10]** "티어를 올리면 더 좋은
+      //   카드, 더 특별한 카드들이 열려서") · 초반 사다리만 계약으로 못 박는다.
+      const o = rarityOdds(pool, 3, 1);
+      expect(o.epic.perCard, `${label} 레벨 1: 아주 귀함 < 귀함`).toBeLessThan(o.rare.perCard);
+      expect(o.legendary.perCard, `${label} 레벨 1: 전설 < 아주 귀함`).toBeLessThan(o.epic.perCard);
     }
   });
 });
 
 describe("등급 기준 (v9 — 등급을 손으로 안 적는다)", () => {
-  it("전설은 열쇠 카드다 — 한 장으로 「못 하던 걸 하게 되는」 자리", () => {
+  it("전설 = **없던 규칙** — 열쇠 일곱 + 4단 규칙 카드 열", () => {
+    // 옛 경계 「전설은 열쇠 전용」은 2026-08-11 에 넓어졌다: **[사용자 2026-08-10]** 이
+    // 「죽지 않는 것」을 전설 예시로 들며 4단 카드에 그 무게를 줬다. 공통 정의는 「없던 규칙을 연다」.
     const legendary = CARD_POOL.filter((c) => cardRarity(c) === "legendary");
-    expect(legendary.every((c) => c.key !== undefined)).toBe(true);
-    expect(legendary.length).toBe(KEY_NAMES.length);
-    expect(new Set(legendary.map((c) => c.key))).toEqual(new Set(KEY_NAMES));
+    const keyCards = legendary.filter((c) => c.key !== undefined);
+    const ruleCards = legendary.filter((c) => c.key === undefined);
+    expect(keyCards.length).toBe(KEY_NAMES.length);
+    expect(new Set(keyCards.map((c) => c.key))).toEqual(new Set(KEY_NAMES));
+    expect(ruleCards.length, "전설 규칙 카드는 4단 열 장뿐").toBe(10);
+    for (const c of ruleCards) {
+      expect(gateDepth(perkGate(c.perk as PerkName)), `${c.id} 는 4단 게이트여야 한다`).toBe(4);
+    }
   });
 
   it("듀오 열 장은 **두 범주 3단 전에는 후보에 안 든다** · 티어를 올릴 이유가 여기 있다", () => {
@@ -467,7 +496,7 @@ describe("카드 적용 — 특성이 붙고, 열쇠가 열리고, (프리셋만
   });
 
   it("같은 특성을 두 번 넣어도 하나뿐이다 — 중복하면 배수가 곱해져 화면 한 줄과 갈린다", () => {
-    const c = card("pk_vision_night");
+    const c = card("pk_vision_day");
     const g = defaultGenome();
     applyCard(g, c);
     applyCard(g, c);
@@ -523,10 +552,10 @@ describe("죽은 카드 필터(cardPrereqMet · cardRedundant)", () => {
   });
 
   it("이미 가진 특성은 후보에 안 든다 — 같은 특성은 한 번뿐이다", () => {
-    // 게이트를 열어 두고 잰다(눈 3단) · 안 그러면 게이트에 먼저 걸려 중복 판정이 안 보인다.
-    const has = genomeFromPips(APEX_PIPS, emptyKeys(), ["vision_night"]);
-    expect(cardRedundant(card("pk_vision_night"), has)).toBe(true);
-    expect(cardPrereqMet(card("pk_vision_night"), has)).toBe(false);
+    // 게이트를 열어 두고 잰다(최고 티어) · 안 그러면 게이트에 먼저 걸려 중복 판정이 안 보인다.
+    const has = genomeFromPips(APEX_PIPS, emptyKeys(), ["vision_grass"]);
+    expect(cardRedundant(card("pk_vision_grass"), has)).toBe(true);
+    expect(cardPrereqMet(card("pk_vision_grass"), has)).toBe(false);
     // 같은 축의 다른 특성은 여전히 후보다(축을 판다고 그 축이 닫히지 않는다).
     expect(cardRedundant(card("pk_vision_day"), has)).toBe(false);
     expect(cardPrereqMet(card("pk_vision_day"), has)).toBe(true);
@@ -611,7 +640,7 @@ describe("죽은 카드 필터(cardPrereqMet · cardRedundant)", () => {
     }
   });
 
-  it("풀이 마르는 것은 **특성 마흔다섯을 전부 가졌을 때뿐**이고, 그건 한 런으로 못 닿는다", () => {
+  it("풀이 마르는 것은 **특성 전부를 가졌을 때뿐**이고, 그건 한 런으로 못 닿는다", () => {
     // v8 의 사고: 성장 그릇이 「도장 100 + 열쇠 3」뿐이라 5시대짜리 런이 시대 3에 그릇을 채웠고,
     // 그 뒤 드래프트가 통째로 비었다(2026-08-09). v9 의 그릇은 「특성 45 + 열쇠 3」이라 한 런
     // (카드 12~22장)으로는 절반도 못 채운다 — 즉 **정상 플레이에서 도달 불가능한 자리**다.
@@ -716,7 +745,7 @@ describe("반복 완화(소프트 디듑)", () => {
   });
 });
 
-describe("갈래 전용 풀은 폐기됐다 — 52장 전부가 누구에게나 나온다", () => {
+describe("갈래 전용 풀은 폐기됐다 — 풀 전체가 누구에게나 나온다", () => {
   it("cardPoolFor 는 늘 풀 전체를 준다", () => {
     expect(cardPoolFor().length).toBe(CARD_POOL.length);
     expect(CARD_POOL.length).toBe(PERKS.length + KEY_NAMES.length);

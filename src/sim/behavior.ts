@@ -20,7 +20,50 @@ import { bossCanHunt, isRaidFighter, isRaidRangedFighter, raidRangedPower, dealR
 import { ORDER, SIM } from "@/sim/params";
 // 듀오는 2026-08-10 부터 **도장이 아니라 카드**다 · `hasRule` 이 「그 카드를 골랐는가」를 묻는다
 // (옛 `tiers.hasDuo(pips, id)` 는 지웠다 · 두 범주를 3단까지 올려도 그것만으로는 안 켜진다).
-import { hasRule, perkCtxOf, perkMul } from "@/sim/perks";
+import {
+  BLOODGIFT_GIVE,
+  BLOODGIFT_LOSS_MUL,
+  CARRION_FRESH_MUL,
+  CULL_DMG_MUL,
+  CULL_THRESHOLD,
+  EYESPOT_DMG_MUL,
+  EYESPOT_SEEN_MUL,
+  FAMISHED_RANGE_MUL,
+  FOOTSTEPS_EDGE,
+  FULL_AT,
+  GREENWAKE_GAIN,
+  GREENWAKE_REGROW,
+  HAMSTRING_DMG_MUL,
+  HAMSTRING_SLOW,
+  HAMSTRING_TICKS,
+  HUNGRY_AT,
+  MOUNTAIN_CAP,
+  MOUNTAIN_UPKEEP,
+  NEWFLESH_SHARE,
+  NIGHT_LIGHT,
+  NOSHINE_GUARD,
+  NOSHINE_STEALTH,
+  PANGOLIN_CD_MUL,
+  PANGOLIN_DMG_MUL,
+  RATEL_FLEE_MUL,
+  RATEL_REFLECT,
+  RIVERJAW_AWAY_MUL,
+  RIVERJAW_KILL,
+  SALMON_FERT_MUL,
+  SHEDTAIL_EAT_CD_MUL,
+  SHEDTAIL_EAT_TICKS,
+  SHEDTAIL_ENERGY,
+  SHEDTAIL_SLOW,
+  TRANSFIX_FREEZE_TICKS,
+  TRANSFIX_SELF_TICKS,
+  ZEBRA_FLEE_MUL,
+  hasRule,
+  nearShore,
+  perkCtxOf,
+  perkMul,
+  tryRevive,
+  whenHolds,
+} from "@/sim/perks";
 
 interface Vec {
   x: number;
@@ -312,6 +355,22 @@ export function herdShielded(p: Entity, world: World): boolean {
  * venom 이 강할수록 독은 크게 옮고 사냥 이득은 준다("잡아먹으면 손해"의 포식 방어).
  */
 function devour(e: Entity, prey: Entity, world: World): void {
+  // 「꼬리 자르기」(다리 4단 카드) — 잡아먹히기 직전 한 번, 꼬리만 내주고 빠져나온다.
+  // devour 의 **맨 앞** 한 자리다: resolveBite 의 두 호출부(즉사 굴림·기운 소진)가 다 여길 지나므로
+  // 여기서 가로채면 두 곳이 어긋날 수 없다(정찰 확인). 즉사 굴림은 이미 끝난 뒤라 rng 열 불변.
+  const preyPerksAll = prey.genome.perks;
+  if (preyPerksAll.length !== 0 && !prey.tailUsed && hasRule(preyPerksAll, "shedtail")) {
+    prey.tailUsed = true;
+    prey.energy = SIM.maxEnergy * SHEDTAIL_ENERGY; // 기운 4분의 1로 살아 나온다(0 이하로 떨어졌어도)
+    prey.woundTicks = SIM.woundTicks; // 꼬리를 잃은 직후는 다친 몸이다(기운 선이 뜬다)
+    e.attackCd = SIM.attackCooldownTicks * SHEDTAIL_EAT_CD_MUL; // 다음 물기도 늦어진다
+    // 「꼬리를 먹느라 멈춥니다」를 화면에서 참말로 만드는 자리 — 공격자가 실제로 1초 멈춰 선다
+    // (안 세우면 다음 틱에 같은 표적을 곧장 다시 쫓아 문구가 거짓이 된다 · 검증 지적).
+    if (e.frozenTicks < SHEDTAIL_EAT_TICKS) e.frozenTicks = SHEDTAIL_EAT_TICKS;
+    e.targetPrey = null; // 그리고 표적을 놓친다 — 미끼의 본질
+    world.emit("block", prey.x, prey.y, e.species.isPlayer || prey.species.isPlayer, e.x, e.y);
+    return;
+  }
   const preyVenom = prey.genome.traits.venom;
   prey.alive = false;
   world.recordDeath(prey.species, "predation");
@@ -334,12 +393,14 @@ function devour(e: Entity, prey: Entity, world: World): void {
   // 육식 빌드는 상한(maxEnergyFor)이 100 위로 올라 이 큰 사냥을 비축한다(긴 포만) — 초식은 상한 100 그대로.
   // 듀오 「큰 턱」(가죽 III + 이빨 III): 한 번 문 것으로 기력이 훨씬 많이 찬다.
   const jaw = hasRule(e.genome.perks, "bigjaw") ? 1.5 : 1;
+  // 「썩은 고기를 먹는 위」의 대가 — 갓 잡은 사냥에서 얻는 기운이 절반(사체는 세계에 남아 따로 먹는다).
+  const scav = hasRule(e.genome.perks, "carrion") ? CARRION_FRESH_MUL : 1;
   // 조건부 특성의 사냥 배수(「밤 사냥 ×1.3」 등)는 여기 한 자리에서만 걸린다.
   // 무리 나눔(packShareGain)은 이 huntGain 을 밑으로 삼으므로 자동으로 함께 커진다 —
-  // 「내가 크게 잡으면 무리도 크게 나눈다」가 그대로 성립한다(따로 곱하면 두 번 걸린다).
+  // 「내가 크게 잡으면 무리도 크게 나눈다」가 그대로 성립한다(따로 곱하면 두 번 걸린다 · 대가도 같이 전파).
   const hMul = e.genome.perks.length > 0 ? perkMul(e.genome.perks, "hunt", perkCtxOf(e, world)) : 1;
   const huntGain =
-    SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX) * et.hunt * gorgeFactor(carn) * jaw * hMul;
+    SIM.predationEnergy * (1 - preyVenom / TRAIT_MAX) * et.hunt * gorgeFactor(carn) * jaw * scav * hMul;
   e.energy = Math.min(maxEnergyFor(carn), e.energy + huntGain);
   // 무리사냥 먹이 나눔: 사냥감을 같은 종 무리가 함께 먹는다(늑대). 사냥감 주위 같은 종 순수 육식 무리에게
   // 카커스 몫을 지급 — 뭉친 팩은 소수의 사냥으로 다 같이 먹어 자생한다(herding 이 육식 생존 레버). 순수
@@ -356,6 +417,8 @@ function devour(e: Entity, prey: Entity, world: World): void {
     });
   }
   e.targetPrey = null;
+  // 잡아먹힌 자리에도 먹다 남긴 몫이 남는다(썩은 고기를 먹는 위가 있는 판에서만 · world 가 게이트).
+  world.legacyDeath(prey, true);
 }
 
 /**
@@ -389,7 +452,12 @@ export function attackRangeOf(t: Traits): number {
  */
 function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): void {
   const t = e.genome.traits;
-  e.attackCd = SIM.attackCooldownTicks;
+  // 「천산갑의 비늘」(가죽 3단 카드) — 나를 문 상대는 이가 상해, 다음 물기까지 두 배로 오래 걸린다.
+  // 튕긴 물기(ignored)도 포함이다 — 갑옷에 튕긴 이빨이 더 상한다(무는 시도 자체가 「물었다」).
+  e.attackCd =
+    prey.genome.perks.length !== 0 && hasRule(prey.genome.perks, "pangolin")
+      ? SIM.attackCooldownTicks * PANGOLIN_CD_MUL
+      : SIM.attackCooldownTicks;
   // 원거리 종은 발사체(spit)가 먹잇감으로 날아간다(레일건 조준선 대신 생물다운 뱉기/가시). 근접은 그 자리 물기.
   if (ranged) world.emit("spit", e.x, e.y, e.species.isPlayer || prey.species.isPlayer, prey.x, prey.y);
   // 독은 방어(삼킨 쪽이 중독)라 사냥 성공과 무관 — 물기 판정은 공격력 차와 **몸집 차**를 본다.
@@ -430,6 +498,48 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
       bite.damage *= m;
       bite.killChance = clamp(bite.killChance * m, 0, SIM.killChanceMax);
     }
+    // ── 고유 카드의 물기 규칙(2026-08-11) · 전부 rng 없는 값 조정이라 아래 굴림 수가 안 변한다 ──
+    if (e.genome.perks.length !== 0) {
+      const perks = e.genome.perks;
+      // 물가의 매복자 — 물가에서는 열에 아홉을 단숨에, 물가 밖에서는 이빨이 무디다.
+      if (hasRule(perks, "riverjaw")) {
+        if (nearShore(world, e.x, e.y)) bite.killChance = Math.max(bite.killChance, RIVERJAW_KILL);
+        else bite.damage *= RIVERJAW_AWAY_MUL;
+      }
+      // 힘줄을 무는 법 — 급소 대신 다리를 노린다. 피해 절반, 상대는 3초 절뚝인다.
+      if (hasRule(perks, "hamstring")) {
+        bite.damage *= HAMSTRING_DMG_MUL;
+        prey.limpTicks = HAMSTRING_TICKS;
+      }
+      // 숨통을 보는 눈 — 다 죽어 가는 상대는 반드시 잡고, 성한 상대에게는 이빨이 얕다.
+      // 처형은 killChanceMax(압도 곡선의 상한)를 넘는다 — 상한은 「세서 이긴다」의 한계이지
+      // 「약점을 끝낸다」의 한계가 아니다(취향 심판 결정 반영). 굴림은 그대로 돈다(chance(1)).
+      // 문턱의 밑은 SIM.maxEnergy — **화면 기운 선과 같은 밑**이라야 「4분의 1 아래」가 참말이다
+      // (maxEnergyFor 로 재면 육식 상대는 막대 40% 에서 처형이 떠 화면과 어긋난다 · 검증 지적).
+      if (hasRule(perks, "cull")) {
+        if (prey.energy < SIM.maxEnergy * CULL_THRESHOLD) {
+          bite.killChance = 1;
+        } else {
+          bite.damage *= CULL_DMG_MUL;
+        }
+      }
+      // 천산갑의 비늘의 대가 — 이빨 대신 비늘을 고른 몸은 무는 피해가 절반.
+      if (hasRule(perks, "pangolin")) bite.damage *= PANGOLIN_DMG_MUL;
+    }
+    if (prey.genome.perks.length !== 0) {
+      const pp = prey.genome.perks;
+      // 등에 그린 눈 — 아직 안 다친 개체의 첫 이빨은 가짜 눈을 문다(받는 피해 절반).
+      if (prey.woundTicks <= 0 && hasRule(pp, "eyespot")) bite.damage *= EYESPOT_DMG_MUL;
+      // 산 같은 몸 — 한 입에는 죽지 않는다: 피해 상한 + 즉사 무효(굴림은 그대로 돈다).
+      // ⚠ 「숨통을 보는 눈」의 처형(위 killChance=1)보다 **뒤에** 있어 방패가 창을 이긴다 —
+      //   산 같은 몸을 잡으려면 4분의 1 아래로 깎는 것으로는 안 되고 끝까지 깎아야 한다(의도).
+      // 상한의 밑도 SIM.maxEnergy 다(cull 과 같은 이유 · 화면 기운 선과 같은 밑).
+      if (hasRule(pp, "mountain")) {
+        const cap = SIM.maxEnergy * MOUNTAIN_CAP;
+        if (bite.damage > cap) bite.damage = cap;
+        bite.killChance = 0;
+      }
+    }
   }
   // 이빨이 안 박혔다("일정 공격력 이하의 공격은 무시"). 판정상 아무 일도 안 일어나지만 **화면에는
   // 튕겨 나가는 게 보여야 한다** — 안 그러면 "왜 공격이 안 먹히는지"를 알 방법이 화면에 없다.
@@ -445,6 +555,28 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
   }
   prey.energy -= bite.damage;
   prey.woundTicks = SIM.woundTicks; // 다쳤다 — 이 동안 쓰러지면 "부상"이지 굶주림이 아니다
+  // ── 물린 쪽의 고유 카드(2026-08-11) · 전부 rng 없는 가산이라 굴림 수가 안 변한다 ──────────────
+  if (prey.genome.perks.length !== 0) {
+    const pp = prey.genome.perks;
+    // 돋는 새살 — 잃은 것의 절반이 상처가 아무는 동안 천천히 돌아온다(적립만 여기서, 회복은 틱에서).
+    if (hasRule(pp, "newflesh")) prey.pendingRegen += bite.damage * NEWFLESH_SHARE;
+    // 라텔의 맞물기 — 그 자리에서 마주 문다. 반사량은 **내(물린 쪽) 이빨 능치**로 잰다 —
+    // 이빨을 안 판 종의 라텔은 무는 흉내일 뿐이다(이빨 4단 카드인 이유). 카드 문구도 「내 이빨
+    // 힘의 절반」이다(내 물기에 걸리는 다른 배수와 일부러 무관 · 검증 지적 반영).
+    if (hasRule(pp, "ratel")) {
+      const back = biteOutcome(prey.genome.traits.attack, t.defense, prey.genome.traits.size, t.size);
+      if (!back.ignored) {
+        e.energy -= back.damage * RATEL_REFLECT;
+        // 마주 물린 쪽도 다쳤다 — 이게 없으면 반격에 쓰러진 죽음이 「굶주림」으로 집계된다(검증 지적).
+        e.woundTicks = SIM.woundTicks;
+      }
+    }
+    // 얼룩말의 뒷발질 — 달아나는 동안은 입은 만큼 되갚는다(한 틱 전 fleeing 계약).
+    if (prey.fleeing && hasRule(pp, "zebrakick")) {
+      e.energy -= bite.damage;
+      e.woundTicks = SIM.woundTicks; // 위와 같은 이유(사망 원인 「부상」 귀속)
+    }
+  }
   if (!ranged) world.emit("bite", prey.x, prey.y, e.species.isPlayer || prey.species.isPlayer); // 근접만 그 자리 물기
   // 여러 번 물려 기운이 다하면 그 자리에서 잡아먹힌다(사망 원인은 잡아먹힘 — 포식자가 먹는다).
   if (prey.energy <= 0) devour(e, prey, world);
@@ -553,7 +685,14 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 임계 기반: 임계(rangedThreshold) 이하는 기존 기울기(밸런스 불변), 초과분만 급한 기울기로 사거리가
   // 확 는다 → 전문 원거리 종만 멀리서 쏜다(야생·부수적 ranged 는 근접 그대로).
   // (식은 attackRangeOf 로 뽑아 뒀다 — 사람이 시킨 물기가 **같은 사거리**를 써야 하기 때문이다.)
-  const atkRange = attackRangeOf(t);
+  const atkRangeBase = attackRangeOf(t);
+  // 「굶주린 사냥꾼」(이빨 3단 카드) — 배가 절반 아래면 물 수 있는 거리가 2배.
+  // ⚠ **사냥 경로 전용이다.** 보스전 원거리 사격(아래 fighter 블록)은 atkRangeBase 를 쓴다 —
+  //   굶주림이 보스전 사거리까지 늘리면 격퇴 밸런스가 카드 하나에 끌려간다(구현 심판 지적).
+  const atkRange =
+    perks.length !== 0 && hasRule(perks, "famished") && whenHolds("hungry", pctx)
+      ? atkRangeBase * FAMISHED_RANGE_MUL
+      : atkRangeBase;
   // 사냥 스퍼트(질주형 육식): 순수 육식이 먹잇감을 추격 중이면 속도가 오른다 — 도망치는 초식을 speed 50
   // 으론 못 잡던 병목을 speed 형질로 푼다(치타의 폭발적 추격). 순수 육식일수록·추격 중일 때만이라 야생
   // 초식·잡식은 영향 0.
@@ -564,10 +703,29 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const roughFree = canFly || isApex(t.speed);
   // 특성의 빠르기 배수는 **맨 끝에** 곱한다 — 앞의 다섯 항을 한 글자도 안 건드려야 특성 없는 종의
   // 부동소수점 결과가 예전과 같다(known_issues 「덧셈 순서를 바꾸면 결정론 지문이 깨진다」).
-  const maxSpeed =
+  let maxSpeed =
     SIM.maxSpeedBase * (0.4 + speed01) *
     (roughFree ? 1 : roughSpeedFactor(world, e.x, e.y, speed01)) * sprintFactor *
     sizeSpeedFactor(t.size) * perkMul(perks, "speed", pctx);
+  // ── 고유 카드의 걸음 규칙(2026-08-11) · 전부 기존 식 **뒤에서만** 곱하거나 덮는다 ──────────────
+  if (perks.length !== 0) {
+    if (e.fleeing) {
+      // 한 틱 전 값 계약(perkCtx 와 같다). 라텔은 등을 못 돌리고, 얼룩말은 뒷발질하느라 늦다.
+      if (hasRule(perks, "ratel")) maxSpeed *= RATEL_FLEE_MUL;
+      if (hasRule(perks, "zebrakick")) maxSpeed *= ZEBRA_FLEE_MUL;
+    }
+    // 꼬리 자르기의 대가 — 꼬리를 잃은 몸은 죽을 때까지 느리다.
+    if (e.tailUsed) maxSpeed *= SHEDTAIL_SLOW;
+    // 따라오는 발소리 — 쫓는 동안 내 걸음은 상대(의 지금 걸음)보다 언제나 반 걸음 빠르다.
+    if (e.targetPrey !== null && e.targetPrey.alive && hasRule(perks, "footsteps")) {
+      const chased = Math.hypot(e.targetPrey.vx, e.targetPrey.vy) * FOOTSTEPS_EDGE;
+      if (chased > maxSpeed) maxSpeed = chased;
+    }
+  }
+  // 「힘줄을 무는 법」에 물린 절뚝임 · 「뱀의 응시」에 붙들린 정지 — **당한 쪽**(야생 포함)에 걸린다.
+  // 게이트는 필드 값 자체다: 특성 없는 세계에서는 이 값이 영영 0 이라 분기가 안 탄다(부동소수점 불변).
+  if (e.limpTicks > 0) maxSpeed *= HAMSTRING_SLOW;
+  if (e.frozenTicks > 0) maxSpeed = 0;
   // 이 자리에서 실제로 보는 반경. 밤·수풀 감쇠, 비행 보너스, 정점 시야(100) 면제가 전부 visionRadius
   // 안에 있다(렌더가 같은 함수로 안개 구멍을 뚫어 화면과 로직을 1:1 로 맞춘다).
   const vision = visionRadius(t, world, e.x, e.y) * perkMul(perks, "vision", pctx);
@@ -579,9 +737,11 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const sprintDrain = t.sprintCost > 0 ? 1 + t.sprintCost * Math.min(1, Math.hypot(e.vx, e.vy) / Math.max(0.01, maxSpeed)) : 1;
   // 특성의 기운 소모 배수는 **1 아래가 이득인 유일한 축**이다(「밤의 휴식 ×0.7」= 밤에 덜 먹는다).
   // 그래서 카드에 적히는 수와 여기 곱해지는 수가 같다 — 화면이 ×0.7 이라 적으면 정확히 ×0.7 이다.
+  // 「산 같은 몸」의 대가 — 그 몸을 먹여 살리느라 기운 소모가 언제나 1.3배(맨 끝 곱 · x×1 은 x 그대로).
+  const mountainDrain = perks.length !== 0 && hasRule(perks, "mountain") ? MOUNTAIN_UPKEEP : 1;
   const drain =
     SIM.metabolismDrain * t.upkeep * flyDrainMultiplier(t.wings) * sizeDrainFactor(t.size) * sprintDrain *
-    perkMul(perks, "upkeep", pctx);
+    perkMul(perks, "upkeep", pctx) * mountainDrain;
   // ⚠ 수명은 **일부러 유지비와 안 묶었다.** 여기에 유지비를 곱하면 야생 전 종의 수명이 함께 움직여
   //   손으로 튜닝한 붐-버스트가 흔들린다. 유지비의 대가는 「굶주림」 한 축으로만 낸다(읽히는 축이 하나여야
   //   플레이어가 무엇 때문에 죽었는지 안다).
@@ -589,7 +749,12 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // **사냥/채집 자격은 이제 효율이 직접 말한다.** 이빨 0단은 `hunt === 0` 이라 사냥이 원리적으로 불가하고
   // (**[사용자]** 초식 거인 경로 = 이빨에 도장을 하나도 안 넣는 것 자체가 빌드), 채집은 효율이 바닥
   // (grazeMinEff)보다 남아 있는 한 계속된다 — 극단 육식이 무의미한 채집 이동을 하지 않게 여기서 끊는다.
-  const canHunt = t.hunt > 0;
+  let canHunt = t.hunt > 0;
+  // 「굶주린 사냥꾼」의 대가 — 기운이 넉넉할 때는 사냥감을 알아보지 못한다(스스로 사냥을 안 시작하고,
+  // 쫓던 것도 놓아준다 · chooseGoal 이 canHunt=false 에서 targetPrey 를 비우는 기존 규칙 그대로).
+  if (canHunt && perks.length !== 0 && hasRule(perks, "famished") && whenHolds("full", pctx)) {
+    canHunt = false;
+  }
   const canGraze = t.graze > SIM.grazeMinEff;
   // 수영 종만 물에 들어가고(산은 못 넘되 비행은 예외), 물 전용(수영 아주 높음)은 육지에 못 올라온다.
   const canSwim = t.swimming >= SIM.swimThreshold;
@@ -615,7 +780,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 쫓지 않는다(보스가 무리로 오므로) — 지형에 막혀 접근 못 하던 문제를 없앤다. 안 죽는 전사라 코앞이어도 쏜다.
   if (fighter && raidBoss && isRaidRangedFighter(raidBoss, e, world)) {
     const tgt = bossRaidTargetFor(raidBoss, e.x, e.y);
-    if ((e.x - tgt.x) ** 2 + (e.y - tgt.y) ** 2 <= atkRange * atkRange && e.attackCd <= 0) {
+    // ⚠ 보스전 사거리는 atkRangeBase 다 — 「굶주린 사냥꾼」의 늘어난 거리는 사냥 전용(위 주석).
+    if ((e.x - tgt.x) ** 2 + (e.y - tgt.y) ** 2 <= atkRangeBase * atkRangeBase && e.attackCd <= 0) {
       dealRaidHit(raidBoss, raidRangedPower(t) * SIM.raidRangedMul, world);
       e.attackCd = SIM.attackCooldownTicks;
       world.emit("spit", e.x, e.y, e.species.isPlayer, tgt.x, tgt.y); // 연출: 발사체가 보스로 날아간다(원거리)
@@ -921,6 +1087,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
 
   // --- 섭취 / 사냥 (쫓던 목표가 사정거리면) ---
   if (e.attackCd > 0) e.attackCd -= 1;
+  // 고유 카드의 시한 상태(2026-08-11) — 특성 없는 세계에서는 값이 영영 0 이라 분기가 안 탄다.
+  if (e.limpTicks > 0) e.limpTicks -= 1;
+  if (e.frozenTicks > 0) e.frozenTicks -= 1;
 
   // --- 알파 조종: 사람이 시킨 물기 ---
   // 알파가 능력을 새로 얻는 게 아니다. AI 가 사냥할 때 쓰는 바로 그 경로(resolveBite)를, 바로 그
@@ -948,6 +1117,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       //    실측에서 근접 종은 버튼이 90초 동안 한 번도 안 켜졌다. 표적을 세우면 질주가 붙고, 사정거리에
       //    닿는 순간 아래 AI 경로가 알아서 문다 — 사람은 모는 데 집중한다.
       //    새 능력이 아니다. AI 가 스스로 고르던 표적을 **사람이 대신 고르는 것**뿐이다.
+      // 「뱀의 응시」는 사람이 시킨 표적에도 걸린다(AI 채택과 같은 함수 · applyGaze 주석 참조).
+      applyGaze(e, aim);
       e.targetPrey = aim;
       // ② 이미 사정거리 안이면 지금 문다(같은 판정·같은 쿨다운). 쿨다운 중이면 아무 일도 안 일어난다.
       const adx = aim.x - e.x;
@@ -998,9 +1169,15 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         // 채집 수입 = 기본 × 풀 효율. 이빨 티어가 낮출수록 줄고(이빨의 고유 대가), 무리 티어가 높을수록
         // 개체당 몫이 준다(무리의 고유 대가 · "잡은 것은 함께 먹지만 풀은 나눠 뜯어 몫이 준다").
         // 특성의 풀 배수는 여기 한 자리에서만 걸린다(「수풀의 미식가 ×1.45」 등).
-        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy * t.graze * perkMul(perks, "graze", pctx));
+        // 「푸른 발자국」(무리 3단 카드) — 한 입에서 얻는 것은 20% 줄고(대가), 뜯은 자리는 두 배
+        // 빨리 다시 자란다(효과 · 아래 regrowTimer). 배수 1 은 x×1 = x 라 특성 없는 세계 불변.
+        const wake = perks.length !== 0 && hasRule(perks, "greenwake") ? GREENWAKE_GAIN : 1;
+        e.energy = Math.min(SIM.maxEnergy, e.energy + SIM.foodEnergy * t.graze * perkMul(perks, "graze", pctx) * wake);
         // 시대가 지날수록(foodScarcity) 먹힌 풀이 더 느리게 자란다 — 큰 무리일수록 고갈이 빨라 회복이 억제된다.
-        food.regrowTimer = Math.round(SIM.foodRegrowTicks * world.foodRegrowMultiplier * world.foodScarcity);
+        const regrowWake = perks.length !== 0 && hasRule(perks, "greenwake") ? GREENWAKE_REGROW : 1;
+        food.regrowTimer = Math.round(
+          SIM.foodRegrowTicks * world.foodRegrowMultiplier * world.foodScarcity * regrowWake,
+        );
         if (e.species.isPlayer) world.roundCounts.feeds += 1; // 시험 계수: 채집 섭취 확정(산 보물은 births 로 센다)
       }
       food.available = false;
@@ -1008,6 +1185,20 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       // 레벨업 경험치 소스(내 종 섭취만) — 보물은 크게(즉시 레벨업 쪽으로).
       if (e.species.isPlayer) world.playerFoodEaten += food.mountainous ? SIM.mountainTreasureSpawn : 1;
     }
+  }
+
+  // 「입에서 입으로」(무리 3단 카드) — 기운이 넉넉한 개체가 곁의 굶는 동료 하나에게 흘려 넣는다.
+  // 주는 쪽에서만 처리해(구현 심판) 같은 쌍이 한 틱에 두 번 옮기지 않고, 그리드 순회 순서가 고정이라
+  // 결정론 안전 · rng 0. 옮기는 길에 절반이 새어 주는 쪽은 두 배를 잃는다(대가).
+  if (perks.length !== 0 && e.energy >= SIM.maxEnergy * FULL_AT && hasRule(perks, "bloodgift")) {
+    let gave = false;
+    world.grid.forEachMatching(e.x, e.y, SIM.packShareRadius, (m) => {
+      if (gave || !m.alive || m === e || m.species.id !== e.species.id) return;
+      if (m.energy >= SIM.maxEnergy * HUNGRY_AT) return;
+      m.energy = Math.min(maxEnergyFor(m.genome.traits.carnivory), m.energy + BLOODGIFT_GIVE);
+      e.energy -= BLOODGIFT_GIVE * BLOODGIFT_LOSS_MUL;
+      gave = true;
+    });
   }
 
   // --- 허기 + 노화. 추위(저대사 불리, 무리 보온으로 완화) + 폭염(고대사 불리). ---
@@ -1028,27 +1219,47 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   if (poisonDmg > 0) e.poison -= poisonDmg;
   e.energy -= drain + coldDrain + heatDrain + poisonDmg;
   e.age += 1;
-  if (e.woundTicks > 0) e.woundTicks -= 1;
+  if (e.woundTicks > 0) {
+    e.woundTicks -= 1;
+    // 「돋는 새살」(가죽 3단 카드) — 상처가 아무는 동안 잃은 것이 돌아온다. 회복 속도는 남은 상처
+    // 시간에 비례해(적립 ÷ 남은 틱 + 1) **아무는 순간 정확히 다 돌아온다** · 고정 속도로 하면 큰
+    // 피해의 「절반」이 잘려 카드가 거짓말이 된다(검증 지적). pendingRegen 은 카드 보유 종만
+    // 적립하므로 특성 없는 세계에서는 이 분기가 영영 안 탄다.
+    if (e.pendingRegen > 0) {
+      const heal = e.pendingRegen / (e.woundTicks + 1);
+      e.pendingRegen -= heal;
+      e.energy = Math.min(maxEnergyFor(t.carnivory), e.energy + heal);
+      if (e.woundTicks === 0) e.pendingRegen = 0;
+    }
+  }
 
   // --- 죽음 (사망 원인 집계, §7). 이번 틱 가장 큰 소모로 귀속(독>추위/폭염>기본 대사). ---
   if (e.energy <= 0) {
-    let cause: DeathCause = "starve";
-    if (poisonDmg > 0 && poisonDmg >= coldDrain && poisonDmg >= heatDrain && poisonDmg >= drain) {
-      cause = "venom"; // 방어 독으로 중독사 — 독먹이를 삼킨 포식자가 되갚음당해 죽는다
-    } else if (e.woundTicks > 0) {
-      // 물려서 기운이 깎인 채 도망치다 쓰러졌다. 못 먹어서 죽은 게 아니다(포식자는 놓쳤으니 못 먹는다).
-      cause = "wound";
-    } else if (coldDrain >= heatDrain && coldDrain > drain) cause = "cold";
-    else if (heatDrain > coldDrain && heatDrain > drain) cause = "heat";
-    e.alive = false;
-    world.recordDeath(e.species, cause);
-    world.emit("death", e.x, e.y, e.species.isPlayer); // 연출: 자연사(회색 흩어짐)
-    return;
+    // 「죽지 않는 것」(가죽 4단 카드) — 기운이 다한 죽음을 한 번 무른다. recordDeath·emit 이전에
+    // 가로채므로 통계·연출 정리가 필요 없다(정찰 확인 · rng 0).
+    if (tryRevive(e)) {
+      world.emit("birth", e.x, e.y, e.species.isPlayer); // 되살아나는 순간(초록 반짝)
+    } else {
+      let cause: DeathCause = "starve";
+      if (poisonDmg > 0 && poisonDmg >= coldDrain && poisonDmg >= heatDrain && poisonDmg >= drain) {
+        cause = "venom"; // 방어 독으로 중독사 — 독먹이를 삼킨 포식자가 되갚음당해 죽는다
+      } else if (e.woundTicks > 0) {
+        // 물려서 기운이 깎인 채 도망치다 쓰러졌다. 못 먹어서 죽은 게 아니다(포식자는 놓쳤으니 못 먹는다).
+        cause = "wound";
+      } else if (coldDrain >= heatDrain && coldDrain > drain) cause = "cold";
+      else if (heatDrain > coldDrain && heatDrain > drain) cause = "heat";
+      e.alive = false;
+      world.recordDeath(e.species, cause);
+      world.emit("death", e.x, e.y, e.species.isPlayer); // 연출: 자연사(회색 흩어짐)
+      world.legacyDeath(e, false); // 사체(기운은 이미 0 이라 연어의 귀향은 자연히 제외)
+      return;
+    }
   }
   if (e.age >= maxAge) {
     e.alive = false;
     world.recordDeath(e.species, "age");
     world.emit("death", e.x, e.y, e.species.isPlayer);
+    world.legacyDeath(e, false); // 늙어 죽은 몸은 기운이 남는다 — 연어의 귀향이 가장 자주 서는 자리
     return;
   }
 
@@ -1072,8 +1283,10 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     e.energy >= SIM.reproduceThreshold &&
     // ⚠ 특성 배수는 **확률 안에서** 곱한다 — rng 를 더 뽑지 않는다(새끼를 한 마리 더 낳는 식의 보상이
     //   스트림을 밀어 시뮬을 통째로 다른 세계로 만든 적이 있다 · known_issues 「쌍둥이 실패」).
+    //   고유 카드의 번식 대가(ruleFertMul)도 같은 규칙으로 확률 안에만 곱는다(굴림 수 불변).
     world.rng.chance(
-      SIM.reproduceRate * (0.3 + fertility01) * sizeFertilityFactor(t.size) * perkMul(perks, "fertility", pctx),
+      SIM.reproduceRate * (0.3 + fertility01) * sizeFertilityFactor(t.size) *
+        perkMul(perks, "fertility", pctx) * ruleFertMul(e),
     )
   ) {
     const childEnergy = e.energy * 0.5; // 새끼가 받는 기운 — 정점이어도 그대로(새끼를 더 살찌우는 게 아니다)
@@ -1102,6 +1315,20 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   }
 }
 
+
+/**
+ * 고유 카드가 무는 **번식 대가**를 한 곳에 모은 배수. 확률 안에만 곱한다(굴림 수 불변).
+ * · 죽지 않는 것: 되살아난 몸은 새끼를 못 친다 · 열병의 흉터: 앓아 넘긴 몸은 평생 못 친다
+ * · 돋는 새살: 새살을 기르는 동안(woundTicks)은 안 친다 · 연어의 귀향: 살아 있는 몸은 절반
+ * 특성 없는 개체는 1 을 돌려준다(x×1 = x · 부동소수점 불변).
+ */
+function ruleFertMul(e: Entity): number {
+  const perks = e.genome.perks;
+  if (perks.length === 0) return 1;
+  if (e.revived || e.feverScarred) return 0;
+  if (e.woundTicks > 0 && hasRule(perks, "newflesh")) return 0;
+  return hasRule(perks, "salmonrun") ? SALMON_FERT_MUL : 1;
+}
 
 /** 보스/포식자가 도망 범위 안이면 도망 속도(단위×maxSpeed), 아니면 null. 도망 방향은 지형 회피로 보정. */
 function computeFlee(
@@ -1145,7 +1372,11 @@ function computeFlee(
     if (bd2 < fr * fr) return clearFleeDir(e, world, bdx, bdy, maxSpeed, canSwim, canLand, canFly);
   }
   // 듀오 「먼저 보고 먼저 뛴다」(눈 III + 다리 III): 포식자를 1.5배 멀리서 알아챈다(가젤·영양).
-  const senseR = hasRule(e.genome.perks, "seefirst") ? SIM.predatorSenseRange * 1.5 : SIM.predatorSenseRange;
+  let senseR = hasRule(e.genome.perks, "seefirst") ? SIM.predatorSenseRange * 1.5 : SIM.predatorSenseRange;
+  // 「빛나지 않는 눈」의 대가 — 쫓는 동안은 곁눈이 죽어, 나를 노리는 것을 알아채는 거리가 절반.
+  if (e.genome.perks.length !== 0 && e.targetPrey !== null && hasRule(e.genome.perks, "noshine")) {
+    senseR *= NOSHINE_GUARD;
+  }
   const predator = world.grid.nearestMatching(
     e.x,
     e.y,
@@ -1158,7 +1389,15 @@ function computeFlee(
       // **닿을 수 있는 포식자만 무섭다.** 먹잇감 조준(chooseGoal)과 같은 규칙 — 물 건너 물고기한테서
       // 도망칠 이유가 없다. 지금 야생 물고기는 초식이라 실제로는 안 걸리지만(프로브: 0건), 육식 수생종이
       // 생기면 곧바로 터진다. 같은 종류의 버그를 먹잇감 쪽에서 이미 겪었다(물가 머리박기).
-      world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly),
+      world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly) &&
+      // 「빛나지 않는 눈」(눈 3단 카드) — 밤의 그 눈은 절반 거리까지 와야 알아챈다(후보별 반경 재검사 ·
+      // 특성 없는 포식자에게는 첫 조건이 false 라 판정이 예전과 한 글자도 안 다르다).
+      !(
+        p.genome.perks.length !== 0 &&
+        hasRule(p.genome.perks, "noshine") &&
+        world.daylight < NIGHT_LIGHT &&
+        dist2(e, p) >= senseR * NOSHINE_STEALTH * (senseR * NOSHINE_STEALTH)
+      ),
   );
   if (predator) {
     return clearFleeDir(e, world, e.x - predator.x, e.y - predator.y, maxSpeed, canSwim, canLand, canFly);
@@ -1228,6 +1467,22 @@ const FLEE_OFFSETS: readonly number[] = [
 ];
 
 /**
+ * 「뱀의 응시」(눈 4단 카드) — 사냥감을 노리기 시작한 순간 눈이 마주친 상대가 1초 얼어붙고,
+ * 이쪽도 반 초 굳는다. 같은 상대에게 다시 걸리려면 표적이 한 번 바뀌어야 한다(gazeTargetId).
+ * **AI 표적 채택(chooseGoal)과 사람이 시킨 물기가 같은 함수를 부른다** — 두 곳에 적으면 조종
+ * 경로에서만 응시가 침묵하는 어긋남이 생긴다(검증이 정확히 그 결함을 잡았다). rng 0.
+ */
+function applyGaze(e: Entity, prey: Entity): void {
+  if (e.genome.perks.length === 0 || prey.id === e.gazeTargetId) return;
+  if (!hasRule(e.genome.perks, "transfix")) return;
+  e.gazeTargetId = prey.id;
+  prey.frozenTicks = TRANSFIX_FREEZE_TICKS;
+  // ⚠ 응시한 쪽의 굳음은 자기 maxSpeed 계산 뒤에 세워져 **다음 틱부터** 14틱 돈다(1틱 오차 ·
+  //   1/30초라 눈에 안 띈다 · 검증 확인). 상대는 30틱을 온전히 받는다.
+  if (e.frozenTicks < TRANSFIX_SELF_TICKS) e.frozenTicks = TRANSFIX_SELF_TICKS;
+}
+
+/**
  * 쫓을 목표 좌표를 고른다. 기존 목표가 유효(존재·시야 안)하면 유지(hysteresis)해 목표 진동을 막고,
  * 무효일 때만 새로 가까운 것을 찾는다. 잡식은 먹잇감/식물 중 가까운 쪽에 commit.
  */
@@ -1264,6 +1519,37 @@ function chooseGoal(
   const canLand = e.genome.traits.swimming < SIM.aquaticOnlyThreshold;
   const canFly = e.genome.traits.wings >= SIM.flyThreshold;
 
+  // 「따라오는 발소리」 보유 여부 · 표적 선택 여러 자리가 읽는다(추격 고정 · 안전핀 · 사체 양보).
+  const relentless = e.genome.perks.length !== 0 && hasRule(e.genome.perks, "footsteps");
+
+  // 「썩은 고기를 먹는 위」(이빨 4단 카드) — **능력을 쓸 줄 아는 행동**(**[사용자 2026-08-11]**
+  // "능력이 있으면 그걸 활용할 줄도 알아야지"): 배가 부르지 않은 한 감지 범위의 사체부터 찾아간다.
+  // 사체는 안 움직이므로 표적 상태 없이 좌표만 돌려줘도 진동이 없다. 특성 없는 세계는 carcasses 가
+  // 늘 비어 있어 nearestCarcass 가 즉시 null(순회 0)이다.
+  // ⚠ 「따라오는 발소리」로 추격 중이면 사체가 있어도 추격을 안 놓는다 — 그 카드의 대가(그만둘 수
+  //   없다)를 사체가 조용히 무효화하면 안 된다(검증 지적).
+  if (
+    e.genome.perks.length !== 0 &&
+    e.energy < SIM.maxEnergy * FULL_AT &&
+    !(relentless && e.targetPrey !== null && e.targetPrey.alive) &&
+    hasRule(e.genome.perks, "carrion")
+  ) {
+    // ⚠ 통행 가능한 자리의 사체만 — 물속 사체를 목표로 잡으면 물가에 머리를 박고 40초를 굶는다.
+    //   먹잇감(huntable)·방울(nearestFreeDrop)이 정확히 같은 이유로 같은 검사를 갖고 있다
+    //   (이 저장소가 두 번 기록한 함정 · 검증이 세 번째 재발을 잡았다).
+    const carcass = world.nearestCarcass(
+      e.x,
+      e.y,
+      senseRange,
+      (cx, cy) => world.terrain.isPassable(cx, cy, canSwim, canLand, canFly) && canSense(cx, cy),
+    );
+    if (carcass) {
+      e.targetPrey = null;
+      e.targetFood = null;
+      return { x: carcass.x, y: carcass.y };
+    }
+  }
+
   /**
    * 먹잇감 감지 — 먹이(식물)와 달리 **상대가 숨을 수 있다**(은신). 은신은 시야 반경만 줄이고
    * 초음파는 못 속인다: 눈을 속이는 것이지 소리를 지우는 게 아니다. 숨는 종은 초음파 사냥꾼 앞에서
@@ -1283,32 +1569,63 @@ function chooseGoal(
           camoVisionFactor(p.genome.traits.camouflage, p.genome.traits.size),
           still ? 0.35 : 1,
         );
-    const hidden2 = vision2 * camoF * camoF; // 반경에 곱하므로 제곱거리엔 제곱으로
+    // 「등에 그린 눈」의 대가 — 무늬가 커서 늘 눈에 띈다: 포식자가 1.3배 멀리서 알아챈다.
+    // 특성 없는 상대는 배수 1 이라(x×1 은 x) 판정이 예전과 부동소수점까지 같다.
+    const seenMul =
+      p.genome.perks.length !== 0 && hasRule(p.genome.perks, "eyespot") ? EYESPOT_SEEN_MUL : 1;
+    const hidden2 = vision2 * camoF * camoF * (seenMul * seenMul); // 반경에 곱하므로 제곱거리엔 제곱으로
     return (d2 < hidden2 && inFov(p.x, p.y)) || d2 < echo2;
   };
+
+  // 「따라오는 발소리」의 안전핀 — 이빨이 안 박히는 상대는 애초에 쫓기 시작하지 않는다(아래
+  // huntable 의 마지막 조건). 추격을 그만둘 수 없는 카드라, 못 무는 거구를 향한 죽음의 행군을
+  // 표적 선택에서 막는다(구현 심판). relentless 는 위(사체 양보 게이트)에서 이미 계산했다.
+  const et = e.genome.traits;
+  const huntable = (p: Entity): boolean =>
+    p.alive && p !== e && p.species.id !== e.species.id &&
+    !areFriends(e.species, p.species) && canSensePrey(p) &&
+    // **닿을 수 있는 먹잇감만.** 먹이(nearestFood)엔 이 검사가 있었는데 먹잇감엔 없어서, 땅 위 종이
+    // 물속 물고기를 노리고 물가에 머리를 박은 채 굶어 죽었다(프로브: 내 종 개체틱의 31%).
+    // 끼임 감지(stuckTicks)로는 못 푼다 — 물가에서 튕기며 진동해 "움직였다"로 판정된다.
+    world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly) &&
+    // **정점 속도(100)는 아예 안 쫓는다** — 따라잡을 수 없는 것을 쫓는 것은 굶는 길이다.
+    !outrunsHunters(p) &&
+    // **뭉친 무리는 아예 안 건드린다**(무리 방어). 사자가 물소 떼 한가운데를 덮치지 않고 가장자리·
+    // 낙오자를 노리는 것과 같다. 물기 확률을 깎는 방식으로도 해 봤으나 소용없었다 — 애초에 잡히는
+    // 개체는 이미 무리에서 떨어져 나온 낙오자라 "이웃 수" 보정이 걸리지 않았다(프로브: 저항을 걸어도
+    // 잡아먹힘 29→22 에 그쳐 도달 단계가 안 변함). 표적 선택 단계에서 막아야 무리가 실제로 산다.
+    !herdShielded(p, world) &&
+    !(relentless && biteOutcome(et.attack, p.genome.traits.defense, et.size, p.genome.traits.size).ignored);
 
   let prey: Entity | null = null;
   let food: Food | null = null;
   if (canHunt) {
-    prey = world.grid.nearestMatching(
-      e.x,
-      e.y,
-      senseRange,
-      (p) =>
-        p.alive && p !== e && p.species.id !== e.species.id &&
-        !areFriends(e.species, p.species) && canSensePrey(p) &&
-        // **닿을 수 있는 먹잇감만.** 먹이(nearestFood)엔 이 검사가 있었는데 먹잇감엔 없어서, 땅 위 종이
-        // 물속 물고기를 노리고 물가에 머리를 박은 채 굶어 죽었다(프로브: 내 종 개체틱의 31%).
-        // 끼임 감지(stuckTicks)로는 못 푼다 — 물가에서 튕기며 진동해 "움직였다"로 판정된다.
-        world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly) &&
-        // **정점 속도(100)는 아예 안 쫓는다** — 따라잡을 수 없는 것을 쫓는 것은 굶는 길이다.
-        !outrunsHunters(p) &&
-        // **뭉친 무리는 아예 안 건드린다**(무리 방어). 사자가 물소 떼 한가운데를 덮치지 않고 가장자리·
-        // 낙오자를 노리는 것과 같다. 물기 확률을 깎는 방식으로도 해 봤으나 소용없었다 — 애초에 잡히는
-        // 개체는 이미 무리에서 떨어져 나온 낙오자라 "이웃 수" 보정이 걸리지 않았다(프로브: 저항을 걸어도
-        // 잡아먹힘 29→22 에 그쳐 도달 단계가 안 변함). 표적 선택 단계에서 막아야 무리가 실제로 산다.
-        !herdShielded(p, world),
-    );
+    prey = world.grid.nearestMatching(e.x, e.y, senseRange, huntable);
+    // ── 능력을 쓸 줄 아는 표적 고르기(**[사용자 2026-08-11]**) · 가장 가까운 놈이 정답이 아니다 ──
+    // 두 카드를 다 가졌으면 처형감이 먼저, 없을 때 물가 우선으로 **폴백**한다(else-if 로 물가를
+    // 조용히 죽이면 그 카드의 「물가 쪽부터 고릅니다」가 거짓이 된다 · 검증 지적).
+    if (prey !== null && e.genome.perks.length !== 0) {
+      let picked: Entity | null = null;
+      // 숨통을 보는 눈 — 다 죽어 가는 놈이 보이면 그놈부터(처형 문턱과 같은 판정 · 같은 밑).
+      if (hasRule(e.genome.perks, "cull")) {
+        picked = world.grid.nearestMatching(
+          e.x,
+          e.y,
+          senseRange,
+          (p) => huntable(p) && p.energy < SIM.maxEnergy * CULL_THRESHOLD,
+        );
+      }
+      // 물가의 매복자 — 물가에 있는 사냥감부터(내 턱이 가장 무서운 자리로 몬다).
+      if (picked === null && hasRule(e.genome.perks, "riverjaw")) {
+        picked = world.grid.nearestMatching(
+          e.x,
+          e.y,
+          senseRange,
+          (p) => huntable(p) && nearShore(world, p.x, p.y),
+        );
+      }
+      if (picked !== null) prey = picked;
+    }
   }
   if (canGraze) food = nearestFood(e, world, senseRange, canSense);
   if (prey && food) {
@@ -1326,6 +1643,12 @@ function chooseGoal(
     // 그 목표를 붙들어 물가에서 계속 머리를 박는다. 쫓던 먹잇감이 **무리로 돌아가 버려도** 놓아준다
     // (무리 방어) — 안 그러면 표적 제외를 뚫고 무리 한가운데까지 쫓아 들어간다.
     const reachable = world.terrain.isPassable(p.x, p.y, canSwim, canLand, canFly);
+    // 「따라오는 발소리」 — 한번 시작한 추격은 그만둘 수 없다: 거리 상한(keep2)도, 더 쉬운 후보로의
+    // 갈아타기도, 정점 속도의 표적 제외도 이 종에게는 없다. 남는 탈출구는 셋뿐이다 — 상대가 죽거나,
+    // 무리 속으로 돌아가거나(무리 방어 존중), 물·산 너머로 사라지거나(도달 불가 존중).
+    if (relentless && p.alive && p.species.id !== e.species.id && reachable && !herdShielded(p, world)) {
+      return { x: p.x, y: p.y };
+    }
     if (p.alive && p.species.id !== e.species.id && reachable && !herdShielded(p, world) && !outrunsHunters(p)) {
       const cur2 = dist2(e, p);
       // ── 듀오 「파도」(다리 III + 무리 III 에서 열리는 카드) ────────────────────────────────
@@ -1356,6 +1679,7 @@ function chooseGoal(
 
   // 3) 새 후보 채택
   if (prey) {
+    applyGaze(e, prey);
     e.targetPrey = prey;
     return { x: prey.x, y: prey.y };
   }

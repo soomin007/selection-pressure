@@ -402,7 +402,7 @@ export function cardRarity(card: Card): Rarity {
   return card.rarity;
 }
 
-/** 갈래 전용 풀은 폐기됐다 — 52장 전부가 누구에게나 나온다. (대백과 호환용으로 남긴다.) */
+/** 갈래 전용 풀은 폐기됐다 — 풀 전체가 누구에게나 나온다(장수는 `CARD_POOL.length` 가 진실). */
 export function cardPoolFor(): Card[] {
   return CARD_POOL.slice();
 }
@@ -564,7 +564,7 @@ export function applyCard(genome: Genome, card: Card): void {
 
 /**
  * 카드 한 장을 한 줄로 요약 — 대백과·런 보고서·드래프트 카드가 전부 이 하나를 쓴다.
- * 예: 「밤에 보는 거리 ×1.45」 · 「열쇠 「지느러미」」 · (프리셋) 「이빨 +4 · 눈 +3」
+ * 예: 「수풀에서 보는 거리 ×1.55」 · 「열쇠 「지느러미」」 · (프리셋) 「이빨 +4 · 눈 +3」
  *
  * ⚠ 특성 줄은 **`sim/perks.ts` 가 만든다.** 여기서 배수를 다시 적으면 언젠가 한쪽만 바뀐다.
  */

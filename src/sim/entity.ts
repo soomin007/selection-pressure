@@ -62,6 +62,23 @@ export interface Entity {
   // 3×3 칸의 이웃 수(자기 포함 · 런타임, 직렬화 안 함). 위와 같은 이유로 개체에 남긴다.
   // 이웃 정보를 안 만드는 종(무리 성향 0)은 1 로 남는다 = 「혼자」.
   neighbors: number;
+  // ── 고유 카드(3단·4단 규칙 카드 · sim/perks.ts RULE_CARD_DEFS)의 런타임 상태 (2026-08-11) ──
+  // 전부 직렬화 안 함 · 특성 없는 세계에서는 값이 초기값에서 영영 안 움직인다(분기가 hasRule 뒤에만 있다).
+  // 「힘줄을 무는 법」에 물려 절뚝이는 남은 틱. 걸음이 절반이 된다 — **당한 쪽**(야생 포함)에 남는 값이라
+  // 게이트는 값 자체다(0 이면 아무 일도 없다).
+  limpTicks: number;
+  // 「뱀의 응시」에 붙들려 굳은 남은 틱(응시한 쪽도 반 초 굳는다 · 같은 필드).
+  frozenTicks: number;
+  // 「뱀의 응시」가 마지막으로 굳힌 표적 id — 같은 표적에게 연속으로 다시 걸리지 않게 한다(-1 = 없음).
+  gazeTargetId: number;
+  // 「돋는 새살」이 돌려줄 남은 기운. 상처가 아무는 동안(woundTicks) 조금씩 돌아오고, 아물면 사라진다.
+  pendingRegen: number;
+  // 「죽지 않는 것」을 이미 썼는가(한 개체에 한 번뿐).
+  revived: boolean;
+  // 「꼬리 자르기」를 이미 썼는가(한 개체에 한 번뿐 · 쓴 뒤로는 걸음이 줄어든 채 산다).
+  tailUsed: boolean;
+  // 「열병의 흉터」로 돌림병을 앓아 넘겼는가(남은 평생 새끼를 못 친다).
+  feverScarred: boolean;
 }
 
 export function createEntity(
@@ -104,5 +121,12 @@ export function createEntity(
     raidCounterCd: 0,
     fleeing: false,
     neighbors: 1,
+    limpTicks: 0,
+    frozenTicks: 0,
+    gazeTargetId: -1,
+    pendingRegen: 0,
+    revived: false,
+    tailUsed: false,
+    feverScarred: false,
   };
 }
