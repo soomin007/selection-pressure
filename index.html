@@ -33,12 +33,15 @@
         touch-action: none;
         -webkit-tap-highlight-color: transparent;
       }
-      /* 캔버스가 창 전체를 실제 픽셀로 채운다. 레터박스는 PixiJS 가 배경색으로 처리. */
+      /* 캔버스가 창 전체를 실제 픽셀로 채운다. 레터박스는 PixiJS 가 배경색으로 처리.
+         touch-action 은 상속이 아니라서 body 에만 두면 캔버스에서 시작한 제스처가 샐 수 있다 —
+         핀치 줌(화면 늘어남·오른쪽 잘림, 2026-08-12 제보)을 막는 쪽에 명시로 한 겹 더 둔다. */
       #app,
       #app > canvas {
         display: block;
         width: 100%;
         height: 100%;
+        touch-action: none;
       }
     </style>
   </head>

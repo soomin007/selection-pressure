@@ -704,6 +704,22 @@ describe("라운드 시험과 혈통의 불씨", () => {
     }
   });
 
+  it("시험의 자리·표식은 단계가 바뀌면 세계에서 걷힌다(보스·대멸종 단계에 안 남는다)", () => {
+    // 2026-08-12 **[사용자]** 제보: 모으기(자리 지키기) 시험 뒤 폭염이 오는데 원이 안 사라졌다.
+    // 원인: beginStage 의 채집 가지만 armTrial 을 불러, 보스·대멸종 가지는 세계의 자리·표식을
+    // 안 걷었다. 불변식: 지금 시험이 hold 가 아니면 원이 없어야 하고, mark 가 아니면 표식이 없어야 한다.
+    const g = startWithTrialKind("trial-clear", "hold");
+    expect(g.world.trialZone).not.toBeNull();
+    const p = g as unknown as GamePriv;
+    for (let i = 0; i < 6 && g.result === null; i++) {
+      p.finishStage(true);
+      let guard = 0;
+      while (g.phase === "draft" && guard++ < 8) g.pickCard(0);
+      if (g.trial?.kind !== "hold") expect(g.world.trialZone, `단계 ${i}`).toBeNull();
+      if (g.trial?.kind !== "mark") expect(g.world.trialMarks.length, `단계 ${i}`).toBe(0);
+    }
+  });
+
   it("이빨 0단(순수 초식)에게는 사냥이 걸리는 시험이 아예 안 뜬다", () => {
     // **[사용자 2026-08-06]** 「초식 거인 경로는 반드시 만든다」가 이 한 줄에 걸려 있다.
     // 사냥 효율이 정확히 0 인데 사냥 시험을 내면 그건 판정이 아니라 사형 선고다(불씨는 다섯뿐).

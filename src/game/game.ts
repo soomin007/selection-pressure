@@ -1826,6 +1826,10 @@ export class Game {
     this.orderCd.clear(); // 명령 쿨타임은 라운드 경계에서 씻는다(라운드 시작에 손이 묶여 있으면 답답하다)
     this.world.resetRoundCounts(); // 새 단계 = 시험 계수 리셋 (뜻은 clearStageState 가 이미 거뒀다)
     this.currentTrial = null;
+    // 세계에 찍힌 지난 시험(자리 원·금빛 표식)도 **모든 갈래가** 여기서 걷는다. 채집 가지만
+    // armTrial 을 부르던 시절엔 보스·대멸종 단계에 지난 원이 그대로 남았다(2026-08-12 **[사용자]**
+    // 제보: 모으기 시험 뒤 폭염에서 원이 안 사라짐). armTrial(null) 은 지우기만 한다(rng 불변).
+    this.armTrial(null);
     this.lastVerdictValue = null; // 새 라운드가 시작되면 지난 판정은 지운다
     this.phase = "watch";
     this.acc = 0;

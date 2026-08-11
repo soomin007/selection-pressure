@@ -236,6 +236,31 @@ async function boot(): Promise<void> {
     vv.addEventListener("scroll", refit);
   }
 
+  // ── 폰에서 화면이 가로로 ~1.5배 늘고 오른쪽 1/3 이 잘린 채 유지 (2026-08-12 · **[사용자]** 제보) ──
+  //
+  // 유력한 두 원인을 함께 막는다. **⚠ 재현은 못 했다** — 증상과 정확히 맞고 막는 비용이 작아 넣는다
+  // (위 2026-08-10 검은 띠 수정과 같은 성격). 폰에서 또 나오면 이 둘이 아니라는 뜻이다.
+  //
+  // ① **iOS Safari 의 핀치 페이지 줌.** viewport meta 의 user-scalable=no 를 iOS 는 접근성 정책으로
+  //    무시한다. 이 게임은 두 손가락 팬이 훔쳐보기 제스처라 핀치 오발이 쉬운데, 페이지가 줌되면
+  //    정확히 「가로로 늘고 오른쪽이 잘린」 화면이 되고 **되돌리는 핀치를 하기 전엔 저절로 안 낫는다.**
+  //    WebKit 전용 gesture 이벤트를 막으면 페이지 줌 자체가 안 걸린다(안드로이드는 meta 가 이미 막는다).
+  const blockGesture = (ev: Event): void => ev.preventDefault();
+  document.addEventListener("gesturestart", blockGesture);
+  document.addEventListener("gesturechange", blockGesture);
+  // ② **resize 이벤트를 놓친 캔버스.** 회전(가로→세로) 직후 이벤트가 안 오면 캔버스가 가로 크기로
+  //    영영 남는다 — autoDensity 가 박은 인라인 px 가 뷰포트보다 넓으면 오른쪽이 잘린다. 0.5초마다
+  //    렌더 크기와 창 크기를 비교해 어긋나 있으면 강제로 다시 맞춘다(맞을 땐 아무 일도 안 해 공짜).
+  //    핀치 줌은 window.innerWidth 가 안 변하므로 이 감시가 줌과 싸우지는 않는다(①이 담당).
+  window.setInterval(() => {
+    if (
+      Math.abs(app.screen.width - window.innerWidth) > 1 ||
+      Math.abs(app.screen.height - window.innerHeight) > 1
+    ) {
+      app.resize();
+    }
+  }, 500);
+
   // 월드는 비율 맞춰 스케일·중앙배치. HUD 는 스케일 밖(화면 픽셀)이라 글자가 선명. logical(=layout)을 참조로
   // 넘겨 fit() 이 매번 최신 논리 크기를 읽는다 — 아래 relayout 이 화면 비율에 맞춰 갱신하면 레터박스가 안 남는다.
   const root = new Container();
