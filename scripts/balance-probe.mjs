@@ -144,9 +144,12 @@ const { voiceRadius, vacuumTicks } = await server.ssrLoadModule("/src/sim/herdOr
 const { defaultGenome, refreshDerived, genomeFromPips, TRAIT_LABELS } = await server.ssrLoadModule("/src/sim/genome.ts");
 // v8 — 성장은 형질 숫자가 아니라 **도장과 티어**로 잰다. 이 모듈이 그 단일 진실이다.
 const {
-  CATEGORIES, CATEGORY_LABELS, TIER_STEPS, MAX_TIER, tiersOf, tierSum, activeDuos,
+  CATEGORIES, CATEGORY_LABELS, TIER_STEPS, MAX_TIER, tiersOf, tierSum,
   emptyPips, emptyKeys,
 } = await server.ssrLoadModule("/src/sim/tiers.ts");
+// 듀오는 「열림」(activeDuos=openDuos · 도장)과 「가짐」(ownedDuos · 고른 카드)이 다르다(2026-08-10).
+// growth 표의 「듀오」는 가진 것을 세야 한다 · 열림을 세면 카드를 안 골라도 센다(과대집계 · 2026-08-11 수정).
+const { ownedDuos } = await server.ssrLoadModule("/src/sim/perks.ts");
 // v9 · 카드는 **도장을 안 준다**(특성과 열쇠만 준다 · `game/cards.ts` 파일 머리).
 // ⚠ `ssrLoadModule` 은 **없는 export 를 조용히 `undefined` 로 준다.** 그래서 지워진 함수를 여기에
 //   적어 두면 import 는 통과하고 **한참 뒤 실행 중에 TypeError 로 죽는다**(2026-08-10 에 세 모드가
@@ -867,8 +870,10 @@ async function runReplay() {
 
 /** 디코드된 판 하나를 되살려 기록과 한 줄씩 대조한다(사람 판·자가 검사가 같은 자리를 쓴다). */
 function replayAgainst(dec, label) {
+  // ⚠ decodeRunCode 는 실패를 { ok:false, error } 로 준다 · `reason` 칸은 없다(2026-08-11 수정 ·
+  //   전에는 늘 「(이유 없음)」이 찍혀 무엇이 잘못됐는지 알 수 없었다).
   if (dec.ok !== true) {
-    console.error(`이 코드를 못 읽습니다: ${dec.reason ?? "(이유 없음)"}`);
+    console.error(`이 코드를 못 읽습니다: ${dec.error ?? "(이유 없음)"}`);
     process.exitCode = 1;
     return;
   }
@@ -1766,7 +1771,9 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
       r.tierSum = tierSum(game.pipsNow);
       r.geneBank = game.geneBank; // 안 쓰고 쌓아 둔 방울 · 「이 자가 성장을 안 굴린다」의 증거
       r.pips = { ...game.pipsNow };
-      r.duos = activeDuos(game.pipsNow).length;
+      // 「가진 듀오」를 센다 · 열린 듀오(activeDuos=openDuos)를 세면 카드를 안 골라도 세어
+      // 표가 과대집계된다(v9 · 듀오는 카드다). 2026-08-11 수정.
+      r.duos = ownedDuos(game.genome.perks).length;
       if (game.result === "win" && !game.isFinalEra) {
         closeWorldDrops(); // ⚠ 세계를 갈아 끼우기 **전에** 이 시대의 방울 결산을 뜬다
         game.continueToNextEra();
