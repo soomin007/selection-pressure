@@ -396,20 +396,25 @@ describe("명령이 닿는 거리 — 무리 티어가 넓힌다", () => {
   });
 
   it("흩어진 무리에서는 목소리가 좁을수록 듣는 개체가 적다(반경이 실제 게이트다)", () => {
-    // 시작 무리는 한 덩어리라 260px 안에 다 들어간다 — 그 상태로 재면 반경 차이가 안 드러난다.
-    // 그래서 **무리를 실제로 흩뜨린 뒤** 잰다. 이게 무리가 커졌을 때의 실제 모습이기도 하다.
+    // ⚠ 2026-08-12 순종 처방 ①(티어 0 목소리 260 → 520)로 이 시험의 무대를 옮겼다. 폰 한 화면
+    // 크기(540x960 · 대각 1100px)에서는 520 이 6배로 흩뜨린 무리까지 다 덮어 근/원 차이가 안
+    // 드러난다. **그게 처방의 의도다**(첫 시대 = 한 화면 세계에서는 티어 0 도 거의 다 듣는다).
+    // 반경이 게이트로 읽히는 것은 **세계가 커진 뒤**이므로, 여기서는 두 배 세계(1080x1920 ·
+    // 실제 후기 시대 치수)에서 무리를 열두 배로 벌려 잰다.
+    const W2 = W * 2;
+    const H2 = H * 2;
     const target = { x: 60, y: 900 };
     const heardWith = (voice: number): number => {
-      const w = new World("order-reach", W, H, tune({ herding: 40 }));
+      const w = new World("order-reach", W2, H2, tune({ herding: 40 }));
       w.voiceR = voice;
       w.armLead();
-      // 알파를 축으로 무리를 여섯 배로 벌린다(같은 시드 = 두 판의 배치가 완전히 같다).
+      // 알파를 축으로 무리를 벌린다(같은 시드 = 두 판의 배치가 완전히 같다).
       const ax = w.lead.x;
       const ay = w.lead.y;
       for (const e of w.entities) {
         if (!e.species.isPlayer || e.id === w.lead.leaderId) continue;
-        e.x = Math.max(2, Math.min(W - 2, ax + (e.x - ax) * 6));
-        e.y = Math.max(2, Math.min(H - 2, ay + (e.y - ay) * 6));
+        e.x = Math.max(2, Math.min(W2 - 2, ax + (e.x - ax) * 12));
+        e.y = Math.max(2, Math.min(H2 - 2, ay + (e.y - ay) * 12));
       }
       w.herdOrder = target;
       w.step();
@@ -828,8 +833,12 @@ describe("방울 우선 · 닿을 수 없는 방울은 안 고른다", () => {
       stalledWith += withDrop.stalled;
     }
     // 고치기 전 실측: 생존 합 1(0/1/0/0) · 정지 합 10169. 고친 뒤: 16(3/10/3/0) · 227.
+    // (재기준선 이력) 2026-08-12 순종 처방 셋(목소리 520 · 「가는 길 먹이」 예외 제거 · 스침 채집
+    // 30px) 뒤 정지 합 1401. 옛 세계는 행군이 먹이로 늘 새서 다들 걸어 다녔고, 지금은 도착한
+    // 무리가 감속 링 안에서 실제로 **자리를 지키고 선다**(순종 17 → 72%의 자연스러운 뒷면).
+    // 벽 박힘 병리(10169)와는 자릿수가 다르다 · 문턱은 그 병리만 다시 잡게 3000 으로 올렸다.
     expect(aliveWith).toBeGreaterThan(8);
-    expect(stalledWith).toBeLessThan(1000);
+    expect(stalledWith).toBeLessThan(3000);
   });
 
   it("길이 있는 방울은 여전히 고른다 · 직선(같은 판·벽 없음)", () => {

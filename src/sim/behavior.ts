@@ -1015,21 +1015,20 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 밀린다(known_issues 의 "쌍둥이" 함정). 여기서는 결과값 desired 만 섞는다. 지시가 없으면(null)
   // 이 블록은 통째로 안 돌아, 명령을 한 번도 안 준 세계는 기존과 부동소수점까지 같다.
   //
-  // 우선순위: 도망 > 사냥감 추적 > (가는 길·코앞의) 먹이 > **지시** > 배회.
-  // ⚠ 단 **해제 반경(releaseRadius, 개체 단위) 밖에서는 지시가 그 밖의 먹이를 이긴다.** 예전 조건은
-  //   targetFood/targetPrey 가 하나라도 있으면 지시를 통째로 무시했는데, 먹이를 쫓는 것은 예외적
-  //   사정이 아니라 **기본 상태**다(실측: 개체틱의 72.1%). 그래서 순종률이 7.5% 였고 사용자가
-  //   "내 말을 듣는다는 느낌이 전혀 안 든다"고 했다. herdOrder.ts 가 스스로 정한 마지막 선
-  //   "방향은 반드시 따른다"를 코드가 못 지키고 있던 것이다.
-  //
-  // "가는 길" 예외는 남긴다 · 목표가 지시 쪽(내적 ≥ 0)이고 지시점보다 가까우면 그것부터 먹고 간다.
-  // 순수 기하라 rng 를 한 번도 안 쓴다(스트림 불변).
+  // 우선순위: 도망 > 사냥감 추적 > 방울 > **지시** > 배회. 먹이는 이제 이동을 못 가져간다.
+  // 행군 중에는 **발밑을 스치며 먹는다**(아래 섭취 블록의 스침 채집 · 걸음은 안 바꾼다).
+  // ⚠ 예전 조건은 targetFood/targetPrey 가 하나라도 있으면 지시를 통째로 무시했는데, 먹이를 쫓는
+  //   것은 예외적 사정이 아니라 **기본 상태**다(실측: 개체틱의 72.1%). 그래서 순종률이 7.5% 였고
+  //   사용자가 "내 말을 듣는다는 느낌이 전혀 안 든다"고 했다.
+  // ⚠ 그 뒤에 남겨 뒀던 「가는 길 먹이」 예외(지시 쪽·코앞이면 그것부터 먹고 간다)도 2026-08-12 에
+  //   걷어냈다 · 그 예외 하나가 순종률을 30.8%p 새게 했다(2026-08-08 실측 · 처방 셋의 ② ·
+  //   backlog 5번). 굶주림 보전은 예외 부활이 아니라 **스침 채집**이 맡는다(같은 처방의 ③).
   //
   // ★ chooseGoal 은 한 글자도 안 건드린다 · targetFood 는 그대로 세팅해 두고 **이동 벡터만** 덮는다.
-  //   먹기는 근접(eatRadius) 판정이라 행진 중 지나치는 먹이는 자동으로 먹힌다(아래 섭취 블록).
+  //   순수 기하라 rng 를 한 번도 안 쓴다(스트림 불변).
   //
   // ★ **목소리가 닿는 데까지만 간다** (**[사용자 2026-08-06]** 확정). 명령은 알파에서 이 거리 안의
-  //   개체에게만 걸리고, 그 거리를 **무리 티어가 넓힌다**(260px → 4000px · 열쇠 「부름」이면 ×1.6).
+  //   개체에게만 걸리고, 그 거리를 **무리 티어가 넓힌다**(520px → 4000px · 열쇠 「부름」이면 ×1.6).
   //   그래서 무리를 안 판 종은 소수를 직접 데리고 다니는 손맛, 무리를 판 종은 대군을 한 번에 움직이는
   //   맛이 된다 — **같은 게임에서 조작 감각이 둘로 갈린다.**
   //   ⚠ 반경이 0 이하면(알파 없음·지휘 공백) 이 블록이 통째로 안 돈다 = 명령이 아예 안 통한다.
@@ -1128,35 +1127,26 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
             x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
             y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
           };
-        } else if (!reached) {
-          // 쫓던 먹이가 "가는 길"에 있나 · 있으면 그것부터 먹고 간다(배고픈 개체는 지나치지 못한다).
-          // 가는 길 = 지시 쪽(내적 ≥ 0)이고 지시점보다 가깝다. 여기에 **코앞(grabRadius)** 을 더한다 ·
-          // 방향 조건만 두면 등 뒤의 먹이가 매 틱 버려져 행군 중엔 거의 못 먹는다.
-          const food = e.targetFood;
-          let onTheWay = false;
-          if (!hunting && food !== null) {
-            const gdx = food.x - e.x;
-            const gdy = food.y - e.y;
-            const gd2 = gdx * gdx + gdy * gdy;
-            onTheWay = gd2 <= ORDER.grabRadius * ORDER.grabRadius || (gd2 < od2 && gdx * odx + gdy * ody >= 0);
-          }
-          if (!hunting && !onTheWay) {
-            // 격자 길찾기를 태운다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러지기만 한다
-            // (known_issues "반응형 벽 회피는 진동을 만든다 · 격자 BFS 가 정답").
-            // 도착 감속도 해제 반경 기준이다 · 게이트가 200 이던 시절엔 min(1, d/200)=1 이 항상 참이라
-            // 죽은 코드였고, 게이트를 64 로 줄이면서 처음 살아났다(문턱 근처에서 지나침·진동 방지).
-            const nav = navTo(e, world, { x: order.x, y: order.y }, canSwim, canLand, canFly);
-            const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? ORDER.releaseRadius : 0);
-            desired = {
-              x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
-              y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
-            };
-            // 순종의 질을 화면에 보여 주는 숫자는 **여기서**, 규칙이 판정된 그 자리에서 센다.
-            // 밖에서 조건을 다시 유도하면 화면과 실제가 갈린다(known_issues).
-            // 세는 것은 **지시가 이번 틱 이동을 가져간 개체**뿐이다 · 가는 길의 먹이로 잠깐 새는 개체는
-            // 안 센다(그건 지시가 아니라 천성이 모는 것이라, 세면 순종이 부풀어 화면이 거짓말한다).
-            world.orderFollowers += 1;
-          }
+        } else if (!reached && !hunting) {
+          // 「가는 길 먹이」 예외(지시 쪽·코앞이면 그것부터 먹고 간다)는 여기 있다가 2026-08-12 에
+          // 걷어냈다 · 그 예외 하나가 순종률을 30.8%p 새게 했다(2026-08-08 실측 · 처방 ②).
+          // 굶주림 보전은 예외 부활이 아니라 아래 섭취 블록의 **스침 채집**(처방 ③)이 맡는다.
+          //
+          // 격자 길찾기를 태운다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러지기만 한다
+          // (known_issues "반응형 벽 회피는 진동을 만든다 · 격자 BFS 가 정답").
+          // 도착 감속도 해제 반경 기준이다 · 게이트가 200 이던 시절엔 min(1, d/200)=1 이 항상 참이라
+          // 죽은 코드였고, 게이트를 64 로 줄이면서 처음 살아났다(문턱 근처에서 지나침·진동 방지).
+          const nav = navTo(e, world, { x: order.x, y: order.y }, canSwim, canLand, canFly);
+          const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? ORDER.releaseRadius : 0);
+          desired = {
+            x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
+            y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
+          };
+          // 순종의 질을 화면에 보여 주는 숫자는 **여기서**, 규칙이 판정된 그 자리에서 센다.
+          // 밖에서 조건을 다시 유도하면 화면과 실제가 갈린다(known_issues).
+          // 세는 것은 **지시가 이번 틱 이동을 가져간 개체**뿐이다 · 방울로 잠깐 새는 개체는 안 센다
+          // (그건 지시가 아니라 방울이 모는 것이라, 세면 순종이 부풀어 화면이 거짓말한다).
+          world.orderFollowers += 1;
         }
       }
     }
@@ -1264,11 +1254,27 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     if (dx * dx + dy * dy <= atkRange * atkRange && e.attackCd <= 0) {
       resolveBite(e, prey, world, t.ranged >= SIM.rangedThreshold);
     }
-  } else if (!fleeing && e.targetFood && e.targetFood.available) {
-    const food = e.targetFood;
-    const dx = food.x - e.x;
-    const dy = food.y - e.y;
-    if (dx * dx + dy * dy <= SIM.eatRadius * SIM.eatRadius) {
+  } else if (!fleeing) {
+    // 무엇을 먹는가: 평소에는 **쫓던 목표**(targetFood)뿐이다. 지시 행군 중에는 거기에 **발밑의
+    // 아무 먹이**가 더해진다 · 스침 채집(2026-08-12 · 순종 처방 ③ · backlog 5번). 「가는 길 먹이」
+    // 예외를 걷어내(처방 ②) 행군이 먹이로 새지 않는 대신, 걸음을 안 바꾸고 지나치며 먹는다.
+    //  · 게이트가 지시 이동 블록과 같은 재료다(order · isPlayer · inVoice) → **지시 없는 세계와
+    //    야생종은 1비트도 안 바뀐다**(쫓던 목표 경로가 원래 조건 그대로 먼저 돈다).
+    //  · canGraze 게이트: 채집 자격은 평소 규칙 그대로다(극단 육식은 스쳐도 못 먹는다).
+    //  · FoodGrid.nearest 는 순수 탐색(rng 0) · 먹이 위치 불변 · 순회 순서 고정이라 결정론 안전.
+    //  · 시야·부채꼴을 안 묻는 것이 핵심이다: 행군 중 targetFood 는 대개 등 뒤나 옆에 있어
+    //    eatRadius 에 안 걸린다. 스침은 「밟았으면 먹는다」다(방울 줍기 GENE_PICK_RADIUS 와 같은 결).
+    const chased = e.targetFood;
+    let food: Food | null = null;
+    if (chased !== null && chased.available) {
+      const dx = chased.x - e.x;
+      const dy = chased.y - e.y;
+      if (dx * dx + dy * dy <= SIM.eatRadius * SIM.eatRadius) food = chased;
+    }
+    if (food === null && order !== null && order.kind !== "evade" && e.species.isPlayer && inVoice && canGraze) {
+      food = world.foodGrid.nearest(e.x, e.y, ORDER.brushRadius, (f) => f.available);
+    }
+    if (food !== null) {
       if (food.mountainous) {
         // 산 보물 — 에너지 만땅 + 동족 여럿 즉시 태어남(무리가 확 불어나는 대박). 희소한 보상(날개 종만).
         e.energy = SIM.maxEnergy;
