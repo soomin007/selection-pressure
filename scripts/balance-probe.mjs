@@ -106,8 +106,20 @@ globalThis.localStorage = {
   removeItem: (k) => void memStore.delete(k),
   clear: () => memStore.clear(),
 };
-/** 이 판을 시작하기 전 저장본을 이 상태로 맞춘다(런마다 반드시 다시 부른다 · endRun 이 값을 늘린다). */
+/**
+ * 이 판을 시작하기 전 저장본을 이 상태로 맞춘다(런마다 반드시 다시 부른다 · endRun 이 값을 늘린다).
+ *
+ * **업적 캐시도 여기서 함께 지운다(2026-08-12 근본 수리).** `achievements.ts` 의 모듈 수준
+ * `unlockedCache` 는 localStorage 보다 먼저 보는 진실이라, 저장본만 갈아 끼우면 같은 프로세스의
+ * 앞 런이 연 업적(해금 카드 풀)이 뒤 런으로 샌다 · econ 표 10셀 중 8셀을 거짓으로 만들었던 그
+ * 오염이다(known_issues 2026-08-09 · `ORDER.geneRadius` 주석의 전말).
+ * ⚠ 이 수리로 **옛 econ·growth 수치는 전부 기준선 자격을 잃는다**(그만큼 오염돼 있었다는 뜻) ·
+ *   재측정과 한 몸으로 커밋하라(backlog 의 그 항목이 이 줄로 닫힌다).
+ * ⚠ 쉼표 스윕(`--generadius=0,160`)도 이제 묶음 사이가 새지 않는다 · 다만 「인자마다 별도
+ *   프로세스」 습관은 그대로 두는 것이 안전하다(다음에 또 다른 모듈 상태가 생길 수 있다).
+ */
 function setSavedProgress(runsCompleted, metaXp) {
+  debugResetAchievements();
   memStore.clear();
   memStore.set(
     "selpress_meta_v1",
@@ -819,8 +831,7 @@ async function runReplay() {
   if (args.includes("--selftest")) {
     const HANDS = args.includes("--hands");
     console.log(`# replay --selftest · ${HANDS ? "손을 붙인" : "손이 안 붙은"} 판을 굴려 코드를 뽑고, 그 코드로 되살려 대조한다`);
-    debugResetAchievements();
-    setSavedProgress(0, 0);
+    setSavedProgress(0, 0); // 업적 캐시 리셋 포함(함수 주석 참조)
     const g0 = new Game(MOBILE.width, MOBILE.height);
     g0.assistEnabled = false;
     g0.leadEnabled = true;
@@ -898,11 +909,8 @@ function replayAgainst(dec, label) {
   }
 
   // --- 축을 코드에서 읽어 그대로 심는다 ---
-  // ⚠ **업적 캐시를 반드시 먼저 비운다.** `achievements.ts` 의 unlockedCache 는 모듈 수명이라
-  //   같은 프로세스에서 판을 두 번 굴리면 앞 판이 연 카드가 뒤 판의 드래프트 풀에 남는다
-  //   (2026-08-09 known_issues). 그러면 재생이 **원래 판에 없던 카드**를 후보로 받아, 어긋남이
-  //   「게임과 프로브의 차이」가 아니라 프로브 자신이 만든 오염이 된다.
-  debugResetAchievements();
+  // 업적 캐시 리셋은 setSavedProgress 안에 있다(2026-08-12 근본 수리 · 함수 주석 참조) ·
+  // 앞 판이 연 카드가 뒤 판의 드래프트 풀에 남던 오염(2026-08-09 known_issues)이 그 자리에서 막힌다.
   setSavedProgress(h.runsDone, xpForLevelStart(h.metaLevel));
   const game = new Game(MOBILE.width, MOBILE.height);
   game.assistEnabled = h.assistEnabled;
@@ -2133,10 +2141,12 @@ async function runEcon() {
   //   교차 확인: `--generadius=80,80` 은 두 행이 서로도 단독과도 완전히 같다(= 스윕이라서 틀리는 게
   //   아니라, 앞 묶음이 **업적을 열었을 때만** 틀린다). 실제로 이 스윕은 표3 의 10셀 중 8셀을 거짓으로
   //   만들었고, 그 값이 한동안 `ORDER.geneRadius` 주석에 실려 있었다(2026-08-09 에 걷어냈다).
-  //   ⚠ 표1·표2 도 같은 오염을 탄다(스윕이면 마지막 반경의 판만 담기는데, 그 판이 이미 오염돼 있다).
+  //   ⚠ 표1·표2 도 같은 오염을 탔다(스윕이면 마지막 반경의 판만 담기는데, 그 판이 이미 오염돼 있었다).
   //
-  //   그래도 스윕을 안 지우는 이유: 이 오염을 재현하는 유일한 경로가 이것이고, 고침(캐시를 지우는
-  //   것은 `achievements.ts` 쪽 일이라 별건이다)이 들어왔는지 확인하려면 다시 돌려 봐야 한다.
+  //   **(2026-08-12) 근본 수리가 들어왔다** · `setSavedProgress` 가 업적 캐시까지 지운다(함수 주석).
+  //   교차 확인(`--seeds=4 --drive` · 순종 처방 이후 세계): `0,160` 스윕의 160 행 = 단독 160 과
+  //   전 셀 일치. 그래도 「밸런스 값은 인자마다 별도 프로세스」 습관은 유지하라(위 ⚠⚠ 그대로) ·
+  //   다음에 또 다른 모듈 수준 상태가 생기면 같은 자리가 다시 샌다.
   const radii = opt("generadius", "") === "" ? [null] : opt("generadius", "").split(",").map(Number);
   // ⚠ **첫 판에 실제로 고를 수 있는 갈래만** 태운다(runGrowth 와 같은 처리). 잠긴 갈래를 넣으면
   //   playFullRun 의 `want >= 0 ? want : 0` 이 첫 카드로 떨어져 **전부 같은 판을 돌린다** — 처음엔
