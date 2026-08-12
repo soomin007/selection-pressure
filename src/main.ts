@@ -1507,7 +1507,12 @@ async function boot(): Promise<void> {
     const mmFlag = minimap.container.visible ? "on" : "off";
     if (document.body.dataset["minimap"] !== mmFlag) document.body.dataset["minimap"] = mmFlag;
     if (minimap.container.visible) {
-      minimap.sync(game.world, camX, camY, camZoom, layout.width, layout.height);
+      // ⚠ camX/camY(추종 상태)가 아니라 **화면에 실제로 반영된** 카메라(view.cameraCenter · 맵 안으로
+      //   잘린 값)를 넘긴다. 화면은 setCamera 가 맵 밖을 안 보여 주는데 미니맵이 자르기 전 값을 그리면,
+      //   가장자리에서 하얀 네모만 맵 밖으로 계속 흘러 나간다([사용자 2026-08-12] 폰 제보 · 시대 3 축소).
+      //   위 updateCamera(1498)가 이 프레임의 setCamera 를 이미 끝냈으므로 낡은 값이 아니다.
+      const cam = view.cameraCenter();
+      minimap.sync(game.world, cam.x, cam.y, cam.zoom, layout.width, layout.height);
       minimap.place(app.screen.width, app.screen.height);
     }
     detectEvents(raidFighters);
