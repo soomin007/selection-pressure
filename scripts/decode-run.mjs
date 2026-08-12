@@ -76,13 +76,14 @@ const RARITY_LABEL = {
   legendary: "전설",
 };
 const EXTINCTION_LABEL = { cold: "혹독한 추위", famine: "대가뭄", heat: "폭염", plague: "대역병" };
+// 게임 어휘와 함께 간다(2026-08-12 [사용자] 어휘 지시 · 시험/합격은 학사 어휘라 금지 → 시련/넘음).
 const TRIAL_LABEL = {
   hunt: "사냥",
   feed: "먹이",
   birth: "새끼",
   pop: "무리",
   hold: "표시된 자리",
-  mark: "표식 사냥",
+  mark: "금빛 짐승 잡기",
 };
 const DRAFT_KIND_LABEL = { preset: "시작 갈래", level: "레벨업", era: "시대 보상" };
 const END_LABEL = {
@@ -172,8 +173,8 @@ for (const e of data.entries) {
     if (e.extinction) bits.push(`${EXTINCTION_LABEL[e.extinction] ?? e.extinction}`);
     if (e.trial) {
       const t = e.trial;
-      const verdict = t.passed ? (t.overachieved ? "합격(초과 · 불씨 +1)" : "합격") : "불합격(불씨 −1)";
-      bits.push(`시험 ${TRIAL_LABEL[t.kind] ?? t.kind} ${t.progress}/${t.target} ${verdict}`);
+      const verdict = t.passed ? (t.overachieved ? "크게 넘음(불씨 +1)" : "넘음") : "못 넘음(불씨 −1)";
+      bits.push(`시련 ${TRIAL_LABEL[t.kind] ?? t.kind} ${t.progress}/${t.target} ${verdict}`);
     }
     bits.push(`끝 개체 ${e.pop}`);
     if (!e.passed) bits.push("관문 실패");

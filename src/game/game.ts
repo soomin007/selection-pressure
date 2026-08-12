@@ -1210,7 +1210,7 @@ export class Game {
       const bt = kind as BossType;
       this.stageThreat = bt; // 소환도 진짜 단계와 같은 상태를 만든다(분석 기록도 같은 값을 본다)
       this.world.boss = createBoss(bt, this.world.width, this.world.height, this.world.terrain, diff, true); // 레이드 첫 시대부터
-      this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
+      this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "재앙"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협. ${bossPreview(bt)}`;
       this.threatText = `지금 위협 「${bossName(bt)}」 · ${bossCounter(bt)}`;
     } else {
@@ -1865,7 +1865,7 @@ export class Game {
       //   보스가 맵 밖에 태어나 아무 일도 안 일어난다.
       this.world.boss = createBoss(bt, this.world.width, this.world.height, this.world.terrain, diff, true);
       // 개체형(쫓아오는 개체)은 "보스", 전역 재난은 "시련"으로 부른다(시각·로직과 일치).
-      this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "시련"} · ${bossName(bt)}`;
+      this.stageLabel = `${isPredatorBoss(bt) ? "보스" : "재앙"} · ${bossName(bt)}`;
       this.preview = `다가오는 위협. ${bossPreview(bt)}${survivalLine(bossPassNeeded(this.era), isPredatorBoss(bt))}`;
       // 드래프트가 화면을 덮어도 무엇과 싸우는 중인지 보이게, 대응 힌트만 짧게 붙들어 둔다.
       // 전문(preview)은 배너가 이미 띄웠고, 카드 고르는 자리에서 필요한 건 "무엇을 키워야 하나"다.
@@ -2401,7 +2401,7 @@ export class Game {
       return "대멸종을 견뎌내고 정점에 올랐습니다. 더 험한 다음 시대로 나아갈 수 있습니다.";
     }
     if (this.loseReason === "embers")
-      return "혈통의 불씨가 꺼졌습니다. 시험에 거듭 져 남은 기회를 모두 잃었습니다.";
+      return "혈통의 불씨가 꺼졌습니다. 시련에 거듭 져 남은 기회를 모두 잃었습니다.";
     const kind = this.currentKind();
     if (kind === "boss") return `${this.stageLabel} 관문을 넘지 못했습니다.`;
     if (kind === "extinction") return "대멸종을 견디지 못했습니다.";

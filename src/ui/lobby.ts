@@ -83,7 +83,7 @@ export function createLobby(
   hint.className = "lobby-hint";
   // 첫 화면은 지금 게임을 소개해야 한다. 예전 문구("무리가 살아남는 것을 지켜보세요")는 조작이 없던
   // 관전형 시절의 것이라, 탭으로 이끄는 지금 게임과 어긋나 있었다(2026-08-03 정정).
-  hint.textContent = "탭으로 우두머리를 이끌고, 라운드마다 주어지는 시험을 통과하세요.";
+  hint.textContent = "탭으로 우두머리를 이끌고, 라운드마다 닥치는 시련을 넘으세요.";
 
   // 꾸밈 고르기 — 재사용 컴포넌트. 하나도 안 열렸으면 스스로 숨는다(첫 판 화면을 안 어지럽힌다).
   const cosmetics = createCosmeticPicker(onCosmetic);

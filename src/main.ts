@@ -635,10 +635,10 @@ async function boot(): Promise<void> {
     const t = game.trial;
     if (t)
       return game.trialLocked
-        ? `이번 시험: ${t.label} · 합격 확정`
-        : `이번 시험: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`;
+        ? `이번 시련: ${t.label} · 이미 넘었습니다`
+        : `이번 시련: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`;
     const nt = game.upcomingTrial;
-    return nt ? `다음 시험: ${nt.label}` : "";
+    return nt ? `다음 시련: ${nt.label}` : "";
   }
   // 라운드 시험 판정 플래시: 합격은 라임, 불합격은 호박에 이유(진행/목표)와 대가(불씨)를 한 줄로.
   const TRIAL_WORD: Record<TrialKind, string> = {
@@ -650,20 +650,24 @@ async function boot(): Promise<void> {
     mark: "금빛 짐승 잡기",
   };
   // priority=true: 같은 프레임에 다음 단계(보스) 등장 플래시가 이어져도 판정이 덮이지 않고 끝까지 보인다.
-  /** 판정 한 줄 · 화면 플래시와 카드창 제목이 **같은 문구**를 쓴다(둘이 갈리면 화면이 거짓말한다). */
+  /** 판정 한 줄 · 화면 플래시와 카드창 제목이 **같은 문구**를 쓴다(둘이 갈리면 화면이 거짓말한다).
+   *  ⚠ 어휘는 살아남기의 말로 (**[사용자 2026-08-12]** "합격 확정은 수능이나 자격증 시험 같은
+   *  느낌" · 학사·행정 어휘 금지). 시련은 넘거나 넘지 못하는 것이다. */
   function verdictLine(v: TrialVerdict): string {
-    return v.passed
-      ? `시험 합격 · ${v.trial.label}`
-      : `시험 불합격 · ${TRIAL_WORD[v.trial.kind]} ${Math.min(v.progress, v.trial.target)}/${v.trial.target} · 불씨 하나가 꺼졌습니다`;
+    if (!v.passed)
+      return `시련을 넘지 못했습니다 · ${TRIAL_WORD[v.trial.kind]} ${Math.min(v.progress, v.trial.target)}/${v.trial.target} · 불씨 하나가 꺼졌습니다`;
+    return v.overachieved ? `시련을 크게 넘었습니다 · ${v.trial.label}` : `시련을 넘었습니다 · ${v.trial.label}`;
   }
   game.onTrialVerdict = (v) => {
+    // 넘는 순간에 이미 알렸으면(아래 onTrialLocked) 라운드 끝의 같은 말은 접는다 — 두 번 말하면
+    // 잔소리다. 크게 넘었을 때(불씨·방울)와 못 넘었을 때는 새 정보라 그대로 띄운다.
+    if (v.passed && game.trialLocked && !v.overachieved) return;
     highlights.flash(verdictLine(v), v.passed ? 0x8fd14f : 0xffba3a, true);
   };
-  // 조기 합격 확정 (**[사용자 2026-08-12]** "목표를 일찍 달성하면 바로 성공 판정") — 닿는 순간
-  // 그 자리에서 알린다. 판정 합격과 같은 라임 · priority 는 아니다(최종 판정이 아니라 확정 예고라,
-  // 보스 등장 같은 더 급한 플래시를 덮으면 안 된다).
+  // 시련을 넘는 그 순간 알린다 (**[사용자 2026-08-12]** "목표를 일찍 달성하면 바로 성공 판정") ·
+  // priority 는 아니다(보스 등장 같은 더 급한 플래시를 덮으면 안 된다).
   game.onTrialLocked = (t) => {
-    highlights.flash(`시험 합격 확정 · ${t.label}`, 0x8fd14f, false);
+    highlights.flash(`시련을 넘었습니다 · ${t.label}`, 0x8fd14f, false);
   };
   // 승리·정복·멸종 순간 연출 — 결과 패널 직전에 전역 화면 클라이맥스를 얹는다.
   const moment = createMomentOverlay();
@@ -1418,16 +1422,16 @@ async function boot(): Promise<void> {
         // 라운드 시험: "이번 16초가 답해야 할 질문"을 목표 줄로. 진행 숫자는 sim 계수기 그대로.
         // 기한(남은 시간)과 대가(불씨)를 나란히 둔다 · 시험이 걸린 판돈이 한눈에 읽혀야 한다.
         const t = game.trial;
-        // 합격이 확정되면(조기 판정) 숫자·기한 대신 확정을 말한다 — 「채웠는데 왜 아직 시키지」가 없게.
+        // 시련을 이미 넘었으면(조기 판정) 숫자·기한 대신 그 사실을 말한다 — 「채웠는데 왜 아직 시키지」가 없게.
         const locked = t !== null && game.trialLocked;
         goalText = t
           ? locked
-            ? `이번 시험: ${t.label} · 합격 확정`
-            : `이번 시험: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`
+            ? `이번 시련: ${t.label} · 넘었습니다`
+            : `이번 시련: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`
           : "무리를 먹여 키우세요";
         goalSub = t
           ? locked
-            ? `이번 시험은 통과했습니다 · 불씨 ${emberDots(game.embers)}`
+            ? `이 시련은 이미 넘었습니다 · 불씨 ${emberDots(game.embers)}`
             : `${game.secondsLeft}초 안에 채우세요 · 불씨 ${emberDots(game.embers)}`
           : left;
       }
@@ -1496,7 +1500,7 @@ async function boot(): Promise<void> {
         // priority: "불씨"의 유일한 첫 풀이라 레벨업·위협 플래시가 끼어들어도 끝까지 읽혀야 한다.
         // 기한을 먼저 말한다("시험에 기한이 있는지 알 수가 없다" 2026-08-03 사용자). 다만 이 배너는
         // 화면 한복판을 덮으므로 두 문장을 넘기지 않는다 · 길면 세계가 통째로 가린다.
-        highlights.flash("라운드가 끝날 때 시험을 판정합니다. 못 채우면 남은 기회(불씨)가 하나 꺼집니다.", 0xf0f8ff, true);
+        highlights.flash("라운드가 끝날 때 시련을 넘었는지 가립니다. 못 채우면 남은 기회(불씨)가 하나 꺼집니다.", 0xf0f8ff, true);
       }
     }
     // 내 형질 패널은 관전 중 + 칩이 켜져 있을 때만 — 드래프트는 전체 화면이라 그 아래 깔린 UI 가
@@ -1675,8 +1679,9 @@ async function boot(): Promise<void> {
     if (bossBannerTick >= 0 && w.tick > bossBannerTick && w.boss) {
       bossBannerTick = -1;
       const b = w.boss;
-      // 개체형=보스, 전역 재난=시련으로 알린다(시각·용어 일치).
-      const kind = isPredatorBoss(b.type) ? "보스" : "시련";
+      // 개체형=보스, 전역 재난=재앙으로 알린다(시각·용어 일치). ⚠ 「시련」은 라운드 시험의 새 이름이
+      // 됐다(**[사용자 2026-08-12]** 어휘 지시) · 재난이 그 말을 쓰면 두 시스템이 한 이름을 나눠 갖는다.
+      const kind = isPredatorBoss(b.type) ? "보스" : "재앙";
       // "이 판은 잡는 판인가 버티는 판인가"를 등장하는 그 순간에 정해 준다. 지금까지는 40초 내내
       // 같은 문구만 돌고 대응법이 한 번도 안 나왔다. ⚠ 배너를 두 번 띄우면 뒤엣것이 앞엣것을
       // 덮는다(단일 슬롯 · known_issues) → 한 줄로 합친다.

@@ -111,7 +111,7 @@ export const GENE_REASON_LABELS: Readonly<Record<GeneReason, string>> = {
   extinction: "대멸종 생존",
   milestone: "개체 수 돌파",
   recovery: "위기 회복",
-  trialExceed: "시험 초과 달성",
+  trialExceed: "시련을 크게 넘음",
   era: "새 시대 진입",
 };
 

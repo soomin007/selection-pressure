@@ -364,7 +364,7 @@ export function stepWorldOptions(step: number): WorldOptions {
  * 진도가 안 올랐으면 빈 문자열이다. 과설명 금지 · 한 줄.
  */
 export function onboardingOpenedLine(step: number): string {
-  if (step === 1) return "이번 시대부터 라운드마다 시험이 하나 걸립니다. 못 채우면 불씨가 하나 꺼집니다.";
+  if (step === 1) return "이번 시대부터 라운드마다 시련이 하나 닥칩니다. 못 넘으면 불씨가 하나 꺼집니다.";
   if (step === 2) return "이번 시대부터 땅이 다양해집니다. 산과 험한 곳, 수풀이 생기고 그곳에 사는 종들이 나타납니다.";
   if (step === 3) return "이번 시대부터 세계가 온전히 열립니다. 넓어진 땅에 예전에 기르던 종까지 돌아옵니다.";
   return "";

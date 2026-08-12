@@ -195,7 +195,7 @@ const REASON_NOTE: Readonly<Record<GeneReason, string>> = {
   milestone: "",
   // 「최고 20마리」로 줄이면 「많아야 20마리」로 읽힌다 · 뜻이 뒤집히므로 풀어 쓴다.
   recovery: `가장 많았을 때 ${GAME.geneCrisisMinPeak}마리 이상`,
-  trialExceed: EXCLUDED_TRIAL_WORDS === "" ? "" : `${EXCLUDED_TRIAL_WORDS} 시험은 빼고`,
+  trialExceed: EXCLUDED_TRIAL_WORDS === "" ? "" : `${EXCLUDED_TRIAL_WORDS} 시련은 빼고`,
 };
 
 /** 이 오버레이의 z-index 이자 키보드 레이어 우선순위(같은 값을 쓰는 것이 이 저장소 관례다).
