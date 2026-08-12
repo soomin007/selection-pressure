@@ -311,6 +311,23 @@ export class Game {
     return Math.max(0, this.world.playerPopulation - (this.skipBroodTotal - this.trialSkipBroodBase));
   }
 
+  /**
+   * **시험 합격이 이미 확정됐는가** (**[사용자 2026-08-12]** "목표를 일찍 달성하면 그냥 바로 성공
+   * 판정 내리는 게 낫진 않나?" · 원문은 모으기 시험의 「유지가 너무 어렵다」에서 나왔다).
+   * 목표에 닿는 순간 합격이 잠기고, 그 뒤로는 흩어져도 안 뒤집힌다.
+   * ⚠ 「무리 N마리」(pop)만 예외다 — 그 시험은 라운드 시작 시점에 이미 목표 이상이라(목표 =
+   *   시작 수 − 여유), 조기 판정하면 걸리는 순간 합격 = 시험이 존재하지 않게 된다. 붕괴(급감)를
+   *   잡는 시험이라 **끝까지 버텼는가**가 본질이고, 그래서 끝값 판정을 유지한다.
+   */
+  get trialLocked(): boolean {
+    return this.trialLockedValue;
+  }
+  private trialLockedValue = false;
+  /** 이번 라운드의 최대 달성치 — 판정·화면이 이 값을 쓴다(조기 확정 뒤 흩어져도 정직한 숫자). */
+  private trialPeak = 0;
+  /** 합격이 확정되는 순간 한 번 · main 이 플래시로 배선한다. */
+  onTrialLocked: ((t: Trial) => void) | null = null;
+
   /** 단계 시작 직전 드래프트(시대 보상)에서, 곧 시작할 채집 단계의 시험. 그 외엔 null.
    * 드래프트를 열 때 얼려 둔 시험(pendingTrial)을 그대로 보여준다 · beginStage 도 같은 것을 쓴다.
    * (그때그때 pickTrial 로 다시 계산하면, 고른 카드가 후보 수를 3↔4 로 바꿔 예고가 거짓말이 된다.) */
@@ -907,6 +924,15 @@ export class Game {
         // 으로 프레임을 빠져나가고, 시대 전환은 World 를 통째로 갈아 끼워 누계를 0 으로 되돌리므로,
         // update 끝에서 모으면 마지막 몇 틱에 주운 방울이 그대로 증발한다.
         this.harvestGenes();
+        // ── 시험 진행 감시: 최대 달성치 갱신 + 조기 합격 확정(trialLocked 주석 · pop 만 예외) ──
+        if (this.currentTrial) {
+          const prog = this.trialProgress;
+          if (prog > this.trialPeak) this.trialPeak = prog;
+          if (!this.trialLockedValue && this.currentTrial.kind !== "pop" && prog >= this.currentTrial.target) {
+            this.trialLockedValue = true;
+            this.onTrialLocked?.(this.currentTrial);
+          }
+        }
         this.stageTicksLeft -= 1;
         this.stageTick += 1; // 명령 기록의 시각(단계 안에서의 경과)
         this.runSteps += 1;
@@ -1818,6 +1844,8 @@ export class Game {
     this.orderCd.clear(); // 명령 쿨타임은 라운드 경계에서 씻는다(라운드 시작에 손이 묶여 있으면 답답하다)
     this.world.resetRoundCounts(); // 새 단계 = 시험 계수 리셋 (뜻은 clearStageState 가 이미 거뒀다)
     this.currentTrial = null;
+    this.trialLockedValue = false; // 조기 합격 확정도 라운드 단위다
+    this.trialPeak = 0;
     // 세계에 찍힌 지난 시험(자리 원·금빛 표식)도 **모든 갈래가** 여기서 걷는다. 채집 가지만
     // armTrial 을 부르던 시절엔 보스·대멸종 단계에 지난 원이 그대로 남았다(2026-08-12 **[사용자]**
     // 제보: 모으기 시험 뒤 폭염에서 원이 안 사라짐). armTrial(null) 은 지우기만 한다(rng 불변).
@@ -1925,7 +1953,11 @@ export class Game {
     // 라운드 시험 판정(채집 단계만) · 불합격은 런을 끊지 않고 불씨 하나를 대가로 치른다. 불씨 0 = 패배.
     const trial = kind === "forage" ? this.currentTrial : null;
     if (trial) {
-      const prog = this.trialProgress;
+      // **판정은 최대 달성치로** (**[사용자 2026-08-12]** 조기 합격 · trialLocked 주석).
+      // 사냥·먹이·새끼·잡기는 계수가 단조 증가라 끝값과 같고, 「자리 지키기」(hold)만 실질이 바뀐다:
+      // 한 번이라도 채웠으면 그 뒤 흩어져도 합격이다(「채운 뒤 유지」는 시험이 아니라 형벌이었다).
+      // 「무리」(pop)는 붕괴를 잡는 시험이라 **끝값**을 유지한다(조기 판정이면 시험이 소멸한다).
+      const prog = trial.kind === "pop" ? this.trialProgress : Math.max(this.trialPeak, this.trialProgress);
       const trialPassed = prog >= trial.target;
       if (!trialPassed) this.embers -= 1;
       // **초과 달성 보상** — **[사용자 2026-08-06]** 목표를 크게 넘겨 합격하면 불씨가 하나 돌아온다.

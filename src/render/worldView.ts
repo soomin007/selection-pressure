@@ -1135,12 +1135,53 @@ export class WorldView {
     if (!this.inView(g.x, g.y, 80)) return;
     const pulse = 0.5 + 0.5 * Math.sin(((this.frame % 40) / 40) * Math.PI * 2);
     const spin = ((this.frame % 90) / 90) * Math.PI * 2;
-    // 광륜(바깥 어두운 밑선 → 금빛 두 겹) — 밝은 지형(사막·눈) 위에서도 안 사라지게 밑선을 깐다.
+    // 광륜(바깥 어두운 밑선 → 금빛 한 겹) — 밝은 지형(사막·눈) 위에서도 안 사라지게 밑선을 깐다.
     this.trialMarkG.circle(g.x, g.y, 15 + 3 * pulse).stroke({ color: LEAD_OUTLINE, width: 3, alpha: 0.35 });
     this.trialMarkG.circle(g.x, g.y, 13 + 3 * pulse).stroke({ color: GOBLIN_GOLD, width: 2.2, alpha: 0.9 });
-    // 금빛 몸(작은 원 · 옅은 속광). 몸이 작아야 "잡는 것"이지 "싸우는 것"으로 안 읽힌다.
-    this.trialMarkG.circle(g.x, g.y, 7).fill({ color: GOBLIN_GOLD, alpha: 0.95 });
-    this.trialMarkG.circle(g.x, g.y, 4).fill({ color: 0xfff3c4, alpha: 0.9 });
+    // ── 금빛 「짐승」 — 원 하나로 그렸더니 "전혀 짐승같지 않다"([사용자 2026-08-12]). 진행 방향으로
+    //    눕는 몸통 + 머리 + 귀 두 짝 + 꼬리를 그린다(보스 실루엣과 같은 문법 · 방향은 sim 의 heading).
+    const ux = Math.cos(g.heading);
+    const uy = Math.sin(g.heading);
+    const px = -uy; // 몸의 옆 방향
+    const py = ux;
+    const P = (f: number, s: number): { x: number; y: number } => ({
+      x: g.x + ux * f + px * s,
+      y: g.y + uy * f + py * s,
+    });
+    // 꼬리(뒤로 가늘게 흔들리는 선) — 살아 있는 것으로 읽히는 가장 싼 신호.
+    const wag = Math.sin(((this.frame % 22) / 22) * Math.PI * 2) * 2.4;
+    const tailEnd = { x: g.x - ux * 12 + px * wag, y: g.y - uy * 12 + py * wag };
+    this.trialMarkG
+      .moveTo(P(-5.5, 0).x, P(-5.5, 0).y)
+      .lineTo(tailEnd.x, tailEnd.y)
+      .stroke({ color: GOBLIN_GOLD, width: 1.8, alpha: 0.9, cap: "round" });
+    // 몸통(뒤 크고 앞 작은 원 두 개 겹침 = 길쭉한 등) + 머리.
+    const hind = P(-3, 0);
+    const fore = P(2.5, 0);
+    const head = P(7, 0);
+    this.trialMarkG.circle(hind.x, hind.y, 5).fill({ color: GOBLIN_GOLD, alpha: 0.95 });
+    this.trialMarkG.circle(fore.x, fore.y, 4.2).fill({ color: GOBLIN_GOLD, alpha: 0.95 });
+    this.trialMarkG.circle(head.x, head.y, 3).fill({ color: 0xfff3c4, alpha: 0.95 });
+    // 귀 두 짝(머리에서 옆·위로 뾰족) — "동물 머리"로 읽히게 하는 결정적 한 획.
+    for (const s of [1, -1]) {
+      const base = P(6, s * 2);
+      const tip = P(8.5, s * 4.6);
+      this.trialMarkG
+        .moveTo(base.x, base.y)
+        .lineTo(tip.x, tip.y)
+        .stroke({ color: 0xfff3c4, width: 2, alpha: 0.95, cap: "round" });
+    }
+    // 발(몸 아래 좌우로 총총 · 걷는 위상은 프레임에서) — 점 네 개면 충분하다.
+    const step = Math.sin(((this.frame % 14) / 14) * Math.PI * 2) * 1.6;
+    for (const [f, s] of [
+      [-4, 3.8],
+      [-2, -3.8],
+      [1.5, 3.8],
+      [3.5, -3.8],
+    ] as const) {
+      const foot = P(f + step * (s > 0 ? 0.4 : -0.4), s);
+      this.trialMarkG.circle(foot.x, foot.y, 1.1).fill({ color: GOBLIN_GOLD, alpha: 0.85 });
+    }
     // 도는 반짝 네 점 — 「번쩍번쩍」. 각도는 프레임에서 오므로 결정론과 무관한 순수 연출이다.
     for (let k = 0; k < 4; k += 1) {
       const a = spin + (k * Math.PI) / 2;

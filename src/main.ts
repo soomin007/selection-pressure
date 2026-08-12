@@ -13,6 +13,7 @@ import { Game, type ExtinctionType, type TrialKind, type TrialVerdict } from "@/
 import { GAME } from "@/game/config";
 import { BOSS_TYPES, bossName, type BossType } from "@/sim/boss";
 import { createDraftPanel } from "@/ui/draftPanel";
+import { CARD_POOL, EMBER_CARD, PRESET_CARDS, type Card } from "@/game/cards";
 import { createPresetPanel } from "@/ui/presetPanel";
 import { createResultPanel } from "@/ui/resultPanel";
 import { createRunReportScreen } from "@/ui/runReportScreen";
@@ -596,6 +597,28 @@ async function boot(): Promise<void> {
     onGeneOpen: (): void => genePanel.open(),
   });
 
+  /** 레벨업 카드창을 연다 · onDraft 와 ?ovhook 의 draftCard(전수 실측)가 **같은 문**을 쓴다.
+   *  따로 만들면 실측이 실제 화면과 다른 ctx 로 재게 된다(검사가 거짓말이 되는 그 함정). */
+  const openDraft = (cards: Card[]): void => {
+    draft.show(cards, {
+      level: game.level,
+      genome: game.genome,
+      speciesColor: game.world.playerSpecies.color,
+      speciesName: describeSpecies(game.genome),
+      population: game.world.playerPopulation,
+      pickedCardNames: game.pickedCardNames,
+      canReroll: game.canReroll,
+      forecast: draftForecast(),
+      notice: game.draftNotice,
+      // 다음 관문이 때려서 물리칠 수 있는 보스면 그 이름. 카드가 "고르면 맞설 수 있는가"를
+      // 그 자리에서 말한다(형질을 키울 이유는 고르는 순간에 보여야 한다).
+      raidBoss: game.upcomingRaidBoss,
+      // 판정 직후에 열린 카드창이면 제목 자리에 판정을 싣는다(플래시는 이 창에 가려 안 보인다).
+      verdict: game.lastVerdict
+        ? { text: verdictLine(game.lastVerdict), passed: game.lastVerdict.passed }
+        : null,
+    });
+  };
   game.onDraft = (cards, preview) => {
     // 시작 프리셋 선택은 캐릭터 선택 창, 레벨업 형질은 일반 카드 창.
     // 드래프트 화면은 게임 객체를 모른다 — 그릴 때 필요한 종 상태만 넘긴다(레벨 = 세대).
@@ -604,31 +627,16 @@ async function boot(): Promise<void> {
     // 카드창은 전체 화면(z 15)인데 티어 구입 화면은 그 위(z 16)다 → 열린 채로 두면 카드를 덮는다.
     genePanel.close();
     if (game.isChoosingPreset) presetPanel.show(cards, preview, game.worldBriefing());
-    else
-      draft.show(cards, {
-        level: game.level,
-        genome: game.genome,
-        speciesColor: game.world.playerSpecies.color,
-        speciesName: describeSpecies(game.genome),
-        population: game.world.playerPopulation,
-        pickedCardNames: game.pickedCardNames,
-        canReroll: game.canReroll,
-        forecast: draftForecast(),
-        notice: game.draftNotice,
-        // 다음 관문이 때려서 물리칠 수 있는 보스면 그 이름. 카드가 "고르면 맞설 수 있는가"를
-        // 그 자리에서 말한다(형질을 키울 이유는 고르는 순간에 보여야 한다).
-        raidBoss: game.upcomingRaidBoss,
-        // 판정 직후에 열린 카드창이면 제목 자리에 판정을 싣는다(플래시는 이 창에 가려 안 보인다).
-        verdict: game.lastVerdict
-          ? { text: verdictLine(game.lastVerdict), passed: game.lastVerdict.passed }
-          : null,
-      });
+    else openDraft(cards);
   };
   /** 드래프트 예고 줄: 진행 중 라운드의 시험(레벨업) 또는 곧 시작할 단계의 시험(시대 보상).
    *  시대 보상 쪽은 game 이 얼려 둔 확정 시험이라(예고=실물) 그대로 시작된다. 라운드 전이라 진행 숫자만 뺀다. */
   function draftForecast(): string {
     const t = game.trial;
-    if (t) return `이번 시험: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`;
+    if (t)
+      return game.trialLocked
+        ? `이번 시험: ${t.label} · 합격 확정`
+        : `이번 시험: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`;
     const nt = game.upcomingTrial;
     return nt ? `다음 시험: ${nt.label}` : "";
   }
@@ -639,7 +647,7 @@ async function boot(): Promise<void> {
     birth: "새끼",
     pop: "무리",
     hold: "자리 지키기",
-    mark: "표시된 것 사냥",
+    mark: "금빛 짐승 잡기",
   };
   // priority=true: 같은 프레임에 다음 단계(보스) 등장 플래시가 이어져도 판정이 덮이지 않고 끝까지 보인다.
   /** 판정 한 줄 · 화면 플래시와 카드창 제목이 **같은 문구**를 쓴다(둘이 갈리면 화면이 거짓말한다). */
@@ -650,6 +658,12 @@ async function boot(): Promise<void> {
   }
   game.onTrialVerdict = (v) => {
     highlights.flash(verdictLine(v), v.passed ? 0x8fd14f : 0xffba3a, true);
+  };
+  // 조기 합격 확정 (**[사용자 2026-08-12]** "목표를 일찍 달성하면 바로 성공 판정") — 닿는 순간
+  // 그 자리에서 알린다. 판정 합격과 같은 라임 · priority 는 아니다(최종 판정이 아니라 확정 예고라,
+  // 보스 등장 같은 더 급한 플래시를 덮으면 안 된다).
+  game.onTrialLocked = (t) => {
+    highlights.flash(`시험 합격 확정 · ${t.label}`, 0x8fd14f, false);
   };
   // 승리·정복·멸종 순간 연출 — 결과 패널 직전에 전역 화면 클라이맥스를 얹는다.
   const moment = createMomentOverlay();
@@ -906,6 +920,15 @@ async function boot(): Promise<void> {
      */
     tierUp: (cat: string, tier: number) => void;
     report: () => void;
+    /**
+     * 카드 한 장을 강제로 레벨업 카드창에 세 장 나란히 띄운다 · **카드 전수 화면 넘침 실측**용
+     * (2026-08-12 [사용자] 폰 화면 늘어남 재발 · "레벨업 드래프트 화면에서 · 형질 하나가 멘트가
+     * 길어져서 그런 게 아닐까" — 어느 카드가 문서 폭을 넓히는지 52장 전부를 재는 문).
+     * onDraft 와 같은 문(openDraft)을 지나므로 실측 화면 = 실제 화면이다.
+     */
+    draftCard: (id: string) => boolean;
+    /** 강제로 띄울 수 있는 카드 id 전부(프리셋 + 불씨 + 풀). */
+    draftIds: () => string[];
   }
   if (new URLSearchParams(window.location.search).has("ovhook")) {
     const hooks: OverlapHooks = {
@@ -931,6 +954,13 @@ async function boot(): Promise<void> {
         moment.tierUp(`${CATEGORY_LABELS[c]} ${TIER_ROMAN[tier]}`, tier, tierLine(c, tier, game.genome.keys).gain);
       },
       report: () => reportScreen.show(game.runHistory, game.runCode()),
+      draftCard: (id) => {
+        const card = [...PRESET_CARDS, EMBER_CARD, ...CARD_POOL].find((c) => c.id === id);
+        if (!card) return false;
+        openDraft([card, card, card]);
+        return true;
+      },
+      draftIds: () => [...PRESET_CARDS, EMBER_CARD, ...CARD_POOL].map((c) => c.id),
     };
     (window as unknown as { __ov: OverlapHooks }).__ov = hooks;
   }
@@ -1388,11 +1418,17 @@ async function boot(): Promise<void> {
         // 라운드 시험: "이번 16초가 답해야 할 질문"을 목표 줄로. 진행 숫자는 sim 계수기 그대로.
         // 기한(남은 시간)과 대가(불씨)를 나란히 둔다 · 시험이 걸린 판돈이 한눈에 읽혀야 한다.
         const t = game.trial;
+        // 합격이 확정되면(조기 판정) 숫자·기한 대신 확정을 말한다 — 「채웠는데 왜 아직 시키지」가 없게.
+        const locked = t !== null && game.trialLocked;
         goalText = t
-          ? `이번 시험: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`
+          ? locked
+            ? `이번 시험: ${t.label} · 합격 확정`
+            : `이번 시험: ${t.label} (${Math.min(game.trialProgress, t.target)}/${t.target})`
           : "무리를 먹여 키우세요";
         goalSub = t
-          ? `${game.secondsLeft}초 안에 채우세요 · 불씨 ${emberDots(game.embers)}`
+          ? locked
+            ? `이번 시험은 통과했습니다 · 불씨 ${emberDots(game.embers)}`
+            : `${game.secondsLeft}초 안에 채우세요 · 불씨 ${emberDots(game.embers)}`
           : left;
       }
       // 갈 수 없는 곳을 탭했으면 이 줄의 뒷말만 잠깐 바꾼다(기한은 그대로 남긴다 · 새 줄을 안 만든다).

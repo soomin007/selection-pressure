@@ -710,6 +710,49 @@ describe("라운드 시험과 혈통의 불씨", () => {
     }
   });
 
+  it("목표에 닿는 순간 합격이 확정된다 · 그 뒤 흩어져도 안 뒤집힌다 (**[사용자 2026-08-12]**)", () => {
+    // 원문: "미리 다 채워진다고 해도 계속 유지해야 되는 게 너무 어려워 · 목표를 일찍 달성하면
+    // 그냥 바로 성공 판정 내리는 게 낫진 않나?" — 특히 「자리 지키기」에서 실질이 바뀐다.
+    const g = startWithTrialKind("trial-hold-lock", "hold");
+    const z = g.world.trialZone;
+    if (!z) throw new Error("자리가 없다");
+    expect(g.trialLocked).toBe(false);
+    // 무리를 통째로 자리 안에 → 다음 update 틱에 확정된다.
+    for (const e of g.world.entities) {
+      if (e.species.isPlayer && e.alive) {
+        e.x = z.x;
+        e.y = z.y;
+      }
+    }
+    let locked = 0;
+    g.onTrialLocked = () => {
+      locked += 1;
+    };
+    for (let i = 0; i < 6 && !g.trialLocked; i++) g.update(34);
+    expect(g.trialLocked).toBe(true);
+    expect(locked).toBe(1); // 확정 알림은 한 번만
+    // 흩뜨린다 — 옛 규칙이면 여기서 불합격이 됐다.
+    for (const e of g.world.entities) {
+      if (e.species.isPlayer && e.alive) {
+        e.x = 10;
+        e.y = 10;
+      }
+    }
+    let verdict: TrialVerdict | null = null;
+    g.onTrialVerdict = (v) => {
+      verdict = v;
+    };
+    (g as unknown as GamePriv).finishStage(true);
+    expect(verdict).not.toBeNull();
+    expect((verdict as TrialVerdict | null)?.passed).toBe(true);
+  });
+
+  it("「무리」 시험은 조기 확정이 안 걸린다(시작 시점에 이미 목표 이상이라, 걸리면 시험이 소멸한다)", () => {
+    const g = startWithTrialKind("trial-pop-nolock", "pop");
+    for (let i = 0; i < 6; i++) g.update(34);
+    expect(g.trialLocked).toBe(false);
+  });
+
   it("시험의 자리·표식은 단계가 바뀌면 세계에서 걷힌다(보스·대멸종 단계에 안 남는다)", () => {
     // 2026-08-12 **[사용자]** 제보: 모으기(자리 지키기) 시험 뒤 폭염이 오는데 원이 안 사라졌다.
     // 원인: beginStage 의 채집 가지만 armTrial 을 불러, 보스·대멸종 가지는 세계의 자리·표식을

@@ -32,6 +32,8 @@ export interface Goblin {
   y: number;
   /** 배회 방향(라디안). 도망 중이 아닐 때만 쓴다. */
   wanderAngle: number;
+  /** 마지막으로 실제로 움직인 방향(라디안) · 렌더가 몸을 이쪽으로 눕힌다("짐승"으로 읽히려면 방향이 있어야 한다). */
+  heading: number;
 }
 
 export const GOBLIN = {
@@ -124,6 +126,8 @@ export function stepGoblin(world: World): void {
 
   // 축 분리 통행(개체 이동과 같은 규칙) + 세계 경계. 도망 방향이 막히면 그 축만 죽어 벽을 따라
   // 미끄러진다 — 구석에 몰리는 것은 결함이 아니라 **몰이의 보상**이다.
+  const ox = g.x;
+  const oy = g.y;
   const nx = g.x + dx;
   const ny = g.y + dy;
   if (nx >= 4 && nx <= world.width - 4 && world.terrain.isPassable(nx, g.y, caps.swim, caps.land, caps.fly)) {
@@ -132,6 +136,10 @@ export function stepGoblin(world: World): void {
   if (ny >= 4 && ny <= world.height - 4 && world.terrain.isPassable(g.x, ny, caps.swim, caps.land, caps.fly)) {
     g.y = ny;
   }
+  // 실제로 움직인 방향으로 몸을 눕힌다(막혀서 안 움직인 틱은 이전 방향 유지 · 떨림 방지).
+  const mdx = g.x - ox;
+  const mdy = g.y - oy;
+  if (mdx * mdx + mdy * mdy > 1e-6) g.heading = Math.atan2(mdy, mdx);
 }
 
 /** 무리에서 떨어진, 내 종이 갈 수 있는 자리에 낳는다. 마흔 번 다 실패하면 무리 곁(시험이 쉬워질지언정 불가능하진 않게). */
@@ -144,8 +152,8 @@ function spawnGoblin(world: World): Goblin {
     const x = Math.max(8, Math.min(world.width - 8, c.x + Math.cos(ang) * dist));
     const y = Math.max(8, Math.min(world.height - 8, c.y + Math.sin(ang) * dist));
     if (!world.terrain.isPassable(x, y, caps.swim, caps.land, caps.fly)) continue;
-    return { x, y, wanderAngle: ang };
+    return { x, y, wanderAngle: ang, heading: ang };
   }
   const spot = world.terrain.nearestPassable(c.x, c.y, caps.swim, caps.land, caps.fly);
-  return { x: spot.x, y: spot.y, wanderAngle: 0 };
+  return { x: spot.x, y: spot.y, wanderAngle: 0, heading: 0 };
 }
