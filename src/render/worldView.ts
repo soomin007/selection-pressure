@@ -1121,26 +1121,33 @@ export class WorldView {
   }
 
   /**
-   * **표식이 찍힌 야생** — 「표시된 것 N마리 사냥」 시험의 그 개체들.
-   * **[사용자 2026-08-06]** 이 직접 낸 아이디어다("특정 표시가 있는 개체 사냥하기").
+   * **황금 고블린** — 「금빛 짐승 N마리 잡기」 시험의 목표. **[사용자 2026-08-07]** 확정
+   * ("좀 눈에 띄게 금색으로 번쩍번쩍하게"). 옛 「표식이 찍힌 야생」 그리기를 갈아엎었다(2026-08-12).
    *
-   * 금빛 두 겹 고리로 그린다 — 먹잇감 호박빛과 같은 계열이라 "저건 노릴 것"이 색만으로 읽히고,
-   * 고리가 두 겹이라 평범한 먹잇감 표식과 구별된다.
+   * 설명 없이 읽히는 것이 목적이다(전달 규칙 1순위): 금빛 몸 + 맥동 광륜 + 도는 반짝 네 점.
+   * 생물 스프라이트가 아니라 이 레이어에 직접 그린다 — 생태 밖 존재라 몸집·형질 시각 문법(크기 =
+   * 몸집 등)을 물려받으면 오히려 거짓말이 된다.
    */
   private drawTrialMarks(world: World): void {
     this.trialMarkG.clear();
-    if (world.trialMarks.length === 0) return;
-    const pulse = 0.5 + 0.5 * Math.sin(((this.frame % 48) / 48) * Math.PI * 2);
-    for (const e of world.entities) {
-      if (!e.alive || !world.trialMarks.includes(e.id)) continue;
-      const d = this.dispPos.get(e.id);
-      const x = d ? d.x : e.x;
-      const y = d ? d.y : e.y;
-      if (!this.inView(x, y, 80)) continue;
-      const r = 13 + 3 * pulse;
-      this.trialMarkG.circle(x, y, r + 2).stroke({ color: LEAD_OUTLINE, width: 3, alpha: 0.35 });
-      this.trialMarkG.circle(x, y, r).stroke({ color: TRIAL_MARK_COLOR, width: 2.2, alpha: 0.9 });
-      this.trialMarkG.circle(x, y, r - 4).stroke({ color: TRIAL_MARK_COLOR, width: 1.2, alpha: 0.5 });
+    const g = world.goblin;
+    if (g === null) return;
+    if (!this.inView(g.x, g.y, 80)) return;
+    const pulse = 0.5 + 0.5 * Math.sin(((this.frame % 40) / 40) * Math.PI * 2);
+    const spin = ((this.frame % 90) / 90) * Math.PI * 2;
+    // 광륜(바깥 어두운 밑선 → 금빛 두 겹) — 밝은 지형(사막·눈) 위에서도 안 사라지게 밑선을 깐다.
+    this.trialMarkG.circle(g.x, g.y, 15 + 3 * pulse).stroke({ color: LEAD_OUTLINE, width: 3, alpha: 0.35 });
+    this.trialMarkG.circle(g.x, g.y, 13 + 3 * pulse).stroke({ color: GOBLIN_GOLD, width: 2.2, alpha: 0.9 });
+    // 금빛 몸(작은 원 · 옅은 속광). 몸이 작아야 "잡는 것"이지 "싸우는 것"으로 안 읽힌다.
+    this.trialMarkG.circle(g.x, g.y, 7).fill({ color: GOBLIN_GOLD, alpha: 0.95 });
+    this.trialMarkG.circle(g.x, g.y, 4).fill({ color: 0xfff3c4, alpha: 0.9 });
+    // 도는 반짝 네 점 — 「번쩍번쩍」. 각도는 프레임에서 오므로 결정론과 무관한 순수 연출이다.
+    for (let k = 0; k < 4; k += 1) {
+      const a = spin + (k * Math.PI) / 2;
+      const rr = 11 + 2 * pulse;
+      this.trialMarkG
+        .circle(g.x + Math.cos(a) * rr, g.y + Math.sin(a) * rr, 1.6)
+        .fill({ color: 0xffffff, alpha: 0.55 + 0.35 * pulse });
     }
   }
 
@@ -1697,7 +1704,7 @@ const PREY_OUT_OF_AIM_DIM = 0.35;
 // 들고 있으니 바꿀 땐 함께 바꾼다(색이 갈리면 "파문 → 깃발" 연결이 끊긴다).
 const FLAG_COLOR = 0xbcf24e;
 /** 시험 표식의 금빛 · 먹잇감 호박빛과 같은 계열이라 "저건 노릴 것"이 색만으로 읽힌다. */
-const TRIAL_MARK_COLOR = 0xffd24a;
+const GOBLIN_GOLD = 0xffd24a; // 황금 고블린 · 미니맵 점 · 잡는 순간의 파문(effects)과 같은 금
 const FLAG_LIGHT = 0xe4ffb0; // 깃대·중심점(밝은 라임 — 어두운 지형 위 가독)
 // 「피해라」 표식의 붉은빛 · 위협(보스 떼 0xff5535)과 같은 계열이라 "저기서 멀어져라"가 색만으로 읽힌다.
 // 라임(가라)과 정반대 색이라 두 명령이 한눈에 갈린다.

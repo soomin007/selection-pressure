@@ -116,6 +116,15 @@ export class Minimap {
       this.dynG.circle(boss.x * s, boss.y * s, 2.4).fill(0xe85c43);
     }
 
+    // 황금 고블린(시험 「금빛 짐승 잡기」) — 무리에서 떨어진 곳에 뜨는 목표라 **미니맵이 방향 표시다**
+    // (화면 밖이면 이 점이 유일한 단서 · 첫 시대는 세계가 한 화면이라 미니맵 없이도 늘 보인다).
+    // 방울 점(1.9px)보다 크고, 링을 둘러 "물건"이 아니라 "쫓을 것"으로 읽히게 한다.
+    const gb = world.goblin;
+    if (gb !== null) {
+      this.dynG.circle(gb.x * s, gb.y * s, 2.6).fill(0xffd24a);
+      this.dynG.circle(gb.x * s, gb.y * s, 4.2).stroke({ color: 0xffd24a, width: 1, alpha: 0.8 });
+    }
+
     // 방울(유전자 점수) · 아직 안 주운 것만 금빛 점으로. **화면 밖 방울을 여기서 세어 볼 수 있다.**
     // 화면 가장자리 쐐기(render/geneDrops.ts)는 「어느 쪽인가」만 말하고 가까운 셋까지만 그린다 →
     // 「지금 이 세계에 몇 개가 어디 남았나」는 이 지도가 아니면 알 길이 없다.

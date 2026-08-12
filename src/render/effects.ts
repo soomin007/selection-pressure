@@ -41,6 +41,8 @@ interface Particle {
 const LIFE: Record<ParticleKind, number> = {
   birth: 720, death: 820, kill: 620, bite: 240, spit: 200, block: 300, go: 350, deny: 250, counter: 190,
   gene: 0,
+  // 금빛 짐승(황금 고블린)을 잡은 순간 — 시험 진행이 한 칸 오르는 사건이라 탄생(720)급으로 길게.
+  goblin: 700,
 };
 const TAU = Math.PI * 2;
 
@@ -139,8 +141,25 @@ function drawParticle(g: Graphics, p: Particle, t: number): void {
     drawGoPing(g, x, y, e, fade);
   } else if (p.kind === "deny") {
     drawDenyPing(g, x, y, t, fade);
+  } else if (p.kind === "goblin") {
+    drawGoblinCatch(g, x, y, e, fade, p.seed);
   } else {
     drawDeath(g, x, y, e, fade, p.seed);
+  }
+}
+
+// 금빛 짐승(황금 고블린)을 잡았다 — 금빛 파문 + 사방으로 튀는 반짝 여덟. 시험 진행이 오르는 사건이라
+// 사냥의 빨강(kill)과 확실히 구별되는 "얻었다" 색을 쓴다(방울·고블린 몸과 같은 금 계열).
+function drawGoblinCatch(g: Graphics, x: number, y: number, e: number, fade: number, seed: number): void {
+  g.circle(x, y, 5 + e * 20).stroke({ color: 0xffd24a, width: 2.4 * fade + 0.5, alpha: 0.85 * fade });
+  g.circle(x, y, 3 + e * 10).stroke({ color: 0xfff3c4, width: 1.4 * fade + 0.3, alpha: 0.7 * fade });
+  for (let k = 0; k < 8; k += 1) {
+    const a = seed * TAU + (k * TAU) / 8;
+    const d = 4 + e * (14 + 6 * ((seed * 13 + k) % 3));
+    g.circle(x + Math.cos(a) * d, y + Math.sin(a) * d, 1.7 * fade + 0.3).fill({
+      color: k % 2 === 0 ? 0xffd24a : 0xffffff,
+      alpha: 0.9 * fade,
+    });
   }
 }
 

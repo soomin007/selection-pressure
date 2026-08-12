@@ -18,6 +18,7 @@ import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecie
 import type { Biome } from "@/sim/environment";
 import { stepEntity, visionRadius, leadBiteTarget, isApex } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
+import { stepGoblin, type Goblin } from "@/sim/goblin";
 import { createLeadState, type LeadState } from "@/sim/lead";
 import {
   GENE_PICK_RADIUS,
@@ -155,7 +156,7 @@ export function syncWildDerived(t: Traits): void {
 // ⚠ 이 union 에 멤버를 더하면 `src/render/effects.ts` 의 `LIFE: Record<ParticleKind, number>` 가
 //   즉시 컴파일 에러가 난다(Record 는 모든 키를 요구한다). 거기 `gene: <수명ms>` 한 줄을 함께 넣어야
 //   짝이 맞는다 · 렌더 쪽이 이미 "counter" 로 같은 함정을 겪고 주석에 적어 둔 그 자리다.
-export type VisualEventKind = "birth" | "death" | "kill" | "bite" | "spit" | "block" | "counter" | "gene";
+export type VisualEventKind = "birth" | "death" | "kill" | "bite" | "spit" | "block" | "counter" | "gene" | "goblin";
 export interface VisualEvent {
   kind: VisualEventKind;
   x: number;
@@ -260,6 +261,9 @@ export class World {
    * 밀려 야생 스폰·진화 밸런스가 통째로 이동한다. 결정론은 그대로다(같은 시드 = 같은 자리).
    */
   readonly geneRng: Rng;
+
+  /** **황금 고블린 전용 rng**(위와 같은 이유 · `sim/goblin.ts` 의 격리 계약). */
+  readonly goblinRng: Rng;
 
   /**
    * 알파 조종 상태. leaderId < 0 이면 이 기능은 존재하지 않는 것과 같다(= 기존 모드).
@@ -402,12 +406,14 @@ export class World {
   trialZone: { x: number; y: number; r: number } | null = null;
 
   /**
-   * **표식이 찍힌 야생 개체 id.** **[사용자 2026-08-06]** 직접 낸 아이디어("특정 표시가 있는 개체
-   * 사냥하기"). 잡으면 `roundCounts.marked` 가 오르고 이 목록에서 빠진다.
-   *
-   * 여유롭게 찍는다 — 표식이 찍힌 것이 다른 이유로 죽어도 시험이 불가능해지지 않게(목표보다 많이 찍는다).
+   * **황금 고블린** — 시험 「금빛 짐승 잡기」의 목표(설계·격리 계약은 `sim/goblin.ts` 머리 주석).
+   * 옛 「표식이 찍힌 야생」(trialMarks)을 2026-08-12 에 이것으로 갈아엎었다(**[사용자 2026-08-07]**
+   * 확정 · 표식은 스스로 도망다니다 죽어 시험이 운이 됐다). 잡으면 `roundCounts.marked` 가 오른다.
    */
-  trialMarks: number[] = [];
+  goblin: Goblin | null = null;
+
+  /** 이번 라운드에 앞으로 몇 마리 더 내보내는가. game 의 armTrial 이 정하고, 0 이면 고블린 코드가 안 돈다. */
+  goblinQuota = 0;
 
   /**
    * 이번 틱에 **실제로 뜻을 향해 움직인** 내 종 개체 수. 순종의 질을 화면에 보여 주는 유일한 숫자다
@@ -532,6 +538,8 @@ export class World {
     // 방울 전용 독립 스트림. 방울 위치를 메인 rng 로 뽑으면 소비 횟수가 밀려 야생 스폰·진화가
     // 통째로 이동한다(`WILD_RNG_KEYS` 제약과 같은 계열). 여기 없는 스트림을 새로 만들지 말 것.
     this.geneRng = new Rng(String(seed) + "-gene");
+    // 황금 고블린 전용 스트림(같은 이유 · sim/goblin.ts 의 생태 격리 계약).
+    this.goblinRng = new Rng(String(seed) + "-goblin");
     // 물 전용 플레이어(바다 개척자)는 바다만 살아 과밀하므로 시작 수를 줄인다(다른 게놈엔 영향 없음).
     // areaScale 은 spawnEntities 에서 일괄 곱하므로 여기선 기본 수만(이중 곱 방지).
     const baseStart =
@@ -835,6 +843,8 @@ export class World {
     this.collectGeneDrops();
     // ── 사체 먹기(썩은 고기를 먹는 위) ── 방울 줍기와 같은 자리·같은 규칙(순회 순서 무관 · rng 0).
     this.collectCarrion();
+    // ── 황금 고블린(시험 「금빛 짐승 잡기」) ── 시험이 안 걸린 세계(quota 0)에서는 한 줄도 안 돈다.
+    stepGoblin(this);
 
     this.maybeImmigrate();
     this.maybeEvolveWild();

@@ -48,7 +48,6 @@ import {
 import { easeChampionGenome } from "@/sim/species";
 import { GENE_AWARD, milestonesCrossed, type CrisisWatch, type GeneReason } from "@/sim/gene";
 import { SIM } from "@/sim/params";
-import { biteOutcome } from "@/sim/behavior";
 import { debugSetMetaLevel } from "@/game/meta";
 
 // 대멸종 이름 4종(game.ts extinctionName 과 일치) — 예고 title 이 보스 예고와 섞이지 않게 거른다.
@@ -665,42 +664,49 @@ describe("라운드 시험과 혈통의 불씨", () => {
     expect(g.trialProgress).toBe(g.world.playerPopulation);
   });
 
-  it("「표시된 것 사냥」은 목표보다 넉넉히 표식을 찍는다(다른 이유로 죽어도 가능해야 한다)", () => {
+  it("「금빛 짐승 잡기」는 고블린을 낳는다 · 내 종이 갈 수 있는 자리에, 세계 안에", () => {
+    // 옛 「표시된 것 사냥」(야생에 표식)은 2026-08-12 에 황금 고블린으로 갈아엎었다(sim/goblin.ts ·
+    // **[사용자 2026-08-07]** 확정). 표식은 스스로 도망다니다 죽어 시험이 운이 됐다(판 코드 실측 1/4 합격).
     const g = startWithTrialKind("trial-mark", "mark");
     const t = g.trial;
     if (!t) throw new Error("시험이 없다");
-    expect(g.world.trialMarks.length).toBeGreaterThan(t.target);
-    // 표식은 **내 이빨이 박히는 야생**에만 찍힌다 — 못 잡는 것에 찍으면 못 하는 시험이 된다.
-    const me = g.genome.traits;
-    for (const id of g.world.trialMarks) {
-      const e = g.world.entities.find((x) => x.id === id);
-      expect(e, "표식이 없는 개체를 가리킨다").toBeTruthy();
-      if (!e) continue;
-      expect(e.species.isPlayer).toBe(false);
-      expect(e.species.friendly).toBe(false);
-      expect(biteOutcome(me.attack, e.genome.traits.defense, me.size, e.genome.traits.size).ignored).toBe(false);
-    }
+    expect(g.world.goblinQuota).toBe(t.target);
+    g.world.step(); // 첫 틱에 태어난다
+    const gb = g.world.goblin;
+    expect(gb, "mark 시험인데 고블린이 안 태어났다").not.toBeNull();
+    if (!gb) return;
+    // **내 종이 갈 수 있는 자리여야 한다** — 못 가는 곳으로 달아나면 못 하는 시험이 된다.
+    const tr = g.genome.traits;
+    const canSwim = tr.swimming >= SIM.swimThreshold;
+    const canLand = tr.swimming < SIM.aquaticOnlyThreshold;
+    const canFly = tr.wings >= SIM.flyThreshold;
+    expect(g.world.terrain.isPassable(gb.x, gb.y, canSwim, canLand, canFly)).toBe(true);
+    expect(gb.x).toBeGreaterThanOrEqual(0);
+    expect(gb.y).toBeGreaterThanOrEqual(0);
+    expect(gb.x).toBeLessThanOrEqual(g.world.width);
+    expect(gb.y).toBeLessThanOrEqual(g.world.height);
   });
 
-  it("표식이 찍힌 것을 잡으면 진행도가 오르고 그 표식은 빠진다", () => {
+  it("고블린은 접촉으로 잡힌다 · 진행도가 오르고, 남은 수만큼 다음 마리가 곧바로 뜬다", () => {
     const g = startWithTrialKind("trial-mark-kill", "mark");
-    const before = g.trialProgress;
-    const markCount = g.world.trialMarks.length;
-    // sim 이 실제로 세는 자리를 그대로 흉내낸다(devour 안의 표식 처리).
-    const victim = g.world.trialMarks[0] as number;
-    const hunter = g.world.entities.find((e) => e.species.isPlayer && e.alive);
-    const prey = g.world.entities.find((e) => e.id === victim);
-    if (!hunter || !prey) throw new Error("사냥꾼이나 표식 개체가 없다");
-    // 물기가 반드시 박히게 붙여 놓고, 내 종이 잡을 때까지 돌린다.
-    prey.x = hunter.x;
-    prey.y = hunter.y;
-    prey.energy = 1;
-    let guard = 0;
-    while (g.world.trialMarks.includes(victim) && guard++ < 400) g.world.step();
-    // 잡혔으면 진행도가 오르고 표식이 빠진다. 못 잡았으면(다른 이유로 죽었으면) 표식만 남아 있을 수 있다.
-    if (!g.world.trialMarks.includes(victim) && g.world.roundCounts.marked > 0) {
-      expect(g.trialProgress).toBe(before + g.world.roundCounts.marked);
-      expect(g.world.trialMarks.length).toBeLessThan(markCount);
+    const t = g.trial;
+    if (!t) throw new Error("시험이 없다");
+    g.world.step();
+    const gb = g.world.goblin;
+    const catcher = g.world.entities.find((e) => e.species.isPlayer && e.alive);
+    if (!gb || !catcher) throw new Error("고블린이나 내 종이 없다");
+    // 내 종 하나를 고블린 위에 세운다 — 다음 틱의 접촉 판정(catchRadius)이 잡는다.
+    catcher.x = gb.x;
+    catcher.y = gb.y;
+    const before = g.world.roundCounts.marked;
+    const quotaBefore = g.world.goblinQuota;
+    g.world.step();
+    expect(g.world.roundCounts.marked).toBe(before + 1);
+    expect(g.world.goblinQuota).toBe(quotaBefore - 1);
+    expect(g.trialProgress).toBe(before + 1); // 표시 = 판정(같은 계수를 읽는다)
+    if (g.world.goblinQuota > 0) {
+      g.world.step(); // 한 마리씩 차례로 — 남았으면 다음 마리가 뜬다
+      expect(g.world.goblin, "quota 가 남았는데 다음 고블린이 안 떴다").not.toBeNull();
     }
   });
 
@@ -716,7 +722,10 @@ describe("라운드 시험과 혈통의 불씨", () => {
       let guard = 0;
       while (g.phase === "draft" && guard++ < 8) g.pickCard(0);
       if (g.trial?.kind !== "hold") expect(g.world.trialZone, `단계 ${i}`).toBeNull();
-      if (g.trial?.kind !== "mark") expect(g.world.trialMarks.length, `단계 ${i}`).toBe(0);
+      if (g.trial?.kind !== "mark") {
+        expect(g.world.goblinQuota, `단계 ${i}`).toBe(0);
+        expect(g.world.goblin, `단계 ${i}`).toBeNull();
+      }
     }
   });
 
@@ -731,7 +740,8 @@ describe("라운드 시험과 혈통의 불씨", () => {
       expect(g.genome.traits.hunt).toBe(0);
       const t = (g as unknown as GamePriv).pickTrial();
       expect(t.kind, `초식 종에게 ${t.kind} 시험이 떴다`).not.toBe("hunt");
-      expect(t.kind, `초식 종에게 ${t.kind} 시험이 떴다`).not.toBe("mark");
+      // 「금빛 짐승 잡기」(mark)는 이제 초식도 할 수 있다 — 잡기가 물기가 아니라 **접촉**이라서
+      // (2026-08-12 황금 고블린 개편 · sim/goblin.ts). 그래서 여기서 mark 를 금지하지 않는다.
     }
   });
 

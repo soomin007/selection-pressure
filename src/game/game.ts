@@ -62,8 +62,6 @@ import {
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import type { LeadCommand } from "@/sim/lead";
-import type { Entity } from "@/sim/entity";
-import { biteOutcome } from "@/sim/behavior";
 import {
   ORDER_SPECS,
   ORDER_SPEC_BY_KIND,
@@ -98,8 +96,13 @@ const TRIAL_HOLD_MIN_DIST = 220;
 const TRIAL_HOLD_MAX_DIST = 420;
 /** 자리의 반지름(px). 무리는 무게중심에서 평균 240px 로 흩어져 사니, 좁으면 다 모으는 게 불가능하다. */
 const TRIAL_HOLD_RADIUS = 130;
-/** 표식을 목표보다 이만큼 더 찍는다 — 표식이 찍힌 것이 다른 이유로 죽어도 시험이 불가능해지지 않게. */
-const TRIAL_MARK_SPARE = 3;
+/**
+ * 「금빛 짐승 잡기」(옛 표식 사냥)의 라운드당 목표 상한. 고블린은 **한 마리씩 차례로** 나오므로
+ * 산술이 시간으로 정해진다: 16초 라운드에서 한 마리 = 이동 ~5초 + 몰이 ~3초 → 최대 세 마리가 한계다.
+ * 옛 상한 없는 pop 스케일(목표 9)은 즉사 전투(TTK 0.17초) 시절 값이라 지금 세계에선 산술 불가였다
+ * (2026-08-12 판 코드 실측: 4회 등장 1회 합격 · [사용자] "거의 매번 실패"). ⚠ 값은 폰 실기로 튠.
+ */
+const TRIAL_MARK_CAP = 3;
 import { createBoss, bossPreview, bossName, bossCounter, bossTypeRaidable, isPredatorBoss, bossEligible, BOSS_TYPES, type BossType } from "@/sim/boss";
 import { pickMapType, mapKind, FIRST_ERA_MAP, type MapKind, type MapType } from "@/sim/mapType";
 import { TILE } from "@/sim/terrain";
@@ -1744,9 +1747,12 @@ export class Game {
     //   실제로 세계에 찍는 것은 `armTrial` 이 라운드를 시작할 때 한 번만 한다.
     const holdTarget = Math.max(3, Math.min(12, Math.round(pop * 0.5)));
     if (pop >= 4) candidates.push({ kind: "hold", target: holdTarget, label: `표시된 자리에 ${holdTarget}마리` });
-    // 표식 사냥은 이빨 0단이면 못 한다(사냥 자체가 불가) · 위 「사냥」과 같은 게이트.
-    if (t.hunt > 0) {
-      candidates.push({ kind: "mark", target: goal(GAME.trialMarkN), label: `표시된 것 ${goal(GAME.trialMarkN)}마리 사냥` });
+    // 금빛 짐승(황금 고블린) 잡기 · 옛 「표시된 것 사냥」을 2026-08-12 에 갈아엎었다(sim/goblin.ts).
+    // 잡기가 물기가 아니라 **접촉**이라 이빨 0단(초식)도 할 수 있다 → 옛 이빨 게이트를 걷었다.
+    // 목표는 상한이 산술로 막혀 있다(TRIAL_MARK_CAP 주석 · 한 마리씩 차례로 나오는 시험이라서).
+    {
+      const n = Math.min(TRIAL_MARK_CAP, goal(GAME.trialMarkN));
+      candidates.push({ kind: "mark", target: n, label: `금빛 짐승 ${n}마리 잡기` });
     }
 
     const idx = new Rng(`${this.currentSeed}-trial-s${this.stageIndex}`).int(0, candidates.length - 1);
@@ -1761,7 +1767,9 @@ export class Game {
    */
   private armTrial(trial: Trial | null): void {
     this.world.trialZone = null;
-    this.world.trialMarks = [];
+    // 황금 고블린도 여기서 걷는다 — 시험이 끝나면 사라진다(**[사용자 2026-08-07]** 확정).
+    this.world.goblinQuota = 0;
+    this.world.goblin = null;
     if (!trial) return;
     const rng = new Rng(`${this.currentSeed}-trialmark-s${this.stageIndex}`);
 
@@ -1791,26 +1799,10 @@ export class Game {
     }
 
     if (trial.kind === "mark") {
-      // 잡을 수 있는 야생만 고른다(내 이빨이 박히는 상대). **목표보다 넉넉히 찍는다** — 표식이 찍힌
-      // 것이 다른 포식자에게 먼저 잡히거나 굶어 죽어도 시험이 불가능해지면 안 된다.
-      const me = this.genome.traits;
-      const pool = this.world.entities.filter(
-        (e) =>
-          e.alive &&
-          !e.species.isPlayer &&
-          !e.species.friendly &&
-          !biteOutcome(me.attack, e.genome.traits.defense, me.size, e.genome.traits.size).ignored,
-      );
-      const want = trial.target + TRIAL_MARK_SPARE;
-      // 개체 id 오름차순으로 정렬한 뒤 뽑는다 — 배열 순서(스폰 순)에 결과가 안 걸리게(결정론).
-      pool.sort((a, b) => a.id - b.id);
-      const picked: number[] = [];
-      while (picked.length < want && pool.length > 0) {
-        const i = rng.int(0, pool.length - 1);
-        picked.push((pool[i] as Entity).id);
-        pool.splice(i, 1);
-      }
-      this.world.trialMarks = picked;
+      // 황금 고블린 — 수만 정해 준다. 낳고 · 도망치고 · 잡히는 것은 전부 sim 이 한다(sim/goblin.ts ·
+      // 전용 rng 라 여기 rng 도 메인 스트림도 안 쓴다). 옛 방식(야생에 표식)은 목표가 스스로
+      // 도망다니다 죽어 시험이 운이 됐다 · 갈아엎은 경위는 goblin.ts 머리 주석.
+      this.world.goblinQuota = trial.target;
     }
   }
 
