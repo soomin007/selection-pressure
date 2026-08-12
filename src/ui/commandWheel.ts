@@ -71,11 +71,18 @@ export class CommandWheel {
 
   /**
    * 휠을 연다. `sx,sy` 는 손가락이 있는 화면 좌표, `wx,wy` 는 그 자리의 월드 좌표.
-   * 칸이 하나(가라)뿐이면 열지 않는다 — 고를 것이 없는 휠은 방해일 뿐이다.
+   * 칸이 하나(이동)뿐이면 열지 않는다 — 고를 것이 없는 휠은 방해일 뿐이다.
    */
   open(sx: number, sy: number, wx: number, wy: number, items: WheelSlot[]): boolean {
-    if (items.length <= 1) return false;
-    this.items = items;
+    // **구현 안 된 칸(ready:false)은 휠에 아예 안 올린다** (**[사용자 2026-08-12]** "'원진'이 뭔지
+    // 와닿지가 않고 … 각각 뭐가 다른지 잘 모르겠어" → 숨기기로 확정). 하는 일 없는 이름 여섯이
+    // 혼란만 만들었다 · 명령이 하나씩 구현될 때마다 **새 칸이 등장**하는 것이 성장 신호로도 세다.
+    // ⚠ 티어로 잠긴 **진짜** 칸(회피 · ready:true)은 회색으로 남는다 — 그 회색이 성장 예고다.
+    //   숨기기 게이트는 spec.ready 하나뿐이라 「화면은 회색인데 명령은 나가는」 어긋남이 없다
+    //   (orderUnlocked 가 같은 필드로 명령 접수를 이미 막는다).
+    const usable = items.filter((it) => it.spec.ready);
+    if (usable.length <= 1) return false;
+    this.items = usable;
     this.cx = sx;
     this.cy = sy;
     this.wx = wx;
@@ -84,9 +91,9 @@ export class CommandWheel {
     this.root.replaceChildren();
     this.slots.length = 0;
 
-    const n = items.length;
+    const n = usable.length;
     for (let i = 0; i < n; i++) {
-      const it = items[i] as WheelSlot;
+      const it = usable[i] as WheelSlot;
       // 12시부터 시계 방향. 「이동」이 늘 12시라 손이 위치를 외운다.
       const ang = -Math.PI / 2 + (i / n) * Math.PI * 2;
       const x = sx + Math.cos(ang) * RADIUS;
