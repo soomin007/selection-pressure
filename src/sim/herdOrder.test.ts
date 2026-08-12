@@ -142,6 +142,74 @@ describe("「피해라」 · 탭한 자리에서 멀어진다", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// 「피해라」 · 세계 가장자리 (2026-08-12 수정의 감지기)
+//
+// fleeClear 가 부르는 lineOfSight 는 격자 밖 끝점을 가장자리 타일에 붙여 읽어 **맵 밖이 늘
+// 「트임」으로 보였다.** 그래서 달아날 방향이 맵 밖이면 우회 탐색(FLEE_OFFSETS)이 아예 안 돌고,
+// 개체는 경계에 눌린 채 사실상 정지했다(2026-08-09 실측: 4초 이동거리 한복판 174.0px · 남서 구석
+// 133.2px · 구석 개체틱의 84.4%가 틱당 0.3px 미만). 「피해라」는 기력 8 + 쿨타임 90틱을 무는
+// **사람이 산 명령**이라 이 손해의 무게가 다르다. 아래 둘이 빨간불이면 경계 검사가 다시 사라진 것.
+// ---------------------------------------------------------------------------
+describe("「피해라」 · 세계 가장자리에서도 실제로 달아난다", () => {
+  /** 개체 하나를 at 에 세우고 tap 에서 달아나게 한 뒤, 순 변위와 정지 틱을 계측한다. */
+  function evadeRun(
+    seed: string,
+    at: { x: number; y: number },
+    tap: { x: number; y: number },
+    steps: number,
+  ): { net: number; stalled: number } {
+    const w = worldOn(flatTerrain(), seed, { hunt: 0 });
+    let kept = false;
+    for (let i = w.entities.length - 1; i >= 0; i--) {
+      const e = w.entities[i];
+      if (e === undefined) continue;
+      if (e.species.isPlayer && !kept) {
+        kept = true;
+        e.x = at.x;
+        e.y = at.y;
+        e.prevX = e.x;
+        e.prevY = e.y;
+        e.vx = 0;
+        e.vy = 0;
+        continue;
+      }
+      w.entities.splice(i, 1); // 한 마리만 · 야생·뭉침·도망이 계측을 흐리지 않게
+    }
+    let stalled = 0;
+    let px = at.x;
+    let py = at.y;
+    for (let i = 0; i < steps; i++) {
+      w.armLead();
+      w.herdOrder = { x: tap.x, y: tap.y, kind: "evade" };
+      w.step();
+      const me = w.entities.find((e) => e.alive && e.species.isPlayer);
+      if (me === undefined) break;
+      if (Math.hypot(me.x - px, me.y - py) < 0.05) stalled += 1;
+      px = me.x;
+      py = me.y;
+    }
+    return { net: Math.hypot(px - at.x, py - at.y), stalled };
+  }
+
+  it("남쪽 가장자리 · 「반대 방향」이 맵 밖이어도 벽을 따라 달아난다(경계에 눌려 정지하지 않는다)", () => {
+    // 탭이 개체 바로 북쪽 → 반대 방향이 정남 = 맵 밖. 수정 전에는 여기서 경계 반사에 눌렸다.
+    for (const seed of ["edge-a", "edge-b"]) {
+      const r = evadeRun(seed, { x: 270, y: H - 12 }, { x: 270, y: H - 112 }, 150);
+      expect(r.net, `시드 ${seed}`).toBeGreaterThan(100);
+      expect(r.stalled, `시드 ${seed}`).toBeLessThan(30);
+    }
+  });
+
+  it("남서 구석 · 두 축이 다 막혀도 벽을 따라 빠져나간다(실측 최악 지점)", () => {
+    for (const seed of ["corner-a", "corner-b"]) {
+      const r = evadeRun(seed, { x: 12, y: H - 12 }, { x: 112, y: H - 112 }, 150);
+      expect(r.net, `시드 ${seed}`).toBeGreaterThan(100);
+      expect(r.stalled, `시드 ${seed}`).toBeLessThan(30);
+    }
+  });
+});
+
 describe("명령 휠 · 구현 안 된 칸은 화면에서 약속하지 않는다", () => {
   it("`ready: false` 인 칸은 어떤 도장으로도 안 열린다(게이트가 하나뿐이다)", () => {
     const maxed = {

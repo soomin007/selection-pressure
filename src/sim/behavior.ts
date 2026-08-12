@@ -1588,9 +1588,20 @@ function fleeClear(
   canLand: boolean,
   canFly: boolean,
 ): boolean {
-  return world.terrain.lineOfSight(
-    x, y, x + Math.cos(ang) * probe, y + Math.sin(ang) * probe, canSwim, canLand, canFly,
-  );
+  const px = x + Math.cos(ang) * probe;
+  const py = y + Math.sin(ang) * probe;
+  // **세계 밖은 「막힘」이다**(2026-08-12 수정). lineOfSight 는 격자 밖 끝점을 clampIndex 로
+  // 가장자리 타일에 붙여 읽으므로 맵 밖이 늘 「트임」으로 보였고, 그래서 가장자리·구석에서 우회
+  // 탐색(FLEE_OFFSETS)이 아예 안 돌아 도망이 경계에 눌려 사실상 정지했다. 실측(2026-08-09 ·
+  // 4초 이동거리): 한복판 174.0px · 남쪽 가장자리 165.1px · 남서 구석 133.2px(구석 개체틱의
+  // 84.4%가 틱당 0.3px 미만). 「피해라」는 기력 8 + 쿨타임 90틱을 무는 **사람이 산 명령**이라
+  // 같은 손해의 무게가 다르다(backlog 2026-08-09 검증 항목).
+  // 비행 종도 세계 밖으로는 못 나간다(경계 반사는 모두에게 걸린다) · lineOfSight 의 canFly
+  // 지름길보다 먼저 본다. 전 방향이 밖이면(구석) clearFleeDir 의 offsets 가 벽을 따라 도는
+  // 방향(±2.8rad 까지)을 찾는다. 순수 기하 · rng 0(결정론 안전 · 다만 도망 경로가 바뀌는
+  // **의도된 세계 변화**라 골든 지문은 재기준선).
+  if (px < 0 || px > world.width || py < 0 || py > world.height) return false;
+  return world.terrain.lineOfSight(x, y, px, py, canSwim, canLand, canFly);
 }
 
 // 도망 회피 탐색 각(라디안). 0.4rad 씩 좌우로 점점 크게 — away 에 가까운(작은 편차) 통행 방향 우선.
