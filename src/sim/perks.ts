@@ -497,9 +497,9 @@ export const RIVERJAW_KILL = 0.9;
 export const RIVERJAW_AWAY_MUL = 0.5;
 /** 썩은 고기를 먹는 위 · 갓 잡은 사냥 수입 배수(「절반」). */
 export const CARRION_FRESH_MUL = 0.5;
-/** 라텔의 맞물기 · 반사량 = 내 무는 피해 × 이 값(「절반」). */
+/** 벌꿀오소리의 맞물기 · 반사량 = 내 무는 피해 × 이 값(「절반」). */
 export const RATEL_REFLECT = 0.5;
-/** 라텔의 맞물기 · 달아나는 동안 걸음 배수(「30% 줄어든다」). */
+/** 벌꿀오소리의 맞물기 · 달아나는 동안 걸음 배수(「30% 줄어든다」). */
 export const RATEL_FLEE_MUL = 0.7;
 /** 힘줄을 무는 법 · 절뚝임 지속 틱(「3초」 · sim 30틱 = 1초). */
 export const HAMSTRING_TICKS = 90;
@@ -607,8 +607,9 @@ const RULE_CARD_DEFS = [
   },
   {
     id: "ratel",
-    name: "라텔의 맞물기",
-    flavor: "라텔. 사자가 물어도 마주 무는 짐승입니다.",
+    // **[사용자 2026-08-12]** "라텔은 뭐야?" → 아는 이름(벌꿀오소리)으로 개명(쉬운 말 규칙).
+    name: "벌꿀오소리의 맞물기",
+    flavor: "벌꿀오소리. 사자가 물어도 마주 무는 짐승입니다.",
     when: "always",
     axis: "attack",
     rule: "ratel",

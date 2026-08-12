@@ -574,7 +574,7 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
     const pp = prey.genome.perks;
     // 돋는 새살 — 잃은 것의 절반이 상처가 아무는 동안 천천히 돌아온다(적립만 여기서, 회복은 틱에서).
     if (hasRule(pp, "newflesh")) prey.pendingRegen += bite.damage * NEWFLESH_SHARE;
-    // 라텔의 맞물기 — 그 자리에서 마주 문다. 반사량은 **내(물린 쪽) 이빨 능치**로 잰다 —
+    // 벌꿀오소리의 맞물기 — 그 자리에서 마주 문다. 반사량은 **내(물린 쪽) 이빨 능치**로 잰다 —
     // 이빨을 안 판 종의 라텔은 무는 흉내일 뿐이다(이빨 4단 카드인 이유). 카드 문구도 「내 이빨
     // 힘의 절반」이다(내 물기에 걸리는 다른 배수와 일부러 무관 · 검증 지적 반영).
     if (hasRule(pp, "ratel")) {

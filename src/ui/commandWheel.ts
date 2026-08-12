@@ -87,7 +87,7 @@ export class CommandWheel {
     const n = items.length;
     for (let i = 0; i < n; i++) {
       const it = items[i] as WheelSlot;
-      // 12시부터 시계 방향. 「가라」가 늘 12시라 손이 위치를 외운다.
+      // 12시부터 시계 방향. 「이동」이 늘 12시라 손이 위치를 외운다.
       const ang = -Math.PI / 2 + (i / n) * Math.PI * 2;
       const x = sx + Math.cos(ang) * RADIUS;
       const y = sy + Math.sin(ang) * RADIUS;

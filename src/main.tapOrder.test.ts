@@ -83,7 +83,7 @@ describe("거절 이유 한 줄 · 참인 것만, 모르면 입을 다문다 (�
     const slot = g.orderWheel().find((s) => s.spec.kind === "evade");
     expect(slot?.unlocked).toBe(false);
     const line = orderDenyLine(slot);
-    expect(line).toBe(`「피해라」 명령은 ${ORDER_SPEC_BY_KIND.get("evade")?.hint ?? ""}`);
+    expect(line).toBe(`「회피」 명령은 ${ORDER_SPEC_BY_KIND.get("evade")?.hint ?? ""}`);
     expect(line).not.toContain("숨을 고르는"); // 쿨타임이 아닌데 쿨타임이라 말하지 않는다
   });
 
@@ -93,7 +93,7 @@ describe("거절 이유 한 줄 · 참인 것만, 모르면 입을 다문다 (�
     expect(g.setHerdOrder(120, 200, "evade")).toBe(true);
     expect(g.setHerdOrder(120, 200, "evade")).toBe(false); // 곧바로 또 = 쿨타임
     expect(orderDenyLine(g.orderWheel().find((s) => s.spec.kind === "evade"))).toBe(
-      "「피해라」 명령은 아직 숨을 고르는 중입니다",
+      "「회피」 명령은 아직 숨을 고르는 중입니다",
     );
   });
 

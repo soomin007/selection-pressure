@@ -95,29 +95,33 @@ export interface OrderSpec {
  */
 /** 아직 구현 안 된 칸의 힌트·설명 한 줄(여섯 칸이 같은 문구를 쓴다 · 한 곳에서만 고친다). */
 const WIP_HINT = "아직 준비 중입니다";
+// ⚠ 칸 이름은 **명사형**이다 (**[사용자 2026-08-12]** "-해라 라는 말투가 좀 컨셉이랑 안 맞는 것
+//   같다" → 명사형으로 확정). 옛 이름(가라·피해라·잡아라·모여라·살펴라·버텨라·몰아라)이 주석 ·
+//   테스트 설명·세션 로그 곳곳에 역사로 남아 있다 · kind 로 대조하면 된다(move=이동 · evade=회피 ·
+//   hunt=사냥 · gather=집결 · scan=정찰 · brace=버티기 · drive=몰이).
 export const ORDER_SPECS: readonly OrderSpec[] = [
   {
-    kind: "move", label: "가라", cat: null, tier: 0, ready: true,
+    kind: "move", label: "이동", cat: null, tier: 0, ready: true,
     hint: "", desc: "그 자리로 무리를 보냅니다.", cooldown: 0, energy: 0,
   },
   {
-    kind: "hunt", label: "잡아라", cat: "fang", tier: 1, ready: false,
+    kind: "hunt", label: "사냥", cat: "fang", tier: 1, ready: false,
     hint: WIP_HINT, desc: WIP_HINT, cooldown: 60, energy: 0,
   },
   {
-    kind: "evade", label: "피해라", cat: "leg", tier: 1, ready: true,
+    kind: "evade", label: "회피", cat: "leg", tier: 1, ready: true,
     hint: "다리 1단이 되면 열립니다", desc: "탭한 자리에서 반대쪽으로 흩어져 달아납니다.", cooldown: 90, energy: 8,
   },
   {
-    kind: "gather", label: "모여라", cat: "herd", tier: 1, ready: false,
+    kind: "gather", label: "집결", cat: "herd", tier: 1, ready: false,
     hint: WIP_HINT, desc: WIP_HINT, cooldown: 60, energy: 0,
   },
   {
-    kind: "scan", label: "살펴라", cat: "eye", tier: 2, ready: false,
+    kind: "scan", label: "정찰", cat: "eye", tier: 2, ready: false,
     hint: WIP_HINT, desc: WIP_HINT, cooldown: 120, energy: 0,
   },
   {
-    kind: "brace", label: "버텨라", cat: "hide", tier: 3, ready: false,
+    kind: "brace", label: "버티기", cat: "hide", tier: 3, ready: false,
     hint: WIP_HINT, desc: WIP_HINT, cooldown: 180, energy: 4,
   },
   {
@@ -125,7 +129,7 @@ export const ORDER_SPECS: readonly OrderSpec[] = [
     hint: WIP_HINT, desc: WIP_HINT, cooldown: 180, energy: 0,
   },
   {
-    kind: "drive", label: "몰아라", cat: null, tier: 0, ready: false,
+    kind: "drive", label: "몰이", cat: null, tier: 0, ready: false,
     hint: WIP_HINT, desc: WIP_HINT, cooldown: 150, energy: 0,
   },
 ];
