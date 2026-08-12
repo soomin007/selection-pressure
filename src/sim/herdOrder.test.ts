@@ -909,6 +909,46 @@ describe("방울 우선 · 닿을 수 없는 방울은 안 고른다", () => {
     expect(stalledWith).toBeLessThan(3000);
   });
 
+  it("길이 없는 목표는 유예 뒤 놓아 준다 — 벽을 밀며 서 있지 않는다 (2026-08-12 포기 카운터)", () => {
+    // 2026-08-09 실측: 길 없는 목표의 직진 폴백에 붙들린 개체틱이 군도 166 대 72 · 대양 816 대 6.
+    // 게임의 명령 수락 게이트(herdCanReach)는 무리 중심 기준이라, 물 건너 갈린 개체는 여전히
+    // 이 폴백에 떨어진다. 계약: 뜻은 유효하되(분모 orderPending 에 남는다) 이 개체는 놓인다
+    // (분자 orderFollowers 에서 빠진다) — 벽에 머리를 박는 대신 평소 삶(채집·배회)으로 돌아간다.
+    const w = worldOn(wallTerrain(null), "giveup-a", { hunt: 0 });
+    let kept = false;
+    for (let i = w.entities.length - 1; i >= 0; i--) {
+      const e = w.entities[i];
+      if (e === undefined) continue;
+      if (e.species.isPlayer && !kept) {
+        kept = true;
+        e.x = 270;
+        e.y = 450; // 벽(y 480~500) 북쪽
+        e.prevX = e.x;
+        e.prevY = e.y;
+        e.vx = 0;
+        e.vy = 0;
+        continue;
+      }
+      w.entities.splice(i, 1);
+    }
+    const south: HerdOrder = { x: 270, y: 700, kind: "move" }; // 벽 건너 · 이 개체에게 길이 없다
+    let lateFollow = 0;
+    let latePendingTicks = 0;
+    for (let i = 0; i < 200; i++) {
+      w.armLead();
+      w.herdOrder = south;
+      w.step();
+      if (i >= 120) {
+        lateFollow += w.orderFollowers;
+        if (w.orderPending > 0) latePendingTicks += 1;
+      }
+    }
+    expect(latePendingTicks).toBeGreaterThan(0); // 뜻은 여전히 유효하다(화면 분모에 남는다)
+    expect(lateFollow).toBe(0); // 그러나 이 개체는 놓였다 — 영원한 직진 폴백이 사라졌다
+    // 살아 있다(놓인 뒤 평소 삶으로 돌아가 굶지 않았다는 최소한의 증거).
+    expect(w.entities.some((e) => e.alive && e.species.isPlayer)).toBe(true);
+  });
+
   it("길이 있는 방울은 여전히 고른다 · 직선(같은 판·벽 없음)", () => {
     // 이 케이스가 빨간불이면 「기능을 통째로 끈 것」과 구별이 안 된다.
     const r = wallRun("wall-flat", flatTerrain(), true, north, 600);

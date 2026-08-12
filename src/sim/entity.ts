@@ -42,6 +42,14 @@ export interface Entity {
   // 목표 타일이 바뀌면 재계산). 직선으로 보이면 경로를 버리고 직진하므로 대부분 비어 있다.
   path: number[];
   pathGoalTile: number;
+  // 길찾기 실패 기억(런타임, 직렬화 안 함): 어느 목표 타일에(navFailTile · -1=없음) 몇 틱 연속으로
+  // 길이 없었나(navFail). SIM.navGiveUpTicks 를 넘으면 navTo 가 포기 신호(giveUp)를 준다 —
+  // 지시·방울·금빛 쫓기가 그 신호를 읽고 놓아 준다.
+  // ⚠ **타일에 귀속**인 이유: 한 틱 안에 먹이 navTo 와 지시 navTo 가 번갈아 불리므로, 전역 카운터로
+  //   두면 먹이 길찾기의 성공이 지시 목표의 실패 기억을 매 틱 씻어 포기가 영영 안 걸린다(실측).
+  // ⚠ 야생의 먹이 추적은 이 신호를 **안 읽는다**(생태 불변 · 그쪽 포기는 stuckTicks 가 담당).
+  navFail: number;
+  navFailTile: number;
   // 지금 보스에 맞설 수 있는가(런타임, 직렬화 안 함). sim 이 매 틱 판정해 여기 남긴다 · 렌더가 매
   // 프레임 isRaidFighter 를 다시 부르면 폰 프레임이 죽고, 조건을 밖에서 다시 유도하면 화면과 실제가
   // 갈린다. 보스가 없으면 늘 false(world.step 이 매 틱 끈다).
@@ -116,6 +124,8 @@ export function createEntity(
     wanderAngle: hash01(id) * Math.PI * 2,
     path: [],
     pathGoalTile: -1,
+    navFail: 0,
+    navFailTile: -1,
     poison: 0,
     attackCd: 0,
     woundTicks: 0,

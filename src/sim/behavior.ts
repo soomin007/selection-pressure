@@ -1138,12 +1138,15 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         const drop = hunting || goblinChase !== null ? null : nearestFreeDrop(world, e.x, e.y, canSwim, canLand, canFly);
         if (drop !== null) {
           // 길찾기를 태우는 이유는 지시와 같다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다.
-          const nav = navTo(e, world, drop, canSwim, canLand, canFly);
-          const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, 0);
-          desired = {
-            x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
-            y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
-          };
+          // 포기 신호(giveUp)면 안 끈다 — 길 없는 방울에 벽을 밀며 서 있는 것보다 평소대로 사는 게 낫다.
+          const nav = navTo(e, world, drop, canSwim, canLand, canFly, true);
+          if (!nav.giveUp) {
+            const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, 0);
+            desired = {
+              x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
+              y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
+            };
+          }
         } else if (!reached && !hunting && goblinChase === null) {
           // 「가는 길 먹이」 예외(지시 쪽·코앞이면 그것부터 먹고 간다)는 여기 있다가 2026-08-12 에
           // 걷어냈다 · 그 예외 하나가 순종률을 30.8%p 새게 했다(2026-08-08 실측 · 처방 ②).
@@ -1153,17 +1156,23 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
           // (known_issues "반응형 벽 회피는 진동을 만든다 · 격자 BFS 가 정답").
           // 도착 감속도 해제 반경 기준이다 · 게이트가 200 이던 시절엔 min(1, d/200)=1 이 항상 참이라
           // 죽은 코드였고, 게이트를 64 로 줄이면서 처음 살아났다(문턱 근처에서 지나침·진동 방지).
-          const nav = navTo(e, world, { x: order.x, y: order.y }, canSwim, canLand, canFly);
-          const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? ORDER.releaseRadius : 0);
-          desired = {
-            x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
-            y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
-          };
-          // 순종의 질을 화면에 보여 주는 숫자는 **여기서**, 규칙이 판정된 그 자리에서 센다.
-          // 밖에서 조건을 다시 유도하면 화면과 실제가 갈린다(known_issues).
-          // 세는 것은 **지시가 이번 틱 이동을 가져간 개체**뿐이다 · 방울로 잠깐 새는 개체는 안 센다
-          // (그건 지시가 아니라 방울이 모는 것이라, 세면 순종이 부풀어 화면이 거짓말한다).
-          world.orderFollowers += 1;
+          const nav = navTo(e, world, { x: order.x, y: order.y }, canSwim, canLand, canFly, true);
+          // **길이 없으면 놓아 준다**(2026-08-12 · navTo 의 포기 카운터). 예전엔 직진 폴백이 영원해서
+          // 이 개체가 못 가는 목표에 벽을 밀며 굶었다(실측: 대양에서 개체틱 816 대 6). 놓아 주면
+          // 평소 삶(채집·배회)으로 돌아가고, 아래 follower 계수에서도 빠져 화면이 정직해진다
+          // (「따르는 중 N/M」의 분모에는 남는다 — 뜻은 유효한데 이 개체가 못 따르는 상태 그대로).
+          if (!nav.giveUp) {
+            const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? ORDER.releaseRadius : 0);
+            desired = {
+              x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
+              y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
+            };
+            // 순종의 질을 화면에 보여 주는 숫자는 **여기서**, 규칙이 판정된 그 자리에서 센다.
+            // 밖에서 조건을 다시 유도하면 화면과 실제가 갈린다(known_issues).
+            // 세는 것은 **지시가 이번 틱 이동을 가져간 개체**뿐이다 · 방울로 잠깐 새는 개체는 안 센다
+            // (그건 지시가 아니라 방울이 모는 것이라, 세면 순종이 부풀어 화면이 거짓말한다).
+            world.orderFollowers += 1;
+          }
         }
       }
     }
@@ -1174,12 +1183,14 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 길찾기를 태우는 이유는 방울과 같다(직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다).
   // 잡기는 sim/goblin.ts 의 접촉 판정이 한다 — 여기는 다리만 움직인다(판정을 두 곳에 안 적는다).
   if (goblinChase !== null && !(order !== null && inVoice && order.kind === "evade")) {
-    const nav = navTo(e, world, { x: goblinChase.x, y: goblinChase.y }, canSwim, canLand, canFly);
-    const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, 0);
-    desired = {
-      x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
-      y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
-    };
+    const nav = navTo(e, world, { x: goblinChase.x, y: goblinChase.y }, canSwim, canLand, canFly, true);
+    if (!nav.giveUp) {
+      const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, 0);
+      desired = {
+        x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
+        y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
+      };
+    }
   }
 
   // --- 관성: 현재 속도를 desired 로 부드럽게 (홱 꺾임/제자리 떨림 제거) ---
@@ -1903,21 +1914,56 @@ function navTo(
   canSwim: boolean,
   canLand: boolean,
   canFly: boolean,
-): { x: number; y: number; final: boolean } {
+  /**
+   * **길 없음 포기를 추적하는가.** 지시·방울·금빛 쫓기만 true 를 넘긴다 — 그들이 giveUp 신호를
+   * 읽고 개체를 놓아 준다. 먹이 추적은 false(기본) — 신호를 안 읽으니 기억도 안 만진다.
+   * ⚠ 기억(navFail/navFailTile)은 개체에 하나뿐이라, 먹이 쪽도 쓰게 하면 물 건너 먹이를 노린
+   *   실패가 지시 목표의 실패 기억을 매 틱 덮어써 포기가 영영 안 걸린다(2026-08-12 실측 ·
+   *   t20 부터 navFail 이 1 에 고정됐다).
+   */
+  trackFail = false,
+): { x: number; y: number; final: boolean; giveUp: boolean } {
   const terr = world.terrain;
+  const goalTile = terr.tileIndex(goal.x, goal.y);
   // 1) 직선으로 보이면 직진 — 경로 버림. 비행 종은 지형에 안 막혀 늘 직진(BFS 안 탐).
   if (terr.lineOfSight(e.x, e.y, goal.x, goal.y, canSwim, canLand, canFly)) {
     if (e.path.length > 0) {
       e.path.length = 0;
       e.pathGoalTile = -1;
     }
-    return { x: goal.x, y: goal.y, final: true };
+    if (trackFail && e.navFailTile === goalTile) {
+      e.navFail = 0;
+      e.navFailTile = -1;
+    }
+    return { x: goal.x, y: goal.y, final: true, giveUp: false };
+  }
+  // **포기한 목표** — 길이 없는 목표에 BFS 를 틱마다 다시 돌리지 않는다(포기 전까지 이미
+  // navGiveUpTicks 틱 연속으로 돌았다). 신호를 읽는 쪽(지시·방울·금빛)은 이 개체를 놓아 주고,
+  // 먹이 추적은 예전과 같은 직진 폴백 좌표를 받는다(야생 이동 비트 불변).
+  if (trackFail && e.navFailTile === goalTile && e.navFail >= SIM.navGiveUpTicks) {
+    return { x: goal.x, y: goal.y, final: true, giveUp: true };
   }
   // 2) 막힘 — 목표 타일이 바뀌었거나 경로가 없으면 BFS 재계산(그 외엔 캐시 재사용).
-  const goalTile = terr.tileIndex(goal.x, goal.y);
   if (e.pathGoalTile !== goalTile || e.path.length === 0) {
     e.path = terr.findPath(e.x, e.y, goal.x, goal.y, canSwim, canLand, canFly);
     e.pathGoalTile = goalTile;
+    if (e.path.length === 0) {
+      // 갓 계산했는데 길이 없다 — 진짜 못 찾음. 실측(2026-08-09): 이 폴백에 붙들린 개체틱이
+      // 군도 166 대 72 · 대양 816 대 6 이었다(못 가는 목표에 벽을 밀며 서 있는 상태).
+      if (trackFail) {
+        if (e.navFailTile === goalTile) e.navFail += 1;
+        else {
+          e.navFailTile = goalTile;
+          e.navFail = 1;
+        }
+        return { x: goal.x, y: goal.y, final: true, giveUp: e.navFail >= SIM.navGiveUpTicks };
+      }
+      return { x: goal.x, y: goal.y, final: true, giveUp: false };
+    }
+    if (trackFail && e.navFailTile === goalTile) {
+      e.navFail = 0;
+      e.navFailTile = -1;
+    }
   }
   // 3) 경로 단축(funnel): 다음 웨이포인트가 보이면 현재 것을 건너뛴다.
   while (e.path.length >= 2) {
@@ -1934,10 +1980,10 @@ function navTo(
     const reach = terr.cellSize * 0.6;
     if ((e.x - wx) ** 2 + (e.y - wy) ** 2 < reach * reach) e.path.shift();
   }
-  // 경로 소진/못 찾음 → 목표로 직진 시도(axis sliding 이 막아주니 갇히진 않는다).
-  if (e.path.length === 0) return { x: goal.x, y: goal.y, final: true };
+  // 경로 소진(웨이포인트를 다 먹음) → 목표로 직진 시도(axis sliding 이 막아주니 갇히진 않는다).
+  if (e.path.length === 0) return { x: goal.x, y: goal.y, final: true, giveUp: false };
   const w = e.path[0] as number;
-  return { x: terr.tileCenterX(w), y: terr.tileCenterY(w), final: false };
+  return { x: terr.tileCenterX(w), y: terr.tileCenterY(w), final: false, giveUp: false };
 }
 
 /** 목표가 없을 때: 보존된 헤딩을 조금씩 흔들며 순항(멈추지 않고 부드럽게 떠돈다). */
