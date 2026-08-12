@@ -536,14 +536,24 @@ async function runOrder() {
 function raidRound(genome, type, seed, diffMul, mapType, drive = false) {
   const w = buildWorld(seed, genome, mapType);
   for (let i = 0; i < WARMUP; i++) w.step();
+  // ⚠ **몰기(drive)는 알파와 목소리 반경 없이는 통째로 무효다**(2026-08-12 발견 · order 모드가
+  //   2026-08-08 에 고친 것과 같은 결함이 여기에도 있었다). raidRound 는 herdOrder 만 세우고
+  //   armLead/voiceR 를 안 세워, `--drive` 의 45행 출력이 지시 없음과 **바이트 단위로 같았다** =
+  //   「몰면 격퇴가 빨라지나」를 잰 적이 한 번도 없다. game 이 매 단계 하는 것과 같은 함수로 넣는다.
+  if (drive) {
+    w.voiceR = voiceRadius(genome.pips, genome.keys);
+    w.vacuumOnLeadDeath = vacuumTicks(genome.pips);
+  }
   w.boss = createBoss(type, W, H, w.terrain, diffMul, true);
   const maxHp = w.boss.maxHp;
   let minRatio = 1;
   let melee = 0;
   let ranged = 0;
   let killed = false;
+  let killTick = -1; // 격퇴가 성립한 틱(초 = /SIM.stepsPerSecond) · 리듬 폭(raidRecoil)을 만질 때 이 값이 자다
   const ticks = GAME.bossSeconds * SIM.stepsPerSecond;
   for (let i = 0; i < ticks; i++) {
+    if (drive) w.armLead(); // 매 틱 · 알파가 죽으면 다음 개체가 이어받는다(order 모드와 같은 모양)
     if (drive && w.boss !== null) {
       const ms = w.boss.members;
       if (ms.length > 0) {
@@ -565,6 +575,7 @@ function raidRound(genome, type, seed, diffMul, mapType, drive = false) {
       const r = Math.max(0, b.hp) / maxHp;
       if (r < minRatio) minRatio = r;
       if (b.hp <= 0) {
+        if (!killed) killTick = i;
         killed = true;
         // --full 이면 격퇴 뒤에도 끝까지 돌린다. "보스에게 죽은 내 종 수"를 HEAD 와 견줄 땐 필수다 ·
         // 격퇴 시점이 다르면 남은 틱 수가 달라져, 죽음 경로를 안 건드렸어도 사망 수가 달라 보인다.
@@ -572,7 +583,7 @@ function raidRound(genome, type, seed, diffMul, mapType, drive = false) {
       }
     }
   }
-  return { minRatio, killed, bossDeaths: w.deaths.boss, pop: w.playerPopulation, melee, ranged };
+  return { minRatio, killed, killTick, bossDeaths: w.deaths.boss, pop: w.playerPopulation, melee, ranged };
 }
 
 async function runRaid() {
@@ -584,7 +595,7 @@ async function runRaid() {
 
   console.log(`# raid · era ${ERA} · 진도 ${STEP} · 세계 ${W}x${H}(배율 ${SCALE}) · areaScale ${AREA_SCALE} · ${mapType ?? mapTypeForStep(STEP)} · diffMul ${diffMul} · 시드 ${SEEDS.length} · ${GAME.bossSeconds}초${drive ? " · 몰기(지시)" : " · 지시 없음"}`);
   console.log(`# 지표: 최소체력% = 라운드 중 격퇴 바가 내려간 가장 낮은 지점(사용자가 보는 양). 무흠집 = 99% 이상으로 끝난 라운드.`);
-  console.log(["프리셋".padEnd(18), "보스".padEnd(10), "격퇴", "최소체력%", "무흠집", "전사(근/원)", "보스사망", "생존"].join("\t"));
+  console.log(["프리셋".padEnd(18), "보스".padEnd(10), "격퇴", "격퇴초", "최소체력%", "무흠집", "전사(근/원)", "보스사망", "생존"].join("\t"));
 
   for (const p of presets) {
     for (const type of bosses) {
@@ -593,11 +604,16 @@ async function runRaid() {
       if (rows.length === 0) continue;
       const kills = rows.filter((r) => r.killed).length;
       const untouched = rows.filter((r) => r.minRatio >= 0.99).length;
+      // 격퇴초 = 격퇴가 성립한 판만의 평균(초). 리듬 폭(raidRecoilNear/Factor)이나 물기 간격을 만지면
+      // 이 열이 먼저 움직인다 · 격퇴율(칸이 거칠다)보다 민감한 자다. ⚠ --full 이 아니면 격퇴 즉시
+      // 루프를 끊으므로 이 값은 그대로 유효하다(끊기 전에 기록).
+      const killSecs = rows.filter((r) => r.killTick >= 0).map((r) => r.killTick / SIM.stepsPerSecond);
       console.log(
         [
           p.name.padEnd(18),
           type.padEnd(10),
           `${kills}/${rows.length}`,
+          killSecs.length === 0 ? "-" : cell(killSecs, 1),
           cell(rows.map((r) => r.minRatio * 100), 1),
           `${untouched}/${rows.length}`,
           `${fmt(rows.reduce((a, r) => a + r.melee, 0) / rows.length, 1)}/${fmt(rows.reduce((a, r) => a + r.ranged, 0) / rows.length, 1)}`,
