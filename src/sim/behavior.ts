@@ -18,6 +18,7 @@ import { createEntity } from "@/sim/entity";
 import { areFriends } from "@/sim/species";
 import { bossCanHunt, isRaidFighter, isRaidRangedFighter, raidRangedPower, dealRaidHit, bossRaidTargetFor } from "@/sim/boss";
 import { ORDER, SIM } from "@/sim/params";
+import { GOBLIN } from "@/sim/goblin";
 // 듀오는 2026-08-10 부터 **도장이 아니라 카드**다 · `hasRule` 이 「그 카드를 골랐는가」를 묻는다
 // (옛 `tiers.hasDuo(pips, id)` 는 지웠다 · 두 범주를 3단까지 올려도 그것만으로는 안 켜진다).
 import {
@@ -1027,6 +1028,25 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   //   그래서 무리를 안 판 종은 소수를 직접 데리고 다니는 손맛, 무리를 판 종은 대군을 한 번에 움직이는
   //   맛이 된다 — **같은 게임에서 조작 감각이 둘로 갈린다.**
   //   ⚠ 반경이 0 이하면(알파 없음·지휘 공백) 이 블록이 통째로 안 돈다 = 명령이 아예 안 통한다.
+  // ── 금빛 짐승(황금 고블린) 쫓기 · **[사용자 2026-08-12]** "금빛 짐승을 내 종조차도 잡으려 하질
+  //    않는데" — 처음 구현은 「무리를 몰아 밟게 한다」뿐이라, 방울은 알아서 줍는 무리가 금빛 짐승은
+  //    쳐다도 안 봤다. 방울과 같은 결로 고친다: **근처의 내 종은 스스로 덮친다.** 지시로 근처까지
+  //    몰면 무리가 알아서 에워싸고, 지시가 없어도 눈앞의 금빛은 쫓는다(내 종에게만 보이는 존재).
+  //    우선순위: 도망 > 물고 있는 사냥감 > **금빛 짐승** > 방울 > 지시 > 배회.
+  //     · 사냥감보다 아래: 물던 것을 놓게 하면 드문 사건(판에 5~10번)이 통째로 사라진다(방울과 같은 이유).
+  //     · 「회피」 명령보다 아래: 사람이 기력을 주고 산 도피를 금빛이 덮으면 안 된다(아래 게이트).
+  //    순수 기하 · rng 0 · 시련이 안 걸린 라운드(goblin null)는 이 분기가 통째로 죽는다.
+  const gbNear = world.goblin;
+  const goblinChase =
+    gbNear !== null &&
+    e.species.isPlayer &&
+    !fleeing &&
+    e.targetPrey === null &&
+    (gbNear.x - e.x) * (gbNear.x - e.x) + (gbNear.y - e.y) * (gbNear.y - e.y) <=
+      GOBLIN.chaseRadius * GOBLIN.chaseRadius
+      ? gbNear
+      : null;
+
   const order = world.herdOrder;
   const inVoice = world.hearsOrder(e.x, e.y);
   if (order !== null && e.species.isPlayer && inVoice) {
@@ -1113,7 +1133,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         // ⚠ 통행 특성을 넘기는 이유: **걸어 닿을 수 있는 방울만** 고르게 하기 위해서다. 직선거리만
         //   보던 시절에는 물 건너 방울이 뽑혀 개체가 물가에 머리를 박은 채 굶어 죽었다(2026-08-09 ·
         //   `nearestFreeDrop` 주석에 실측이 있다). 이 개체가 갈 수 있는가는 이 개체의 게놈이 정한다.
-        const drop = hunting ? null : nearestFreeDrop(world, e.x, e.y, canSwim, canLand, canFly);
+        // 금빛 짐승을 쫓는 중이면 방울·행군은 그 아래다(이동은 아래 금빛 블록이 가져간다 ·
+        // 순종(orderFollowers)에도 안 센다 — 지시가 아니라 금빛이 모는 것이라서, 방울과 같은 처리).
+        const drop = hunting || goblinChase !== null ? null : nearestFreeDrop(world, e.x, e.y, canSwim, canLand, canFly);
         if (drop !== null) {
           // 길찾기를 태우는 이유는 지시와 같다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다.
           const nav = navTo(e, world, drop, canSwim, canLand, canFly);
@@ -1122,7 +1144,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
             x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
             y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
           };
-        } else if (!reached && !hunting) {
+        } else if (!reached && !hunting && goblinChase === null) {
           // 「가는 길 먹이」 예외(지시 쪽·코앞이면 그것부터 먹고 간다)는 여기 있다가 2026-08-12 에
           // 걷어냈다 · 그 예외 하나가 순종률을 30.8%p 새게 했다(2026-08-08 실측 · 처방 ②).
           // 굶주림 보전은 예외 부활이 아니라 아래 섭취 블록의 **스침 채집**(처방 ③)이 맡는다.
@@ -1145,6 +1167,19 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         }
       }
     }
+  }
+
+  // ── 금빛 짐승에게 달려든다(위 goblinChase 게이트에서 정해졌다) ──────────────────────────────
+  // 「회피」 명령을 듣는 중인 개체만 예외 — 사람이 기력을 주고 산 도피를 금빛이 덮으면 안 된다.
+  // 길찾기를 태우는 이유는 방울과 같다(직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다).
+  // 잡기는 sim/goblin.ts 의 접촉 판정이 한다 — 여기는 다리만 움직인다(판정을 두 곳에 안 적는다).
+  if (goblinChase !== null && !(order !== null && inVoice && order.kind === "evade")) {
+    const nav = navTo(e, world, { x: goblinChase.x, y: goblinChase.y }, canSwim, canLand, canFly);
+    const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, 0);
+    desired = {
+      x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
+      y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
+    };
   }
 
   // --- 관성: 현재 속도를 desired 로 부드럽게 (홱 꺾임/제자리 떨림 제거) ---
