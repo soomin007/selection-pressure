@@ -39,6 +39,12 @@ export interface Species {
   homeBiome?: Biome;
   /** 비동기 생물(S2) — 지난 런의 내 종("예전의 나")이 이 세계에 다시 나타난 것. 렌더에서 왕관으로 표시. */
   champion?: boolean;
+  /**
+   * 시대별 상위 포식자(2026-08-13 안건 1). **spawnEntities(메인 rng)가 건너뛰는 근거다** —
+   * friendly·homeBiome 처럼 전용 스폰(spawnApexPredators · 독립 rng)이 따로 맡는다. 이 표식이
+   * 없으면 메인 스트림이 밀리고 개체가 이중 스폰된다(격리 계약 테스트가 잡았다).
+   */
+  apexPredator?: boolean;
   // (v7: 종 단위 `bodyScale`(렌더 전용 몸 크기 배율)은 제거됐다 — 몸집(size) **형질**이 그 일을 하고,
   //  개체별 게놈 값이라 같은 종 안에서도 큰 놈·작은 놈이 갈린다. 외형과 시뮬이 한 값에서 나온다.)
 }
@@ -505,6 +511,72 @@ export function mapSpeciesHabitat(mapType: string, name: string): "sea" | "mount
   if (a?.aquatic) return "sea";
   if (a?.mountainous) return "mountain";
   return "land";
+}
+
+// ───────────────────────────── 시대별 상위 포식자 ─────────────────────────────
+//
+// 2026-08-13 결정 회의 안건 1(A안). **[사용자 2026-08-13]** "시대가 오르면 맵도 바뀌고 종도
+// 추가되는데 야생 생태는 원래 바뀌는 거 아니야? 야생 애들도 같이 성장한다는 느낌으로 하든가."
+// 야생의 공격 천장이 전 시대 「포식자」(공격 70 · 흔들림 ±7) 하나로 고정이라, 이빨 2단(공격 78 ·
+// 방울 8개)만 찍으면 세계의 위협이 통째로 소멸했다(2026-08-12 실측: 잡아먹힘 194~206 → 0~1).
+// 시대가 깊어지면 더 사나운 사냥꾼이 스폰 목록에 들어와 그 천장이 세계와 함께 오른다.
+//
+// ⚠ WILD_ARCHETYPES 에 직접 넣지 않는다 — generateWildSpecies 의 rng 소비가 늘어 기존 야생
+//   생태가 통째로 이동한다(WILD_RNG_KEYS 제약). 바이옴·맵 전용 종과 똑같이 **독립 rng** 로 만들고
+//   모든 스폰이 끝난 맨 마지막에 붙인다 → 이 종을 안 들이는 세계(첫 시대·기존 테스트)는 1비트도
+//   안 달라진다.
+// ⚠ 몇 시대에 몇 종이 들어오는가는 game 이 정한다(config 의 eraApexPredators · sim 은 era 를
+//   모른다 — foodScarcity·predatorPressure 와 같은 구조).
+// ⚠ 색은 「나를 먹는 것」 계열(포식자의 빨강)을 지키되 더 무겁게 — 위험의 등급이 색의 무게로
+//   읽히게 한다(첫 판 색 원칙: 새 종은 고유색이 아니라 세 계열 중 하나를 받는다). 실루엣은
+//   몸집·등가시(공격)가 텍스처에서 저절로 커진다(creatureLook · 시각=로직 1:1).
+const ERA_PREDATOR_ARCHETYPES: readonly Archetype[] = [
+  {
+    // 긴이빨 맹수 — 시대 2부터. 이빨 2단(공격 78)이 더는 자동 정점이 아니게 하는 첫 계단.
+    name: "긴이빨 맹수",
+    color: 0xb0182a, // 포식자(0xe23b2e)보다 짙은 핏빛 · 같은 「나를 먹는 것」 계열의 무거운 톤
+    initialCount: 3,
+    foodKinds: [],
+    traits: { diet: 88, fertility: 26, speed: 64, vision: 62, metabolism: 52, attack: 82, herding: 36, size: 58 },
+  },
+  {
+    // 검붉은 폭군 — 시대 3부터. 이 세계의 마지막 공격 계단(흔들림 ±6까지 84~96).
+    name: "검붉은 폭군",
+    color: 0x8f1424, // 가장 어두운 핏빛 — 위험의 등급이 색의 무게로 읽힌다
+    initialCount: 2,
+    foodKinds: [],
+    traits: { diet: 92, fertility: 22, speed: 66, vision: 66, metabolism: 54, attack: 90, herding: 28, size: 64 },
+  },
+];
+
+/** 상위 포식자 종류 수 — game(config.eraApexPredators)이 「몇 시대에 몇 종」을 셀 때 쓴다. */
+export const ERA_PREDATOR_KINDS = ERA_PREDATOR_ARCHETYPES.length;
+
+/** 상위 포식자 이름들 — 대백과·테스트가 대조할 수 있게 밖에 둔다(WILD_ARCHETYPE_NAMES 와 같은 이유). */
+export const ERA_PREDATOR_NAMES: readonly string[] = ERA_PREDATOR_ARCHETYPES.map((a) => a.name);
+
+/**
+ * 시대별 상위 포식자 종을 만든다 — 앞의 `kinds` 종만(시대가 깊을수록 많이). **독립 rng** 라
+ * 메인 스트림(기존 밸런스) 불변. id 는 800 대역(야생 1~ · 맵 전용 700+ · 챔피언 900+ 와 안 겹친다).
+ */
+export function makeEraPredatorSpecies(rng: Rng, kinds: number): Species[] {
+  const out: Species[] = [];
+  let id = 800;
+  for (const arch of ERA_PREDATOR_ARCHETYPES.slice(0, Math.max(0, kinds))) {
+    out.push({
+      id: id++,
+      name: arch.name,
+      genome: clampGenome(genomeFromTraits(wildTraits(arch.traits, rng, 6))),
+      isPlayer: false,
+      color: arch.color,
+      initialCount: arch.initialCount,
+      foodKinds: arch.foodKinds.slice(),
+      friendly: false,
+      faction: 0,
+      apexPredator: true,
+    });
+  }
+  return out;
 }
 
 /**

@@ -3,6 +3,7 @@
 
 import { MAP_SCALE } from "@/config";
 import type { WorldOptions } from "@/sim/world";
+import { ERA_PREDATOR_KINDS } from "@/sim/species";
 
 export const GAME = {
   roundSeconds: 16, // 채집 라운드 길이(초) — 통과 기준 없어 짧혀도 밸런스 영향 없음
@@ -213,6 +214,23 @@ export function eraScarcity(era: number): number {
  */
 export function eraPredatorPressure(era: number): number {
   return Math.min(GAME.eraPredatorCap, Math.pow(1 + GAME.eraPredatorStep, Math.max(0, era)));
+}
+
+/**
+ * 시대별 **상위 포식자** — 이 시대의 스폰 목록에 몇 **종류**가 들어가는가
+ * (2026-08-13 결정 회의 안건 1 · A안 · **[사용자 2026-08-13]** "야생 애들도 같이 성장한다는
+ * 느낌으로"). 시대 2(era 1)에 「긴이빨 맹수」, 시대 3(era 2)부터 「검붉은 폭군」까지 둘.
+ *
+ * 좁힌 세계(온보딩 진도 0~1)에는 들이지 않는다 — 처음 하는 사람의 첫 런 시대 2 는 진도 1 이라
+ * 아직 안 만나고, 런을 하나라도 끝냈으면(진도 2+) 시대 2 부터 만난다. 이빨 2단 날먹 제보는
+ * 숙련 판의 것이라 이 게이트가 목적을 안 깎는다.
+ *
+ * sim 은 era 도 진도도 모른다 — game 이 이 수만 `WorldOptions.apexPredators` 로 넘긴다
+ * (eraPredatorPressure 와 같은 구조).
+ */
+export function eraApexPredators(era: number, step: number): number {
+  if (step < 2) return 0;
+  return Math.max(0, Math.min(ERA_PREDATOR_KINDS, era));
 }
 
 /**

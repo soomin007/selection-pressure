@@ -14,7 +14,7 @@ import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { mapKind, type MapType } from "@/sim/mapType";
 import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
-import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeMapSpecies, mapSpeciesHabitat, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
+import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeEraPredatorSpecies, makeMapSpecies, mapSpeciesHabitat, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
 import type { Biome } from "@/sim/environment";
 import { stepEntity, visionRadius, leadBiteTarget, isApex } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
@@ -212,6 +212,19 @@ export interface WorldOptions {
    *   메인 rng 소비 순서를 안 건드려야 같은 시드의 세계가 이 옵션 하나로 통째로 갈리지 않는다.
    */
   predatorPressure?: number;
+  /**
+   * **시대별 상위 포식자를 몇 종류 들이는가.** 생략·0 = 지금까지 그대로(첫 시대·기존 테스트 불변).
+   * game 이 `eraApexPredators(era, step)` 값을 넘긴다(2026-08-13 결정 회의 안건 1 · A안 ·
+   * **[사용자 2026-08-13]** "야생 애들도 같이 성장한다는 느낌으로").
+   *
+   * 왜 수 늘리기(predatorPressure)와 별개인가: 수는 「포식자가 많아진다」이고 이건 **천장**이다 —
+   * 야생 공격 천장이 전 시대 고정이라 이빨 2단이 자동 정점이 되던 것(2026-08-12 실측)의 답은
+   * 같은 놈을 늘리는 게 아니라 **더 센 놈이 나타나는 것**이다(화면에서 새 실루엣·더 무거운 핏빛로
+   * 읽힌다 — 같은 놈이 조용히 세지는 C안은 전달 규칙 위반이라 기각됐다).
+   *
+   * ⚠ 종 생성·스폰 전부 **독립 rng**(`-apexspecies` · `-apexpos`) · 맨 마지막에 붙어 0 이면 1비트 불변.
+   */
+  apexPredators?: number;
 }
 
 /**
@@ -561,7 +574,12 @@ export class World {
     // 바이옴 특화종과 같이 "독립 rng"로 생성(메인 스트림 보존). 물이 많은 세계에 **바다 포식자**를
     // 들이는 게 핵심이다 — 지금까지 바다엔 위험이 하나도 없어 헤엄치는 종이 공짜로 먹고 살았다.
     const mapSpecies = makeMapSpecies(new Rng(String(seed) + "-mapspecies"), mapType);
-    this.species = [this.playerSpecies, kin, ...wild, ...biomeSpecies, ...mapSpecies, ...championSpecies];
+    // 시대별 상위 포식자(2026-08-13 안건 1) — 독립 rng · 0 종이면 배열이 비어 아래 전부가 무풍이다.
+    const apexSpecies = makeEraPredatorSpecies(
+      new Rng(String(seed) + "-apexspecies"),
+      options.apexPredators ?? 0,
+    );
+    this.species = [this.playerSpecies, kin, ...wild, ...biomeSpecies, ...mapSpecies, ...apexSpecies, ...championSpecies];
     // 감출 종을 **여기서 정해 두기만** 한다(배열에서 빼지 않는다 · 스폰도 건너뛰지 않는다).
     // 실제로 빼는 것은 모든 스폰이 끝난 뒤 딱 한 번(아래 grid.rebuild 직전)이다.
     // 옵션을 안 주면 감추는 종이 하나도 없다 = 지금까지의 온전한 세계.
@@ -596,6 +614,9 @@ export class World {
     // 시대별 포식 압력 — 감추기·자리 잡기까지 끝난 **맨 마지막**에, 살아남은 사냥 무리 옆에만 붙인다
     // (감춘 종에 붙이면 곧바로 지워질 개체를 만들고, 자리 잡기 전에 붙이면 평균이 흔들린다).
     this.spawnEraPredators(new Rng(String(seed) + "-erapred"), options.predatorPressure ?? 1);
+    // 상위 포식자 무리 — 감추기·자리 잡기·수 불리기까지 다 끝난 뒤에만 붙는다(개체 id 가 기존
+    // 세계와 한 칸도 안 밀리게 · 0 종이면 아무 일도 없다).
+    this.spawnApexPredators(new Rng(String(seed) + "-apexpos"), apexSpecies);
     this.grid.rebuild(this.entities);
     // 먹이 위치는 불변이라 격자를 한 번만 빌드한다(available 토글은 탐색 시 거른다).
     this.foodGrid = new FoodGrid(width, height, SIM.gridCellSize);
@@ -1360,8 +1381,9 @@ export class World {
 
   private spawnEntities(): void {
     for (const sp of this.species) {
-      // 친척(우호 종)·바이옴 특화종은 여기서 스폰하지 않는다 — 각자 독립 rng 스폰이 맡아 메인 rng 소비 순서 보존.
-      if (sp.friendly || sp.homeBiome) continue;
+      // 친척(우호 종)·바이옴 특화종·상위 포식자는 여기서 스폰하지 않는다 — 각자 독립 rng 스폰이 맡아
+      // 메인 rng 소비 순서 보존(상위 포식자를 빠뜨리면 메인 스트림이 밀리고 이중 스폰된다 · 계약 테스트).
+      if (sp.friendly || sp.homeBiome || sp.apexPredator) continue;
       // 야생종은 고유한 영역(보금자리)에 모여 태어난다 — 환경 비옥도 차이 + 무리 성향과 맞물려
       // 경쟁 배제를 늦춰 더 많은 종이 공존한다. 내 종(주인공)은 맵 전체에 넓게 퍼뜨린다.
       const homeX = this.rng.range(0.14, 0.86) * this.width;
@@ -1443,6 +1465,49 @@ export class World {
       hy /= list.length;
       for (let i = 0; i < extra; i++) {
         const spot = this.snapSpawn(hx + rng.range(-spread, spread), hy + rng.range(-spread, spread), canSwim, canLand, canFly);
+        this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
+      }
+    }
+  }
+
+  /**
+   * (옵션 `apexPredators`) 시대별 상위 포식자 무리를 세계에 들인다 — 2026-08-13 결정 회의
+   * 안건 1(A안). 자리는 내 종 무게중심에서 맵 짧은 변의 0.4 거리(spaceOutPredators 의 FAR 띠) —
+   * 「더 센 놈이 나타났다」가 시작하자마자 물리는 운으로 배워지면 안 된다.
+   *
+   * ⚠ 전용 rng · 모든 스폰과 감추기가 끝난 뒤 마지막에만 불린다(0 종 = 1비트 불변 · 개체 id 보존).
+   * ⚠ 좁힌 세계(keepWildNames)와는 만날 일이 없게 game 이 게이트한다(eraApexPredators 의 진도 검사).
+   *   그래도 감춘 종으로 들어오면 건너뛴다 — 감추기 필터는 이미 지나갔으므로 여기서 막는 것이 마지막 문이다.
+   */
+  private spawnApexPredators(rng: Rng, list: Species[]): void {
+    if (list.length === 0) return;
+    let px = 0;
+    let py = 0;
+    let pn = 0;
+    for (const e of this.entities) {
+      if (e.species.isPlayer) {
+        px += e.x;
+        py += e.y;
+        pn += 1;
+      }
+    }
+    const cx = pn > 0 ? px / pn : this.width / 2;
+    const cy = pn > 0 ? py / pn : this.height / 2;
+    const dist = Math.min(this.width, this.height) * 0.4;
+    const spread = this.spawnSpread;
+    for (const sp of list) {
+      if (this.hiddenSpeciesIds.has(sp.id)) continue;
+      const canSwim = sp.genome.traits.swimming >= SIM.swimThreshold;
+      const canLand = sp.genome.traits.swimming < SIM.aquaticOnlyThreshold;
+      const canFly = sp.genome.traits.wings >= SIM.flyThreshold;
+      // 종마다 다른 방향의 보금자리 — 두 종이 같은 자리에 겹쳐 스폰돼 한 덩어리로 읽히지 않게.
+      const ang = rng.range(0, Math.PI * 2);
+      const bx = Math.max(0, Math.min(this.width, cx + Math.cos(ang) * dist));
+      const by = Math.max(0, Math.min(this.height, cy + Math.sin(ang) * dist));
+      for (let i = 0; i < sp.initialCount; i++) {
+        const x = Math.max(0, Math.min(this.width, bx + rng.range(-spread, spread)));
+        const y = Math.max(0, Math.min(this.height, by + rng.range(-spread, spread)));
+        const spot = this.terrain.nearestPassable(x, y, canSwim, canLand, canFly);
         this.entities.push(createEntity(this.nextId(), spot.x, spot.y, sp, SIM.startEnergy));
       }
     }

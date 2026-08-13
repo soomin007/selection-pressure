@@ -45,6 +45,7 @@ import { cardAvailable, debugResetAchievements, evaluateRun, type Achievement, t
 import {
   GAME,
   SCHEDULE,
+  eraApexPredators,
   eraDifficulty,
   eraScarcity,
   eraPredatorPressure,
@@ -1663,7 +1664,12 @@ export class Game {
       eraScarcity(this.era), // 시대가 지날수록 세계가 척박(먹이↓·재생↓) — era 0 = 1.0 = 기존과 동일
       // 진도가 해석한 세계 옵션(남길 종·친척·기후·포식자 자리). sim 은 진도도 시대도 모른다.
       // 시대별 포식 압력도 여기서 숫자 하나로만 넘긴다(era 0 = 1.0 = 첫 시대 불변).
-      { ...stepWorldOptions(step), predatorPressure: eraPredatorPressure(this.era) },
+      // 상위 포식자(안건 1 · 2026-08-13)도 종류 수 하나로만 — 시대 2부터 한 종씩, 좁힌 세계 제외.
+      {
+        ...stepWorldOptions(step),
+        predatorPressure: eraPredatorPressure(this.era),
+        apexPredators: eraApexPredators(this.era, step),
+      },
     );
   }
 
@@ -2269,6 +2275,16 @@ export class Game {
     // (이미 온전한 세계면) 빈 줄이라 아무것도 안 붙는다.
     const step = this.onboarding;
     const opened = step > onboardingStep(this.runsDone, this.era - 1) ? onboardingOpenedLine(step) : "";
+    // 상위 포식자가 이번 시대에 **새로** 들어왔으면 한 줄로 예고한다(안건 1 · 2026-08-13).
+    // 「왜 졌는지 모르는데 졌다」 방지 — 세계가 험해진 것은 화면(새 실루엣)으로도 읽히지만,
+    // 시대 전환 직후 반드시 지나는 이 화면이 가장 싼 예고 자리다(onboardingOpenedLine 과 같은 이유).
+    // 진도까지 같은 함수로 검사한다(eraApexPredators) — 실제로 안 들어온 세계에 예고하면 거짓말이다.
+    const prevStep = onboardingStep(this.runsDone, this.era - 1);
+    const apexNow = eraApexPredators(this.era, step);
+    const apexLine =
+      apexNow > eraApexPredators(this.era - 1, prevStep)
+        ? "이번 시대부터 더 사나운 사냥꾼이 나타납니다."
+        : "";
     // **지금 어디쯤인지를 이 화면에서 알아채게 한다.** 대백과에만 적으면 그건 안 끝난 작업이다
     // (CLAUDE.md 전달 규칙). 다음 문턱이 몇 개 남았는지 알려 주면, 곧바로 이어지는 드래프트에서
     // 막대가 실제로 그만큼 차는 것을 눈으로 본다.
@@ -2279,7 +2295,8 @@ export class Game {
     this.preview =
       "새로운 시대에 들어섭니다. 지난 시대를 넘어선 보상으로 카드 하나를 더 고르세요. 지금 무리에 바로 물려집니다. " +
       goalLine +
-      (opened === "" ? "" : ` ${opened}`);
+      (opened === "" ? "" : ` ${opened}`) +
+      (apexLine === "" ? "" : ` ${apexLine}`);
     this.onDraft?.(this.draftCards, this.preview);
   }
 

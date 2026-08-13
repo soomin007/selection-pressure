@@ -8,7 +8,7 @@ import { MUTABLE_TRAITS, cloneGenome, genomeFromTraits, mutateGenome, randomGeno
 import { nightVisionFactor, makeFovTest, fovCosOf, grassVisionFactor, roughSpeedFactor, flyDrainMultiplier, biteOutcome, grazeEfficiency, huntEfficiency, huntSprintFactor, carnivory01, gorgeFactor, maxEnergyFor, packShareGain, packHerdFactor, herdShieldedBy, isApex, sizeDev, sizeSpeedFactor, sizeDrainFactor, sizeFertilityFactor, effectiveCamo, camoVisionFactor } from "@/sim/behavior";
 import { EYE_FOV_COS, FANG_CARN, MAX_TIER, TIER_STEPS, emptyPips, openDuos, type Pips } from "@/sim/tiers";
 import { hasRule, type PerkName } from "@/sim/perks";
-import { areFriends, generateWildSpecies, WILD_ARCHETYPE_NAMES, BIOME_FOOD_KIND, type Species } from "@/sim/species";
+import { areFriends, generateWildSpecies, ERA_PREDATOR_NAMES, WILD_ARCHETYPE_NAMES, BIOME_FOOD_KIND, type Species } from "@/sim/species";
 import { FIRST_ERA_MAP } from "@/sim/mapType";
 import { createEntity, type Entity } from "@/sim/entity";
 import { Rng } from "@/sim/rng";
@@ -1716,5 +1716,71 @@ describe("온보딩 진도별 세계 (생성은 그대로 · 마지막에 걸러
     expect(plain.species.length).toBe(13);
     expect(stepUsesDrawnMap(ONBOARDING_MAX_STEP)).toBe(true); // 세계 종류도 이 런에 뽑힌 것
     expect(mapScale(ONBOARDING_MAX_STEP)).toBe(2.0); // 맵 배율도 상한
+  });
+});
+
+describe("시대별 상위 포식자 (2026-08-13 결정 회의 안건 1 · [사용자] A안)", () => {
+  const G = (): Genome => genomeFromTraits({});
+
+  it("옵션이 없으면(첫 시대) 세계가 1비트도 안 달라진다 — 격리 계약", () => {
+    const plain = new World("apex-iso", W, H, G());
+    const zero = new World("apex-iso", W, H, G(), 1, [], "continent", 1, { apexPredators: 0 });
+    expect(snapshot(zero)).toBe(snapshot(plain));
+  });
+
+  it("들여도 나머지 세계(비상위 개체·좌표·id)는 기존과 완전히 같다 — 맨 마지막 스폰 계약", () => {
+    const plain = new World("apex-iso2", W, H, G());
+    const withApex = new World("apex-iso2", W, H, G(), 1, [], "continent", 1, { apexPredators: 2 });
+    const fp = (w: World, apex: boolean): string =>
+      w.entities
+        .filter((e) => (e.species.id >= 800 && e.species.id < 900) === apex)
+        .map((e) => `${e.id}:${e.species.id}:${e.x.toFixed(3)},${e.y.toFixed(3)}`)
+        .join("|");
+    expect(fp(withApex, false)).toBe(fp(plain, false));
+    expect(fp(plain, true)).toBe(""); // 옵션 없는 세계에 상위 포식자는 없다
+    const apexEnts = withApex.entities.filter((e) => e.species.id >= 800 && e.species.id < 900);
+    expect(apexEnts.length).toBeGreaterThan(0);
+    // 새 개체의 id 는 전부 기존 세계의 어떤 id 보다도 뒤다(기존 id 가 한 칸도 안 밀렸다는 증거).
+    const maxPlain = Math.max(...plain.entities.map((e) => e.id));
+    for (const e of apexEnts) expect(e.id).toBeGreaterThan(maxPlain);
+  });
+
+  it("공격 천장이 실제로 오른다 — 이빨 2단(공격 78)이 자동 정점이 아니게 된다", () => {
+    const w = new World("apex-atk", W, H, G(), 1, [], "continent", 1, { apexPredators: 2 });
+    const apexSp = w.species.filter((s) => s.id >= 800 && s.id < 900);
+    expect(apexSp.map((s) => s.name)).toEqual(ERA_PREDATOR_NAMES.slice(0, 2));
+    // 흔들림(±6)을 감안해도 첫 종은 76+, 둘째 종은 84+ — 야생 천장 64 를 확실히 넘는다.
+    expect((apexSp[0] as Species).genome.traits.attack).toBeGreaterThanOrEqual(76);
+    expect((apexSp[1] as Species).genome.traits.attack).toBeGreaterThanOrEqual(84);
+  });
+
+  it("종류 수는 시키는 만큼만 — 1 이면 첫 종(긴이빨 맹수)만 들어온다", () => {
+    const w = new World("apex-one", W, H, G(), 1, [], "continent", 1, { apexPredators: 1 });
+    const names = new Set(w.entities.filter((e) => e.species.id >= 800).map((e) => e.species.name));
+    expect([...names]).toEqual([ERA_PREDATOR_NAMES[0]]);
+  });
+
+  it("내 종 무게중심에서 떨어져 태어난다 — 시작하자마자 물리는 운을 만들지 않는다", () => {
+    const w = new World("apex-far", W, H, G(), 1, [], "continent", 1, { apexPredators: 2 });
+    let px = 0;
+    let py = 0;
+    let pn = 0;
+    for (const e of w.entities) {
+      if (e.species.isPlayer) {
+        px += e.x;
+        py += e.y;
+        pn += 1;
+      }
+    }
+    const cx = px / pn;
+    const cy = py / pn;
+    const side = Math.min(W, H);
+    for (const e of w.entities) {
+      if (e.species.id >= 800 && e.species.id < 900) {
+        const d = Math.hypot(e.x - cx, e.y - cy);
+        // 보금자리(0.4×짧은 변) ± 스폰 산포 · 지형 스냅 여유. 코앞(0.15 미만)은 계약 위반이다.
+        expect(d).toBeGreaterThan(0.15 * side);
+      }
+    }
   });
 });

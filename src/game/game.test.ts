@@ -7,6 +7,7 @@ import {
   ONBOARDING_MAX_STEP,
   SCHEDULE,
   eraDifficulty,
+  eraApexPredators,
   eraScarcity,
   eraPredatorPressure,
   eraRewardBoostAt,
@@ -1131,6 +1132,15 @@ describe("지수 난이도 (성장 곡선과 난이도 곡선의 경주)", () =>
     expect(eraPredatorPressure(9)).toBeLessThanOrEqual(GAME.eraPredatorCap); // 상한에서 멈춘다
     expect(eraRewardBoostAt(1)).toBeCloseTo(GAME.eraRewardBoost);
     expect(eraRewardBoostAt(4)).toBeGreaterThan(eraRewardBoostAt(1));
+  });
+
+  it("상위 포식자는 시대 2부터 한 종씩, 좁힌 세계(진도 0~1)에는 안 들어온다 (2026-08-13 안건 1)", () => {
+    expect(eraApexPredators(0, 3)).toBe(0); // 첫 시대는 어떤 진도여도 기존 그대로
+    expect(eraApexPredators(1, 3)).toBe(1); // 시대 2 · 온전한 세계 → 긴이빨 맹수
+    expect(eraApexPredators(2, 3)).toBe(2); // 시대 3부터 둘 다
+    expect(eraApexPredators(4, 3)).toBe(2); // 종류 수 상한에서 멈춘다
+    expect(eraApexPredators(1, 1)).toBe(0); // 처음 하는 사람의 첫 런 시대 2(진도 1)는 아직 안 만난다
+    expect(eraApexPredators(2, 2)).toBe(2); // 진도 2 부터는 시대 수 그대로
   });
 
   it("난이도는 시대마다 복리로 오른다 — 뒤 시대의 계단이 앞 시대보다 크다", () => {
