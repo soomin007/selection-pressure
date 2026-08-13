@@ -1830,4 +1830,18 @@ describe("시대를 넘으면 방울이 필드에 떨어진다 (2026-08-11 · [�
     // 밟아야 주워진다 — 떨어지는 순간 지갑은 안 는다(방울 설계의 계약 그대로).
     expect(g.geneBank).toBe(bankBefore);
   });
+
+  it("깊은 시대일수록 계단으로 커진다 (2026-08-13 결정 회의 안건 3 · A안)", () => {
+    const g = startRun("era-gene-stair");
+    g.result = "win";
+    g.continueToNextEra(); // 시대 2 진입 → +3
+    g.result = "win";
+    g.continueToNextEra(); // 시대 3 진입 → +4 · 못 주운 +3 은 새 세계로 딸려 온다(carriedDrops)
+    expect(g.era).toBe(2);
+    const amounts = g.world.geneDrops
+      .filter((d) => d.reason === "era")
+      .map((d) => d.amount)
+      .sort((a, b) => a - b);
+    expect(amounts).toEqual([GENE_AWARD.era, GENE_AWARD.era + 1]);
+  });
 });

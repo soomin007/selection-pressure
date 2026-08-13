@@ -99,11 +99,31 @@ export const GENE_AWARD: Readonly<Record<GeneReason, number>> = {
   milestone: 2,
   recovery: 5,
   trialExceed: 2,
-  // 시대 진입 · **미실측 추정값이다**(2026-08-11 신설). 시대 4 도달 판이면 +9 로, 판당 수입이
-  // 약 26 → 35 가 되어 한 우물 4단(20)에 여유가 생긴다는 산수. 구입 정책 자가 서면 다시 재라
-  // (backlog 「2. 성장 속도 재측정」).
+  // 시대 진입 · **미실측 추정값이다**(2026-08-11 신설). 구입 정책 자가 서면 다시 재라
+  // (backlog 「2. 성장 속도 재측정」). ⚠ 이 값은 계단의 **첫 칸**이다 · 실제 지급은 아래
+  // `eraAward`(시대가 깊을수록 +1씩) — 화면·경제 모델이 이 칸만 읽으면 뒤 시대를 과소평가한다.
   era: 3,
 };
+
+/**
+ * 새 시대 진입 방울의 계단 상한 (2026-08-13 결정 회의 안건 3 · A안 · 값은 안건지의 3~7 예시 그대로).
+ * 값 자체는 **미실측 출발값**이다 · 전면 재측정(backlog 2번)에서 확정한다.
+ */
+export const ERA_AWARD_CAP = 7;
+
+/**
+ * 새 시대 진입 방울 · **깊은 시대일수록 계단으로 커진다**: 시대 2 진입 +3 · 시대 3 진입 +4 ·
+ * … · 상한 +7(`ERA_AWARD_CAP`).
+ *
+ * 왜 평평하지 않은가: 뒤 시대일수록 위협(보스 diffMul · 시대 압력)은 가파르게 세지는데 보상이
+ * 평평하면 「시대를 넘는 것」의 값이 갈수록 얇아진다 — v8 의 강화 ×2.0~4.9 도 뒤로 갈수록 컸다.
+ * 판당 수입(33~61 실측)에 견줘 3~7 이면 「선물」로 읽히되 곡선을 흔들지 않는다는 산수다.
+ *
+ * @param era 진입한 시대의 내부 인덱스(`Game.era` 를 올린 **뒤의** 값 · 1 = 시대 2 진입).
+ */
+export function eraAward(era: number): number {
+  return Math.min(ERA_AWARD_CAP, GENE_AWARD.era + Math.max(0, era - 1));
+}
 
 /** 사건 한국어 이름 · 방울이 뜰 때 화면이 그대로 쓴다. 다섯 에이전트가 각자 다른 말을 짓지 않게 한 곳에 둔다. */
 export const GENE_REASON_LABELS: Readonly<Record<GeneReason, string>> = {

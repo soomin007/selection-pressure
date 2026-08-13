@@ -55,7 +55,7 @@ import {
 import type { Category, Pips } from "@/sim/tiers";
 import type { Genome } from "@/sim/genome";
 import { PERK_BY_NAME, perkCost, perkLine } from "@/sim/perks";
-import { GENE_AWARD, GENE_REASON_LABELS } from "@/sim/gene";
+import { ERA_AWARD_CAP, GENE_AWARD, GENE_REASON_LABELS } from "@/sim/gene";
 import type { GeneReason } from "@/sim/gene";
 import { TRIAL_EXCEED_EXCLUDED, type TrialKind } from "@/game/game";
 import { CARD_POOL, cardGateOpen, cardPrereqMet, cardRarity, type Card } from "@/game/cards";
@@ -191,7 +191,7 @@ const EXCLUDED_TRIAL_WORDS: string = TRIAL_EXCEED_EXCLUDED.map((k) => TRIAL_KIND
 const REASON_NOTE: Readonly<Record<GeneReason, string>> = {
   boss: "",
   extinction: "",
-  era: "",
+  era: "깊은 시대일수록 커집니다",
   milestone: "",
   // 「최고 20마리」로 줄이면 「많아야 20마리」로 읽힌다 · 뜻이 뒤집히므로 풀어 쓴다.
   recovery: `가장 많았을 때 ${GAME.geneCrisisMinPeak}마리 이상`,
@@ -391,13 +391,15 @@ export function createGenePanel(shop: GeneShop): GenePanel {
 
   // 방울이 어디서 나오는지 · 값은 `GENE_AWARD`, 이름은 `GENE_REASON_LABELS`, 조건은 `REASON_NOTE`
   // (게이트가 읽는 상수에서 만든다). 여기서 손으로 적으면 표를 튜닝하는 순간 화면이 거짓말을 한다.
+  // 「새 시대 진입」만 계단(eraAward · 첫 칸~상한)이라 범위로 적는다 — +3 으로만 적으면 시대 3부터 거짓말.
   const sources = document.createElement("div");
   sources.className = "gene-sources";
   sources.textContent =
     "값은 다음 단까지 남은 도장 수입니다. 방울이 떨어지는 순간: " +
     REASON_ORDER.map((r) => {
       const note = REASON_NOTE[r];
-      return `${GENE_REASON_LABELS[r]} +${GENE_AWARD[r]}${note === "" ? "" : `(${note})`}`;
+      const amount = r === "era" ? `${GENE_AWARD.era}~${ERA_AWARD_CAP}` : `${GENE_AWARD[r]}`;
+      return `${GENE_REASON_LABELS[r]} +${amount}${note === "" ? "" : `(${note})`}`;
     }).join(" · ") +
     ". 무리가 밟고 지나가면 주워집니다.";
 

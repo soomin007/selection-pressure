@@ -12,6 +12,7 @@ import { defaultGenome, cloneGenome, refreshDerived, MUTABLE_TRAITS, type Genome
 import {
   GENE_AWARD,
   createCrisisWatch,
+  eraAward,
   milestonesCrossed,
   stepCrisisWatch,
   type CrisisWatch,
@@ -2218,7 +2219,8 @@ export class Game {
     // 방울로」 결정). v8 의 강화 ×N 이 사라진 자리를 방울이 잇는다 — 성장이 방울 한 갈래로 들어오는
     // v9 구조 그대로다(backlog 「시대 보상이 비어 있다 → 방울 보상으로 옮기는 것이 맞다」).
     // 새 무리 곁 필드에 떨어지므로 여전히 **걸어가 밟아야** 주워진다(지갑 직행 아님).
-    this.awardGenes("era");
+    // 2026-08-13 결정 회의(안건 3 · A안): 평평한 +3 → 깊은 시대일수록 커지는 계단(`eraAward`).
+    this.dropGene(eraAward(this.era), "era");
     this.onWorldChanged?.(this.world);
     // 첫 채집 단계로 바로 가지 않고, 먼저 "시대 보상" 드래프트를 띄운다(강해진 형질 하나 = 난이도 도약 보상).
     this.beginEraRewardDraft();

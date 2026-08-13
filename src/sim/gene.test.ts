@@ -11,7 +11,9 @@ import type { Entity } from "@/sim/entity";
 import {
   CRISIS_BACK,
   CRISIS_LOW,
+  ERA_AWARD_CAP,
   GENE_AWARD,
+  eraAward,
   GENE_PICK_RADIUS,
   GENE_REASON_LABELS,
   GENE_SPAWN_RING,
@@ -125,6 +127,8 @@ describe("방울 값", () => {
       trialExceed: 1.75,
       // 새 시대 진입(2026-08-11 신설) · 위 실측(도달 시대 평균 2.5 안팎)에서 시대 전환은 판당
       // 약 1.5회다. **발생 횟수는 기존 실측에서 유도한 추정**이라 econ 프로브로 다시 재야 한다.
+      // ⚠ 2026-08-13 부터 시대 방울은 계단(eraAward · 3→7)이다 — 아래 곱은 첫 칸(3)만 읽는
+      //   **하한 모델**이라, 깊이 간 판은 이보다 더 받는다(첫 두 전환 기준 +3·+4 = 평균 3.5).
       era: 1.5,
     };
     let total = 0;
@@ -132,6 +136,16 @@ describe("방울 값", () => {
     expect(total).toBeGreaterThan(24);
     // 상한을 29 → 34 로 올렸다(시대 방울 +4.5 몫 · [사용자 2026-08-11] 「4단은 찍지도 못했어」의 처방).
     expect(total).toBeLessThan(34);
+  });
+
+  it("시대 방울 계단은 첫 칸이 GENE_AWARD.era 고 단조 증가 · 상한에서 멈춘다 (2026-08-13 안건 3)", () => {
+    expect(eraAward(1)).toBe(GENE_AWARD.era);
+    expect(eraAward(2)).toBe(GENE_AWARD.era + 1);
+    for (let era = 1; era < 12; era += 1) {
+      expect(eraAward(era + 1)).toBeGreaterThanOrEqual(eraAward(era));
+      expect(eraAward(era)).toBeLessThanOrEqual(ERA_AWARD_CAP);
+    }
+    expect(eraAward(99)).toBe(ERA_AWARD_CAP); // 상한 — 계단이 무한히 자라면 후반 경제가 부서진다
   });
 
   it("판당 공급이 한 범주를 0에서 4단까지 올리고도 남는다", () => {
