@@ -12,7 +12,7 @@ import type { Boss, BossType, Layer } from "@/sim/boss";
 //   문턱이 전부 그 안에 있어서, 표식이 붙은 개체 = 실제로 때리는 개체가 정의상 어긋날 수 없다.
 //   (world.entities 는 매 스텝 끝에 산 개체만 남게 걸러지므로 sim 쪽 alive 검사와도 결과가 같다.)
 //   비용: 내 종 개체(수십 마리)에 프레임당 한 번이라 폰에서도 무시할 수준이다.
-import { bossRaidable, isRaidFighter } from "@/sim/boss";
+import { bossRaidable, isRaidFighter, isRaidRangedFighter } from "@/sim/boss";
 import { TILE, type Terrain, type TileKind } from "@/sim/terrain";
 import type { Biome } from "@/sim/environment";
 import { TRAIT_KEYS, TRAIT_MAX, type Genome } from "@/sim/genome";
@@ -506,6 +506,8 @@ export class WorldView {
       }
       const rx = dp.x;
       const ry = dp.y;
+      // 보스전 반격 리듬의 몸 기울임(아래 sp.scale 에서 소비). 0=평상 · +1=파고듦(길게) · -1=물러남(움츠림).
+      let raidLean = 0;
 
       // 나는 개체(날개≥문턱)는 **공중에 떠 있다** — 아래로 어긋난 그림자로 그걸 보인다. 이게 없으면
       // 땅 보스가 코앞에서 지나가는데 왜 안 잡히는지 화면에서 알 수 없다(시각=로직 1:1, known_issues).
@@ -623,6 +625,33 @@ export class WorldView {
         // "주황색 콘 굳이 필요한가?") — 이 수가 0 인 순간만 격퇴 바 자리가 한 줄로 말한다(drawRaidBar).
         if (raidBoss !== null && isRaidFighter(raidBoss, e, world)) {
           raidFighters++;
+          // ── 반격 리듬의 시각화(2026-08-13 결정 회의 안건 4 · B안) ──────────────────────────
+          // sim 의 치고 빠지기(behavior 858~867)와 **똑같은 판정**으로 물러남/파고듦을 읽는다
+          // (근접 전사 · counterRadius × raidRecoilNear 안 · 쿨타임 절반 기준). 조건식을 렌더에
+          // 복제하는 게 아니라 같은 상수·같은 필드를 읽으므로 화면과 실제가 갈릴 수 없다.
+          // sim 은 안 건드린다 — "어색함"의 정체가 리듬 크기인지 가독인지를 이 연출이 갈라 준다.
+          if (!isRaidRangedFighter(raidBoss, e, world)) {
+            const bdx = e.x - raidBoss.x;
+            const bdy = e.y - raidBoss.y;
+            const near = raidBoss.counterRadius * SIM.raidRecoilNear;
+            if (bdx * bdx + bdy * bdy <= near * near) {
+              const d = Math.hypot(bdx, bdy) || 1;
+              const ux = bdx / d; // 보스 → 나 (물러나는 방향)
+              const uy = bdy / d;
+              if (e.raidCounterCd > SIM.raidCounterCooldown * 0.5) {
+                raidLean = -1; // 물러나 이를 고른다 — 움츠린 몸
+                // 물러남 잔상 — 방금 있던 자리(보스 쪽)에 옅은 금빛 허물 셋. 반격 스파크(0xffd76a)와
+                // 같은 금 계열이라 "보스전의 움직임"으로 묶여 읽힌다. 스프라이트 아래 레이어(playerG).
+                for (let k = 1; k <= 3; k++) {
+                  this.playerG
+                    .circle(rx - ux * k * 6, ry - uy * k * 6, 7 - k * 1.6)
+                    .fill({ color: 0xffd76a, alpha: 0.26 - k * 0.07 });
+                }
+              } else {
+                raidLean = 1; // 다시 붙는다 — 몸을 길게 뻗는 돌진
+              }
+            }
+          }
         }
         // 도전 과제 꾸밈 — 효과는 전혀 없다. 무지갯빛은 몸 색이라 아래 sp.tint 에서 처리한다.
         this.drawCosmetic(rx, ry, e.id);
@@ -736,7 +765,10 @@ export class WorldView {
       const st = personalityStretch(e.id); // >1 길고 홀쭉(몸 방향=x 늘림), <1 짧고 통통
       // (v7: 몸집은 텍스처(makeCreatureTexture 의 sizeScale)가 이미 반영한다 — 개체별 게놈 값이라
       //  같은 종 안에서도 큰 놈·작은 놈이 갈린다. 종 단위 bodyScale 배율은 제거됐다.)
-      sp.scale.set(ps * st, ps / st);
+      // 보스전 반격 리듬의 몸 기울임 — 파고들 땐 몸이 길게 늘고(돌진), 물러날 땐 움츠린다(웅크림).
+      // squash & stretch: x 를 늘리면 y 를 줄여 부피감을 지킨다. raidLean 0 이면 문자 그대로 예전 값.
+      const lunge = raidLean > 0 ? 1.14 : raidLean < 0 ? 0.9 : 1;
+      sp.scale.set(ps * st * lunge, (ps / st) / lunge);
       // 독(중독) 걸린 개체는 보라빛으로 — "독이 퍼지는 중"이 한눈에(지속 피해의 시각 피드백).
       // 중독이 무지갯빛보다 우선한다(꾸밈이 위험 신호를 가리면 안 된다).
       sp.tint =

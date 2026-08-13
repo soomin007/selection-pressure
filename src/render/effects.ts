@@ -243,13 +243,24 @@ function drawCounter(
   const uy = d > 0.001 ? dy / d : -1; // 방향이 없으면 위로(하늘로 치켜든 반격)
   const ang = Math.atan2(uy, ux);
   const snap = Math.min(1, t / 0.22); // 앞 22% 에 탁 뻗고 나머지는 그 자리에서 옅어진다(날카롭게)
-  const reach = 7 + snap * 15;
+  // 확대(2026-08-13 결정 회의 안건 4 · B안): 배속 화면에서 반격이 읽히는 유일한 순간이 이 스파크라
+  // 창의 길이·굵기를 키우고 창끝에 맞은 자리 번쩍임을 더했다. 수명(190ms)은 그대로 — 길어지면
+  // 여러 번의 반격이 뭉개진다(위 LIFE 주석).
+  const reach = 9 + snap * 20;
   const cx = x + ux * 3;
   const cy = y + uy * 3;
   // 뻗는 금빛 창 · 두 겹(바깥 진한 금 + 안쪽 흰빛)이라 어두운 지형·밤 오버레이 위에서도 안 묻힌다.
   g.moveTo(cx, cy)
     .lineTo(cx + ux * reach, cy + uy * reach)
-    .stroke({ color: 0xffb524, width: 3.4 * fade + 0.5, alpha: 0.95 * fade, cap: "round" });
+    .stroke({ color: 0xffb524, width: 4.2 * fade + 0.6, alpha: 0.95 * fade, cap: "round" });
+  // 창끝의 타격 번쩍 — 맞은 자리(보스 가장자리)가 아주 짧게 희게 번쩍여 "닿았다"가 읽힌다.
+  const hitFlash = Math.max(0, 1 - t * 2.6);
+  if (hitFlash > 0) {
+    g.circle(cx + ux * reach, cy + uy * reach, 2.2 + 2.4 * hitFlash).fill({
+      color: 0xffffff,
+      alpha: 0.75 * hitFlash,
+    });
+  }
   g.moveTo(cx, cy)
     .lineTo(cx + ux * reach * 0.7, cy + uy * reach * 0.7)
     .stroke({ color: 0xfff4c8, width: 1.5 * fade + 0.3, alpha: 0.95 * fade, cap: "round" });
