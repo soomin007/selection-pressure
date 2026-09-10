@@ -307,6 +307,64 @@ const SCREENS = {
   // 문은 목표 줄 알약 옆의 방울 카운터(.goal-gene)다 · 새 제스처를 안 만들고 기존 HUD 손잡이를 쓴다.
   // **두 상태를 다 잰다.** 지갑이 0 이면 다섯 줄이 전부 「모자람」이라 켜진 테두리와 방울 색 값 칩을
   // 영영 안 재게 된다(화면의 절반만 검사하는 셈) → 채운 장면을 따로 둔다.
+  // 감독 패널(2026-09-11 · 일정표 + 지침 시트 + 작전타임) · 데스크톱은 왼쪽 열, 폰은 아래 서랍.
+  // 시트는 세계가 서 있을 때만 받으므로 작전타임을 연 채 넣는다(진짜 문 game.openTimeout · setSheet).
+  // 단어는 가장 긴 조합(「이빨이 센 개체 · 배가 절반 아래일 때 · 수풀로 숨는다」)으로 줄 안 겹침을 재고,
+  // 두 줄이라 줄 사이·고정 줄·발동 수 칸까지 한 번에 본다.
+  watchManager: {
+    label: "관전 + 감독 패널(읽기 · 지침 두 줄 · 발동 수)",
+    async go(page) {
+      await toHud(page);
+      await page.evaluate(() => {
+        window.__ov.timeout();
+        window.__ov.sheet([
+          { who: "strong", when: "hungry", act: "hide" },
+          { who: "weak", when: "crowd", act: "scatter" },
+        ]);
+      });
+      await page.keyboard.press("Enter"); // 경기 재개 → 읽기 상태(발동 수가 산다)
+      await page.waitForTimeout(500);
+      const handle = page.locator(".mgr-handle");
+      if (await handle.isVisible()) {
+        await handle.click(); // 폰 서랍은 접혀 있다 · 펴서 시트까지 잰다
+        await page.waitForTimeout(300);
+      }
+    },
+  },
+  watchManagerEdit: {
+    label: "작전타임 · 감독 패널 편집 상태(도구 버튼 · 줄 추가)",
+    async go(page) {
+      await toHud(page);
+      await page.evaluate(() => {
+        window.__ov.timeout();
+        window.__ov.sheet([{ who: "strong", when: "hungry", act: "hide" }]);
+      });
+      await page.waitForTimeout(400);
+      const handle = page.locator(".mgr-handle");
+      if (await handle.isVisible()) {
+        await handle.click();
+        await page.waitForTimeout(300);
+      }
+    },
+  },
+  watchManagerPick: {
+    label: "작전타임 · 단어 목록 팝오버(어떤 때 · 13개)",
+    async go(page) {
+      await toHud(page);
+      await page.evaluate(() => {
+        window.__ov.timeout();
+        window.__ov.sheet([{ who: "strong", when: "hungry", act: "hide" }]);
+      });
+      await page.waitForTimeout(400);
+      const handle = page.locator(".mgr-handle");
+      if (await handle.isVisible()) {
+        await handle.click();
+        await page.waitForTimeout(300);
+      }
+      await page.locator(".mgr-row:not(.final) .mgr-word.when").first().click();
+      await page.waitForTimeout(400);
+    },
+  },
   genePanel: {
     label: "티어 올리기(방울 0개 · 전부 모자람)",
     async go(page) {
@@ -407,6 +465,16 @@ const SCENES = [
   { screen: "watch", viewport: DESKTOP },
   { screen: "watch", viewport: PHONE, query: "?watch" },
   { screen: "watchExpanded", viewport: PHONE_NARROW },
+  // 데스크톱 메인(2026-09-11) · 왼쪽 열이 생겼으니 목표 줄 상세 패널이 그 열과 겹치는지도 본다.
+  { screen: "watchExpanded", viewport: DESKTOP },
+  // 감독 패널 · 데스크톱 왼쪽 열 + 폰 아래 서랍(좁은 폰·짧은 폰) + 편집 상태 + 단어 목록.
+  { screen: "watchManager", viewport: DESKTOP, query: "?ovhook" },
+  { screen: "watchManager", viewport: PHONE_NARROW, query: "?ovhook" },
+  { screen: "watchManager", viewport: PHONE_SHORT, query: "?ovhook" },
+  { screen: "watchManagerEdit", viewport: DESKTOP, query: "?ovhook" },
+  { screen: "watchManagerEdit", viewport: PHONE_NARROW, query: "?ovhook" },
+  { screen: "watchManagerPick", viewport: DESKTOP, query: "?ovhook" },
+  { screen: "watchManagerPick", viewport: PHONE_SHORT, query: "?ovhook" },
   { screen: "draft", viewport: PHONE_NARROW, query: "?watch" },
   { screen: "draftLongCopy", viewport: PHONE_NARROW, query: "?watch" },
   // 짧은 폰 + 최장 문구 = 히어로 칸이 가장 좁아지는 최악. 그림이 헤더를 덮던 자리다.

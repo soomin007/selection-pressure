@@ -9,6 +9,7 @@
 //   그 판정을 이미 갖고 있다). 도장 막대·티어는 방울로만 움직이므로 이 패널의 나머지는 v9 에서도 참이다.
 
 import type { Genome } from "@/sim/genome";
+import { MANAGER_COLUMN_RESERVE_PX } from "@/ui/managerPanel";
 import {
   CATEGORIES,
   CATEGORY_LABELS,
@@ -43,7 +44,7 @@ export function createBuildPanel(): BuildPanel {
   // 고른 카드가 많이 쌓이는 후반 대비로 최대 높이 안전망은 남긴다.
   root.style.cssText =
     (isDesktop
-      ? "position:fixed; top:140px; left:16px;"
+      ? `position:fixed; top:140px; left:${MANAGER_COLUMN_RESERVE_PX + 8}px;` // 왼쪽 열(감독 패널) 오른쪽
       : "position:fixed; top:calc(144px + env(safe-area-inset-top)); left:calc(8px + env(safe-area-inset-left));") +
     "width:190px; box-sizing:border-box; padding:10px 12px; max-height:420px; overflow-y:auto;" +
     "background:var(--panel); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px);" +

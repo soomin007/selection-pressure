@@ -24,6 +24,7 @@ import { ensurePanelStyles } from "@/ui/panelStyles";
 // 방울 구슬 표식은 티어 구입 화면과 **같은 것을 쓴다** · 색·모양이 갈라지면 「저 숫자가 저 화면의
 // 그것인지」가 안 이어진다. 표식을 만드는 함수 하나가 자기 스타일 주입까지 맡는다(genePanel).
 import { createGeneOrb } from "@/ui/genePanel";
+import { MANAGER_COLUMN_RESERVE_PX } from "@/ui/managerPanel";
 
 export interface GoalBarCallbacks {
   onPauseToggle: () => void;
@@ -427,6 +428,8 @@ function ensureGoalStyles(): void {
   .goal-root { position: fixed; top: 8px; left: 8px; right: 8px; z-index: 9; display: flex;
     flex-direction: column; gap: 6px; pointer-events: none; font-family: var(--font-body);
     zoom: var(--ui-zoom, 1); }
+  /* 데스크톱: 왼쪽 열(감독 패널)만큼 비켜 선다 · 폭은 managerPanel 의 상수 하나에서 온다(두 곳에 안 적는다). */
+  body[data-layout="desktop"] .goal-root { left: ${MANAGER_COLUMN_RESERVE_PX}px; }
   /* ⚠ **stretch 가 아니다** (2026-08-10 사용자 지적: "옆의 방울 칸과 일시정지/메뉴 버튼도 길어져서
      못생겨지는 문제"). 할 일 문구가 두 줄이 되면 알약이 51 → 69px 로 커지는데, stretch 면 옆의
      방울 칸과 멈춤 버튼이 **함께 늘어나 세로로 길쭉한 직사각형**이 된다(실측).

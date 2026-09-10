@@ -285,6 +285,11 @@ export class Game {
     return this.lastVerdictValue;
   }
 
+  /** 지금 도는 위협의 짧은 문구(「지금 위협 「…」 · 대응 힌트」) · 채집 라운드면 빈 문자열. 감독 패널이 읽는다. */
+  get threatLine(): string {
+    return this.threatText;
+  }
+
   /** 아직 카드를 안 고른 레벨업 수. 라운드 경계에서 한 장씩 푼다(라운드 도중엔 안 끊는다). */
   private pendingLevels = 0;
   /** 지금 드래프트가 라운드 경계에서 열린 것인가. 고르고 나면 관전 복귀가 아니라 다음 단계로 간다. */

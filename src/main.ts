@@ -47,11 +47,9 @@ import {
   type Category,
 } from "@/sim/tiers";
 import type { Genome } from "@/sim/genome";
-import { ORDER_SPEC_BY_KIND, type HerdOrder, type OrderKind } from "@/sim/herdOrder";
-import { CommandWheel, OrderLine } from "@/ui/commandWheel";
+import type { HerdOrder } from "@/sim/herdOrder";
+import { createManagerPanel, MANAGER_COLUMN_RESERVE_PX } from "@/ui/managerPanel";
 import { isPredatorBoss, bossRaidable } from "@/sim/boss";
-import { ORDER } from "@/sim/params";
-import { leadCapsOf } from "@/render/leadVision";
 
 // 맵 배율은 src/config.ts 의 MAP_SCALE 이 단일 근원 · main 은 이제 그 값을 직접 읽지 않는다.
 // Game 이 시대별 배율 mapScale(era)(src/game/config.ts · MAP_SCALE 파생)로 월드 치수를 만들고,
@@ -64,23 +62,13 @@ import { leadCapsOf } from "@/render/leadVision";
 const LEAD_CAM_EASE = 10; // 지시 모드 카메라 이징(1/s · 시상수 100ms). 기본 3.5 는 286ms 라 물먹은 느낌
 const CAM_FOCUS_SMOOTH = 12; // 무리 초점 저역통과(1/s · 시상수 83ms) · 초점이 매 틱 떠는 것을 여기서 먹는다
 const CAM_DEADZONE = 22; // 카메라를 안 움직이는 창의 반지름(**논리 화면 px** · 540 폭 기준 ≈ 4%)
-const LEAD_BANNER_DELAY_MS = 3000; // "아무도 안 따라옵니다" 안내까지의 유예(바로 띄우면 잔소리)
 const PEEK_RETURN_MS = 1500; // 훔쳐보기(드래그·미니맵·2손가락 팬) 입력이 끝나고 무리로 복귀까지의 시간
-const ORDER_DENY_MS = 1800; // 갈 수 없는 곳을 탭했을 때 목표 줄에 그 사실을 남겨 두는 시간
-const ORDER_ARRIVED_PAD = 60; // 무리 도착 표시 여유(무리는 한 점에 겹치지 않는다) · 기준 반경(무리 단위 arriveRadius)은 sim 상수 공유
 
-// --- 탭 제스처의 계약 (**[사용자 2026-08-06]** 조작 다양화: 길게 누르기 = 명령 휠 · 더블탭 = 회피) ---
-//
-// 오작동을 어떻게 가르나:
-//  · **단일 탭은 즉시 실행하고, 더블탭이 오면 덮어쓴다.** 탭을 잡아 두고 더블탭을 기다리면 기본
-//    조작에 지연이 생기는데, 「가라」에는 쿨타임조차 안 걸 만큼(**[사용자 2026-08-06]** "기본 조작이
-//    막히면 조종 감각 자체가 죽는다") 즉시성이 중요하다. 대신 **덮어쓴 것을 되돌릴 수 있어야 한다**
-//    ▸ 아래 `undoneOrder` · boot 안의 `tapUndo`.
-//  · **길게 누르기는 손가락이 안 움직인 채 0.25초.** 움직이면 그건 훔쳐보기(팬)다.
-//
-// 이 아래 세 함수는 **순수하다**(Pixi·DOM·게임 상태를 안 본다). 입력 층의 판정이 화면 없이도
-// 검증되게 하려고 일부러 밖으로 뺐다 ▸ `src/main.tapOrder.test.ts`.
-const LONG_PRESS_MS = 250;
+// --- 탭 제스처의 계약 ---
+// ⚠ **탭 명령(가라·피해라·명령 휠·지휘봉 이양)은 2026-09-11 에 끊었다** (**[사용자 2026-09-11]** 감독형
+//   전환 · 알파 탭 조종 → 사전 지침 시트 + 작전타임 · docs/design/manager_instructions.md). 관전 중 탭은
+//   이제 훔쳐보기 해제뿐이다. 아래 순수 함수들(isDoubleTap·orderDenyLine·rewoundOrder·undoneOrder)은
+//   호출부가 사라졌고 테스트(main.tapOrder.test.ts)만 물고 있다 · 옛 명령 경로 삭제 조각에서 함께 지운다.
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_PX = 44; // 손끝 굵기. 이보다 멀면 "다른 곳을 또 탭한 것"이다.
 
@@ -178,17 +166,6 @@ export function undoneOrder(
 ): HerdOrder | null | undefined {
   if (undo === null || current !== undo.installed) return undefined;
   return rewoundOrder(undo.prev, tick - undo.tick);
-}
-
-/**
- * 명령 접수의 결과. `ok` 만으로는 부족해서 `told` 를 함께 낸다. 거절 이유를 **아는 자리가 이미
- * 말했는지**를 부르는 쪽이 알아야, 같은 자리에 두 번 말하거나(핑 두 번) 참인 이유를 거짓 이유로
- * 덮어쓰는 일이 없다(`highlights.flash` 는 priority=false 면 앞 문구를 즉시 덮는다).
- */
-interface OrderResult {
-  readonly ok: boolean;
-  /** 왜 안 됐는지 화면에 **이미 말했다**(핑·문구). 부르는 쪽은 아무 말도 더 하지 않는다. */
-  readonly told: boolean;
 }
 
 async function boot(): Promise<void> {
@@ -330,6 +307,9 @@ async function boot(): Promise<void> {
   // 전부 첫 줄에서 빠진다 = 조작 없는 예전 관전 세계와 문자 그대로 동일하게 돈다(밸런스 비교용).
   const leadMode = DEBUG.leadControl;
   game.leadEnabled = leadMode;
+  // 보스·대멸종 단계는 자동 작전타임으로 시작한다(**[사용자 2026-09-11]** 고정 + 호출). 테스트·프로브가
+  // 멈추지 않게 Game 의 기본은 false 이고 화면이 있는 여기서만 켠다(leadEnabled 와 같은 선례).
+  game.autoTimeout = true;
   // ?follow=<수> 로 "무리가 얼마나 따라오는가"를 배포 없이 폰에서 바로 바꿔 본다. 안 붙이면 NaN 이라
   // sim 기본값(LEAD.followCohesion)을 그대로 쓴다.
   if (leadMode && Number.isFinite(TUNE.leadFollow)) game.leadFollowWeight = TUNE.leadFollow;
@@ -428,6 +408,20 @@ async function boot(): Promise<void> {
   };
   const genePanel = createGenePanel(geneShop);
 
+  // 감독 패널 — 일정표 · 지침 시트 · 작전타임 (**[사용자 2026-09-11]** 감독형 전환). 지침은 game.setSheet
+  // 한 문으로만 들어가고(세계가 서 있을 때만 받는다), 작전타임은 구입 화면과 같은 멈춤 장치(phase)다.
+  const manager = createManagerPanel({
+    onTimeout: (): void => {
+      game.openTimeout();
+    },
+    onResume: (): void => {
+      game.closeTimeout();
+    },
+    onSheetChange: (rows): void => {
+      game.setSheet(rows);
+    },
+  });
+
   const draft = createDraftPanel(app.renderer, app.canvas, {
     onPick: (i) => {
       // 고르기 **전** 게놈을 떠 둔다 — 아래에서 "무엇이 얼마나 세졌는지"를 실제 차이로 말하기 위해서다.
@@ -493,7 +487,7 @@ async function boot(): Promise<void> {
       reportScreen.hide();
       result.hide();
       applyCosmetics();
-      tapHintShown = false; // 새 런 = 탭 안내 다시 1회(선언은 위쪽 상태 블록 — 클릭 시점 실행이라 TDZ 무관)
+      sheetHintShown = false; // 새 런 = 지침 안내 다시 1회(선언은 위쪽 상태 블록 — 클릭 시점 실행이라 TDZ 무관)
       emberHintShown = false; // 불씨 첫 안내도 다시 1회
       emberHintMs = 0;
       game.beginRun();
@@ -527,7 +521,7 @@ async function boot(): Promise<void> {
     () => {
       lobby.hide();
       applyCosmetics(); // 방금 딴 꾸밈을 이번 판부터 적용
-      tapHintShown = false; // 새 런 = 탭 안내 다시 1회
+      sheetHintShown = false; // 새 런 = 지침 안내 다시 1회
       emberHintShown = false; // 불씨 첫 안내도 다시 1회
       emberHintMs = 0;
       game.beginRun();
@@ -567,7 +561,7 @@ async function boot(): Promise<void> {
       game.paused = false;
       controls.setPaused(false);
       goalBar.setPaused(false);
-      tapHintShown = false; // 새 런 = 탭 안내 다시 1회
+      sheetHintShown = false; // 새 런 = 지침 안내 다시 1회
       emberHintShown = false; // 불씨 첫 안내도 다시 1회
       emberHintMs = 0;
       game.beginRun();
@@ -751,10 +745,7 @@ async function boot(): Promise<void> {
   };
   // 무리 지시 표시 상태 · onWorldChanged 가 game.start()에서 곧장 불려 이 값들을 초기화하므로,
   // 그 콜백보다 반드시 먼저 선언한다(아래쪽에 두면 TDZ ReferenceError 로 부팅이 죽는다 — known_issues).
-  let leadZeroMs = 0; // 아무도 안 따라오는 상태가 이어진 시간(ms)
-  let leadZeroShown = false; // 그 안내를 이번 월드에서 이미 띄웠나(한 번만)
-  let denyMs = 0; // "그곳으로는 갈 수 없습니다"를 목표 줄에 남겨 둘 남은 시간(ms)
-  let tapHintShown = false; // "탭 = 명령" 안내(런당 1회) 표시 여부
+  let sheetHintShown = false; // "왼쪽 지침이 무리를 움직인다" 안내(런당 1회) 표시 여부
   let emberHintShown = false; // "불씨 = 남은 기회" 첫 안내(런당 1회) 표시 여부
   let emberHintMs = 0; // 관전 진입 후 그 안내까지의 대기 시간(탭 안내 플래시를 덮지 않게 늦춘다)
 
@@ -770,9 +761,6 @@ async function boot(): Promise<void> {
     // 새 월드 → 훔쳐보기를 풀고 카메라가 무리로 복귀.
     manualCam = null;
     // 무리 지시 표시 상태 초기화 · 새 월드에선 안내를 다시 한 번 띄울 수 있다.
-    leadZeroShown = false;
-    leadZeroMs = 0;
-    denyMs = 0;
     // 새 월드의 내 무리로 카메라를 즉시 스냅(hint 가 엉뚱한 데서 시작해 첫 프레임에 휙 도는 걸 방지).
     const c0 = world.playerCentroid();
     camX = c0.x;
@@ -933,6 +921,10 @@ async function boot(): Promise<void> {
     draftCard: (id: string) => boolean;
     /** 강제로 띄울 수 있는 카드 id 전부(프리셋 + 불씨 + 풀). */
     draftIds: () => string[];
+    /** 작전타임을 연다(감독 패널의 편집 상태 · 단어 목록을 재기 위해). 진짜 문(game.openTimeout)이다. */
+    timeout: () => boolean;
+    /** 지침 줄을 넣는다(발동 수 칸·긴 단어가 줄 안에서 부딪히는지) · game.setSheet 그대로. */
+    sheet: (rows: unknown) => boolean;
   }
   if (new URLSearchParams(window.location.search).has("ovhook")) {
     const hooks: OverlapHooks = {
@@ -958,6 +950,8 @@ async function boot(): Promise<void> {
         moment.tierUp(`${CATEGORY_LABELS[c]} ${TIER_ROMAN[tier]}`, tier, tierLine(c, tier, game.genome.keys).gain);
       },
       report: () => reportScreen.show(game.runHistory, game.runCode()),
+      timeout: () => game.openTimeout(),
+      sheet: (rows) => game.setSheet(rows as Parameters<typeof game.setSheet>[0]),
       draftCard: (id) => {
         const card = [...PRESET_CARDS, EMBER_CARD, ...CARD_POOL].find((c) => c.id === id);
         if (!card) return false;
@@ -998,54 +992,16 @@ async function boot(): Promise<void> {
   const onCanvasUI = (x: number, y: number): boolean =>
     minimap.container.visible && minimap.containsScreenPoint(x, y);
 
-  // --- 조작 확장 (**[사용자 2026-08-06]**): 길게 누르기 = 명령 휠 · 더블탭 = 회피 · 명령 줄 = 철회 ---
-  // 제스처의 상수와 판정은 모듈 위쪽(순수 함수)에 있다. 여기 있는 것은 그 판정이 쓰는 **상태**뿐이다.
-  let pressTimer = 0;
-  let lastTap: TapMark = { t: 0, x: 0, y: 0 };
-  // 되돌리기 한 칸: 방금 단일 탭이 밀어 넣은 「가라」와 그것이 덮어쓴 앞 명령(`undoneOrder` 주석의 결함 D).
-  let tapUndo: TapUndo | null = null;
-  const wheel = new CommandWheel(document.body, {
-    onPick: (kind, wx, wy) => {
-      // 이유를 아는 자리가 이미 말했으면(`told`) 여기서 핑을 또 울리지 않는다 · 같은 자리에 두 번
-      // 울리는 거부 핑은 "두 번 거절당했다"로 읽힌다.
-      const r = issueOrder(wx, wy, kind);
-      if (!r.ok && !r.told) effects.spawnPing(wx, wy, "deny");
-    },
-  });
-  const orderLine = new OrderLine(document.body, () => {
-    game.clearHerdOrder();
-    denyMs = 0;
-  });
-
-  const cancelLongPress = (): void => {
-    if (pressTimer !== 0) {
-      window.clearTimeout(pressTimer);
-      pressTimer = 0;
-    }
-  };
-
+  // 관전·작전타임 중의 포인터는 전부 **카메라**(훔쳐보기 팬·핀치 줌·탭 = 훔쳐보기 해제)다.
+  // 탭 명령·명령 휠·지휘봉 이양은 2026-09-11 에 끊었다(파일 위쪽 「탭 제스처의 계약」 주석).
   app.stage.on("pointerdown", (e) => {
-    if (game.phase !== "watch" && game.phase !== "draft") return;
+    if (game.phase !== "watch" && game.phase !== "timeout" && game.phase !== "draft") return;
     if (e.target !== app.stage || onCanvasUI(e.global.x, e.global.y)) return;
     activePointers.set(e.pointerId, { x: e.global.x, y: e.global.y });
     if (activePointers.size === 1) {
       dragStart = { sx: e.global.x, sy: e.global.y, camX, camY };
       dragging = false;
-      // 길게 누르기 → 명령 휠. 손가락이 그대로일 때만 열린다(움직였으면 pointermove 가 취소한다).
-      if (leadMode && game.phase === "watch" && !game.paused) {
-        const sx = e.global.x;
-        const sy = e.global.y;
-        const p = view.container.toLocal({ x: sx, y: sy });
-        cancelLongPress();
-        pressTimer = window.setTimeout(() => {
-          pressTimer = 0;
-          if (dragging || activePointers.size !== 1) return;
-          wheel.open(sx, sy, p.x, p.y, game.orderWheel());
-        }, LONG_PRESS_MS);
-      }
     } else if (activePointers.size === 2) {
-      cancelLongPress();
-      wheel.cancel();
       const pts = [...activePointers.values()];
       pinchDist = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y);
       pinchMid = { x: (pts[0]!.x + pts[1]!.x) / 2, y: (pts[0]!.y + pts[1]!.y) / 2 };
@@ -1057,11 +1013,6 @@ async function boot(): Promise<void> {
   app.stage.on("pointermove", (e) => {
     if (!activePointers.has(e.pointerId)) return;
     activePointers.set(e.pointerId, { x: e.global.x, y: e.global.y });
-    // 휠이 떠 있으면 손가락은 「고르는 손」이다 — 카메라를 안 민다(한 손으로 끝나는 조작의 핵심).
-    if (wheel.isOpen) {
-      wheel.moveTo(e.global.x, e.global.y);
-      return;
-    }
     if (activePointers.size >= 2) {
       const pts = [...activePointers.values()];
       const d = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y);
@@ -1082,10 +1033,7 @@ async function boot(): Promise<void> {
     if (dragStart) {
       const dx = e.global.x - dragStart.sx;
       const dy = e.global.y - dragStart.sy;
-      if (!dragging && Math.hypot(dx, dy) > 8) {
-        dragging = true; // 탭/드래그 구분 임계
-        cancelLongPress(); // 움직였으면 그건 훔쳐보기지 길게 누르기가 아니다
-      }
+      if (!dragging && Math.hypot(dx, dy) > 8) dragging = true; // 탭/드래그 구분 임계
       if (dragging) {
         // 드래그 = 훔쳐보기(마우스·손가락 공통). 손가락 아래 월드가 따라오게 카메라를 반대로 민다.
         manualCam = { x: dragStart.camX - dx / camZoom, y: dragStart.camY - dy / camZoom };
@@ -1097,18 +1045,6 @@ async function boot(): Promise<void> {
   const endPointer = (e: { pointerId: number; global: { x: number; y: number }; target: unknown }): void => {
     const wasDragging = dragging;
     const hadPointer = activePointers.delete(e.pointerId);
-    cancelLongPress();
-    // 휠에서 손을 뗐다 = 고르고 있던 칸을 실행한다. 이 제스처는 이동 명령이 아니다.
-    if (wheel.isOpen) {
-      wheel.close();
-      if (activePointers.size === 0) {
-        dragStart = null;
-        dragging = false;
-        pinchMid = null;
-        pinchedThisGesture = false;
-      }
-      return;
-    }
     if (activePointers.size < 2) pinchDist = 0;
     if (activePointers.size > 0) return;
     dragStart = null;
@@ -1116,166 +1052,15 @@ async function boot(): Promise<void> {
     pinchMid = null;
     const hadPinch = pinchedThisGesture;
     pinchedThisGesture = false;
-    // 끌지 않은 단순 탭만 명령으로 처리(드래그·핀치 끝은 명령 아님 — 훔쳐보기였다).
+    // 끌지 않은 단순 탭만(드래그·핀치 끝은 훔쳐보기였다).
     if (!hadPointer || wasDragging || hadPinch) return;
-    // 미니맵 게이트 — 안 지키면 미니맵 탭이 이동 명령으로 샌다(조사에서 확인된 회귀 지점).
     if (e.target !== app.stage || onCanvasUI(e.global.x, e.global.y)) return;
-    // ?watch 관전 폴백: 탭 = 수동 조망 해제(예전 관전 동작). 자동 복귀 타이머가 없는 모드라
-    // 탭마저 없으면 드래그 한 번에 그 월드 내내 수동 카메라에 갇힌다(반박 검증에서 확인된 회귀).
-    if (!leadMode) {
-      manualCam = null;
-      return;
-    }
-    // 명령은 관전 단계 + 비멈춤에서만. 드래프트 중 탭은 카드 화면 몫이다(기존 phase 게이트).
-    if (game.phase !== "watch" || game.paused) return;
-    const p = view.container.toLocal(e.global as { x: number; y: number });
-
-    // **더블탭 = 회피.** 단일 탭(이동)은 이미 나갔고, 두 번째 탭이 그것을 덮어쓴다.
-    const now = performance.now();
-    const isDouble = isDoubleTap(lastTap, now, e.global.x, e.global.y);
-    lastTap = { t: now, x: e.global.x, y: e.global.y };
-    if (isDouble) {
-      const r = issueOrder(p.x, p.y, "evade");
-      if (r.ok) {
-        // 회피가 접수됐다 · 첫 탭의 「가라」는 되돌릴 것이 아니라 이 명령에 덮인 것이다.
-        tapUndo = null;
-      } else {
-        // **거절됐으면 첫 탭의 「가라」도 남으면 안 된다.** 안 걷으면 "포식자를 피하라고 두 번
-        // 두드렸는데 무리가 그 포식자에게 걸어가는" 화면이 된다(`undoneOrder` 주석의 결함 D).
-        undoTapOrder();
-        // 회피가 안 나갔으면 **왜** 안 나갔는지 그 자리에서 말한다(없다는 것으로 가르치는 건 가장
-        // 약한 가르침이다). 근거는 game 이 판정한 그 값(orderWheel 의 unlocked·cdLeft)을 그대로
-        // 읽는다 · 조건을 여기서 다시 유도하지 않는다. 이유를 아는 자리가 이미 말했으면(`told`)
-        // 입을 다문다. 안 그러면 참인 이유가 거짓 이유에 덮인다(결함 E).
-        if (!r.told) {
-          effects.spawnPing(p.x, p.y, "deny");
-          const line = orderDenyLine(game.orderWheel().find((s) => s.spec.kind === "evade"));
-          if (line !== null) highlights.flash(line, 0xd0b050);
-        }
-      }
-      return;
-    }
-
-    // **지휘봉 이양** — 내 개체를 바로 짚었으면 그 애가 알파가 된다(**[사용자 2026-08-06]**).
-    // 이동 명령과 겹치지 않는 이유: 내 무리가 이미 있는 자리로 가라는 것은 어차피 아무 일도 아니다.
-    const own = nearestOwnEntity(p.x, p.y, 20);
-    if (own !== null && game.passBaton(own)) {
-      effects.spawnPing(p.x, p.y, "go");
-      tapUndo = null; // 이 탭은 명령을 안 바꿨다 · 되돌릴 것이 없다
-      return;
-    }
-
-    // 「가라」가 무엇을 덮어썼는지 기억해 둔다 · 이 탭이 더블탭의 첫 탭으로 밝혀질 수 있다.
-    const before = game.herdOrder;
-    const installed = issueOrder(p.x, p.y).ok ? game.herdOrder : null;
-    tapUndo = installed === null ? null : { installed, prev: before, tick: game.world.tick };
+    // 탭 = 수동 조망 해제. 자동 복귀 타이머가 없는 ?watch 모드에서는 이것마저 없으면 드래그 한 번에
+    // 그 월드 내내 수동 카메라에 갇힌다(반박 검증에서 확인된 회귀). 감독형에서는 모든 모드가 같다.
+    manualCam = null;
   };
-
-  /**
-   * 거절된 더블탭 뒤에 남은 첫 탭의 「가라」를 걷고, 그 탭이 덮어쓴 앞 명령을 되돌린다.
-   * 무엇을 되돌릴지는 순수 함수(`undoneOrder`)가 정하고, 여기서는 그 답을 세계에 쓰기만 한다.
-   *
-   * ⚠ `setHerdOrder` 로 되돌리지 않는 이유: 그 문은 쿨타임과 기력을 **다시 물리고**, 잠긴 칸이면
-   *   되돌리기 자체를 거절한다. 되돌리기는 새 명령이 아니라 **없던 일로 하는 것**이라 대가가 없어야
-   *   한다. (Game 쪽에 되돌리기 문을 두는 편이 층 구분에는 더 맞다 · backlog)
-   */
-  function undoTapOrder(): void {
-    const back = undoneOrder(tapUndo, game.herdOrder, game.world.tick);
-    tapUndo = null;
-    if (back === undefined) return; // 그 사이 다른 것이 명령을 바꿨다 · 손대지 않는다
-    // ⚠ `world.herdOrder` 를 직접 쓰지 않는다 — 그러면 세계는 되돌아가는데 **판 분석 코드에는
-    //   취소된 탭이 남아**, 되살릴 때 재현이 그 명령을 다시 내려 판이 갈라진다(2026-08-09).
-    game.undoHerdOrder(back);
-  }
-
-  /** 이 자리에서 반경 안에 있는 **내 종** 개체 중 가장 가까운 것의 id. 없으면 null. */
-  function nearestOwnEntity(wx: number, wy: number, r: number): number | null {
-    let best: number | null = null;
-    let bestD2 = r * r;
-    for (const en of game.world.entities) {
-      if (!en.alive || !en.species.isPlayer) continue;
-      const d2 = (en.x - wx) ** 2 + (en.y - wy) ** 2;
-      if (d2 <= bestD2) {
-        bestD2 = d2;
-        best = en.id;
-      }
-    }
-    return best;
-  }
   app.stage.on("pointerup", endPointer);
   app.stage.on("pointerupoutside", endPointer);
-
-  /**
-   * 탭 지점을 명령으로 해석한다 — 동시에 하나만: 사냥할 수 있는 개체면 사냥 잠금, 그 외 전부
-   * (빈 땅·내 무리·못 사냥하는 상대)는 그 지점으로 이동. 목표가 못 가는 지형이거나 길이 없으면
-   * 명령을 바꾸지 않고 거부 핑만 띄운다(왜 안 가는지 그 자리에서 보이게).
-   *
-   * 돌려주는 것이 불리언이 아닌 이유는 `OrderResult` 주석에 있다. **이유를 여기서 말했는지**를
-   * 부르는 쪽이 알아야 같은 자리에 두 번 말하지 않는다.
-   */
-  function issueOrder(wx: number, wy: number, kind: OrderKind = "move"): OrderResult {
-    // 무리 지시(신탁) · 탭한 곳이 곧 "저기로 가라"다. 개체를 고르는 게 아니라 **종에게** 내리는 뜻이라
-    // 무엇을 탭했는지는 상관없다(생물 위를 탭해도 그 자리로 간다).
-    // ⚠ 「가라」만 통행 가능성을 본다 — 회피·원진처럼 제자리에서 하는 명령은 목표 지형과 무관하다.
-    if (kind === "move" && !herdCanReach(wx, wy)) {
-      effects.spawnPing(wx, wy, "deny"); // 왜 안 가는지 그 자리에서 보이게(못 가는 지형·길 없음)
-      // 0.25초짜리 핑만으로는 "탭이 먹기는 했는지"조차 안 읽힌다(실측: 탭 여섯 번 중 한 번이 조용히
-      // 거부됐다). 새 줄을 만들지 않고 이미 있는 목표 줄에 잠깐 말로 남긴다.
-      denyMs = ORDER_DENY_MS;
-      return { ok: false, told: true };
-    }
-    // ⚠ **지휘 공백 안내를 통째로 걷어냈다** (2026-08-10 · **[사용자]** "지금도 여전히 이끌던 개체
-    //   어쩌고가 남아있는데, **이거 그냥 아예 없애줘**").
-    //   여기 있던 것: 알파가 막 쓰러지면 몇 초 동안 명령이 안 통했고, 그 사실을 「이끌던 개체가
-    //   쓰러졌습니다…」로 알렸다. 2026-08-09 에 문구를 한 번 고쳤는데도 같은 지적이 다시 나왔다 —
-    //   **문제는 문장이 아니라 개념이었다.** 화면이 한 번도 안 가르쳐 준 「앞장서는 개체」를
-    //   하필 실패를 알릴 때만 꺼내 쓰고 있었다.
-    //   그래서 문구뿐 아니라 **명령을 막던 게이트 자체**를 걷었다(`game.setHerdOrder` ·
-    //   `world.hearsOrder`). 문구만 지우면 명령이 **조용히 먹통**이 되어 더 나쁘다.
-    // 여기까지 왔는데 game 이 거절하면 그건 잠긴 칸이거나 쿨타임이다 · 그 이유는 휠의 칸이 알고
-    // 있으므로(`orderDenyLine`) 여기서 지어내지 않는다. 아무 말도 안 했으니 told 는 false 다.
-    if (!game.setHerdOrder(wx, wy, kind)) return { ok: false, told: false };
-    effects.spawnPing(wx, wy, "go");
-    denyMs = 0; // 새 지시가 먹혔다 · 거부 안내는 그 자리에서 걷는다
-    return { ok: true, told: false };
-  }
-
-  /**
-   * 무리가 내려 둔 뜻에 사실상 도착했나 · **무리 단위**(무게중심 기준, ORDER.arriveRadius 200).
-   * sim 의 개체별 게이트는 따로 있다(ORDER.releaseRadius 64 · behavior 지시 블록) · 개체 하나가
-   * 지시를 놓는 문턱과 "무리가 도착했다"는 화면 표시는 척도가 달라 상수도 다르다(params.ts 주석).
-   * 이걸 안 가르면 목표 근방에 모여 사는 무리가 "아무도 안 따른다"로 표시된다(화면이 거짓말한다).
-   */
-  function herdArrived(): boolean {
-    const o = game.world.herdOrder;
-    if (o === null) return false;
-    // 「피해라」는 **멀어지라**는 뜻이라 도착이라는 개념 자체가 없다 · 여기서 true 가 나면 화면이
-    // 「무리 도착」이라 말하고 "아무도 안 따른다" 안내까지 막힌다(둘 다 이 함수를 근거로 쓴다).
-    if ((o.kind ?? "move") === "evade") return false;
-    const c = game.world.playerCentroid();
-    return Math.hypot(c.x - o.x, c.y - o.y) <= ORDER.arriveRadius + ORDER_ARRIVED_PAD;
-  }
-
-  /**
-   * 무리가 (gx, gy)까지 갈 수 있나 · 종의 통행 능력(게놈)과 무리 중심에서의 길로 검사한다.
-   * 불가능한 약속을 하지 않으려는 것이지, 개체 하나하나가 닿는지를 보증하는 것은 아니다
-   * (누가 언제 닿는지는 그 개체의 천성이 정한다 · sim/herdOrder.ts).
-   */
-  function herdCanReach(gx: number, gy: number): boolean {
-    const caps = leadCapsOf(game.genome);
-    const terrain = game.world.terrain;
-    if (!terrain.isPassable(gx, gy, caps.canSwim, caps.canLand, caps.canFly)) return false;
-    const from = game.world.playerFocus(camX, camY); // 지금 주 무리가 있는 자리
-    if (terrain.tileIndex(from.x, from.y) === terrain.tileIndex(gx, gy)) return true;
-    // **직선(lineOfSight) 단축을 쓰지 않는다.** 직선 판정은 Bresenham 이라 한 걸음에 x·y 가 함께
-    // 움직여 **대각 모서리를 뚫고 지나간다**(8연결). 그런데 실제 이동과 findPath 는 4연결이라, 두
-    // 육지가 모서리로만 맞닿은 자리는 "직선으로 보이지만 갈 수는 없는 곳"이 된다(2026-08-08 실측:
-    // lineOfSight=true · findPath=경로 0 · 무리는 400틱 내내 42px 앞에서 못 건넜다).
-    // 그때 이 게이트가 통과시키면 게임이 **못 지킬 약속**을 한다 · 「가라」 핑이 뜨고, 무리는 물가에
-    // 서 있고, 화면은 「무리 도착」이라 말한다. 갈 수 있는지를 묻는 자리이니 **실제로 걸어갈 길
-    // (findPath)에게만** 묻는다. 탭은 몇 초에 한 번이고 격자는 27x48 이라 BFS 값이 싸다.
-    return terrain.findPath(from.x, from.y, gx, gy, caps.canSwim, caps.canLand, caps.canFly).length > 0;
-  }
 
   // 휠 줌(데스크톱).
   app.canvas.addEventListener(
@@ -1289,6 +1074,20 @@ async function boot(): Promise<void> {
 
   // "따르는 무리" 수는 goalBar 상세 패널에 있다(HUD 갈아엎기로 좌하단 상시 칩 제거 — 하단은 월드 몫).
   // 숫자의 단일 진실은 여전히 sim 이 판정 자리에서 센 world.lead.followerCount 다.
+
+  // 작전타임 중 — Enter·Space·Esc 로 경기 재개. 다른 게임 키(배속·멈춤)는 세계가 서 있으니 잠근다.
+  // 단어 목록이 떠 있으면 감독 패널의 레이어(더 높은 우선순위)가 Esc 를 먼저 받아 목록만 닫는다.
+  registerKeyLayer(
+    1,
+    () => game.phase === "timeout",
+    (e) => {
+      if (e.repeat) return true;
+      if (e.code === "Enter" || e.code === "NumpadEnter" || e.code === "Space" || e.code === "Escape" || e.code === "KeyT") {
+        game.closeTimeout();
+      }
+      return true;
+    },
+  );
 
   // 키보드 조작(관전·멈춤 메뉴) — 우선순위 0(바닥). 드래프트·결과·오버레이가 열리면 그쪽 레이어가 먼저 받는다.
   registerKeyLayer(
@@ -1332,6 +1131,10 @@ async function boot(): Promise<void> {
           controls.setSpeed(game.speed);
           goalBar.setSpeed(game.speed); // 표시 동기화 — 키로 바꿔도 goalBar 패널의 배속 버튼이 맞게
           return true;
+        case "KeyT":
+          // 작전타임 부르기(**[사용자 2026-09-11]** 호출형) · 예산이 없으면 game 이 거절한다.
+          if (!e.repeat) game.openTimeout();
+          return true;
         case "KeyI":
           // 자세한 정보(목표 줄 아래 상세 패널) 펼치기/접기 · 폰은 탭, 데스크톱은 이 키.
           // 알약은 button 이지만 이 라우터가 keydown 마다 포커스를 걷어내므로(keys.ts) Tab+Enter 로는
@@ -1358,25 +1161,10 @@ async function boot(): Promise<void> {
   app.ticker.add((ticker) => {
     game.update(ticker.deltaMS);
     view.sync(game.world, game.interpAlpha, ticker.deltaMS);
-    // 뜻 표식 · 지시가 없으면 null 로 지운다. 단계가 바뀌면 game 이 뜻을 거두므로 저절로 사라진다.
-    // ⚠ 「피해라」에는 **깃발을 세우지 않는다.** 깃발은 "여기로 가라"는 뜻이라, 피하라고 찍은 자리에
-    //   그것이 서면 화면이 정반대를 말한다 · 대신 붉은 반발 고리로 "이 자리에서 멀어져라"를 그린다.
-    {
-      const o = game.herdOrder;
-      view.setMoveTarget(o, (o?.kind ?? "move") === "evade");
-    }
-    // **현재 명령 한 줄** — 철회하려면 먼저 무엇이 걸려 있는지 보여야 한다(**[사용자 2026-08-06]**).
-    // 드래프트·결과 화면에서는 감춘다(그때 탭은 카드 화면 몫이라 철회할 것도 없다).
-    {
-      const o = game.phase === "watch" && !game.paused ? game.herdOrder : null;
-      const spec = o ? ORDER_SPEC_BY_KIND.get(o.kind ?? "move") : undefined;
-      orderLine.set(spec ? spec.label : null);
-    }
     // 사건 연출: sim 이 이번 프레임에 emit 한 사건(탄생/죽음/잡아먹힘)을 효과로 옮기고 비운다.
     for (const ev of game.world.events) effects.spawn(ev.kind, ev.x, ev.y, ev.mine, ev.tx, ev.ty);
     game.world.events.length = 0;
     effects.update(ticker.deltaMS);
-    if (denyMs > 0) denyMs = Math.max(0, denyMs - ticker.deltaMS);
     const gw = game.world;
     const gBoss = gw.boss;
     let mineCount = 0;
@@ -1435,40 +1223,17 @@ async function boot(): Promise<void> {
             : `${game.secondsLeft}초 안에 채우세요 · 불씨 ${emberDots(game.embers)}`
           : left;
       }
-      // 갈 수 없는 곳을 탭했으면 이 줄의 뒷말만 잠깐 바꾼다(기한은 그대로 남긴다 · 새 줄을 안 만든다).
-      if (denyMs > 0) goalSub = `${left} · 그곳으로는 갈 수 없습니다`;
-      // 접힌 기본 상태에서 순종을 알리는 표시가 하나도 없었다 → 명령이 먹혔는지 알 방법이 없으니
-      // "말을 안 듣는다"로 읽힌다.
-      // 분모는 **아직 목표에 못 닿은 수**(sim 의 orderPending)다 · 살아 있는 내 종 전부를 분모로
-      // 쓰면 이미 도착한 개체가 불복종처럼 세여 "4/24"가 뜬다(2026-08-05 사고 · 실은 20마리 도착).
-      // 분자(orderFollowers)가 분모보다 작은 것은 정상이다 · 못 닿은 개체 중 일부는 달아나는 중이거나
-      // 눈앞의 먹이·사냥에 붙들려 있다(그 사정은 0명 배너가 말한다 · 칩은 숫자만).
-      // "무리 도착"은 무리 단위 판정(herdArrived)이 먼저다 · 개체 몇이 근방을 들락여도(orderPending 이
-      // 0 과 소수를 오간다) 무리가 목표에 살면 도착이 맞다. orderPending === 0 은 그 안전망이다.
-      // 「피해라」에는 **도착이 없다** · 뜻이 "그 자리에서 멀어져라"이므로 「무리 도착」은 정반대 말이다.
-      // 대신 같은 두 숫자를 「흩어지는 중 N/M」으로 읽는다(분모 = 목소리를 들은 수 · 분자 = 실제로
-      // 달아나는 수). 두 문구가 같은 값을 보므로 화면과 sim 이 갈릴 수 없다.
-      const evading = (gw.herdOrder?.kind ?? "move") === "evade";
-      const follow =
-        gw.herdOrder === null || mineCount === 0
-          ? ""
-          : evading
-            ? gw.orderPending === 0
-              ? ""
-              : `흩어지는 중 ${gw.orderFollowers}/${gw.orderPending}`
-            : herdArrived() || gw.orderPending === 0
-              ? "무리 도착"
-              : `따르는 중 ${gw.orderFollowers}/${gw.orderPending}`;
-      // **관문 동안에는 이 칩 자리를 생존 수가 가져간다.** 순종보다 판정이 급하다 — 이 라운드가 끝날 때
-      // 기준 아래면 런이 끝난다. 기준(game.survivorsNeeded)은 판정과 같은 값이라 화면이 거짓말할 수 없다.
+      // **관문 동안에는 이 칩 자리를 생존 수가 말한다.** 이 라운드가 끝날 때 기준 아래면 런이 끝난다.
+      // 기준(game.survivorsNeeded)은 판정과 같은 값이라 화면이 거짓말할 수 없다.
+      // (옛 「따르는 중 N/M」 순종 칩은 탭 명령과 함께 끊었다 · 지침의 발동 수는 왼쪽 감독 패널이 말한다.)
       const gate = survivalChip(mineCount, game.survivorsNeeded);
-      const followText = gate ? gate.text : follow;
+      const followText = gate ? gate.text : "";
       const followTone = gate ? gate.tone : "plain";
       // 상시 도장 눈금이 읽는 값 · 티어 판정은 sim 한 곳(tiersOf)이 하고 화면은 읽기만 한다.
       const tnow = tiersOf(game.pipsNow);
       const goalTiers = CATEGORIES.map((c) => tnow[c]);
       goalBar.update({
-        visible: game.phase === "watch",
+        visible: game.phase === "watch" || game.phase === "timeout",
         text: goalText,
         sub: goalSub,
         stage: `${game.eraLabel ? `${game.eraLabel} · ` : ""}${game.stageLabel}`,
@@ -1478,9 +1243,7 @@ async function boot(): Promise<void> {
         tiers: goalTiers,
         mine: mineCount,
         wild: wildCount,
-        // 순종의 질 · 지금 뜻을 향해 움직이는 수. sim 이 규칙을 판정한 그 자리에서 센 값을 그대로 읽는다.
-        // 뜻을 안 내렸으면 셀 것이 없으므로 줄을 숨긴다(-1).
-        followers: gw.herdOrder !== null ? gw.orderFollowers : -1,
+        followers: -1, // 옛 순종 줄 · 탭 명령과 함께 끊었다(지침의 발동 수는 감독 패널이 말한다)
         follow: followText, // 접힌 알약에 상시로 붙는 짧은 칩(빈 문자열이면 숨김)
         followTone,
         seconds: game.secondsLeft,
@@ -1505,33 +1268,33 @@ async function boot(): Promise<void> {
     }
     // 내 형질 패널은 관전 중 + 칩이 켜져 있을 때만 — 드래프트는 전체 화면이라 그 아래 깔린 UI 가
     // 뿌연 유리로 비쳐 보인다. 드래프트 중 내 종 정보는 헤더의 "내 종" 팝업이 대신한다(핸드오프 §9).
-    buildPanel.setVisible(game.phase === "watch" && traitsOpen);
+    buildPanel.setVisible((game.phase === "watch" || game.phase === "timeout") && traitsOpen);
 
-    // --- 무리 지시: 화면 안에서 알아채게 하는 것들 ---
-    // ⚠ 여기 있던 안내 넷은 전부 `world.lead.*`(알파 조종 시절 필드)를 읽었는데, 무리 지시로 갈아탄 뒤로
-    //   armLead()·setLeadCommand() 호출부가 0 건이라 leaderId 는 영영 -1, followTicks 는 영영 0,
-    //   commanded 는 영영 false 였다 = **한 번도 뜬 적이 없는 안내**. 하필 "지금은 아무도 따라오지
-    //   않습니다"가 사용자가 실제로 겪은 상황의 설명인데 그게 죽은 코드였다. 근거를 지금 살아 있는 값
-    //   (world.herdOrder · world.orderFollowers)으로 다시 잡는다.
-    if (leadMode && game.phase === "watch") {
-      // 첫 관전 진입 안내(런당 1회) — 탭이 곧 명령이라는 것은 화면만 봐서는 알 수 없으니 한 번 알려 준다.
-      if (!tapHintShown) {
-        tapHintShown = true;
-        highlights.flash("화면을 탭하면 무리가 그곳으로 갑니다", 0xf0f8ff);
-      }
-      // 뜻을 내렸는데 아무도 그쪽으로 안 움직이면 잠시 뒤 한 번만 알린다.
-      // ⚠ 원인을 단정하지 않는다 · 도망·눈앞의 먹이가 다 같은 0 으로 나온다. 조건은 칩과 같은
-      //   기준이다: 못 닿은 개체가 있는데(orderPending > 0) 아무도 안 움직이고(orderFollowers 0)
-      //   무리 도착도 아니어야(herdArrived) 한다 · 도착해 모여 사는 무리에게 띄우면 거짓말이 된다.
-      if (gw.herdOrder !== null && gw.orderFollowers === 0 && gw.orderPending > 0 && mineCount > 1 && !herdArrived()) {
-        leadZeroMs += ticker.deltaMS;
-        if (leadZeroMs >= LEAD_BANNER_DELAY_MS && !leadZeroShown) {
-          highlights.flash("지금은 아무도 뜻을 따르지 않습니다. 달아나는 중이거나 눈앞의 일에 붙들려 있습니다.", 0xffba3a);
-          leadZeroShown = true;
-        }
-      } else {
-        leadZeroMs = 0;
-      }
+    // --- 감독 패널(일정표 · 지침 시트 · 작전타임) · 세계가 서 있는 화면 전부에서 산다 ---
+    // 발동 수·본능 수는 sim 이 판정 자리에서 센 값(world.sheetFired · sheetInstinct)을 그대로 읽는다.
+    manager.update({
+      visible: game.phase === "watch" || game.phase === "timeout" || game.phase === "shop",
+      eraLabel: game.eraLabel,
+      schedule: game.schedule,
+      sheet: game.sheet,
+      maxRows: game.maxSheetRows,
+      fired: gw.sheetFired,
+      instinct: gw.sheetInstinct,
+      canEdit: game.canEditSheet,
+      inTimeout: game.phase === "timeout",
+      timeoutIsAuto: game.timeoutIsAuto,
+      timeoutsLeft: game.timeoutsLeft,
+      threatText: game.threatLine,
+    });
+    // 첫 관전 진입 안내(런당 1회) — 손이 아니라 지침이 무리를 움직인다는 것은 화면만 봐서는 알 수 없다.
+    if (game.phase === "watch" && !sheetHintShown) {
+      sheetHintShown = true;
+      highlights.flash(
+        layout.isDesktop
+          ? "왼쪽 지침이 무리를 움직입니다. 작전타임에 고칠 수 있습니다"
+          : "아래 지침이 무리를 움직입니다. 작전타임에 고칠 수 있습니다",
+        0xf0f8ff,
+      );
     }
     view.setLead(null); // 앞장선 한 마리를 표시하던 자리 · 무리 지시에는 그런 개체가 없다
 
@@ -1541,7 +1304,7 @@ async function boot(): Promise<void> {
     // 월드가 화면보다 크지 않으면 미니맵은 보여 줄 것이 없다(같은 그림의 축소판일 뿐) → 숨긴다.
     // 첫 시대 맵이 화면 크기로 좁아지면 이 조건이 알아서 미니맵을 거둔다.
     const worldFitsScreen = game.width <= layout.width && game.height <= layout.height;
-    minimap.container.visible = game.phase === "watch" && !goalBar.isOpen() && !worldFitsScreen;
+    minimap.container.visible = (game.phase === "watch" || game.phase === "timeout") && !goalBar.isOpen() && !worldFitsScreen;
     // 미니맵은 캔버스에 그려 DOM 으로 못 잰다. 겹침 검사기(scripts/overlap-check.mjs)가 "지금 떠 있나"를
     // 알 수 있게 body 에 표식만 남긴다(값이 바뀔 때만 쓴다 · 매 프레임 DOM 쓰기 아님).
     const mmFlag = minimap.container.visible ? "on" : "off";
@@ -1619,6 +1382,12 @@ async function boot(): Promise<void> {
       // 흩어진 낙오자 대신 "지금 시점 근처의 주 무리"를 부드럽게 따라간다(hint=현재 카메라). 번식으로 초점이
       // 홱 튀지 않게 가중 평균을 쓴다.
       const focus = game.world.playerFocus(camX, camY);
+      // 데스크톱 왼쪽 열(감독 패널)이 화면 왼쪽을 덮는다 · 무리가 **남은 화면의 한가운데**에 오도록
+      // 초점을 열 폭의 절반만큼 왼쪽으로 옮긴다. CSS px → 논리 px(layout/screen) → 월드 px(÷줌).
+      // 폰은 아래 서랍이라 가로 보정이 없다.
+      if (layout.isDesktop && app.screen.width > 0) {
+        focus.x -= ((MANAGER_COLUMN_RESERVE_PX * uiZoom * (layout.width / app.screen.width)) / camZoom) * 0.5;
+      }
       rawTx = focus.x;
       rawTy = focus.y;
       // ① **목표점 저역통과** · 무리 초점은 매 틱 다시 계산되는 가중 평균이라 **그 자체가 떤다**.

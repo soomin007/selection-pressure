@@ -45,6 +45,7 @@ const tiersMod = await server.ssrLoadModule("/src/sim/tiers.ts");
 const bossMod = await server.ssrLoadModule("/src/sim/boss.ts");
 const mapMod = await server.ssrLoadModule("/src/sim/mapType.ts");
 const configMod = await server.ssrLoadModule("/src/game/config.ts");
+const instructionsMod = await server.ssrLoadModule("/src/sim/instructions.ts");
 
 const { decodeRunCode, cardByCode, DRAFT_SKIPPED, DRAFT_REROLLED, DEATH_ORDER } = runCodeMod;
 const { cardSummary } = cardsMod;
@@ -52,6 +53,7 @@ const { CATEGORY_LABELS, KEY_LABELS, TIER_ROMAN, tierOf } = tiersMod;
 const { bossName } = bossMod;
 const { MAP_KINDS } = mapMod;
 const { onboardingStep } = configMod;
+const { directiveLine } = instructionsMod;
 
 const decoded = decodeRunCode(raw);
 if (!decoded.ok) {
@@ -164,6 +166,12 @@ for (const e of data.entries) {
   }
   if (e.t === "buy") {
     line(`  방울 구입 · ${CATEGORY_LABELS[e.cat]} ${TIER_ROMAN[e.tier]}단  (방울 ${e.cost}개)`);
+    continue;
+  }
+  if (e.t === "sheet") {
+    // 감독의 지침(2026-09-11) · 세계가 다시 도는 순간의 시트 전부. 빈 시트는 「알아서 한다」뿐이다.
+    line(`  지침 (단계 ${e.stage} · ${e.tick}틱)${e.rows.length === 0 ? " · 비움(알아서 한다)" : ""}`);
+    e.rows.forEach((d, i) => line(`     ${i + 1}. ${directiveLine(d)}`));
     continue;
   }
   if (e.t === "stage") {

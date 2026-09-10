@@ -7,6 +7,7 @@
 - [`design/open_questions.md`](design/open_questions.md) — 미해결 결정 (기획서 §11). 구현 전 확정 대상
 - [`ROADMAP.md`](ROADMAP.md) — 단계별 로드맵 (앞으로 할 일만)
 - [`UI_HANDOFF.md`](UI_HANDOFF.md) — **UI 핸드오프 문서** (코드 안 보고 맥락 파악: Game API·화면 흐름·컴포넌트·톤 규칙)
+- [`design/manager_instructions.md`](design/manager_instructions.md) — **감독형 전환 구현 계약**(2026-09-11 · 지침 시트 · 작전타임 · 일정표 · 데스크톱 메인)
 
 ## 작업 관리
 - [`design/backlog.md`](design/backlog.md) — **다음 작업의 단일 소스** (앞으로 할 일만)
@@ -31,6 +32,7 @@
 |---|---|
 | `src/sim/tiers.ts` | **성장 수치**: 범주 다섯·도장 문턱·티어 파생 능치·몸집 식·유지비·듀오, 그리고 티어 한 줄(`tierLine`). 도장은 **방울로만** 오른다(`Game.buyTier`). |
 | `src/sim/perks.ts` | **조건부 특성(perk)**: 카드가 주는 것의 단일 진실(v9 신설). 조건 13종·축 8종·배수, 등급 계산(`perkRarity`), 화면 한 줄(`perkLine`), sim 이 곱하는 자리(`perkMul`)가 전부 여기 있다. 카드(`game/cards.ts`)는 특성의 이름·설명·효과를 **따로 안 갖는다**. |
+| `src/sim/instructions.ts` | **감독의 지침 시트**: 문장 틀(누가 · 어떤 때 · 무엇을)의 어휘·문구·평가기·시트 상수(`SHEET`). 「어떤 때」는 `perks.ts` 의 조건 13종을 그대로 쓴다. 발동은 `behavior.ts` 의 지침 블록 한 자리에서만 세고, 화면(`ui/managerPanel.ts`)은 읽기만 한다. |
 | `src/sim/genome.ts` | **게놈 직렬화**(v9 = 도장 + 열쇠 + 특성 → 파생 능치) · `GENOME_VERSION` · 마이그레이션 |
 | `src/game/cards.ts` | **카드 풀과 뽑기**: 카드 = 열쇠 또는 특성 하나. 희귀도 가중치·레벨 보정·드래프트 보정(`DraftBias`) |
 | `src/game/runCode.ts` | **판 분석 코드**의 형식(`scripts/decode-run.mjs` 가 푼다) |
