@@ -30,6 +30,7 @@ import {
   type GeneReason,
 } from "@/sim/gene";
 import type { HerdOrder } from "@/sim/herdOrder";
+import type { Directive } from "@/sim/instructions";
 import {
   CARRION_FROM_DEATH,
   CARRION_LEFTOVER,
@@ -361,6 +362,28 @@ export class World {
    * rng 미소비 · null 이면 관련 분기가 통째로 안 돌아 기존 세계와 부동소수점까지 같다.
    */
   herdOrder: HerdOrder | null = null;
+
+  /**
+   * **감독의 지침 시트** (**[사용자 2026-09-11]** 탭 조종 대체 · 계약은 `sim/instructions.ts` 머리 주석).
+   * game 이 세팅하고 behavior 가 읽는다. null 이면 지침 블록이 통째로 안 돌아 기존 세계와 비트 단위로 같다.
+   * 빈 배열도 같다(마지막 줄 「알아서 한다」만 남으므로 이동을 안 덮는다 · 발동 수만 센다).
+   */
+  sheet: readonly Directive[] | null = null;
+  /**
+   * 이번 틱에 **각 줄이 발동한 개체 수**. 길이는 `sheet.length + 1`(마지막 칸 = 보이지 않는 「알아서 한다」).
+   * ⚠ 세는 곳은 규칙이 판정되는 그 자리 하나뿐(behavior 의 지침 블록) · 매 틱 리셋 · 정수 합계라
+   *   순회 순서와 무관 · rng 미사용. UI 는 읽기만 한다(known_issues 「화면에 뜨는 숫자를 다시 유도하지 마라」).
+   */
+  sheetFired: number[] = [];
+  /** 이번 틱에 본능(도망·물고 있는 사냥감·금빛)이 지침의 이동을 가져간 내 종 개체 수. 화면의 「본능 N」. */
+  sheetInstinct = 0;
+  /**
+   * 이번 틱 시작 때의 **팀 무게중심**(살아 있는 내 종). `n === 0` 이면 없다.
+   * 시트가 있을 때만 계산한다(없는 세계에서는 비용 0 · 어차피 세계를 안 바꾸는 파생값이다).
+   * 틱 시작에 한 번 굳혀 두는 이유: 개체가 움직이는 도중에 다시 재면 순회 순서에 따라 이웃이 다른
+   * 값을 본다(syncLeadStart 의 같은 경고).
+   */
+  teamCentroid: { x: number; y: number; n: number } = { x: 0, y: 0, n: 0 };
   /**
    * **명령이 닿는 거리(px).** game 이 매 단계 무리 티어에서 계산해 넣어 준다(`herdOrder.voiceRadius`).
    * sim 은 티어를 모른다 — 받은 숫자를 쓰기만 한다(`foodScarcity` 와 같은 구조).
@@ -659,12 +682,40 @@ export class World {
    * 파생값을 여기서 한 번만 굳히는 이유: 개체 루프 안에서 갱신하면 알파가 몇 번째로 순회되느냐에
    * 따라 이웃이 다른 값을 본다(숨은 순회 순서 의존 = rng 지문으로도 안 잡히는 결정론 지뢰).
    */
+  /**
+   * 지침 시트의 틱 시작 정리: 발동 집계 0 · 팀 무게중심 굳히기. 시트가 없으면 아무것도 안 한다
+   * (배열 길이 0 유지 · 무게중심도 안 잰다) → 시트 없는 세계는 이 함수가 있어도 비용·결과 모두 그대로.
+   */
+  private syncSheetStart(): void {
+    const s = this.sheet;
+    if (s === null) {
+      if (this.sheetFired.length !== 0) this.sheetFired = [];
+      this.sheetInstinct = 0;
+      return;
+    }
+    const n = s.length + 1;
+    if (this.sheetFired.length !== n) this.sheetFired = new Array<number>(n).fill(0);
+    else this.sheetFired.fill(0);
+    this.sheetInstinct = 0;
+    let sx = 0;
+    let sy = 0;
+    let cnt = 0;
+    for (const e of this.entities) {
+      if (!e.alive || !e.species.isPlayer) continue;
+      sx += e.x;
+      sy += e.y;
+      cnt += 1;
+    }
+    this.teamCentroid = cnt > 0 ? { x: sx / cnt, y: sy / cnt, n: cnt } : { x: 0, y: 0, n: 0 };
+  }
+
   private syncLeadStart(): void {
     const L = this.lead;
     // HUD 표시용 집계는 매 틱 여기서만 0 으로 되돌린다(세는 곳은 behavior 의 cohesion 한 자리뿐).
     L.followerCount = 0;
     this.orderFollowers = 0; // 뜻을 향해 움직인 수도 같은 규칙으로 매 틱 리셋(세는 곳은 behavior 한 자리)
     this.orderPending = 0; // "아직 못 닿은" 수(따르는 중 N/M 의 분모)도 같은 자리에서 매 틱 리셋
+    this.syncSheetStart();
     // 맞설 수 있는 개체 수도 같은 자리에서 매 틱 0 으로. 보스가 있으면 stepBoss 가 다시 채운다
     // (보스가 사라진 틱에 낡은 수가 남아 "싸울 수 있다"고 거짓말하지 않게).
     this.raidMeleeFighters = 0;

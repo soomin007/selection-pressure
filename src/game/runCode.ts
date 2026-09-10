@@ -27,6 +27,7 @@ import type { MapType } from "@/sim/mapType";
 import type { DeathCause } from "@/sim/world";
 import type { StageKind } from "@/game/config";
 import type { OrderKind } from "@/sim/herdOrder";
+import { ACT_KEYS, WHEN_KEYS, WHO_KEYS, type Directive } from "@/sim/instructions";
 import type { ExtinctionType, TrialKind } from "@/game/game";
 
 /** 코드 구조(스키마) 버전. **구조가 바뀌면 올린다** · 다르면 디코더가 아예 못 읽는다고 말한다. */
@@ -316,6 +317,18 @@ export interface OrderRecord {
   kind: OrderKind;
 }
 
+/**
+ * **감독의 지침 시트가 바뀐 채 세계가 다시 돌기 시작했다** (**[사용자 2026-09-11]** 탭 조종 대체).
+ * 탭(OrderRecord)이 그랬듯 시트도 판을 바꾸므로 안 담으면 재현이 거짓말이 된다. 담는 것은 단계·시각·줄 전부.
+ * 단어는 `instructions.ts` 의 배열 순서(WHO_KEYS · WHEN_KEYS · ACT_KEYS)로 저장한다 — 재배열 금지 · 새 단어는 끝에만.
+ */
+export interface SheetRecord {
+  t: "sheet";
+  stage: number;
+  tick: number;
+  rows: Directive[];
+}
+
 /** 시대를 넘었다. */
 export interface EraRecord {
   t: "era";
@@ -331,7 +344,7 @@ export interface EndRecord {
   level: number;
 }
 
-export type RunLogEntry = DraftRecord | BuyRecord | OrderRecord | StageRecord | EraRecord | EndRecord;
+export type RunLogEntry = DraftRecord | BuyRecord | OrderRecord | SheetRecord | StageRecord | EraRecord | EndRecord;
 
 /** 재현에 필요한 판 밖의 상태(세계를 만드는 재료). */
 export interface RunCodeHeader {
@@ -497,7 +510,7 @@ function fromBase64Url(text: string): Uint8Array {
 //   새 태그(order=6)를 더하는 것은 안전하다 — 옛 코드에는 그 바이트가 없으므로 그대로 읽힌다.
 //   그래서 스키마 버전을 안 올렸다(올리면 사용자가 이미 보낸 코드를 못 읽게 된다).
 //   buy=2 는 시각이 없던 옛 칸이다 · buyAt=7 이 그 자리를 잇는다(옛 코드를 계속 읽으려고 남겨 둔다).
-const TAG = { draft: 1, buy: 2, stage: 3, era: 4, end: 5, order: 6, buyAt: 7 } as const;
+const TAG = { draft: 1, buy: 2, stage: 3, era: 4, end: 5, order: 6, buyAt: 7, sheet: 8 } as const;
 
 export function encodeRunCode(data: RunCodeData): string {
   const w = new ByteWriter();
@@ -562,6 +575,18 @@ function writeEntry(w: ByteWriter, e: RunLogEntry): void {
     w.varint(Math.round(e.x));
     w.varint(Math.round(e.y));
     w.u8(ORDER_KIND_CODE[e.kind] ?? 0);
+    return;
+  }
+  if (e.t === "sheet") {
+    w.u8(TAG.sheet);
+    w.varint(e.stage);
+    w.varint(e.tick);
+    w.varint(e.rows.length);
+    for (const d of e.rows) {
+      w.u8(Math.max(0, WHO_KEYS.indexOf(d.who)));
+      w.u8(Math.max(0, WHEN_KEYS.indexOf(d.when)));
+      w.u8(Math.max(0, ACT_KEYS.indexOf(d.act)));
+    }
     return;
   }
   if (e.t === "stage") {
@@ -784,6 +809,20 @@ function readEntry(r: ByteReader): RunLogEntry {
       y: r.varint(),
       kind: ORDER_KIND_BY_CODE[r.u8()] ?? "move",
     };
+  }
+  if (tag === TAG.sheet) {
+    const stage = r.varint();
+    const tick = r.varint();
+    const count = r.varint();
+    const rows: Directive[] = [];
+    for (let i = 0; i < count; i += 1) {
+      // 모르는 숫자(더 새로운 빌드의 단어)는 첫 단어로 접는다 · 코드를 깨뜨리기보다 「알아서」에 가깝게.
+      const who = WHO_KEYS[r.u8()] ?? WHO_KEYS[0];
+      const when = WHEN_KEYS[r.u8()] ?? WHEN_KEYS[0];
+      const act = ACT_KEYS[r.u8()] ?? ACT_KEYS[0];
+      rows.push({ who, when, act });
+    }
+    return { t: "sheet", stage, tick, rows };
   }
   if (tag === TAG.era) return { t: "era", era: r.varint() };
   if (tag === TAG.end) {

@@ -89,6 +89,18 @@ function sampleData(): RunCodeData {
       { t: "buy", cat: "fang", cost: 5, tier: 2, stage: 2, tick: 140 },
       // 탭 하나 — 재현의 마지막 조각도 왕복하는지 함께 못박는다(2026-08-09 신설).
       { t: "order", stage: 2, tick: 141, x: 231, y: 604, kind: "evade" },
+      // 지침 시트(2026-09-11 · 탭 조종 대체) — 줄 셋 · 빈 시트도 왕복해야 한다(「지웠다」도 사건이다).
+      {
+        t: "sheet",
+        stage: 2,
+        tick: 150,
+        rows: [
+          { who: "strong", when: "night", act: "gather" },
+          { who: "weak", when: "hungry", act: "auto" },
+          { who: "all", when: "always", act: "hide" },
+        ],
+      },
+      { t: "sheet", stage: 3, tick: 0, rows: [] },
       {
         t: "stage",
         kind: "boss",

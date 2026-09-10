@@ -64,6 +64,7 @@ import {
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
 import type { LeadCommand } from "@/sim/lead";
+import { sameSheet, sanitizeSheet, sheetRows, type Directive } from "@/sim/instructions";
 import {
   ORDER_SPECS,
   ORDER_SPEC_BY_KIND,
@@ -134,7 +135,23 @@ import {
  * 새 정지 경로(별도 플래그)를 만들지 않고 드래프트와 **같은 장치**를 쓴다 · 정지가 두 갈래면
  * 반드시 한쪽만 안 멈추는 화면이 다시 생긴다.
  */
-export type Phase = "lobby" | "draft" | "watch" | "result" | "shop";
+export type Phase = "lobby" | "draft" | "watch" | "result" | "shop" | "timeout";
+
+/** 일정표 한 칸(`Game.schedule`). 화면은 이것을 그리기만 한다. */
+export interface ScheduleEntry {
+  kind: StageKind;
+  /** 1~6 · 시대 안의 순서. */
+  ordinal: number;
+  /** 이 단계의 길이(초). */
+  seconds: number;
+  state: "done" | "now" | "ahead";
+  /** 짧은 이름(채집 · 위협 · 보스 · 재앙 · 대멸종). */
+  label: string;
+  /** 위협의 이름 · 지금 단계이거나 대멸종(큐가 고정)일 때만. 앞으로 올 보스 종류는 적지 않는다. */
+  threat: string | null;
+  /** 지금 단계의 남은 초 · 나머지는 null. */
+  secondsLeft: number | null;
+}
 export type RunResult = "win" | "lose";
 
 export type ExtinctionType = "cold" | "famine" | "heat" | "plague";
@@ -272,6 +289,21 @@ export class Game {
   private pendingLevels = 0;
   /** 지금 드래프트가 라운드 경계에서 열린 것인가. 고르고 나면 관전 복귀가 아니라 다음 단계로 간다. */
   private boundaryDraft = false;
+
+  // ── 감독의 지침 시트 + 작전타임 (**[사용자 2026-09-11]** · 계약은 docs/design/manager_instructions.md) ──
+  /** 지금 걸려 있는 지침. 세계가 바뀌어도 따라간다(makeWorld 가 붙인다). 새 런에서만 비운다. */
+  private sheetRowsValue: Directive[] = [];
+  /** 판 코드에 마지막으로 기록한 시트. 세계가 다시 도는 순간 이것과 다르면 기록한다. */
+  private sheetLogged: Directive[] = [];
+  /** 이 단계에 남은 호출 작전타임 수. beginStage 가 채운다. */
+  private timeoutsLeftValue = 0;
+  /** 지금 열린 작전타임이 자동(위협 시작)인가 · 화면 문구가 갈린다. */
+  private timeoutAutoValue = false;
+  /**
+   * 보스·대멸종 단계가 시작될 때 자동으로 작전타임을 여는가. **main 이 true 로 세운다**(`leadEnabled` 와
+   * 같은 선례) · 기본 false 인 이유: 테스트·프로브는 `update()` 루프로 단계를 넘기므로 멈추면 안 된다.
+   */
+  autoTimeout = false;
 
   private currentTrial: Trial | null = null;
   /** 시대 보상 드래프트가 예고한 시험 · beginStage 가 그대로 채택한다. 예고 시점과 시작 시점의 게놈·
@@ -656,6 +688,7 @@ export class Game {
     // 진행 중이던 단계로 복귀(단계 타이머·보스 상태는 그대로 보존).
     this.phase = "watch";
     this.acc = 0;
+    this.logSheetIfDirty(); // 라운드 중간 드래프트에서 고친 시트도 다시 도는 순간에 기록
   }
 
   /** 레벨업 드래프트를 스킵 — 3장이 다 별로면 형질 대신 소소한 보상(새끼 몇 마리)을 받고 관전으로 복귀한다.
@@ -799,6 +832,106 @@ export class Game {
   closeGeneShop(): void {
     if (this.phase !== "shop") return;
     this.phase = "watch";
+    this.logSheetIfDirty(); // 구입 화면에서도 시트를 고칠 수 있다 · 세계가 다시 도는 순간에 기록
+  }
+
+  // ─────────────────────────────── 지침 시트 · 작전타임 ───────────────────────────────
+
+  /** 지금 걸려 있는 지침(읽기 전용 · 화면이 그린다). 마지막 줄 「모두 · 늘 · 알아서 한다」는 여기 없다. */
+  get sheet(): readonly Directive[] {
+    return this.sheetRowsValue;
+  }
+
+  /** 쓸 수 있는 줄 수 · 무리 티어가 늘린다(`tiers.HERD_SHEET_ROWS`). */
+  get maxSheetRows(): number {
+    return sheetRows(this.genome.pips);
+  }
+
+  /**
+   * 지침을 고칠 수 있는 때 = **세계가 서 있는 모든 화면**(드래프트 · 작전타임 · 구입). 관전 중에는 읽기 전용.
+   * "경기 중에는 감독이 손을 못 댄다"가 이 게임 형태의 뼈대다(**[사용자 2026-09-11]**).
+   */
+  get canEditSheet(): boolean {
+    return this.phase === "draft" || this.phase === "timeout" || this.phase === "shop";
+  }
+
+  /**
+   * 지침을 통째로 갈아 끼운다. 고칠 수 없는 때면 false. 줄 수 상한·모르는 단어는 여기서 정리한다
+   * (sim 은 받은 시트를 믿고 읽는다). 세계에는 즉시 붙지만 세계가 서 있으므로 다시 돌 때부터 산다.
+   * 판 코드 기록은 여기서 하지 않는다 · 한 작전타임에 열 번 고쳐도 세계가 도는 순간의 시트 하나만 뜻이 있다.
+   */
+  setSheet(rows: readonly Directive[]): boolean {
+    if (!this.canEditSheet) return false;
+    this.sheetRowsValue = sanitizeSheet(rows, this.maxSheetRows);
+    this.world.sheet = this.sheetRowsValue;
+    return true;
+  }
+
+  /** 세계가 다시 도는 순간, 시트가 마지막 기록과 다르면 판 코드에 남긴다(재현의 재료 · 2026-08-09 탭 사고의 교훈). */
+  private logSheetIfDirty(): void {
+    if (sameSheet(this.sheetRowsValue, this.sheetLogged)) return;
+    const rows = this.sheetRowsValue.map((d) => ({ ...d }));
+    this.sheetLogged = rows;
+    this.runLog.push({ t: "sheet", stage: this.stageOrdinal, tick: this.stageTick, rows });
+  }
+
+  /** 이 단계에 남은 호출 작전타임 수(화면의 「작전타임 N」). */
+  get timeoutsLeft(): number {
+    return this.timeoutsLeftValue;
+  }
+
+  /** 지금 열린 작전타임이 위협 시작의 자동 작전타임인가(문구가 갈린다 · 「위협이 나타났습니다」). */
+  get timeoutIsAuto(): boolean {
+    return this.phase === "timeout" && this.timeoutAutoValue;
+  }
+
+  /**
+   * 감독이 작전타임을 부른다. 관전 중이고 예산이 남았을 때만. 멈추는 장치는 구입 화면과 같다(`phase`) ·
+   * `acc` 를 건드리지 않는다(closeGeneShop 주석의 결정론 경고 그대로).
+   */
+  openTimeout(): boolean {
+    if (this.phase !== "watch" || this.paused) return false;
+    if (this.timeoutsLeftValue <= 0) return false;
+    this.timeoutsLeftValue -= 1;
+    this.timeoutAutoValue = false;
+    this.phase = "timeout";
+    return true;
+  }
+
+  /** 작전타임을 끝내고 경기를 잇는다. 진행 중이던 단계로 정확히 돌아간다(타이머·보스·시험 그대로). */
+  closeTimeout(): void {
+    if (this.phase !== "timeout") return;
+    this.phase = "watch";
+    this.timeoutAutoValue = false;
+    this.logSheetIfDirty();
+  }
+
+  /**
+   * **일정표** — 이 시대의 단계 여섯. `SCHEDULE`·`stageIndex`·단계 길이에서 **파생만** 한다(새 진실을
+   * 만들지 않는다 · 옛 타임라인의 계약 「타임라인은 game getter, 그리기는 hud」 그대로).
+   * ⚠ 앞으로 올 보스의 **종류는 적지 않는다.** `peekBossType` 은 지금 게놈으로 판정하므로 두 칸 앞을
+   *   적으면 카드 한 장에 예고가 거짓이 된다(known_issues 「예고를 얼려서 들고 있어야 한다」의 기전).
+   *   대멸종은 큐가 고정이라 미리 적어도 안전하다(`upcomingThreat` 이 이미 그렇게 한다).
+   */
+  get schedule(): ScheduleEntry[] {
+    const out: ScheduleEntry[] = [];
+    const inRun = this.phase !== "lobby";
+    for (let i = 0; i < SCHEDULE.length; i += 1) {
+      const kind = SCHEDULE[i] as StageKind;
+      const state: ScheduleEntry["state"] = !inRun || i > this.stageIndex ? "ahead" : i === this.stageIndex ? "now" : "done";
+      const seconds = kind === "boss" ? GAME.bossSeconds : kind === "extinction" ? GAME.extinctionSeconds : GAME.roundSeconds;
+      let threat: string | null = null;
+      if (kind === "extinction") {
+        // 지금 단계면 stageThreat 이 정답(이미 shift 됐다) · 앞이면 큐의 첫 것.
+        const et = state === "now" ? this.stageThreat : this.extinctionQueue[0];
+        if (et && !isBossThreat(et)) threat = extinctionName(et);
+      } else if (kind === "boss" && state === "now" && this.stageThreat && isBossThreat(this.stageThreat)) {
+        threat = bossName(this.stageThreat);
+      }
+      const label = kind === "forage" ? "채집" : kind === "boss" ? (state === "now" ? this.stageLabel.split(" · ")[0] ?? "위협" : "위협") : "대멸종";
+      out.push({ kind, ordinal: i + 1, seconds, state, label, threat, secondsLeft: state === "now" ? this.secondsLeft : null });
+    }
+    return out;
   }
 
   /** 지금 내려져 있는 뜻(화면에 표식을 그리는 데 쓴다). */
@@ -1407,6 +1540,10 @@ export class Game {
     this.trialSkipBroodBase = 0;
     this.pendingLevels = 0;
     this.boundaryDraft = false;
+    this.sheetRowsValue = []; // 새 혈통 = 빈 시트(마지막 줄 「알아서 한다」만) · 기록 기준도 빈 시트
+    this.sheetLogged = [];
+    this.timeoutsLeftValue = 0;
+    this.timeoutAutoValue = false;
     this.firstChoice = true;
     this.lineage = null; // 새 혈통 — 갈래는 시작 프리셋을 고를 때 다시 정해진다
     this.level = 1;
@@ -1641,7 +1778,7 @@ export class Game {
     // 무리도 보스도 화면 안. 진도가 오르면 1.4·2.0 으로 넓어진다). fixedMapScale 은 테스트 전용 고정.
     const step = this.onboarding;
     const s = this.fixedMapScale ?? mapScale(step);
-    return new World(
+    const w = new World(
       `${this.currentSeed}-env`,
       this.baseW * s,
       this.baseH * s,
@@ -1671,6 +1808,9 @@ export class Game {
         apexPredators: eraApexPredators(this.era, step),
       },
     );
+    // 감독의 지침은 세계를 따라간다(시대가 바뀌어도 시트는 그대로). 빈 시트는 기존 세계와 비트 동일.
+    w.sheet = this.sheetRowsValue;
+    return w;
   }
 
   /**
@@ -1911,6 +2051,16 @@ export class Game {
       }
       // 시험을 세계에 실제로 찍는다(자리·표식). 종류가 그걸 안 쓰면 세계는 그대로다.
       this.armTrial(this.currentTrial);
+    }
+    // ── 작전타임 예산과 자동 작전타임 ──
+    // 드래프트에서 고친 시트는 이 단계 0틱에 걸린 것이다 · 여기서 기록해야 재현이 같은 시각에 건다.
+    this.timeoutsLeftValue = GAME.timeoutsPerStage;
+    this.logSheetIfDirty();
+    if (this.autoTimeout && kind !== "forage") {
+      // 위협이 화면에 나타난 채 멈춘다(보스는 이미 태어났고 대멸종은 이미 걸렸다). 예산은 안 쓴다.
+      // `update()` 가 watch 가 아니면 곧장 되돌아가므로 이 한 줄로 틱·타이머·보스가 전부 선다(shop 과 같은 장치).
+      this.phase = "timeout";
+      this.timeoutAutoValue = true;
     }
   }
 

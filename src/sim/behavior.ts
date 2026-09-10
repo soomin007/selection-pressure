@@ -19,6 +19,7 @@ import { areFriends } from "@/sim/species";
 import { bossCanHunt, isRaidFighter, isRaidRangedFighter, raidRangedPower, dealRaidHit, bossRaidTargetFor } from "@/sim/boss";
 import { ORDER, SIM } from "@/sim/params";
 import { GOBLIN } from "@/sim/goblin";
+import { SHEET, directiveApplies, type Act, type Directive } from "@/sim/instructions";
 // 듀오는 2026-08-10 부터 **도장이 아니라 카드**다 · `hasRule` 이 「그 카드를 골랐는가」를 묻는다
 // (옛 `tiers.hasDuo(pips, id)` 는 지웠다 · 두 범주를 3단까지 올려도 그것만으로는 안 켜진다).
 import {
@@ -1178,6 +1179,61 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     }
   }
 
+  // ── 감독의 지침 시트 (**[사용자 2026-09-11]** 탭 조종 대체 · 어휘·평가기는 sim/instructions.ts) ──
+  // 옛 지시 블록과 **같은 계약**: 위 자율 판단을 하나도 건너뛰지 않고 결과값 desired 만 섞는다 · 순수
+  // 기하라 rng 0 · 시트가 null 이면 이 블록이 통째로 안 돌아 시트 없는 세계는 기존과 비트 단위로 같다.
+  // 우선순위(본능이 위): 도망 > 물고 있는 사냥감 > 금빛 짐승 > **지침** > 배회. 근거는 옛 지시 블록의
+  // 실측 그대로(사냥감을 덮으면 사냥 9.0 → 2.5). 줄은 발동해서 세되(화면의 「N마리」), 본능이 이번 틱
+  // 이동을 가진 개체는 `sheetInstinct` 로 따로 센다 · 그래야 「발동했는데 왜 안 움직이나」가 화면에서 읽힌다.
+  // 발동 집계는 **여기 한 자리에서만** 센다(known_issues 「화면에 뜨는 숫자를 규칙에서 다시 유도하지 마라」).
+  const sheet = world.sheet;
+  if (sheet !== null && e.species.isPlayer) {
+    const busy = fleeing || e.targetPrey !== null || goblinChase !== null;
+    let firedRow = sheet.length; // 기본 = 보이지 않는 마지막 줄 「모두 · 늘 · 알아서 한다」
+    let aim: SheetAim = "done";
+    for (let i = 0; i < sheet.length; i += 1) {
+      const d = sheet[i] as Directive;
+      if (!directiveApplies(d, e, pctx)) continue;
+      if (d.act === "auto") {
+        firedRow = i;
+        break;
+      }
+      // 이동 행동은 **대상이 있어야 성립한다**(FF12: 대상 없는 갬빗은 건너뛴다) · 없으면 다음 줄로.
+      const a = sheetAim(d.act, e, world, canSwim, canLand, canFly);
+      if (a === "none") continue;
+      firedRow = i;
+      aim = a;
+      break;
+    }
+    world.sheetFired[firedRow] = (world.sheetFired[firedRow] ?? 0) + 1;
+    if (aim !== "done") {
+      if (busy) {
+        world.sheetInstinct += 1;
+      } else {
+        // 방울 우선 · 옛 지시 블록과 같은 규칙(**[사용자 2026-08-09]** "가라 명령 때 방울을 우선시") ·
+        // 지침이 이동을 가져간 동안에만 산다(auto 인 개체는 예전처럼 밟아야만 줍는다 = 기존 세계 불변).
+        const drop = nearestFreeDrop(world, e.x, e.y, canSwim, canLand, canFly);
+        let go: Vec | null = null;
+        if (drop !== null) {
+          const nav = navTo(e, world, drop, canSwim, canLand, canFly, true);
+          if (!nav.giveUp) go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, 0);
+        } else if (aim.nav) {
+          // 길찾기를 태운다(직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다) · 길이 없으면 놓아 준다.
+          const nav = navTo(e, world, aim, canSwim, canLand, canFly, true);
+          if (!nav.giveUp) go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? aim.arrive : 0);
+        } else {
+          go = toward(aim.x - e.x, aim.y - e.y, maxSpeed, aim.arrive);
+        }
+        if (go !== null) {
+          desired = {
+            x: desired.x * (1 - SHEET.pull) + go.x * SHEET.pull,
+            y: desired.y * (1 - SHEET.pull) + go.y * SHEET.pull,
+          };
+        }
+      }
+    }
+  }
+
   // ── 금빛 짐승에게 달려든다(위 goblinChase 게이트에서 정해졌다) ──────────────────────────────
   // 「회피」 명령을 듣는 중인 개체만 예외 — 사람이 기력을 주고 산 도피를 금빛이 덮으면 안 된다.
   // 길찾기를 태우는 이유는 방울과 같다(직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다).
@@ -2290,6 +2346,104 @@ function scaleTo(dx: number, dy: number, len: number): Vec {
  * (dx,dy) 방향으로 향하는 desired 속도. arriveRadius>0 이면 그 거리 안에서 선형 감속(도착)해
  * 목표를 지나쳐 진동하는 오버슈트를 없앤다. arriveRadius=0 이면 전속(scaleTo 와 동일).
  */
+/**
+ * 지침의 이동 행동이 이번 틱 향할 곳.
+ *   "none" = 대상이 없다(닿는 수풀이 없다 · 무리가 저 혼자) → **그 줄은 성립하지 않은 것**(다음 줄로).
+ *   "done" = 이미 만족(수풀 위 · 이미 모임 · 이미 흩어짐) → 줄은 발동하되 이동은 안 덮는다.
+ *   Vec    = 이 자리로 간다. `nav` 면 길찾기를 태우고, 아니면 직선(흩어지기 · 방향만 뜻이 있다).
+ *   `arrive` 는 도착 감속 반경(px).
+ */
+type SheetAim = "none" | "done" | (Vec & { nav: boolean; arrive: number });
+
+/**
+ * 행동별 대상 판정. 순수 기하 · rng 0 · 세계를 1비트도 안 바꾼다(`canWalkTo` 의 라벨 캐시는 메모일 뿐).
+ * ⚠ 「수풀 위」는 `terrain.isGrass` 하나로 판정한다 · 카드 조건 「수풀에서」(perks.WHEN_TEST.grass)와
+ *   같은 함수라 시트의 「수풀에서 → 알아서 한다」와 「수풀로 숨는다」의 만족 판정이 한 글자도 안 갈린다.
+ */
+function sheetAim(
+  act: Act,
+  e: Entity,
+  world: World,
+  canSwim: boolean,
+  canLand: boolean,
+  canFly: boolean,
+): SheetAim {
+  const terr = world.terrain;
+  if (act === "hide") {
+    const cs = terr.cellSize;
+    if (terr.isGrass(e.x, e.y)) {
+      // 이미 수풀 위 · 그 칸의 중심에 머문다(배회가 칸 밖으로 새지 않게 · 도착 감속 반경 = 한 칸).
+      const cx = Math.floor(e.x / cs);
+      const cy = Math.floor(e.y / cs);
+      return { x: (cx + 0.5) * cs, y: (cy + 0.5) * cs, nav: false, arrive: cs };
+    }
+    const g = nearestReachableGrass(world, e.x, e.y, canSwim, canLand, canFly);
+    return g === null ? "none" : { x: g.x, y: g.y, nav: true, arrive: cs * 0.5 };
+  }
+  const c = world.teamCentroid;
+  if (c.n < 2) return "none"; // 저 혼자면 뭉칠 무리도 흩어질 무리도 없다
+  const dx = c.x - e.x;
+  const dy = c.y - e.y;
+  const d2 = dx * dx + dy * dy;
+  if (act === "gather") {
+    if (d2 <= SHEET.gatherRadius * SHEET.gatherRadius) return "done";
+    return { x: c.x, y: c.y, nav: true, arrive: SHEET.gatherRadius };
+  }
+  // scatter · 무게중심에서 멀어진다. 직선(방향만 뜻이 있다 · 목적지가 아니다) · 정확히 중심 위면 +x 로.
+  if (d2 >= SHEET.scatterRadius * SHEET.scatterRadius) return "done";
+  const d = Math.sqrt(d2);
+  const ux = d < 1e-6 ? 1 : -dx / d;
+  const uy = d < 1e-6 ? 0 : -dy / d;
+  return { x: e.x + ux * SHEET.scatterRadius, y: e.y + uy * SHEET.scatterRadius, nav: false, arrive: 0 };
+}
+
+/**
+ * (x,y) 에서 **걸어 닿는** 가장 가까운 수풀 칸의 중심. 반경 `SHEET.hideRadiusTiles` 밖은 없는 것으로 친다.
+ * 고리(체비쇼프 거리)를 안쪽부터 넓혀 가며 훑고, 후보를 찾은 뒤에도 유클리드 거리로 이길 수 있는 고리까지는
+ * 마저 본다(고리 r 의 모서리는 r√2 라 고리 r+1 의 변 중앙이 더 가까울 수 있다).
+ * · 결정론: 고정 순회 순서 · 동률이면 먼저 나온 칸 · rng 0.
+ * · 도달 판정은 `canWalkTo`(연결 영역 라벨 · 배열 읽기 둘) — 후보마다 BFS 를 돌리지 않는다.
+ */
+function nearestReachableGrass(
+  world: World,
+  x: number,
+  y: number,
+  canSwim: boolean,
+  canLand: boolean,
+  canFly: boolean,
+): Vec | null {
+  const terr = world.terrain;
+  const cs = terr.cellSize;
+  const ox = Math.floor(x / cs);
+  const oy = Math.floor(y / cs);
+  const R = SHEET.hideRadiusTiles;
+  let best: Vec | null = null;
+  let bestD2 = Infinity;
+  for (let r = 0; r <= R; r += 1) {
+    // 이 고리에서 나올 수 있는 최소 거리(변 중앙 = r칸)가 이미 찾은 후보보다 멀면 끝.
+    if (best !== null && r * r * cs * cs > bestD2) break;
+    for (let cy = oy - r; cy <= oy + r; cy += 1) {
+      if (cy < 0 || cy >= terr.rows) continue;
+      const onEdgeRow = cy === oy - r || cy === oy + r;
+      for (let cx = ox - r; cx <= ox + r; cx += 1) {
+        if (cx < 0 || cx >= terr.cols) continue;
+        if (!onEdgeRow && cx !== ox - r && cx !== ox + r) continue; // 고리 안쪽은 이미 봤다
+        const px = (cx + 0.5) * cs;
+        const py = (cy + 0.5) * cs;
+        if (!terr.isGrass(px, py)) continue;
+        const dx = px - x;
+        const dy = py - y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= bestD2) continue;
+        if (!canWalkTo(terr, x, y, px, py, canSwim, canLand, canFly)) continue;
+        bestD2 = d2;
+        best = { x: px, y: py };
+      }
+    }
+  }
+  return best;
+}
+
 function toward(dx: number, dy: number, maxSpeed: number, arriveRadius: number): Vec {
   const d = Math.hypot(dx, dy);
   if (d < 1e-6) return { x: 0, y: 0 };

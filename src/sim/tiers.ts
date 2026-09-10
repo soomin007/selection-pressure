@@ -322,6 +322,12 @@ export const HERD_PLAGUE = [1.0, 1.25, 1.6, 2.1, 2.8] as const;
 export const HERD_VOICE = [520, 700, 900, 4000, 4000] as const;
 /** 알파가 죽었을 때 명령이 막히는 **지휘 공백** 틱 수. 조직이 있으면 다음 개체가 곧바로 이어받는다. */
 export const HERD_VACUUM_TICKS = [150, 110, 75, 45, 20] as const;
+/**
+ * 무리 → **지침 시트에 쓸 수 있는 줄 수** (**[사용자 2026-09-11]** 감독형 전환 · 목소리 반경을 대체한다).
+ * 감독의 말은 팀 전체에 닿으므로 거리는 사라지고, 대신 조직이 클수록 더 많은 지침을 동시에 굴린다
+ * (FF12 갬빗의 칸이 성장으로 열리는 것과 같은 모양). 값은 내 판단 · 실플레이 뒤 다시 잰다.
+ */
+export const HERD_SHEET_ROWS = [2, 3, 4, 5, 6] as const;
 
 const at = (table: readonly number[], tier: number): number =>
   table[Math.max(0, Math.min(MAX_TIER, tier))] as number;
