@@ -60,7 +60,6 @@ import {
 import { ensurePanelStyles } from "@/ui/panelStyles";
 import { registerKeyLayer, keyChip } from "@/ui/keys";
 import { SIM } from "@/sim/params";
-import { DEBUG } from "@/debug";
 import {
   DRAFT_TIMING,
   RARITY_STYLE,
@@ -130,12 +129,9 @@ function raidCardChip(card: Card, genome: Genome): string | null {
   return null;
 }
 
-/**
- * "건너뛰기" 단축키. 평소엔 S 지만 **조종 모드에선 S 가 아래로 가는 키**라, 손을 WASD 에 올린 채
- * 드래프트가 뜨면 카드를 보기도 전에 건너뛰어진다(실기 피드백 2026-08-01). 그 모드에서만 X 로 옮긴다.
- * 화면의 키 칩·안내 줄도 이 값을 쓰므로 표시와 실제가 어긋날 수 없다.
- */
-const SKIP_LABEL = DEBUG.leadControl ? "X" : "S";
+/** "건너뛰기" 단축키. 화면의 키 칩·안내 줄도 이 값을 쓰므로 표시와 실제가 어긋날 수 없다.
+ *  (옛 조종 모드에선 S 가 조향 키라 X 였다 · 2026-09-11 감독형 전환으로 조향 키가 사라져 S 로 돌아왔다.) */
+const SKIP_LABEL = "S";
 
 /** 드래프트 화면이 그리는 데 필요한 종 상태. 패널은 게임 객체를 모르고 이 값만 읽는다. */
 export interface DraftContext {
@@ -645,20 +641,7 @@ export function createDraftPanel(
         case "NumpadEnter":
           if (!e.repeat) pickCard(preview);
           return true;
-        case "KeyW":
-        case "KeyA":
-        case "KeyD":
-          // 조종 모드에서 손이 WASD 에 올라가 있다 · 드래프트 중엔 아무 일도 안 일어나게 삼킨다
-          // (아래 관전 레이어로 새면 카드를 고르는 동안 앞장선 개체가 한쪽으로 달린다).
-          return DEBUG.leadControl;
-        case "KeyX":
-          // 조종 모드에서만 X 가 건너뛰기다(평소엔 아무 의미 없는 키라 아래로 흘려보낸다).
-          if (!DEBUG.leadControl) return false;
-          if (!e.repeat) skipDraft();
-          return true;
         case "KeyS":
-          // 조종 모드면 건너뛰기가 X 로 옮겨졌다. 여기 S 는 조향 키라 삼키기만 하고 아무 일도 안 한다.
-          if (DEBUG.leadControl) return true;
           if (!e.repeat) skipDraft();
           return true;
         case "KeyR":
