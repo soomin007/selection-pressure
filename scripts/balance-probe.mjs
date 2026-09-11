@@ -19,13 +19,13 @@
 // 40~90초 걸린다 → CI·상시 검증에 넣지 않는다. **밸런스를 만졌을 때만 수동으로** 돌린다.
 //
 // 사용:
-//   npm run probe                 (= order)
-//   npm run probe -- order        지시 순종·도착·시험 계수 (지시를 안 준 대조군과 함께)
-//   npm run probe -- raid         프리셋 8종 x 떼 보스 5종 격퇴 (최소 체력 비율)
+//   npm run probe                 (모드를 안 주면 이 목록을 찍고 끝난다)
+//   npm run probe -- raid         프리셋 8종 x 떼 보스 5종 격퇴 (최소 체력 비율) · 지침 없는 세계
 //   npm run probe -- replay --code=SP1-…   **사람이 보낸 판을 그대로 되살린다.**
 //                                 같은 시드·같은 선택으로 다시 굴려, 기록된 결과와 한 줄씩 대조한다.
 //                                 어긋나는 첫 줄이 곧 「프로브(또는 시뮬)가 게임과 갈라진 자리」다.
-//   npm run probe -- poison       독 안개(전역 흡수) · 기준선/안 몲/수풀로 몲 셋을 나란히
+//                                 지침 시트 기록(t:"sheet")은 같은 단계·같은 틱에 다시 건다.
+//   npm run probe -- poison       독 안개(전역 흡수) · 기준선/안개만 둘을 나란히
 //   npm run probe -- extinction   **대멸종 넷을 같은 자로.** 재난이 「예고한 방식으로」 죽이는지 잰다.
 //                                 ⚠ 재난을 추가·수정하면 반드시 이걸 먼저 돌린다(known_issues).
 //   npm run probe -- sweep        공격력 스윕 x 약탈자
@@ -34,15 +34,20 @@
 //   npm run probe -- steps        온보딩 진도 0~3 의 세계를 나란히(종 수·지형 비율·맵 치수·개체 수)
 //   npm run probe -- growth       한 런 전체(시대 0~4 · 정복까지) · 카드 장 수 · 정점 도달 시점 · 시대별 위험
 //   npm run probe -- econ         방울(유전자 점수) 출처 실측 — 티어 가격표의 재료(수입 쪽)
-//                                 + 방울 회수율(표3). `--drive` 로 지시가 걸린 판을,
-//                                 `--generadius=<값>` 으로 방울 우선 반경을 잰다.
-//                                 ⚠ 반경을 여럿 비교할 땐 **반경마다 따로 실행**한다. 쉼표 스윕
-//                                 (`--generadius=0,80,160`)은 앞 묶음의 업적 해금이 뒤 묶음에 새어
-//                                 값을 오염시킨다(runEcon 의 경고 주석 참조).
+//                                 + 방울 회수율(표3).
+//                                 ⚠ `--generadius=<값>`(방울 우선 반경)은 **지침이 이동을 가져간 개체**만
+//                                 읽는다(behavior 의 시트 블록 안 · nearestFreeDrop). 이 프로브는 시트를
+//                                 안 거니 지금은 어떤 값을 줘도 세계가 1비트도 안 바뀐다. 주면 경고를 찍는다.
 //   옵션: --seeds=6 --presets=omni,herd --boss=raider --era=0 --step=2
 //   growth·econ 전용: --policy=first|rarity|focus|random --veteran(끝낸 런 3 = 늘 진도 3)
 //                     (v9 어법 · rarity=등급이 가장 높은 장 · focus=내가 판 범주를 돕는 장.
 //                      옛 이름 best·apexrush 는 경고와 함께 rarity·focus 로 옮겨 준다.)
+//
+// ⚠ **무효가 된 것(2026-09-11 감독형 전환)** · `order` 모드와 `--drive` 플래그. 탭 명령·알파·목소리
+//   반경(`sim/herdOrder.ts` · `World.herdOrder` · `Game.setHerdOrder`)이 게임에서 사라졌다. 「몰기」를
+//   흉내 낼 경로가 없으므로 부르면 **거절하고 종료한다**(exit 2) · 옛 세계를 조용히 흉내 내지 않는다.
+//   지침 시트(`World.sheet` · `Game.setSheet`)로 「감독이 손을 댄 판」을 재는 자는 아직 없다 · backlog.
+//   남은 모드 전부가 재는 것은 **지침 없는 세계**(시트 null = 옛 「지시 없음」과 비트 단위로 같다).
 //
 // ⚠ **멈춰 세운 모드 셋**(apex · scale · tiers). 부르면 「무엇을 재던 자였고 왜 죽었는지 · 지금은
 //   무엇을 쓰면 되는지」만 찍는다. 없는 자를 있는 척 남기지 않는다 · 그게 이 저장소가 네 번 겪은
@@ -74,12 +79,35 @@
 import { createServer } from "vite";
 
 const args = process.argv.slice(2);
-const MODE = args.find((a) => !a.startsWith("--")) ?? "order";
+const MODES = [
+  "replay", "raid", "poison", "extinction", "sweep", "era0", "encounter", "steps", "growth", "econ", "sens",
+  "apex", "scale", "tiers",
+];
+const MODE = args.find((a) => !a.startsWith("--")) ?? "help";
 const FULL = args.includes("--full"); // 격퇴 뒤에도 라운드를 끝까지 돌린다(사망 수 회귀 비교용)
 const opt = (name, dflt) => {
   const hit = args.find((a) => a.startsWith(`--${name}=`));
   return hit === undefined ? dflt : hit.slice(name.length + 3);
 };
+
+// --- 무효가 된 입구는 서버를 띄우기 전에 거절한다(2026-09-11 감독형 전환) ------------------------
+// `order` 모드와 `--drive` 는 탭 명령(herdOrder · 알파 · 목소리 반경)을 흉내 내던 자다. 그 경로가 게임에서
+// 사라졌으므로 흉내 낼 방법이 없다. 조용히 「지시 없음」으로 떨어뜨리면 「몰면 산다」를 잰 줄 아는 보고가
+// 또 나온다(이 저장소가 order 모드에서 2026-08-08 · raid --drive 에서 2026-08-12 에 실제로 겪은 사고).
+if (MODE === "order" || args.includes("--drive")) {
+  console.error(
+    `이 모드는 2026-09-11 감독형 전환으로 무효 · 지침 시트(world.sheet)로 다시 설계 필요 · backlog\n` +
+      `  (${MODE === "order" ? "order 모드" : "--drive 플래그"} · 탭 명령·알파·목소리 반경이 게임에서 사라졌다 · ` +
+      `옛 세계를 흉내 내지 않는다)`,
+  );
+  process.exit(2);
+}
+if (MODE === "help") {
+  console.log(`사용: node scripts/balance-probe.mjs <모드> [--seeds=8 --presets=omni,herd --era=0 ...]`);
+  console.log(`모드: ${MODES.join(" | ")}   (설명은 이 파일 머리 주석)`);
+  console.log(`무효: order · --drive (2026-09-11 감독형 전환 · 지침 시트로 다시 설계 필요 · backlog)`);
+  process.exit(0);
+}
 
 // --- 「누구의 판을 재는가」 축 ---------------------------------------------------------------
 // 이 넷은 **머리글에 반드시 찍힌다**(`axisLine`). 숨은 가정이 곧 다음 사고다 — 이 저장소는 잘못된
@@ -139,8 +167,16 @@ const { SIM, ORDER } = await server.ssrLoadModule("/src/sim/params.ts");
 // 값 하나면 여기서 전역으로 덮어쓰고, 쉼표 목록이면 econ 모드가 값마다 한 번씩 돌린다.
 // ⚠ 반경 비교는 **반경마다 별도 프로세스**로 하라 · 쉼표 목록이 내는 값은 오염된다(runEcon 의 경고).
 // ⚠ `as const` 는 타입에만 걸리므로 런타임 객체는 그냥 바뀐다. 프로브에서만 쓰는 문이다.
+// ⚠ **2026-09-11 이후 이 값은 지침 시트가 이동을 가져간 개체만 읽는다**(behavior 의 시트 블록 안).
+//   이 프로브는 어떤 모드에서도 시트를 안 걸므로 지금은 아무 데도 안 닿는다 · 주면 그 사실을 찍는다.
 const GENE_RADIUS_ARG = opt("generadius", "");
 if (GENE_RADIUS_ARG !== "" && !GENE_RADIUS_ARG.includes(",")) ORDER.geneRadius = Number(GENE_RADIUS_ARG);
+if (GENE_RADIUS_ARG !== "") {
+  console.error(
+    `\n⚠ --generadius=${GENE_RADIUS_ARG} 를 줬지만 이 프로브는 지침 시트를 안 건다 · 방울 우선 반경은 시트가 ` +
+      `이동을 가져간 개체만 읽으므로(2026-09-11 감독형 전환) 이 값은 결과에 1비트도 안 닿는다.\n`,
+  );
+}
 const {
   GAME, SCHEDULE, mapScale, eraScarcity, eraDifficulty, eraPredatorPressure,
   // ⚠ `eraRewardBoostAt`(시대 보상 강화 배수)은 v9 에서 **가져오지 않는다.** 곱할 도장이 없어져
@@ -150,9 +186,9 @@ const {
   EXTINCTION,
 } = await server.ssrLoadModule("/src/game/config.ts");
 const { createBoss, bossRaidable } = await server.ssrLoadModule("/src/sim/boss.ts");
-// 몰기(무리 지시)를 흉내 내려면 게임과 **같은 함수**로 목소리 반경·지휘 공백을 넣어야 한다.
-// 프로브가 임의의 숫자를 넣으면 "몰면 산다"를 게임과 다른 조건에서 재게 된다.
-const { voiceRadius, vacuumTicks } = await server.ssrLoadModule("/src/sim/herdOrder.ts");
+// 지침 시트의 어휘 · replay --selftest --hands 가 「감독이 손을 댄 판」을 지어낼 때 게임과 같은 단어를 쓴다
+// (`Game.setSheet` 는 모르는 단어를 조용히 버리므로 여기 단어를 손으로 적으면 빈 시트가 걸린다).
+const { WHO_KEYS, WHEN_KEYS, ACT_KEYS } = await server.ssrLoadModule("/src/sim/instructions.ts");
 const { defaultGenome, refreshDerived, genomeFromPips, TRAIT_LABELS } = await server.ssrLoadModule("/src/sim/genome.ts");
 // v8 — 성장은 형질 숫자가 아니라 **도장과 티어**로 잰다. 이 모듈이 그 단일 진실이다.
 const {
@@ -369,23 +405,6 @@ function pickPresets() {
   return PRESETS.filter((p) => keys.includes(p.key));
 }
 
-function mine(w) {
-  const out = [];
-  for (const e of w.entities) if (e.alive && e.species.isPlayer) out.push(e);
-  return out;
-}
-
-function centroid(list) {
-  if (list.length === 0) return null;
-  let sx = 0;
-  let sy = 0;
-  for (const e of list) {
-    sx += e.x;
-    sy += e.y;
-  }
-  return { x: sx / list.length, y: sy / list.length };
-}
-
 function fmt(v, d = 1) {
   return Number.isFinite(v) ? v.toFixed(d) : "-";
 }
@@ -398,152 +417,22 @@ function cell(values, digits = 1) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// order 모드 · "내 말을 듣는가"
+// (order 모드 · "내 말을 듣는가" 는 2026-09-11 감독형 전환으로 지웠다. 파일 머리의 거절 게이트가
+//  `order` 와 `--drive` 를 서버를 띄우기 전에 막는다. 탭 명령 순종·도착·절반도달을 재던 자였고,
+//  그 자가 정한 값 하나가 params.ts 의 `ORDER.geneRadius` 주석에 실측 표로 남아 있다 · 그 표는 옛 세계의
+//  것이다. 지침 시트로 「감독이 손을 댄 판」을 재는 자는 아직 없다 · backlog.)
 // ────────────────────────────────────────────────────────────────────────────
-async function runOrder() {
-  const presets = pickPresets();
-  const ORDER_TICKS = 480; // 16초 = 채집 라운드 한 판(GAME.roundSeconds)
-  const MARKS = [30, 150, 480]; // 1초 · 5초 · 16초
-  const ORDER_DIST = Number(opt("dist", "600")); // 지시점까지의 거리(px)
-  // **방울 우선의 값과 대가를 한 판에서 같이 재는 자리** (**[사용자 2026-08-09]**).
-  // `--genedrops=N` 이면 지시를 내리기 직전에 방울 N 개를 **게임과 같은 길**(spawnGeneDropNear ·
-  // 전용 geneRng · 무리 곁의 고리)로 놓는다. 그러면 같은 시드·같은 세계에서 반경만 바꿔 가며
-  // 「회수율은 얼마나 오르고 순종·도착은 얼마나 깎이는가」를 나란히 볼 수 있다.
-  // 0(기본)이면 spawnGeneDropNear 를 한 번도 안 불러 예전과 완전히 같은 판이다.
-  const GENE_DROPS = Number(opt("genedrops", "0"));
-
-  console.log(`# order · era ${ERA} · 진도 ${STEP} · 세계 ${W}x${H}(배율 ${SCALE}) · areaScale ${AREA_SCALE} · 시드 ${SEEDS.length} · 워밍업 ${WARMUP}틱 → 지시 ${ORDER_TICKS}틱`);
-  console.log(`# ORDER.pull=${ORDER.pull} arriveRadius=${ORDER.arriveRadius} geneRadius=${ORDER.geneRadius} · 방울 ${GENE_DROPS}개`);
-  console.log(
-    [
-      "프리셋".padEnd(18),
-      "순종1s", "순종5s", "순종16s", // orderFollowers / 내 종 수 (지시를 향해 실제로 당겨진 개체)
-      "도착16s", // 도착 반경 안 비율
-      "절반도달", // 무게중심이 처음 거리의 절반까지 온 시드 수
-      "방울회수%", // 놓은 방울 중 16초 안에 주워진 비율(--genedrops 를 줬을 때만)
-      "먹이", "사냥", "새끼", // 지시를 준 480틱 동안의 시험 계수
-      "대조먹이", "대조사냥", "대조새끼", // 지시를 안 준 같은 세계의 같은 구간
-    ].join("\t"),
-  );
-
-  for (const p of presets) {
-    const obey = [[], [], []];
-    const arrived = [];
-    let halfReached = 0;
-    const counts = { feeds: [], hunts: [], births: [] };
-    const ctrl = { feeds: [], hunts: [], births: [] };
-    const geneRate = [];
-
-    for (const seed of SEEDS) {
-      // (1) 지시를 준 세계
-      const w = buildWorld(seed, p.genome);
-      for (let i = 0; i < WARMUP; i++) w.step();
-      // ⚠ **알파와 목소리 반경을 반드시 세운다.** 이게 없으면 `behavior` 의 지시 블록이 통째로 안 돈다
-      //   (`world.voiceR > 0` 게이트). 실제로 이 모드는 오랫동안 순종률을 0.0/0.0/0.0 으로 찍고 있었고,
-      //   지시를 준 판의 시험 계수가 **대조군과 소수점까지 같았다**(70.2/1.6/14.4 vs 70.2/1.6/14.4) ·
-      //   "명령을 준 세계"를 잰다면서 명령이 한 번도 안 걸린 세계를 재고 있었던 것이다.
-      //   game.ts 가 매 단계 하는 것과 같은 함수를 부른다(숫자를 여기 손으로 적으면 또 갈린다).
-      w.armLead();
-      w.voiceR = voiceRadius(p.genome.pips, p.genome.keys);
-      w.vacuumOnLeadDeath = vacuumTicks(p.genome.pips);
-      const c0 = centroid(mine(w));
-      if (c0 === null) continue;
-      const t = p.genome.traits;
-      const canSwim = t.swimming >= SIM.swimThreshold;
-      const canLand = t.swimming < SIM.aquaticOnlyThreshold;
-      const canFly = t.wings >= SIM.flyThreshold;
-      // 목표는 **맵 중심 쪽으로 ORDER_DIST px 떨어진 한 점**(통행 가능한 자리로 스냅).
-      // 맵 반대편으로 잡으면 최대 1900px 이라 16초(480틱 × 속도 ~1.7px)로는 **물리적으로 못 간다** ·
-      // 그러면 "안 따른다"와 "못 간다"가 섞여 지표가 무의미해진다. 600px 는 폰 한 화면 남짓의 탭 거리다.
-      const cx = W * 0.5;
-      const cy = H * 0.5;
-      const vlen = Math.hypot(cx - c0.x, cy - c0.y) || 1;
-      const target = w.terrain.nearestPassable(
-        Math.min(W - 10, Math.max(10, c0.x + ((cx - c0.x) / vlen) * ORDER_DIST)),
-        Math.min(H - 10, Math.max(10, c0.y + ((cy - c0.y) / vlen) * ORDER_DIST)),
-        canSwim,
-        canLand,
-        canFly,
-      );
-      const d0 = Math.hypot(c0.x - target.x, c0.y - target.y);
-
-      w.resetRoundCounts();
-      // 방울은 **지시 직전에** 놓는다 · 게임에서도 사건이 나면 무리 곁에 떨어지고 그 뒤에 사람이 탭한다.
-      for (let k = 0; k < GENE_DROPS; k++) w.spawnGeneDropNear(3, "boss");
-      w.herdOrder = target;
-      let mark = 0;
-      let half = false;
-      for (let i = 1; i <= ORDER_TICKS; i++) {
-        w.step();
-        const list = mine(w);
-        if (list.length === 0) break;
-        if (mark < MARKS.length && i === MARKS[mark]) {
-          obey[mark].push(w.orderFollowers / list.length);
-          mark += 1;
-        }
-        const c = centroid(list);
-        if (c !== null && Math.hypot(c.x - target.x, c.y - target.y) <= d0 * 0.5) half = true;
-      }
-      if (half) halfReached += 1;
-      const list = mine(w);
-      if (list.length > 0) {
-        let inR = 0;
-        for (const e of list) if (Math.hypot(e.x - target.x, e.y - target.y) <= ORDER.arriveRadius) inR += 1;
-        arrived.push(inR / list.length);
-      }
-      counts.feeds.push(w.roundCounts.feeds);
-      counts.hunts.push(w.roundCounts.hunts);
-      counts.births.push(w.roundCounts.births);
-      if (w.geneDrops.length > 0) {
-        geneRate.push((100 * w.geneDrops.filter((d) => d.taken).length) / w.geneDrops.length);
-      }
-
-      // (2) 대조군 · 같은 시드·같은 게놈, 지시만 안 준다
-      const c2 = buildWorld(seed, p.genome);
-      for (let i = 0; i < WARMUP; i++) c2.step();
-      c2.resetRoundCounts();
-      for (let i = 0; i < ORDER_TICKS; i++) c2.step();
-      ctrl.feeds.push(c2.roundCounts.feeds);
-      ctrl.hunts.push(c2.roundCounts.hunts);
-      ctrl.births.push(c2.roundCounts.births);
-    }
-
-    console.log(
-      [
-        p.name.padEnd(18),
-        cell(obey[0].map((v) => v * 100), 1),
-        cell(obey[1].map((v) => v * 100), 1),
-        cell(obey[2].map((v) => v * 100), 1),
-        cell(arrived.map((v) => v * 100), 1),
-        `${halfReached}/${SEEDS.length}`,
-        geneRate.length === 0 ? "-" : cell(geneRate, 1),
-        cell(counts.feeds), cell(counts.hunts), cell(counts.births),
-        cell(ctrl.feeds), cell(ctrl.hunts), cell(ctrl.births),
-      ].join("\t"),
-    );
-  }
-  console.log(`# 합격선(시험): 먹이 ${GAME.trialFeedN} · 사냥 ${GAME.trialHuntN} · 새끼 ${GAME.trialBirthN}`);
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // raid 모드 · "격퇴 바가 실제로 움직이는가"
 // ────────────────────────────────────────────────────────────────────────────
 /**
  * 보스 라운드 한 판. 지표는 "라운드 중 최소 체력 비율"(사용자가 보는 바의 양).
- * drive=true 면 **사람이 무리를 떼 쪽으로 계속 모는 것**을 흉내 낸다(매 틱 떼 무게중심으로 지시).
- * 지시가 실제로 먹히는지 + 붙이면 깎이는지를 한 판에서 같이 보는 유일한 방법이다.
+ * 지침 없는 세계다(시트 null) · 「몰면 격퇴가 빨라지나」(옛 --drive)는 2026-09-11 에 자와 함께 사라졌다.
  */
-function raidRound(genome, type, seed, diffMul, mapType, drive = false) {
+function raidRound(genome, type, seed, diffMul, mapType) {
   const w = buildWorld(seed, genome, mapType);
   for (let i = 0; i < WARMUP; i++) w.step();
-  // ⚠ **몰기(drive)는 알파와 목소리 반경 없이는 통째로 무효다**(2026-08-12 발견 · order 모드가
-  //   2026-08-08 에 고친 것과 같은 결함이 여기에도 있었다). raidRound 는 herdOrder 만 세우고
-  //   armLead/voiceR 를 안 세워, `--drive` 의 45행 출력이 지시 없음과 **바이트 단위로 같았다** =
-  //   「몰면 격퇴가 빨라지나」를 잰 적이 한 번도 없다. game 이 매 단계 하는 것과 같은 함수로 넣는다.
-  if (drive) {
-    w.voiceR = voiceRadius(genome.pips, genome.keys);
-    w.vacuumOnLeadDeath = vacuumTicks(genome.pips);
-  }
   w.boss = createBoss(type, W, H, w.terrain, diffMul, true);
   const maxHp = w.boss.maxHp;
   let minRatio = 1;
@@ -553,19 +442,6 @@ function raidRound(genome, type, seed, diffMul, mapType, drive = false) {
   let killTick = -1; // 격퇴가 성립한 틱(초 = /SIM.stepsPerSecond) · 리듬 폭(raidRecoil)을 만질 때 이 값이 자다
   const ticks = GAME.bossSeconds * SIM.stepsPerSecond;
   for (let i = 0; i < ticks; i++) {
-    if (drive) w.armLead(); // 매 틱 · 알파가 죽으면 다음 개체가 이어받는다(order 모드와 같은 모양)
-    if (drive && w.boss !== null) {
-      const ms = w.boss.members;
-      if (ms.length > 0) {
-        let mx = 0;
-        let my = 0;
-        for (const m of ms) {
-          mx += m.x;
-          my += m.y;
-        }
-        w.herdOrder = { x: mx / ms.length, y: my / ms.length };
-      } else w.herdOrder = { x: w.boss.x, y: w.boss.y };
-    }
     w.step();
     const b = w.boss;
     if (b === null) break;
@@ -591,16 +467,15 @@ async function runRaid() {
   const bosses = opt("boss", "") === "" ? BOSS_HORDES : opt("boss", "").split(",");
   const diffMul = Number(opt("diff", "1"));
   const mapType = opt("map", "") === "" ? undefined : opt("map", ""); // 안 주면 이 시대의 기본 세계
-  const drive = args.includes("--drive"); // 사람이 무리를 떼 쪽으로 모는 판(지시 on)
 
-  console.log(`# raid · era ${ERA} · 진도 ${STEP} · 세계 ${W}x${H}(배율 ${SCALE}) · areaScale ${AREA_SCALE} · ${mapType ?? mapTypeForStep(STEP)} · diffMul ${diffMul} · 시드 ${SEEDS.length} · ${GAME.bossSeconds}초${drive ? " · 몰기(지시)" : " · 지시 없음"}`);
+  console.log(`# raid · era ${ERA} · 진도 ${STEP} · 세계 ${W}x${H}(배율 ${SCALE}) · areaScale ${AREA_SCALE} · ${mapType ?? mapTypeForStep(STEP)} · diffMul ${diffMul} · 시드 ${SEEDS.length} · ${GAME.bossSeconds}초 · 지침 없음(시트 null)`);
   console.log(`# 지표: 최소체력% = 라운드 중 격퇴 바가 내려간 가장 낮은 지점(사용자가 보는 양). 무흠집 = 99% 이상으로 끝난 라운드.`);
   console.log(["프리셋".padEnd(18), "보스".padEnd(10), "격퇴", "격퇴초", "최소체력%", "무흠집", "전사(근/원)", "보스사망", "생존"].join("\t"));
 
   for (const p of presets) {
     for (const type of bosses) {
       const rows = [];
-      for (const seed of SEEDS) rows.push(raidRound(p.genome, type, seed, diffMul, mapType, drive));
+      for (const seed of SEEDS) rows.push(raidRound(p.genome, type, seed, diffMul, mapType));
       if (rows.length === 0) continue;
       const kills = rows.filter((r) => r.killed).length;
       const untouched = rows.filter((r) => r.minRatio >= 0.99).length;
@@ -634,59 +509,20 @@ async function runRaid() {
 // 격퇴 체력이 0 인 보스라 raid 의 지표(최소 체력 비율)로는 애초에 잴 수도 없다 · 여기 지표는
 // **끝 개체 수 · 탈락률 · 완전 멸종률**이다.
 //
-// 세 갈래를 **같은 시드로 나란히** 찍는다. 기준선 없이 재면 "이 갈래가 원래 못 사는 것"과 "안개가
+// 두 갈래를 **같은 시드로 나란히** 찍는다. 기준선 없이 재면 "이 갈래가 원래 못 사는 것"과 "안개가
 // 죽인 것"이 구별되지 않는다(known_issues: 카운터를 절대 개체수로 재면 오독한다).
-//   기준선 = 위협이 아예 없는 같은 판 · 안몲 = 안개만 얹고 손 안 댐 · 몲 = 무리를 가장 가까운 수풀로 지시
+//   기준선 = 위협이 아예 없는 같은 판 · 안개 = 안개만 얹고 손 안 댐(지침 없음)
+// ⚠ 세 번째 갈래 「수풀로 몲」(탭 명령으로 무리를 가장 넓은 수풀 한복판에 세우기)은 2026-09-11 감독형
+//   전환으로 지웠다 · 지침 시트의 「수풀로 숨는다」로 같은 질문을 다시 재는 자는 아직 없다(backlog).
+//   옛 「몲」 열의 수치(수풀 체류율 등)는 옛 세계의 것이라 인용하지 마라.
 //
 // 옵션: --seeds=24 --eras=0,2,4 --presets=omni,herd --drain=0.3 --shelter=0
 //   --drain    프리셋의 globalDrain 을 덮어써 값을 쓸어 본다(안 주면 프리셋 값 그대로).
 //   --shelter=0 수풀 피난처를 꺼서 **피난처 전/후**를 같은 자에 나란히 잰다.
 
 /**
- * (x,y) 에서 가장 가까운 **넓은** 수풀의 한복판. 수풀이 한 칸도 없으면 null. rng 미사용 → 결정론.
- *
- * ⚠ 그냥 "가장 가까운 수풀 타일"을 찍으면 안 된다. 타일은 20px 인데 지시 해제 반경(ORDER.releaseRadius)이
- *   64px 라, 한 칸짜리 수풀을 찍으면 무리가 도착하는 순간 전원이 해제 반경 안이 되어 도로 흩어진다
- *   (실측: 수풀 체류율이 맵의 수풀 비율 24% 와 똑같았다 = 몬 효과가 0). 사람이 폰에서 실제로 하는 것도
- *   "눈에 보이는 수풀 덩어리 한복판을 탭"이지 한 칸 찍기가 아니다.
- */
-function grassShelterSpot(terr, x, y) {
-  const cols = terr.cols;
-  const rows = terr.rows;
-  const isG = (cx, cy) =>
-    cx >= 0 && cy >= 0 && cx < cols && cy < rows && terr.tiles[cy * cols + cx] === TILE.grass;
-  const R = 3; // 7x7 창 = 반경 60px ≈ 해제 반경(64px). 이 안이 수풀이면 흩어져도 수풀 위다.
-  const win = (2 * R + 1) * (2 * R + 1);
-  for (const minFrac of [0.75, 0.5, 0]) {
-    let best = null;
-    let bestD2 = Infinity;
-    for (let cy = 0; cy < rows; cy++) {
-      for (let cx = 0; cx < cols; cx++) {
-        if (!isG(cx, cy)) continue;
-        if (minFrac > 0) {
-          let n = 0;
-          for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) if (isG(cx + dx, cy + dy)) n += 1;
-          if (n / win < minFrac) continue;
-        }
-        const gx = (cx + 0.5) * terr.cellSize;
-        const gy = (cy + 0.5) * terr.cellSize;
-        const d2 = (gx - x) ** 2 + (gy - y) ** 2;
-        if (d2 < bestD2) {
-          bestD2 = d2;
-          best = { x: gx, y: gy };
-        }
-      }
-    }
-    if (best !== null) return best;
-  }
-  return null;
-}
-
-/**
- * 독 안개 한 판. mode: "base"(위협 없음) | "still"(안 몲) | "drive"(수풀로 몲).
- * 세 갈래 모두 같은 자리에서 알파를 세운다 · `armLead` 는 rng 를 안 쓰고, 명령을 한 번도 안 주면
- * 세계가 기존과 부동소수점까지 같다(world.ts 의 followTicks·commanded 주석). 그래야 세 갈래의
- * 차이가 **오직 지시 유무**가 된다.
+ * 독 안개 한 판. mode: "base"(위협 없음) | "still"(안개만 · 손 안 댐).
+ * 두 갈래 모두 지침 없는 세계(시트 null)라 차이는 **오직 안개 유무**다.
  */
 function poisonRound(genome, seed, era, mode, drainOverride, shelterOn) {
   const step = onboardingStep(0, era);
@@ -695,9 +531,6 @@ function poisonRound(genome, seed, era, mode, drainOverride, shelterOn) {
   const h = Math.round(MOBILE.height * scale);
   const world = buildWorld(seed, genome, undefined, step, scale, era);
   for (let i = 0; i < WARMUP; i++) world.step();
-  world.armLead();
-  world.voiceR = voiceRadius(genome.pips, genome.keys);
-  world.vacuumOnLeadDeath = vacuumTicks(genome.pips);
 
   const diffMul = eraDifficulty(era);
   if (mode !== "base") {
@@ -705,32 +538,10 @@ function poisonRound(genome, seed, era, mode, drainOverride, shelterOn) {
     if (drainOverride !== null) world.boss.globalDrain = drainOverride * diffMul;
     if (!shelterOn) world.boss.drainShelter = false;
   }
-  let spot = null;
-  if (mode === "drive") {
-    const c = centroid(mine(world));
-    if (c !== null) spot = grassShelterSpot(world.terrain, c.x, c.y);
-  }
 
   const ticks = GAME.bossSeconds * SIM.stepsPerSecond;
-  let grassSamples = 0;
-  let grassHits = 0;
-  for (let i = 1; i <= ticks; i++) {
-    // 「가라」는 무기한 명령이라 사람은 한 번만 탭한다. 다만 알파가 쓰러지면 sim 이 명령을 지우므로
-    // (지휘 공백) 매 틱 다시 얹어 "그 사람은 여전히 그 자리를 가리키고 있다"를 흉내 낸다.
-    if (spot !== null) world.herdOrder = spot;
-    world.step();
-    if (i % 10 === 0) {
-      for (const e of mine(world)) {
-        grassSamples += 1;
-        if (world.terrain.isGrass(e.x, e.y)) grassHits += 1;
-      }
-    }
-  }
-  return {
-    pop: world.playerPopulation,
-    grass: grassSamples === 0 ? 0 : grassHits / grassSamples,
-    hasGrass: spot !== null || mode !== "drive",
-  };
+  for (let i = 1; i <= ticks; i++) world.step();
+  return { pop: world.playerPopulation };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -820,8 +631,19 @@ function extinctionSubjects() {
 //   · 재현이 기록과 다르다 → **게임과 프로브(또는 그 사이 어딘가)가 갈라져 있다.** 어긋나는 첫 줄이
 //     곧 이분 지점이다. 그때는 밸런스 수치를 하나도 믿으면 안 된다.
 //
-// ⚠ 재현은 **축을 전부 코드에서 읽어** 맞춘다(시드·메타 레벨·끝낸 런·은근한 보정·조종).
+// ⚠ 재현은 **축을 전부 코드에서 읽어** 맞춘다(시드·메타 레벨·끝낸 런·은근한 보정·경험치 상한).
 //   프로브 기본값(보정 끔 등)을 쓰면 그 순간 다른 판이 된다 — 이 모드에서는 `--assist` 류를 안 본다.
+//
+// ⚠ **옛 탭 명령 기록(t:"order" · 2026-08-09 ~ 2026-09-11)은 재생하지 않는다.** 되살릴 명령 경로가
+//   게임에 없다(감독형 전환). 그런 기록이 있는 판은 「완전 재현이 아니다」를 한 줄로 찍고 손 놓은 판으로
+//   돌린다 · 어긋나도 그것을 버그로 읽으면 안 된다.
+// **지침 시트 기록(t:"sheet")은 재생한다.** 기록의 단계·틱에 맞춰 세계를 세우고(`openGeneShop`) 시트를
+//   갈아 끼운 뒤(`setSheet`) 다시 돌린다(`closeGeneShop` · 여기서 게임이 시트를 기록한다). 드래프트 중에
+//   고친 시트는 다음 단계 0틱으로 기록되므로 그 드래프트 안에서 `setSheet` 만 한다(`canEditSheet`).
+//   세우는 문이 작전타임이 아니라 **구입 화면**인 이유: 게임 자신이 구입 화면(예산 없음)에서 지침 편집을
+//   허용하고 `closeGeneShop` 이 기록하므로, 원판이 한 단계에 여러 번 고친 판을 되살리려면 같은 문이어야
+//   한다(세계 효과는 동일 · phase 멈춤 · `acc` 안 건드림). 작전타임(`openTimeout`)은 단계당 예산 1 이라
+//   두 번째 기록부터 못 연다 · 그래서 안 쓴다.
 function replayPick(game, rec) {
   if (rec.outcome === DRAFT_REROLLED) {
     game.reroll();
@@ -843,22 +665,41 @@ async function runReplay() {
   // `--selftest` — **재생기 자신을 검사한다.** 손이 안 붙은 판을 하나 굴려 코드를 뽑고, 그 코드를
   // 그대로 되살려 기록과 대조한다. 여기서 완전히 같지 않으면 재생기가 고장 난 것이고, 사람 판이
   // 어긋나도 그게 「게임과 프로브의 차이」인지 「재생기 버그」인지 가릴 수 없다.
-  // (사람 판은 **탭이 코드에 안 담기므로** 원리적으로 완전 일치가 안 된다 · 아래 결론 참고.)
+  // (`--hands` 는 **감독의 손**을 붙인다 · 드래프트와 작전타임에서 지침 시트를 고친다. 시트 기록의 재생이
+  //  같은 단계·같은 틱에 같은 시트를 거는지 여기서 검사한다.)
   if (args.includes("--selftest")) {
     const HANDS = args.includes("--hands");
-    console.log(`# replay --selftest · ${HANDS ? "손을 붙인" : "손이 안 붙은"} 판을 굴려 코드를 뽑고, 그 코드로 되살려 대조한다`);
+    console.log(`# replay --selftest · ${HANDS ? "감독의 손을 붙인(지침 시트)" : "손이 안 붙은"} 판을 굴려 코드를 뽑고, 그 코드로 되살려 대조한다`);
     setSavedProgress(0, 0); // 업적 캐시 리셋 포함(함수 주석 참조)
     const g0 = new Game(MOBILE.width, MOBILE.height);
     g0.assistEnabled = false;
-    g0.leadEnabled = true;
+    g0.stageXpCapOn = true;
     g0.fixedSeed = opt("seed", "selftest-1");
     g0.beginRun();
     const ms = 1000 / SIM.stepsPerSecond;
     const rng0 = new Rng("selftest-policy");
+    // 지침 한 줄을 게임의 어휘에서 무작위로 짓는다(결정론 · rng0). 단어를 손으로 적으면 setSheet 가 버린다.
+    const randomSheet = () => {
+      const n = rng0.int(0, 2);
+      const rows = [];
+      for (let i = 0; i < n; i++) {
+        rows.push({
+          who: WHO_KEYS[rng0.int(0, WHO_KEYS.length - 1)],
+          when: WHEN_KEYS[rng0.int(0, WHEN_KEYS.length - 1)],
+          act: ACT_KEYS[rng0.int(0, ACT_KEYS.length - 1)],
+        });
+      }
+      return rows;
+    };
     let guard0 = 0;
+    let handsDraft = 0;
+    let handsTimeout = 0;
+    let handsShop = 0;
     while (guard0 < 600000) {
       guard0 += 1;
       if (g0.phase === "draft") {
+        // **감독의 손** · 드래프트마다 셋 중 하나는 시트를 고친다(다음 단계 0틱 기록으로 남는다).
+        if (HANDS && rng0.int(0, 2) === 0 && g0.setSheet(randomSheet())) handsDraft += 1;
         g0.pickCard(rng0.int(0, Math.max(0, g0.draftCards.length - 1)));
         continue;
       }
@@ -866,24 +707,24 @@ async function runReplay() {
         if (g0.result === "win" && !g0.isFinalEra) { g0.continueToNextEra(); continue; }
         break;
       }
-      // **손을 붙인다** — 탭이 재현되는지 검사하려면 원판에 탭이 있어야 한다(`--hands` 로 켠다).
-      // 사람처럼 가끔, 그리고 자리를 바꿔 가며 찍는다. 매 틱 찍으면 무리가 먹지도 못하고 행군만 한다.
-      if (HANDS && guard0 % 90 === 0) {
-        const c = centroid(mine(g0.world));
-        if (c !== null) {
-          const a = rng0.unit() * Math.PI * 2;
-          const r = 120 + rng0.unit() * 240;
-          g0.setHerdOrder(
-            Math.max(4, Math.min(g0.world.width - 4, c.x + Math.cos(a) * r)),
-            Math.max(4, Math.min(g0.world.height - 4, c.y + Math.sin(a) * r)),
-          );
-        }
+      // 관전 중 가끔 작전타임을 불러 시트를 고친다(단계당 예산 1 이라 두 번째부터는 openTimeout 이 거절한다).
+      if (HANDS && guard0 % 200 === 0 && g0.openTimeout()) {
+        g0.setSheet(randomSheet());
+        g0.closeTimeout();
+        handsTimeout += 1;
+      }
+      // 구입 화면에서도 고친다(예산 없음) · 한 단계에 시트 기록이 **여럿** 생기게 해서, 재생기가 그 판을
+      // 같은 문(openGeneShop)으로 되살리는지 검사한다.
+      if (HANDS && guard0 % 130 === 0 && g0.openGeneShop()) {
+        g0.setSheet(randomSheet());
+        g0.closeGeneShop();
+        handsShop += 1;
       }
       for (const c of CATEGORIES) if (g0.buyTier(c)) break; // 방울이 모이면 아무거나 하나 산다
       g0.update(ms);
     }
     const code = g0.runCode();
-    console.log(`# 코드 ${code.length}자 · 시드 ${g0.fixedSeed}`);
+    console.log(`# 코드 ${code.length}자 · 시드 ${g0.fixedSeed}${HANDS ? ` · 시트 고침 드래프트 ${handsDraft}회 · 작전타임 ${handsTimeout}회 · 구입 화면 ${handsShop}회` : ""}`);
     return replayAgainst(decodeRunCode(code), "자가 검사");
   }
   const text = opt("code", "").trim();
@@ -918,10 +759,18 @@ function replayAgainst(dec, label) {
   const h = want.header;
   console.log(
     `# 축 · 시드 ${h.seed} · 메타레벨 ${h.metaLevel} · 끝낸 런 ${h.runsDone} · ` +
-      `보정 ${h.assistEnabled ? "켬" : "끔"} · 조종 ${h.leadEnabled ? "켬" : "끔"} · 챔피언 ${h.champions}마리`,
+      `보정 ${h.assistEnabled ? "켬" : "끔"} · 경험치 상한 ${h.stageXpCap ? "켬" : "끔"} · 챔피언 ${h.champions}마리`,
   );
   if (h.champions > 0) {
     console.log("# ⚠ 챔피언이 있던 판이다 — 코드는 챔피언 **수**만 담고 게놈은 안 담는다. 재현이 여기서 갈린다.");
+  }
+  // 옛 탭 명령(t:"order") — 되살릴 경로가 없다(2026-09-11 감독형 전환). 건너뛰되 그 사실을 먼저 말한다.
+  const orders = want.entries.filter((e) => e.t === "order");
+  if (orders.length > 0) {
+    console.log(
+      `# ⚠ 이 판은 옛 탭 명령을 썼다(${orders.length}건 · 2026-09-11 이전 빌드) · 완전 재현이 아니다. ` +
+        `탭을 되살릴 명령 경로가 게임에 없어 손 놓은 판으로 돌린다 · 어긋나도 버그로 읽지 마라.`,
+    );
   }
 
   // --- 축을 코드에서 읽어 그대로 심는다 ---
@@ -930,39 +779,52 @@ function replayAgainst(dec, label) {
   setSavedProgress(h.runsDone, xpForLevelStart(h.metaLevel));
   const game = new Game(MOBILE.width, MOBILE.height);
   game.assistEnabled = h.assistEnabled;
-  game.leadEnabled = h.leadEnabled;
+  game.stageXpCapOn = h.stageXpCap;
   game.fixedSeed = h.seed;
   game.beginRun();
 
   const drafts = want.entries.filter((e) => e.t === "draft");
   const buys = want.entries.filter((e) => e.t === "buy");
-  // 사람이 내린 탭 — **재현의 마지막 조각**(2026-08-09 신설). 단계 순번과 그 단계 안 경과 틱으로
-  // 적혀 있어, 재현이 같은 단계·같은 틱에 같은 자리를 다시 찍는다.
-  // ⚠ 탭이 하나도 없는 코드는 이 기능이 생기기 **전에 뽑힌 것**이다. 그 판은 조종을 했더라도
-  //   되살릴 때 손을 안 댄 판이 되므로, 어긋나도 그것을 버그로 읽으면 안 된다.
-  const orders = want.entries.filter((e) => e.t === "order");
-  const ordersByStage = new Map();
-  for (const o of orders) {
-    const list = ordersByStage.get(o.stage) ?? [];
-    list.push(o);
-    ordersByStage.set(o.stage, list);
-  }
-  for (const list of ordersByStage.values()) list.sort((a, b) => a.tick - b.tick);
+  // 감독의 지침 시트 — **재현의 마지막 조각**(2026-09-11 · 옛 탭 기록의 자리). 세계가 다시 도는 순간의
+  // 단계 순번과 그 단계 안 경과 틱으로 적혀 있어, 재현이 같은 단계·같은 틱에 같은 시트를 다시 건다.
+  // (단계, 틱) 순으로 정렬해 두고 `buys` 와 같은 방식으로 「때가 되면」 하나씩 소비한다.
+  const sheets = want.entries
+    .filter((e) => e.t === "sheet")
+    .slice()
+    .sort((a, b) => a.stage - b.stage || a.tick - b.tick);
   const stepMs = 1000 / SIM.stepsPerSecond;
   let di = 0;
   let bi = 0;
-  let stageNo = 0; // 재현이 지금 몇 번째 단계에 있는가(게임의 stageOrdinal 과 같은 눈금)
-  let oi = 0; // 이번 단계에서 다음에 내릴 탭
-  let ordersReplayed = 0;
-  let ordersRejected = 0;
+  let si = 0; // 다음에 걸 시트 기록
+  let sheetsReplayed = 0;
   let guard = 0;
   const notes = [];
+  /** 시트 기록 하나를 지금 건다. 세계가 서 있을 때(드래프트·구입 화면)만 받으므로 그 밖이면 false. */
+  const applySheet = (rec) => {
+    if (game.setSheet(rec.rows)) {
+      sheetsReplayed += 1;
+      return true;
+    }
+    return false;
+  };
   while (guard < 600000) {
     guard += 1;
     if (game.phase === "draft") {
       if (di >= drafts.length) {
         notes.push(`드래프트가 기록보다 많다(기록 ${drafts.length}회) — 여기서 멈춘다`);
         break;
+      }
+      // 드래프트에서 고친 시트는 **다음 단계 0틱**으로 기록된다(beginStage 의 logSheetIfDirty). 그 기록이
+      // 다음이면 이 드래프트 안에서 건다(세계가 서 있어 예산이 안 든다). 창을 이미 지난 기록(어긋난 재현)도
+      // 여기서 곧바로 건다 · 안 그러면 `si` 가 영영 안 넘어가 뒤의 시트가 전부 막힌다(buys 와 같은 처리).
+      const ns0 = sheets[si];
+      if (
+        ns0 !== undefined &&
+        ((ns0.stage === game.stageOrdinalNow + 1 && ns0.tick === 0) || ns0.stage <= game.stageOrdinalNow)
+      ) {
+        if (ns0.stage <= game.stageOrdinalNow) notes.push(`시트 기록(단계 ${ns0.stage} · ${ns0.tick}틱)의 창을 지나 드래프트에서 늦게 걸었다`);
+        applySheet(ns0);
+        si += 1;
       }
       const rec = drafts[di];
       // **후보가 같은가**가 가장 강한 신호다. 같은 시드에서 다른 후보가 나오면 카드 풀이나
@@ -987,20 +849,25 @@ function replayAgainst(dec, label) {
       }
       break;
     }
-    // 새 단계에 들어섰나 — 게임의 stageOrdinal 과 같은 눈금으로 따라간다.
-    if (game.stageOrdinalNow !== stageNo) {
-      stageNo = game.stageOrdinalNow;
-      oi = 0;
-    }
-    // 이번 단계의 이 틱에 사람이 찍은 탭이 있으면 그대로 다시 찍는다.
+    // 이번 단계의 이 틱에 감독이 시트를 고쳤으면(작전타임·구입 화면) 같은 자리에서 다시 건다.
     // ⚠ 시각은 **게임에게 묻는다**(`stageTickNow`) · 여기서 프레임을 세면 어긋난다 —
     //   update 는 드래프트·결과 단계에서 일찍 돌아가므로 프레임 수와 단계 틱이 다르다.
-    const list = ordersByStage.get(stageNo);
-    while (list !== undefined && oi < list.length && list[oi].tick <= game.stageTickNow) {
-      const o = list[oi];
-      if (game.setHerdOrder(o.x, o.y, o.kind)) ordersReplayed += 1;
-      else ordersRejected += 1;
-      oi += 1;
+    // 세우는 문은 구입 화면(`openGeneShop`)이다 · 예산이 없어 같은 틱에 몇 번이든 열리고, `closeGeneShop`
+    // 이 게임과 같은 자리에서 시트를 기록한다(위 머리 주석). 관전 중이 아니면(이미 서 있으면) 안 열린다 ·
+    // 그 경우는 재현이 이미 갈린 것이라 notes 에 남긴다.
+    for (;;) {
+      const ns = sheets[si];
+      if (ns === undefined) break;
+      const due = ns.stage < game.stageOrdinalNow || (ns.stage === game.stageOrdinalNow && ns.tick <= game.stageTickNow);
+      if (!due) break;
+      if (ns.stage < game.stageOrdinalNow) notes.push(`시트 기록(단계 ${ns.stage} · ${ns.tick}틱)의 창을 지나 단계 ${game.stageOrdinalNow} 에서 늦게 걸었다`);
+      if (game.openGeneShop()) {
+        applySheet(ns);
+        game.closeGeneShop();
+      } else {
+        notes.push(`시트 기록(단계 ${ns.stage} · ${ns.tick}틱)을 못 걸었다 · 관전 중이 아니라 구입 화면이 안 열렸다(phase ${game.phase})`);
+      }
+      si += 1;
     }
     // 구입 — **시각이 담긴 코드는 그 시각에 정확히 산다.** 옛 코드(stage 0)는 시각을 모르므로
     // 「살 수 있게 되면 곧」이라는 근사로 되돌아간다(그 판은 구입 시점이 원판과 다를 수 있다).
@@ -1066,11 +933,16 @@ function replayAgainst(dec, label) {
   console.log("");
   console.log(
     `# 드래프트 ${di}/${drafts.length} 재현 · 방울 구입 ${bi}/${buys.length} 재현 · ` +
-      `탭 ${ordersReplayed}/${orders.length} 재현${ordersRejected > 0 ? ` (거절 ${ordersRejected})` : ""}`,
+      `지침 시트 ${sheetsReplayed}/${sheets.length} 재현` +
+      `${orders.length > 0 ? ` · 옛 탭 명령 ${orders.length}건 재생 안 함(경로 없음)` : ""}`,
   );
-  if (orders.length === 0 && want.header.leadEnabled) {
-    console.log("# ⚠ 탭이 한 개도 안 담긴 코드다 — 명령 기록이 생기기 전(2026-08-09 이전)에 뽑혔거나");
-    console.log("#   정말로 한 번도 안 탭한 판이다. 앞이라면 **이 재현은 손을 안 댄 판**이라 어긋나는 게 정상이다.");
+  // 시트 기록끼리도 대조한다 · 재현이 같은 단계·같은 틱에 같은 시트를 남겼는가(재생기 자신의 검사).
+  const gSheets = got.entries.filter((e) => e.t === "sheet");
+  const sheetKey = (e) => `${e.stage}:${e.tick}:${e.rows.map((d) => `${d.who}/${d.when}/${d.act}`).join(",")}`;
+  const wantKeys = sheets.map(sheetKey).join(" | ");
+  const gotKeys = gSheets.map(sheetKey).join(" | ");
+  if (wantKeys !== gotKeys) {
+    notes.push(`시트 기록이 다르다\n    기록 ${wantKeys || "(없음)"}\n    재현 ${gotKeys || "(없음)"}`);
   }
   if (notes.length > 0) {
     console.log("# 어긋난 것:");
@@ -1142,16 +1014,15 @@ async function runPoison() {
       `흡수 ${drainOverride === null ? "프리셋 값" : drainOverride}`,
   );
   console.log(
-    "# 기준선 = 같은 시드·같은 판에서 위협을 아예 안 얹은 것. 안몲 = 안개만 얹고 손 안 댐. " +
-      "몲 = 무리를 가장 가까운 수풀로 지시(한 번 탭한 뒤 그대로).",
+    "# 기준선 = 같은 시드·같은 판에서 위협을 아예 안 얹은 것. 안개 = 안개만 얹고 손 안 댐(지침 없음). " +
+      "(옛 「몲」 열은 2026-09-11 감독형 전환으로 지웠다 · 지침 시트로 다시 재는 자는 backlog.)",
   );
-  console.log("# 탈락 = 끝 개체 수 < 통과기준 · 멸종 = 0마리 · 수풀% = 내 종이 수풀 위에 있던 개체틱 비율(몲).");
+  console.log("# 탈락 = 끝 개체 수 < 통과기준 · 멸종 = 0마리.");
   console.log(
     [
       "시대", "프리셋".padEnd(18), "통과",
       "기준선", "기준탈락", "기준멸종",
-      "안몲", "안몲탈락", "안몲멸종",
-      "몲", "몲탈락", "몲멸종", "수풀%",
+      "안개", "안개탈락", "안개멸종",
     ].join("\t"),
   );
 
@@ -1160,11 +1031,9 @@ async function runPoison() {
     for (const p of presets) {
       const base = [];
       const still = [];
-      const drive = [];
       for (const seed of SEEDS) {
         base.push(poisonRound(p.genome, seed, era, "base", drainOverride, shelterOn));
         still.push(poisonRound(p.genome, seed, era, "still", drainOverride, shelterOn));
-        drive.push(poisonRound(p.genome, seed, era, "drive", drainOverride, shelterOn));
       }
       const fail = (rows) => rows.filter((r) => r.pop < need).length;
       const gone = (rows) => rows.filter((r) => r.pop === 0).length;
@@ -1179,10 +1048,6 @@ async function runPoison() {
           cell(still.map((r) => r.pop), 1),
           `${fail(still)}/${still.length}`,
           `${gone(still)}/${still.length}`,
-          cell(drive.map((r) => r.pop), 1),
-          `${fail(drive)}/${drive.length}`,
-          `${gone(drive)}/${drive.length}`,
-          cell(drive.map((r) => r.grass * 100), 0),
         ].join("\t"),
       );
     }
@@ -1268,7 +1133,7 @@ function playEra0(preset, seed, policy, forcedScale) {
   // 같은 시드로 나란히 재기" 위해 쓴다(`--scale=2`). 안 주면 실제 게임과 똑같이 mapScale(era).
   const game = newGame(forcedScale);
   game.fixedSeed = seed;
-  game.leadEnabled = true; // 실제 배포와 같은 설정(단계별 경험치 상한이 걸린다). 지시는 안 준다.
+  game.stageXpCapOn = true; // 실제 배포와 같은 설정(단계별 경험치 상한이 걸린다). 지침 시트는 안 건다.
   game.beginRun();
   // 첫 드래프트 = 시작 종 고르기. 이 프리셋을 정확히 집는다(없으면 첫 장).
   const want = game.draftCards.findIndex((c) => c.id === `preset_${preset.key}`);
@@ -1332,7 +1197,7 @@ async function runEra0() {
   const locked = pickPresets().filter((p) => !openIds.has(`preset_${p.key}`));
   if (locked.length > 0) console.log(`# 잠긴 갈래(이 메타 레벨에선 못 고름): ${locked.map((p) => p.name).join(", ")}`);
   const stageNames = ["채집1", "채집2", "보스1", "채집3", "보스2", "대멸종"];
-  console.log(`# era0 · 첫 시대 한 판 전체 · 세계 ${Math.round(MOBILE.width * scale)}x${Math.round(MOBILE.height * scale)}(배율 ${scale}${forced === undefined ? "" : " · 강제"}) · 시드 ${SEEDS.length} · 카드 ${policy} · 지시 없음`);
+  console.log(`# era0 · 첫 시대 한 판 전체 · 세계 ${Math.round(MOBILE.width * scale)}x${Math.round(MOBILE.height * scale)}(배율 ${scale}${forced === undefined ? "" : " · 강제"}) · 시드 ${SEEDS.length} · 카드 ${policy} · 지침 없음(시트 null)`);
   console.log(`# 일정: ${SCHEDULE.join(" → ")} · 첫 시대는 시험(불씨) 없음 → 패배는 오직 개체 0`);
   console.log(`# 표1 · 단계가 끝난 순간의 내 종 개체 수(평균)`);
   console.log(["프리셋".padEnd(18), ...stageNames, "멸종", "도달단계", "레벨"].join("\t"));
@@ -1582,71 +1447,9 @@ function policyScore(policy, card, digs) {
  * veteranRuns = 저장본의 "끝낸 런 수"(0=첫 런이라 진도가 0→3 으로 오른다 · 3=늘 진도 3 = 숙련자의 세계).
  * ⚠ 챔피언(예전의 나)은 저장본에 없어 진도 3 이어도 안 나온다 — 프로브의 구조적 한계(파일 머리 주석 참조).
  */
-/**
- * **손이 붙은 판을 흉내 낸다** — 사람은 화면을 보며 무리를 먹이 더미로 몰고, 보스가 뜨면 보스로 몬다.
- * 지시 없는 판(손 놓은 하한선)만 재면 "첫 런에 정복"이라는 사용자의 실기를 영영 설명하지 못한다.
- *
- * 정책(사람의 최소 실력):
- *   · 보스 단계면 떼의 무게중심으로 몬다(격퇴 = 즉시 통과 + 불씨 +1 이라 사람은 반드시 이렇게 한다).
- *   · 그 밖에는 **먹이가 가장 빽빽한 칸**으로 몬다(거리로 할인). 굶주림이 최대 사인이므로 이게 곧 실력이다.
- * 좌표만 정한다 · sim 은 한 줄도 안 건드린다(world.herdOrder 는 게임이 탭으로 쓰는 바로 그 입구다).
- */
-const DRIVE_REACH = Number(opt("reach", "420")); // 사람이 한 화면에서 짚을 수 있는 거리(px)
-const DRIVE_CELL = 120; // 먹이 더미를 세는 칸 크기(px)
-function driveOrder(world) {
-  const boss = world.boss;
-  if (boss !== null && boss.maxHp > 0) {
-    const ms = boss.members ?? [];
-    if (ms.length > 0) {
-      let mx = 0;
-      let my = 0;
-      for (const m of ms) {
-        mx += m.x;
-        my += m.y;
-      }
-      return { x: mx / ms.length, y: my / ms.length };
-    }
-    return { x: boss.x, y: boss.y };
-  }
-  const list = mine(world);
-  if (list.length === 0) return null;
-  const c = centroid(list);
-  const t = world.genome.traits;
-  const canSwim = t.swimming >= SIM.swimThreshold;
-  const canFly = t.wings >= SIM.flyThreshold;
-  const cells = new Map();
-  for (const f of world.food) {
-    if (!f.available) continue;
-    if (f.deep) continue;
-    if (f.aquatic && !canSwim) continue;
-    if (f.mountainous && !canFly) continue;
-    const key = `${Math.floor(f.x / DRIVE_CELL)},${Math.floor(f.y / DRIVE_CELL)}`;
-    let cur = cells.get(key);
-    if (cur === undefined) {
-      cur = { n: 0, sx: 0, sy: 0 };
-      cells.set(key, cur);
-    }
-    cur.n += 1;
-    cur.sx += f.x;
-    cur.sy += f.y;
-  }
-  let best = null;
-  let bestScore = -Infinity;
-  for (const v of cells.values()) {
-    const x = v.sx / v.n;
-    const y = v.sy / v.n;
-    const d = Math.hypot(x - c.x, y - c.y);
-    // **한 화면 안(DRIVE_REACH)만 본다.** 사람은 안 보이는 먼 대박을 탭할 수 없고, 먼 더미로 몰면
-    // 행군하는 내내 아무도 안 먹는다(지시는 해제 반경 밖에서 먹이 추적을 이긴다).
-    if (d > DRIVE_REACH) continue;
-    const score = v.n / (1 + d / 150);
-    if (score > bestScore) {
-      bestScore = score;
-      best = { x, y };
-    }
-  }
-  return best;
-}
+// (「손이 붙은 판」 흉내 · `driveOrder` 와 `--drive` 는 2026-09-11 감독형 전환으로 지웠다. 무리를 먹이
+//  더미·보스로 몰던 탭 명령이 게임에 없다. 감독의 손 = 지침 시트를 거는 정책은 아직 안 정해진 값이라
+//  여기서 지어내지 않는다 · backlog. 파일 머리의 거절 게이트가 `--drive` 를 막는다.)
 
 /**
  * 한 런을 **끝까지**(정복 또는 패배) 돌린다 · game.ts 를 통째로 태우고 시대 승리마다 이어간다.
@@ -1661,11 +1464,11 @@ function driveOrder(world) {
  *   지금 이 함수가 정직하게 재는 것: 한 런의 결말(도달 시대·패배 사유) · 사망 원인 · 방울 수입과
  *   회수율 · 드래프트가 무엇을 내놓는가.
  */
-function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
+function playFullRun(preset, seed, policy, veteranRuns, metaXp) {
   setSavedProgress(veteranRuns, metaXp);
   const game = newGame();
   game.fixedSeed = seed;
-  game.leadEnabled = true; // 실제 배포와 같은 설정(단계별 경험치 상한). 지시는 안 준다 = 손 놓은 하한선.
+  game.stageXpCapOn = true; // 실제 배포와 같은 설정(단계별 경험치 상한). 지침 시트는 안 건다 = 손 놓은 하한선.
   game.beginRun();
   const want = game.draftCards.findIndex((c) => c.id === `preset_${preset.key}`);
   game.pickCard(want >= 0 ? want : 0);
@@ -1707,10 +1510,6 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
       dropsTakenValue += d.amount;
     }
   };
-  // 손이 붙은 판에서 「목표에 실제로 닿았는가」: 방울 우선의 대가(지시가 무의미해지는가)를 재는 축.
-  let ordersIssued = 0;
-  let ordersArrived = 0;
-
   const picks = []; // 고른 카드마다 { n, era, level, name }
   const offers = []; // 열린 드래프트의 후보 카드마다 { era, level, kind, cat, rarity, favors, id }
   const topAt = {}; // 범주 → 몇 번째 카드 시점에 4단에 닿았나 { card, era }
@@ -1746,9 +1545,6 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
   noteTopTier(); // 프리셋만으로 4단이 찍히는 경우는 없지만, 기준점을 0 으로 박아 둔다
 
   let guard = 0;
-  let ticks = 0;
-  let driveTarget = null;
-  let driveAt = -999;
   while (guard < 400000) {
     guard += 1;
     if (game.phase === "draft") {
@@ -1806,29 +1602,6 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
       }
       break;
     }
-    // 손이 붙은 판. **다시 탭하는 시점이 중요하다** — 매 초 새 지시를 내리면 무리가 먹지 못하고
-    // 행군만 한다(지시는 해제 반경 밖에서 먹이 추적을 이긴다 · behavior 의 지시 블록). 사람도 그렇게
-    // 안 한다: 한 번 찍고, 도착했거나 한참 지났을 때 다시 찍는다.
-    if (drive && game.phase === "watch") {
-      const c = centroid(mine(game.world));
-      const arrived =
-        c !== null && driveTarget !== null && Math.hypot(c.x - driveTarget.x, c.y - driveTarget.y) <= 120;
-      if (driveTarget === null || arrived || ticks - driveAt >= 150) {
-        // 「지금까지 찍었던 목표에 실제로 닿았나」를 새 목표를 찍기 직전에 결산한다.
-        // 방울 우선을 세게 걸면 무리가 방울만 쫓아 지시가 무의미해진다. 그 대가가 이 비율이다.
-        if (driveTarget !== null) {
-          ordersIssued += 1;
-          if (arrived) ordersArrived += 1;
-        }
-        const o = driveOrder(game.world);
-        if (o !== null) {
-          driveTarget = o;
-          driveAt = ticks;
-          game.setHerdOrder(o.x, o.y);
-        }
-      }
-    }
-    ticks += 1;
     game.update(stepMs);
     const r = eraRow(game.era);
     const pop = game.world.playerPopulation;
@@ -1874,8 +1647,6 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
     made: dropsTaken + dropsLeft,
     takenValue: dropsTakenValue,
     leftValue: dropsLeftValue,
-    ordersIssued,
-    ordersArrived,
   };
   return {
     preset: preset.key,
@@ -1900,7 +1671,6 @@ function playFullRun(preset, seed, policy, veteranRuns, metaXp, drive = false) {
 
 async function runGrowth() {
   const policy = normalizePolicy(opt("policy", opt("cards", "rarity")));
-  const drive = args.includes("--drive"); // 손이 붙은 판(무리를 먹이·보스로 몬다)
   // 「누구의 판인가」 축은 전부 전역이다(`--veteran`·`--metaxp=`·`--reroll`·`--assist`) ·
   // 머리글(axisLine)이 그 값을 그대로 찍는다. 여기서 다시 파싱하면 두 곳이 갈린다.
   const runsDone = RUNS_DONE;
@@ -1915,7 +1685,7 @@ async function runGrowth() {
 
   console.log(
     `# growth · 한 런 전체(시대 0~${GAME.eraCap - 1} · 정복까지) · 카드 정책 ${POLICY_LABEL[policy]} · ` +
-      `${runsDone >= 3 ? `숙련자(끝낸 런 ${runsDone} = 늘 진도 3)` : `첫 런(진도 0→3)`} · 시드 ${SEEDS.length} · ${drive ? "손이 붙은 판(1초마다 지시)" : "지시 없음(손 놓음)"}`,
+      `${runsDone >= 3 ? `숙련자(끝낸 런 ${runsDone} = 늘 진도 3)` : `첫 런(진도 0→3)`} · 시드 ${SEEDS.length} · 지침 없음(시트 null · 손 놓음)`,
   );
   console.log(
     `# 일정 ${SCHEDULE.join("→")} × ${GAME.eraCap} 시대 · 패배 = 개체 0 · 불씨 0 · 관문 생존 기준 미달
@@ -1940,7 +1710,7 @@ async function runGrowth() {
 
   const all = [];
   for (const p of presets) {
-    for (const seed of SEEDS) all.push(playFullRun(p, seed, policy, runsDone, metaXp, drive));
+    for (const seed of SEEDS) all.push(playFullRun(p, seed, policy, runsDone, metaXp));
   }
 
   console.log(`\n# 표1 · 한 런의 결말 (프리셋별 평균 · 시드 ${SEEDS.length})`);
@@ -2136,14 +1906,16 @@ async function runTiers() {
  * 나머지 하나(개체 수 문턱)는 최고 개체 수만 알면 눈금 수로 환산된다.
  *
  * ⚠ 여기서 나오는 것은 **수입(공급)** 이다. 가격표(지출)는 이 수입을 보고 정한다.
- *   지금은 손 놓은 판 기준이라 **하한선**이다. 조종이 붙으면 개체 수가 더 커져 수입도 는다.
+ *   지금은 손 놓은 판 기준이라 **하한선**이다. 지침 시트가 붙은 판은 아직 안 잰다(backlog).
  */
 async function runEcon() {
   const policy = normalizePolicy(opt("policy", "rarity"));
-  const drive = args.includes("--drive"); // 손이 붙은 판(무리를 먹이·보스로 몬다) = 지시가 걸린 판
   // 방울 우선 반경 스윕 · `--generadius=0,80,160` 처럼 주면 값마다 한 번씩 돌려 나란히 찍는다.
   // ⚠ `ORDER` 는 런타임에는 평범한 객체라 여기서 덮어쓸 수 있다(`as const` 는 타입에만 건다).
   //   0 을 주면 「방울 우선」이 통째로 꺼진 예전 세계다 = 고치기 전과 견주는 기준선.
+  // ⚠⚠ **2026-09-11 이후 이 반경은 지침 시트가 이동을 가져간 개체만 읽는다.** 이 모드는 시트를 안 걸므로
+  //   반경 스윕의 행들은 **전부 같은 판**이다(파일 머리의 경고가 그 사실을 찍는다). 옛 --drive 판의 표3
+  //   수치(params.ts ORDER.geneRadius 주석)는 옛 세계의 것이다.
   //
   // ⚠⚠ **이 쉼표 스윕이 내는 값을 밸런스 근거로 쓰지 마라 · 반경마다 별도 프로세스로 돌려라.**
   //   (2026-08-09 실측으로 잡았다 · `sim/params.ts` 의 ORDER.geneRadius 주석에 전말이 있다.)
@@ -2175,7 +1947,7 @@ async function runEcon() {
   const presets = pickPresets().filter((p) => openIds.has(`preset_${p.key}`));
   console.log(
     `# econ · 방울 출처 실측 · 카드 정책 ${POLICY_LABEL[policy]} · 시드 ${SEEDS.length} · ` +
-      `${drive ? "손이 붙은 판(--drive · 지시를 준다)" : "지시 없음(손 놓음 = 수입 하한선)"}`,
+      `지침 없음(시트 null · 손 놓음 = 수입 하한선)`,
   );
   console.log(`# 갈래 ${presets.length}종(이 메타 레벨에 열려 있는 것만 · 잠긴 갈래를 태우면 같은 판이 중복된다)`);
   console.log(
@@ -2189,7 +1961,7 @@ async function runEcon() {
   for (const r of radii) {
     if (r !== null) ORDER.geneRadius = r;
     const rows = [];
-    for (const p of presets) for (const seed of SEEDS) rows.push(playFullRun(p, seed, policy, RUNS_DONE, METAXP, drive));
+    for (const p of presets) for (const seed of SEEDS) rows.push(playFullRun(p, seed, policy, RUNS_DONE, METAXP));
     byRadius.push({ radius: r === null ? ORDER.geneRadius : r, rows });
     if (radii.length === 1) all.push(...rows);
   }
@@ -2257,20 +2029,16 @@ async function runEcon() {
   }
 
   // 표3 · **방울 회수율**: 떨어뜨린 것 중 몇 개나 무리가 실제로 밟아 주웠나.
-  // **[사용자 2026-08-09]** "가라 명령 때 방울을 우선시해서 알아서 먹는다"의 효과가 여기서 읽힌다.
-  // 반경 0 = 방울 우선이 꺼진 예전 세계. 「도착률」은 그 대가다(무리가 지시 대신 방울만 쫓으면 떨어진다).
-  console.log(`\n# 표3 · 방울 회수율 · ${drive ? "지시 있음(--drive)" : "지시 없음"}`);
-  console.log(
-    ["방울우선반경".padEnd(12), "발행(개)", "주움", "남음", "회수율%", "값회수율%", "목표도착률%"].join("\t"),
-  );
+  // 지침 없는 판이라 방울은 **밟아야만** 주워진다(방울 우선은 시트가 이동을 가져간 개체에만 산다).
+  // 옛 「목표도착률」 열(탭 명령의 대가)은 2026-09-11 에 자와 함께 지웠다.
+  console.log(`\n# 표3 · 방울 회수율 · 지침 없음(시트 null)`);
+  console.log(["방울우선반경".padEnd(12), "발행(개)", "주움", "남음", "회수율%", "값회수율%"].join("\t"));
   for (const g of byRadius) {
     const made = avg(g.rows, (r) => r.drops.made);
     const taken = avg(g.rows, (r) => r.drops.taken);
     const left = avg(g.rows, (r) => r.drops.left);
     const tv = g.rows.reduce((a, r) => a + r.drops.takenValue, 0);
     const lv = g.rows.reduce((a, r) => a + r.drops.leftValue, 0);
-    const iss = g.rows.reduce((a, r) => a + r.drops.ordersIssued, 0);
-    const arr = g.rows.reduce((a, r) => a + r.drops.ordersArrived, 0);
     console.log(
       [
         String(g.radius).padEnd(12),
@@ -2279,16 +2047,18 @@ async function runEcon() {
         fmt(left, 2),
         fmt(made > 0 ? (100 * taken) / made : 0, 1),
         fmt(tv + lv > 0 ? (100 * tv) / (tv + lv) : 0, 1),
-        iss > 0 ? fmt((100 * arr) / iss, 1) : "-(지시 없음)",
       ].join("\t"),
     );
+  }
+  if (byRadius.length > 1) {
+    console.log(`# ⚠ 반경 행이 전부 같은 것이 정상이다 · 시트 없는 판은 이 값을 안 읽는다(파일 머리 경고).`);
   }
 
   // 사건 방울(개체 수 제외)의 합 — 여기에 문턱 방울을 더한 것이 총수입이다.
   const evAvg = avg(all, (r) => r.econ.crises + r.econ.bossKilled + r.econ.extinctions + r.econ.overachieves);
   console.log(`\n# 사건 방울(위기회복+보스처치+대멸종생존+시험초과) 판당 평균 ${fmt(evAvg, 2)}개`);
   console.log(`# 총수입 = 위 + 표2 에서 고른 사다리의 방울. 티어 한 단계 값을 정할 때 이 합을 쓴다.`);
-  console.log(`# ⚠ 손 놓은 판이라 **하한선**이다. 조종이 붙으면 개체 수와 격퇴가 함께 는다.`);
+  console.log(`# ⚠ 손 놓은 판이라 **하한선**이다. 지침 시트가 붙은 판은 아직 안 잰다(backlog).`);
 }
 
 /** 시작값 S, 배수 R 의 등비 눈금 중 max 이하인 것의 개수. */
@@ -2401,8 +2171,7 @@ try {
         `  --metaxp=${REROLL_XP} 이상을 함께 줘라. 지금 표는 리롤 없는 판이다.\n`,
     );
   }
-  if (MODE === "order") await runOrder();
-  else if (MODE === "raid") await runRaid();
+  if (MODE === "raid") await runRaid();
   else if (MODE === "poison") await runPoison();
   else if (MODE === "extinction") await runExtinction();
   else if (MODE === "replay") await runReplay();
@@ -2417,9 +2186,7 @@ try {
   else if (MODE === "econ") await runEcon();
   else if (MODE === "sens") await runSens();
   else {
-    console.error(
-      `알 수 없는 모드: ${MODE} (replay | order | raid | poison | extinction | sweep | era0 | encounter | steps | growth | apex | scale | sens)`,
-    );
+    console.error(`알 수 없는 모드: ${MODE} (${MODES.join(" | ")}) · order · --drive 는 2026-09-11 에 무효`);
     process.exitCode = 1;
   }
   // bossRaidable 은 보스 풀이 늘 때 프로브가 조용히 빈 표를 찍는 걸 막는 안전장치로만 참조한다.

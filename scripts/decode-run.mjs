@@ -114,14 +114,18 @@ const rule = () => line("─".repeat(64));
 
 // ── 머리말 ──
 const h = data.header;
+// 옛 탭 명령(t:"order" · 2026-08-09 ~ 2026-09-11) · 감독형 전환으로 게임에서 사라져 되살릴 경로가 없다.
+// 읽기 호환용으로만 남은 기록이라, 있으면 머리말에서 「완전 재현이 아니다」를 먼저 말한다.
+const legacyOrders = data.entries.filter((e) => e.t === "order").length;
 line(`판 분석 코드 SP${data.schema} · 게놈 v${data.genomeVersion} · 카드 풀 지문 ${data.poolDigest.toString(16).padStart(4, "0")}`);
 for (const w of decoded.warnings) line(`⚠ ${w}`);
+if (legacyOrders > 0) line(`⚠ 옛 탭 명령 ${legacyOrders}건 · 이 판은 완전 재현이 아니다 (2026-09-11 이전 빌드 · 탭을 되살릴 명령 경로가 없다)`);
 rule();
 line(`시드          ${h.seed}     (재현: ?seed=${h.seed})`);
 line(`뽑힌 세계     ${MAP_KINDS[h.mapType]?.name ?? h.mapType}`);
 line(`메타          레벨 ${h.metaLevel} · 끝낸 런 ${h.runsDone} · ${h.everConquered ? "정복 경험 있음" : "정복 경험 없음"} · 리롤 ${h.rerollUnlocked ? "열림" : "잠김"}`);
 line(`온보딩 진도   시대 0 에서 ${onboardingStep(h.runsDone, 0)} · 시대 ${data.summary.era + 1} 에서 ${onboardingStep(h.runsDone, data.summary.era)}`);
-line(`조종          ${h.leadEnabled ? "켬" : "끔(관전)"} · 은근한 보정 ${h.assistEnabled ? "켬" : "끔"}`);
+line(`경험치 상한   ${h.stageXpCap ? "켬" : "끔"} (단계당) · 은근한 보정 ${h.assistEnabled ? "켬" : "끔"}`);
 line(`챔피언        ${h.champions}마리 ${h.champions > 0 ? "(게놈은 코드에 없다 · 그만큼 완전 재현이 아니다)" : ""}`);
 
 // ── 흐름 ──
@@ -166,6 +170,11 @@ for (const e of data.entries) {
   }
   if (e.t === "buy") {
     line(`  방울 구입 · ${CATEGORY_LABELS[e.cat]} ${TIER_ROMAN[e.tier]}단  (방울 ${e.cost}개)`);
+    continue;
+  }
+  if (e.t === "order") {
+    // 옛 탭 명령 · 좌표와 종류만 그대로 보여 준다(게임에 이 경로가 없으니 이름표를 새로 짓지 않는다).
+    line(`  옛 탭 명령 (단계 ${e.stage} · ${e.tick}틱) · ${e.x},${e.y} · ${e.kind}`);
     continue;
   }
   if (e.t === "sheet") {
