@@ -50,8 +50,12 @@ interface Directive { who: Who; when: PerkWhen; act: Act }
 뜨는 숫자를 규칙에서 다시 유도하지 마라」). UI 는 읽기만 한다.
 
 **목소리 반경은 없앤다.** 감독의 말은 팀 전체에 닿는다. 무리 티어의 값어치 `HERD_VOICE` 는
-**`HERD_SHEET_ROWS`(쓸 수 있는 줄 수 · 2 → 6)** 로 바뀐다(`tiers.ts` 한 곳). 단어 게이트(열쇠·카드로
-단어가 열림)는 v0 에 없다 · 단어 수가 늘 때 함께 넣는다.
+**`HERD_SHEET_ROWS`(쓸 수 있는 줄 수 · 2 → 6)** 로 바뀐다(`tiers.ts` 한 곳). 열쇠 「부름」은 옛 반경 ×1.6 대신
+**줄 하나를 더한다**(`sheetRows(pips, keys)` · 정리 조각 2026-09-11). 단어 게이트(열쇠·카드로 단어가 열림)는
+v0 에 없다 · 단어 수가 늘 때 함께 넣는다.
+**스침 채집은 지침이 물려받는다.** 지침이 이동을 가져간 틱에는 발밑 먹이(반경 `ORDER.brushRadius`)를 걸음을
+안 바꾸고 먹는다(옛 지시 행군의 규칙 · 「순종 처방 ③」). 잠행 감속·수풀 엄폐 봉인처럼 옛 명령 게이트에 걸려
+있던 규칙은 물려받지 **않았다** · backlog 4번의 결정 항목.
 
 ## 2. 작전타임 (game · `src/game/game.ts`)
 
@@ -86,8 +90,9 @@ interface Directive { who: Who; when: PerkWhen; act: Act }
 
 0. sim 코어 + game 상태(작전타임 · 일정표 getter · 판 코드 기록) + 테스트. 화면 없음.
 1. 화면: 왼쪽 열(일정표 · 시트 편집 · 발동 수) + 작전타임 버튼 + 탭 명령 끄기. 겹침 검사.
-2. 정리: 옛 명령 경로(`herdOrder`·`lead`·명령 휠) 삭제 · 카메라를 팀 무게중심 추종으로 ·
-   문서(CLAUDE.md 조작 문단 · INDEX · backlog) 갱신.
+2. 정리(2026-09-11 완료): 옛 명령 경로(`herdOrder`·`lead`·명령 휠·`leadVision`·`?watch`) 삭제 · 판 코드의 옛 탭
+   기록은 읽기 호환만 · `leadEnabled` → `stageXpCapOn` · 문서(CLAUDE.md 조작 문단 · INDEX · backlog) 갱신.
+   골든 지문(world.test.ts) 불변 확인.
 
 ## 6. 하지 말 것
 

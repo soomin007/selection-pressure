@@ -47,7 +47,7 @@ function sampleData(): RunCodeData {
       champions: 2,
       everConquered: false,
       rerollUnlocked: true,
-      leadEnabled: true,
+      stageXpCap: true,
       assistEnabled: true,
     },
     entries: [

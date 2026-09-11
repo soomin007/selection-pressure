@@ -59,8 +59,7 @@ function snapshot(g: Game): string {
     .join(";");
   const b = w.boss;
   const boss = b === null ? "-" : `${b.name}/${b.hp.toFixed(4)}/${b.x.toFixed(4)},${b.y.toFixed(4)}`;
-  const o = w.herdOrder;
-  const order = o === null ? "-" : `${o.kind ?? "move"}@${o.x.toFixed(3)},${o.y.toFixed(3)}/${(o.ticks ?? 0).toFixed(4)}`;
+  const sheet = w.sheet === null ? "-" : w.sheet.map((d) => `${d.who}.${d.when}.${d.act}`).join("/");
   const drops = w.geneDrops.map((d) => `${d.reason}${d.taken ? "T" : "F"}${d.amount}`).join("/");
   return [
     `tick=${w.tick}`,
@@ -85,7 +84,7 @@ function snapshot(g: Game): string {
     `trial=${g.trial?.label ?? "-"}/${g.trialProgress}`,
     `peak=${g.peakPopulation}`,
     `boss=${boss}`,
-    `order=${order}`,
+    `sheet=${sheet}`,
     `rng=${rng}`,
     `ents=${ents}`,
   ].join("|");
@@ -282,20 +281,19 @@ describe("구입 화면 멈춤 · 단계 넷에서 열고 닫기", () => {
     expect(g.phase).toBe("watch");
   });
 
-  it("멈춘 동안 내려진 명령·지휘봉·디버그 소환이 세계를 못 건드린다", () => {
+  it("멈춘 동안 디버그 소환이 세계를 못 건드리고, 지침은 멈춘 동안에만 고칠 수 있다", () => {
     const g = makeForage();
     expect(g).not.toBeNull();
     if (g === null) return;
-    const c = g.world.playerCentroid();
-    expect(g.setHerdOrder(c.x + 20, c.y + 20, "move"), "전제: 지시를 내릴 수 있는 상태").toBe(true);
+    expect(g.setSheet([{ who: "all", when: "always", act: "gather" }]), "관전 중에는 지침을 못 고친다").toBe(false);
     const before = snapshot(g);
     expect(g.openGeneShop()).toBe(true);
-    expect(g.setHerdOrder(c.x - 40, c.y - 40, "move"), "멈춘 동안 새 지시가 먹혔다").toBe(false);
-    const first = g.world.entities.find((e) => e.alive && e.species.isPlayer);
-    if (first) expect(g.passBaton(first.id), "멈춘 동안 지휘봉이 옮겨졌다").toBe(false);
+    // 세계가 서 있는 동안 고친 지침은 세계에 붙지만(시트 문자열이 바뀐다) 틱·rng·좌표는 그대로다.
+    expect(g.setSheet([{ who: "all", when: "always", act: "gather" }]), "멈춘 동안 지침을 고칠 수 있어야 한다").toBe(true);
     g.debugSummon("raider"); // 관전이 아니면 아무 일도 안 해야 한다
     pumpFrames(g, 60);
-    expect(snapshot(g), "멈춘 동안 세계가 건드려졌다").toBe(before);
+    const after = snapshot(g).replace(/sheet=[^|]*/, "sheet=-");
+    expect(after, "멈춘 동안 세계가 건드려졌다").toBe(before.replace(/sheet=[^|]*/, "sheet=-"));
     g.closeGeneShop();
     expect(g.phase).toBe("watch");
   });

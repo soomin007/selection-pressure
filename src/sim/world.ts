@@ -16,10 +16,9 @@ import { SpatialGrid } from "@/sim/spatialGrid";
 import { FoodGrid } from "@/sim/foodGrid";
 import { makePlayerSpecies, generateWildSpecies, makeKinSpecies, makeBiomeSpecies, makeEraPredatorSpecies, makeMapSpecies, mapSpeciesHabitat, makeChampionSpecies, BIOME_FOOD_KIND, areFriends, type Species, type ChampionSeed } from "@/sim/species";
 import type { Biome } from "@/sim/environment";
-import { stepEntity, visionRadius, leadBiteTarget, isApex } from "@/sim/behavior";
+import { stepEntity, isApex } from "@/sim/behavior";
 import { stepBoss, type Boss } from "@/sim/boss";
 import { stepGoblin, type Goblin } from "@/sim/goblin";
-import { createLeadState, type LeadState } from "@/sim/lead";
 import {
   GENE_PICK_RADIUS,
   GENE_SPAWN_RING,
@@ -29,7 +28,6 @@ import {
   type GeneDrop,
   type GeneReason,
 } from "@/sim/gene";
-import type { HerdOrder } from "@/sim/herdOrder";
 import type { Directive } from "@/sim/instructions";
 import {
   CARRION_FROM_DEATH,
@@ -40,7 +38,7 @@ import {
   type Carcass,
 } from "@/sim/carrion";
 import { FEVER_KEEP, SALMON_MIN_ENERGY, SALMON_SHARE, hasRule } from "@/sim/perks";
-import { SIM, LEAD } from "@/sim/params";
+import { SIM } from "@/sim/params";
 
 /** 한 마리가 죽은 이유 (가독성 §7: "왜 내 종이 죽었나"). 사람이 읽는 한글 라벨은 game 층에서. */
 /** "wound"(부상) = 물려서 기운이 다해 죽음. 포식자가 마무리하지 못하고 놓친 개체 — 굶주림이 아니다. */
@@ -279,16 +277,6 @@ export class World {
   /** **황금 고블린 전용 rng**(위와 같은 이유 · `sim/goblin.ts` 의 격리 계약). */
   readonly goblinRng: Rng;
 
-  /**
-   * 알파 조종 상태. leaderId < 0 이면 이 기능은 존재하지 않는 것과 같다(= 기존 모드).
-   * 알파를 **지정만** 하고 명령을 한 번도 안 줘도 마찬가지다: sim 안에서 조종이 갈라놓는 분기는
-   * followTicks(무리 추종)와 commanded(수풀 봉인) 둘뿐이고, 둘 다 첫 명령 전에는 0/false 다.
-   * **Entity 에는 아무것도 추가하지 않는다** — "직렬화 안 함" 관례·createEntity 시그니처·
-   * 게놈 버전 계약을 흔들지 않기 위해 World 의 id 하나로만 추적한다.
-   * entities 는 매 틱 filter 로 재구성되므로 인덱스가 아니라 반드시 id 로 추적한다.
-   */
-  readonly lead: LeadState = createLeadState();
-
   entities: Entity[] = [];
   food: Food[] = [];
   tick = 0;
@@ -357,13 +345,6 @@ export class World {
   }
 
   /**
-   * 무리에게 내린 뜻(신탁). null 이면 무리는 완전히 자율로 산다 = 관전.
-   * 입력층이 세팅하고 behavior 가 읽는다. 계약·설계 의도는 `sim/herdOrder.ts` 주석에 있다.
-   * rng 미소비 · null 이면 관련 분기가 통째로 안 돌아 기존 세계와 부동소수점까지 같다.
-   */
-  herdOrder: HerdOrder | null = null;
-
-  /**
    * **감독의 지침 시트** (**[사용자 2026-09-11]** 탭 조종 대체 · 계약은 `sim/instructions.ts` 머리 주석).
    * game 이 세팅하고 behavior 가 읽는다. null 이면 지침 블록이 통째로 안 돌아 기존 세계와 비트 단위로 같다.
    * 빈 배열도 같다(마지막 줄 「알아서 한다」만 남으므로 이동을 안 덮는다 · 발동 수만 센다).
@@ -381,55 +362,9 @@ export class World {
    * 이번 틱 시작 때의 **팀 무게중심**(살아 있는 내 종). `n === 0` 이면 없다.
    * 시트가 있을 때만 계산한다(없는 세계에서는 비용 0 · 어차피 세계를 안 바꾸는 파생값이다).
    * 틱 시작에 한 번 굳혀 두는 이유: 개체가 움직이는 도중에 다시 재면 순회 순서에 따라 이웃이 다른
-   * 값을 본다(syncLeadStart 의 같은 경고).
+   * 값을 본다(숨은 순회 순서 의존은 rng 지문으로도 안 잡히는 결정론 지뢰다).
    */
   teamCentroid: { x: number; y: number; n: number } = { x: 0, y: 0, n: 0 };
-  /**
-   * **명령이 닿는 거리(px).** game 이 매 단계 무리 티어에서 계산해 넣어 준다(`herdOrder.voiceRadius`).
-   * sim 은 티어를 모른다 — 받은 숫자를 쓰기만 한다(`foodScarcity` 와 같은 구조).
-   * 0 이면 명령이 아무에게도 안 간다.
-   */
-  voiceR = 0;
-  /**
-   * **지휘 공백** — 알파가 죽고 나서 명령이 안 통하는 남은 틱 수. 무리 티어가 이 길이를 줄인다.
-   * 0 이면 정상(명령이 통한다). 매 틱 1씩 준다.
-   *
-   * ⚠ **알파의 죽음으로 불씨를 깎지 않는다.** 불씨는 다섯뿐인데 알파는 앞장서는 자리라 자주 죽고,
-   *   무엇보다 불씨는 「시험에 떨어졌다」 한 뜻만 가진 미터인데 알파 죽음을 섞으면 뜻이 흐려진다.
-   *   공백은 **손끝으로 치르는 대가**다 — 몇 초 동안 무리가 자율로 흩어진다.
-   */
-  // ⚠⚠ **2026-08-10 부터 이 값을 읽는 규칙이 하나도 없다.** **[사용자]** 「이끌던 개체 어쩌고
-  //   아예 없애줘」로 명령 게이트 둘(`hearsOrder` · `game.setHerdOrder`)에서 걷어냈다.
-  //   값은 여전히 세지만(아래 `vacuumOnLeadDeath`) 세계는 그것으로 아무 일도 안 한다.
-  //   **지우지 않고 남긴 이유**: 알파를 통째로 없앨지가 아직 미결이고(backlog 「알파를 없앨지
-  //   정한다」), 그 결정과 함께 `lead`·`passBaton`·`HERD_VACUUM_TICKS` 를 한 묶음으로 정리하는
-  //   편이 낫다. 지금 여기만 지우면 무리 티어의 값어치 표(`HERD_VACUUM_TICKS`)가 홀로 남는다.
-  leadVacuum = 0;
-  /** 알파가 죽었을 때 걸 지휘 공백의 길이(틱). game 이 무리 티어에서 계산해 넣어 준다.
-   *  ⚠ 위 주석대로 **지금은 아무 효과가 없다.** */
-  vacuumOnLeadDeath = 0;
-
-  /**
-   * **이 자리에 선 개체가 지금 명령을 듣는가**: 목소리가 닿는 거리 안이고, 지휘 공백이 아닐 것.
-   *
-   * ⚠ 이 판정은 **여기 한 곳에만** 적는다. 예전에는 behavior 의 지시 블록이 이 식을 손으로 들고
-   *   있었고, game 의 기력 소모는 그 조건을 **아예 안 봤다.** 주석은 "목소리가 닿는 개체만"이라
-   *   적혀 있는데 코드는 살아 있는 내 종 **전부**의 기력을 깎고 있었다(2026-08-09 발견).
-   *   「피해라」 한 번에 목소리 밖의 개체까지 기력 −8 을 물던 자리다.
-   *   같은 규칙을 두 곳에 적으면 반드시 갈라진다는 이 저장소의 단골 함정 그대로였다.
-   *
-   * rng 미사용 · 순수 기하. 지시가 없으면 부르는 쪽이 없으므로 스트림에 영향이 없다.
-   */
-  hearsOrder(x: number, y: number): boolean {
-    // ⚠ 여기 있던 `this.leadVacuum <= 0 &&`(지휘 공백)을 2026-08-10 에 걷었다 ·
-    //   **[사용자]** 「이끌던 개체 어쩌고 아예 없애줘」. 알파가 쓰러진 직후에도 명령이 계속 닿는다.
-    //   `leadVacuum` 은 아직 세계가 세지만 **이제 아무도 안 본다**(아래 필드 주석 참조).
-    return (
-      this.voiceR > 0 &&
-      (this.lead.x - x) ** 2 + (this.lead.y - y) ** 2 <= this.voiceR * this.voiceR
-    );
-  }
-
   /**
    * **이번 라운드 시험이 세계 위에 찍은 자리.** 없으면 null.
    *
@@ -450,26 +385,6 @@ export class World {
 
   /** 이번 라운드에 앞으로 몇 마리 더 내보내는가. game 의 armTrial 이 정하고, 0 이면 고블린 코드가 안 돈다. */
   goblinQuota = 0;
-
-  /**
-   * 이번 틱에 **실제로 뜻을 향해 움직인** 내 종 개체 수. 순종의 질을 화면에 보여 주는 유일한 숫자다
-   * ("12마리 중 8마리가 향하는 중"). 겁먹어 달아나거나, 가는 길에 먹느라 멈춘 개체는 안 세인다.
-   * ⚠ 세는 곳은 **규칙이 판정되는 그 자리 하나뿐**(behavior 의 지시 블록). 바깥에서 조건을 다시
-   * 유도하면 화면과 실제가 갈린다(known_issues 의 "따르는 무리" 오집계와 같은 함정).
-   * 매 틱 여기서 0 으로 되돌린다. rng 미사용·단순 합계라 순회 순서와 무관하다.
-   */
-  orderFollowers = 0;
-
-  /**
-   * 이번 틱에 **아직 목표에 못 닿은**(해제 반경 ORDER.releaseRadius 밖) 내 종 개체 수.
-   * 화면 "따르는 중 N/M" 의 분모다 · 분모를 살아 있는 내 종 전부로 잡으면 이미 도착한 개체까지
-   * 불복종처럼 읽힌다(2026-08-05, "20마리 도착 + 4마리 오는 중"이 "4/24"로 뜨던 사고).
-   * 도망 중이라 이번 틱 이동을 지시에 못 준 개체도 세므로 orderFollowers < orderPending 이
-   * 정상 상태다(도망·먹이·사냥에 붙들린 수만큼 차이 난다).
-   * ⚠ 세는 곳은 behavior 의 지시 블록 한 자리뿐(orderFollowers 와 같은 규칙) · 매 틱 리셋 ·
-   * rng 미사용·단순 합계라 순회 순서와 무관하다.
-   */
-  orderPending = 0;
 
   /**
    * 지금 이 보스에 **맞설 수 있는** 내 종 개체 수(근접 / 원거리). 화면이 "왜 아무도 안 싸우는가"를
@@ -651,38 +566,6 @@ export class World {
   }
 
   /**
-   * 조종 모드 시작 — 무리 무게중심에 가장 가까운 내 종이 앞장선다(처음부터 무리 한복판에 서게).
-   * 거리가 같으면 먼저 태어난 쪽(작은 id). id 는 유일값이라 동률이 원리적으로 불가능한 전순서다
-   * → 배열 순회 순서와 무관하게 답이 하나다.
-   * rng 를 안 쓰고 개체를 새로 만들지도 않는다(nextId 미호출 → 이후 신생아 wanderAngle 불변).
-   * 이미 알파가 있으면 아무 일도 안 한다(멱등) — game 이 매 프레임 불러도 안전하다.
-   */
-  armLead(): void {
-    const L = this.lead;
-    if (L.leaderId >= 0) return;
-    const c = this.playerCentroid();
-    let best: Entity | null = null;
-    let bestD2 = Infinity;
-    for (const e of this.entities) {
-      if (!e.species.isPlayer) continue;
-      const d2 = (e.x - c.x) ** 2 + (e.y - c.y) ** 2;
-      if (d2 < bestD2 || (d2 === bestD2 && best !== null && e.id < best.id)) {
-        bestD2 = d2;
-        best = e;
-      }
-    }
-    if (best === null) return;
-    L.leaderId = best.id;
-    L.x = best.x;
-    L.y = best.y;
-  }
-
-  /**
-   * 알파의 틱 시작 스냅샷. rng 미사용·개체 생성 없음.
-   * 파생값을 여기서 한 번만 굳히는 이유: 개체 루프 안에서 갱신하면 알파가 몇 번째로 순회되느냐에
-   * 따라 이웃이 다른 값을 본다(숨은 순회 순서 의존 = rng 지문으로도 안 잡히는 결정론 지뢰).
-   */
-  /**
    * 지침 시트의 틱 시작 정리: 발동 집계 0 · 팀 무게중심 굳히기. 시트가 없으면 아무것도 안 한다
    * (배열 길이 0 유지 · 무게중심도 안 잰다) → 시트 없는 세계는 이 함수가 있어도 비용·결과 모두 그대로.
    */
@@ -709,111 +592,6 @@ export class World {
     this.teamCentroid = cnt > 0 ? { x: sx / cnt, y: sy / cnt, n: cnt } : { x: 0, y: 0, n: 0 };
   }
 
-  private syncLeadStart(): void {
-    const L = this.lead;
-    // HUD 표시용 집계는 매 틱 여기서만 0 으로 되돌린다(세는 곳은 behavior 의 cohesion 한 자리뿐).
-    L.followerCount = 0;
-    this.orderFollowers = 0; // 뜻을 향해 움직인 수도 같은 규칙으로 매 틱 리셋(세는 곳은 behavior 한 자리)
-    this.orderPending = 0; // "아직 못 닿은" 수(따르는 중 N/M 의 분모)도 같은 자리에서 매 틱 리셋
-    this.syncSheetStart();
-    // 맞설 수 있는 개체 수도 같은 자리에서 매 틱 0 으로. 보스가 있으면 stepBoss 가 다시 채운다
-    // (보스가 사라진 틱에 낡은 수가 남아 "싸울 수 있다"고 거짓말하지 않게).
-    this.raidMeleeFighters = 0;
-    this.raidRangedFighters = 0;
-    // 1초 창의 이번 틱 칸을 비운다(1초 전 값이 여기 들어 있다). tick 증가 뒤라 칸이 정확히 맞는다.
-    this.raidDmgRing[this.tick % this.raidDmgRing.length] = 0;
-    // 조준 대상도 매 틱 여기서 다시 잡는다. 먼저 비워 두면 알파가 없거나(leaderId<0) 이번 틱에
-    // 쓰러진 경우(아래 조기 반환)에도 "물 수 있다"가 낡은 채로 남지 않는다.
-    L.biteTargetId = -1;
-    // 지정 사냥 대상은 레벨 입력이다 — 매 틱 명령에서 그대로 베낄 뿐, sim 은 저장·기억하지 않는다
-    // (명령이 끊기면 다음 틱에 저절로 -1). 조기 반환들보다 위에 둬야 알파가 사라진 틱에도 낡은
-    // 지정이 안 남고, 아래 leadBiteTarget 호출보다 위에 둬야 이번 틱 겨눔이 이번 틱 명령을 본다.
-    const cmd = L.cmd;
-    L.orderTargetId = cmd !== null && cmd.targetId !== undefined ? cmd.targetId : -1;
-    if (L.followTicks > 0) L.followTicks -= 1;
-    if (L.leaderId < 0) return;
-    let cur: Entity | null = null;
-    for (const e of this.entities) {
-      if (e.id === L.leaderId) {
-        cur = e;
-        break;
-      }
-    }
-    if (cur === null) return; // 이번 틱에 죽었다 → step 끝의 syncLeader 가 승계
-    const t = cur.genome.traits;
-    L.x = cur.x;
-    L.y = cur.y;
-    const sp = Math.hypot(cur.vx, cur.vy);
-    L.omni = sp <= SIM.fovMinSpeed;
-    if (!L.omni) {
-      L.fx = cur.vx / sp;
-      L.fy = cur.vy / sp;
-    }
-    L.visionR = visionRadius(t, this, cur.x, cur.y);
-    L.echoR = SIM.echoBase * (t.echo / TRAIT_MAX);
-    // 지금 물 수 있는 대상 — 화면의 물기 버튼이 이 값 하나로 켜지고 꺼진다.
-    // **실제 물기가 부르는 바로 그 함수**를 부르므로 버튼이 가리키는 대상과 물리는 대상이 어긋날 수 없다.
-    // 격자는 이 틱 시작에 rebuild 된 뒤라 최신이고, 이 호출은 rng 를 안 쓰며 아무것도 안 바꾼다
-    // (그래서 명령을 한 번도 안 준 세계의 지문·rng 상태가 그대로다).
-    const aim = leadBiteTarget(cur, this);
-    L.biteTargetId = aim === null ? -1 : aim.id;
-    // ★ 명령이 있는 틱에만 추종이 켜진다. 명령을 한 번도 안 받으면 followTicks 는 영원히 0,
-    //   commanded 는 영원히 false 라서 "알파를 지정만 한 세계"가 기존 세계와 부동소수점까지
-    //   같다(게놈과 무관하게. 수풀 봉인도 commanded 를 보므로 여기서 함께 잠긴다).
-    //   bite(사냥 명령)도 개입이다 — 사냥 명령 중에도 사람이 개입 중이라, throttle 만 보면
-    //   이동 없이 잠금 사냥만 하는 동안 무리 추종이 1.5초 만에 끊긴다(그 구멍을 여기서 봉합).
-    if (cmd !== null && (cmd.throttle > 0 || cmd.bite === true)) {
-      L.followTicks = LEAD.followHoldTicks;
-      // 끈끈한 플래그 — 한 번 올라가면 이 세계가 끝날 때까지 안 내려간다(승계도 안 되돌린다).
-      // 손을 떼면 되돌아가는 followTicks 로 수풀 봉인을 걸면 "몰아넣고 손 떼기"로 우회된다.
-      L.commanded = true;
-    }
-  }
-
-  /**
-   * 알파 승계 — "쓰러진 자리에서 가장 가까운 내 종이 앞장선다. 거리가 같으면 먼저 태어난 쪽."
-   * rng 를 한 번도 안 쓰고 nextId 도 안 부른다.
-   * **반드시 개체 루프 밖·죽은 개체 filter 뒤에서** 부른다. stepEntity 안에서 하면 앞쪽 개체만
-   * 이동을 마친 반쯤 갱신된 세계에서 "가장 가까운"을 재게 돼 순회 순서에 의존한다.
-   */
-  private syncLeader(): void {
-    const L = this.lead;
-    if (L.leaderId < 0) return;
-    for (const e of this.entities) if (e.id === L.leaderId) return; // 살아 있다
-    let best: Entity | null = null;
-    let bestD2 = Infinity;
-    for (const e of this.entities) {
-      if (!e.species.isPlayer) continue; // filter 뒤라 alive 는 전부 true
-      const d2 = (e.x - L.x) ** 2 + (e.y - L.y) ** 2;
-      if (d2 < bestD2 || (d2 === bestD2 && best !== null && e.id < best.id)) {
-        bestD2 = d2;
-        best = e;
-      }
-    }
-    // 이어받은 개체가 죽은 이의 마지막 명령으로 튀어나가지 않게 초기화한다.
-    // 손가락이 여전히 눌려 있으면 다음 프레임에 자연히 다시 켜진다.
-    // ⚠ L.commanded 는 **초기화하지 않는다.** "사람이 이 세계를 이미 몰았다"는 사실은 앞장선 개체가
-    //   바뀌어도 유효하고, 승계로 수풀 봉인이 풀리면 알파를 일부러 버리는 우회가 생긴다.
-    L.cmd = null;
-    L.followTicks = 0;
-    // 죽은 이의 조준까지 물려받지 않는다(다음 틱 syncLeadStart 가 새 알파 기준으로 다시 잡는다).
-    L.biteTargetId = -1;
-    L.changedTick = this.tick;
-    // **지휘 공백** — 알파가 쓰러지면 몇 초 동안 명령이 안 통하고 무리가 자율로 흩어진다.
-    // **[사용자 2026-08-06]** 확정: 알파는 특별한 개체가 아니라 옮길 수 있는 「지휘봉」이고, 그것을
-    // 놓쳤을 때의 대가는 불씨가 아니라 **손끝**이 치른다. 길이는 무리 티어가 줄인다(조직이 있으면
-    // 다음 개체가 곧바로 이어받는다) — game 이 `vacuumOnLeadDeath` 로 그 값을 미리 넣어 준다.
-    this.leadVacuum = this.vacuumOnLeadDeath;
-    this.herdOrder = null; // 공백 동안은 걸려 있던 명령도 풀린다(누가 시켰는지가 없어졌다)
-    if (best === null) {
-      L.leaderId = -1; // 내 종 전멸 — 패배 판정은 기존 그대로(game.ts)
-      return;
-    }
-    L.leaderId = best.id;
-    L.x = best.x;
-    L.y = best.y;
-  }
-
   step(): void {
     this.tick += 1;
     this.grid.rebuild(this.entities);
@@ -828,10 +606,8 @@ export class World {
       // 반격 쿨다운은 여기 한 자리에서만 줄인다(정수 카운터 · rng 미사용 → 스트림 불변).
       if (e.raidCounterCd > 0) e.raidCounterCd -= 1;
     }
-    // 지휘 공백은 여기 한 자리에서만 줄인다(정수 카운터 · rng 미사용 → 스트림 불변).
-    if (this.leadVacuum > 0) this.leadVacuum -= 1;
-    // 알파의 파생값을 틱 시작에 한 번 굳힌다(알파가 없으면 첫 줄에서 빠진다 = 기존과 동일).
-    this.syncLeadStart();
+    // 지침 시트의 틱 시작 정리(발동 집계 0 · 팀 무게중심). 시트가 없으면 아무것도 안 한다.
+    this.syncSheetStart();
     if (this.boss) {
       this.boss.prevX = this.boss.x;
       this.boss.prevY = this.boss.y;
@@ -901,8 +677,6 @@ export class World {
     }
     if (hasDead) this.entities = this.entities.filter((e) => e.alive);
 
-    // 알파가 이번 틱에 쓰러졌으면 옆에 있던 한 마리가 이어받는다(죽은 개체를 걸러낸 뒤라야 정확하다).
-    this.syncLeader();
 
     // ── 방울 줍기 ────────────────────────────────────────────────────────────────
     //   **왜 하필 여기인가**: 죽은 개체를 걸러낸 뒤라 "이번 틱에 죽은 개체가 줍는" 일이 없고,

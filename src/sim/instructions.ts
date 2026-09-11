@@ -15,7 +15,7 @@
 import type { Entity } from "@/sim/entity";
 import { PERK_WHENS, PERK_WHEN_INFO, whenHolds, type PerkCtx, type PerkWhen } from "@/sim/perks";
 import { SIM } from "@/sim/params";
-import { HERD_SHEET_ROWS, tierOf, type Pips } from "@/sim/tiers";
+import { HERD_SHEET_ROWS, tierOf, type Keys, type Pips } from "@/sim/tiers";
 
 // ─────────────────────────────── 어휘 ───────────────────────────────
 
@@ -80,9 +80,13 @@ export const SHEET = {
   scatterRadius: 160,
 } as const;
 
-/** 이 도장으로 쓸 수 있는 줄 수(무리 티어가 늘린다 · 표는 `tiers.ts` 한 곳). */
-export function sheetRows(pips: Pips): number {
-  return HERD_SHEET_ROWS[Math.max(0, Math.min(HERD_SHEET_ROWS.length - 1, tierOf(pips.herd)))] as number;
+/**
+ * 이 게놈으로 쓸 수 있는 줄 수 · 무리 티어가 늘리고(표는 `tiers.ts` 한 곳) 열쇠 「부름」이 한 줄을 더한다
+ * (옛 목소리 반경 ×1.6 의 자리 · 2026-09-11 · 열쇠 문구 `KEY_DESC.call`·카드 `ky_call` 과 한 쌍).
+ */
+export function sheetRows(pips: Pips, keys?: Keys): number {
+  const base = HERD_SHEET_ROWS[Math.max(0, Math.min(HERD_SHEET_ROWS.length - 1, tierOf(pips.herd)))] as number;
+  return keys?.call ? base + 1 : base;
 }
 
 // ─────────────────────────────── 평가 ───────────────────────────────

@@ -133,18 +133,6 @@ export class Minimap {
       if (!d.taken) this.dynG.circle(d.x * s, d.y * s, 1.9).fill(COLORS.gene);
     }
 
-    // 알파(조종 중인 앞장 개체) — 기본 줌이 2.2 로 오르며 미니맵이 사실상 유일한 조망 수단이 됐다.
-    // "내가 지금 어디인가"가 즉시 읽혀야 하므로 내 종 점(1.6px lime)보다 밝고 큰 흰 점 + 링으로 띄운다.
-    // 색은 월드의 알파 표식(청백 0xf0f8ff 계열)과 이어진다. 관전(?watch)은 leaderId<0 라 아무것도 안 뜬다.
-    const lid = world.lead.leaderId;
-    if (lid >= 0) {
-      for (const e of world.entities) {
-        if (e.id !== lid) continue;
-        this.dynG.circle(e.x * s, e.y * s, 2.8).stroke({ color: 0xffffff, width: 1, alpha: 0.95 });
-        this.dynG.circle(e.x * s, e.y * s, 1.4).fill(0xffffff);
-        break;
-      }
-    }
 
     // 현재 보는 영역(카메라 뷰포트) — 화면 절반을 월드 좌표로 환산해 사각형으로.
     const halfW = (screenW / (2 * zoom)) * s;

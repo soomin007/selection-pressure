@@ -26,7 +26,6 @@ import type { BossType } from "@/sim/boss";
 import type { MapType } from "@/sim/mapType";
 import type { DeathCause } from "@/sim/world";
 import type { StageKind } from "@/game/config";
-import type { OrderKind } from "@/sim/herdOrder";
 import { ACT_KEYS, WHEN_KEYS, WHO_KEYS, type Directive } from "@/sim/instructions";
 import type { ExtinctionType, TrialKind } from "@/game/game";
 
@@ -63,18 +62,13 @@ const EXTINCTION_CODE: Record<ExtinctionType, number> = {
   plague: 3,
 };
 
-/** 명령 종류 — 순서가 곧 저장된 숫자의 뜻이다(재배열 금지 · 새 칸은 끝에만). */
-const ORDER_KIND_CODE: Record<OrderKind, number> = {
-  move: 0,
-  hunt: 1,
-  evade: 2,
-  gather: 3,
-  scan: 4,
-  brace: 5,
-  ring: 6,
-  drive: 7,
-};
-const ORDER_KIND_BY_CODE: OrderKind[] = ["move", "hunt", "evade", "gather", "scan", "brace", "ring", "drive"];
+/**
+ * 옛 탭 명령의 종류(2026-09-11 감독형 전환으로 게임에서 사라졌다 · `sim/herdOrder.ts` 삭제). **읽기 호환용**
+ * 으로만 남긴다 — 이미 배포돼 사용자 손에 있는 판 코드에는 tag=order 가 박혀 있고, 모르는 tag 는 디코드
+ * 전체를 실패시킨다. 새 판은 이 기록을 다시는 안 쓴다(쓰기 분기는 지웠다).
+ */
+export type LegacyOrderKind = "move" | "hunt" | "evade" | "gather" | "scan" | "brace" | "ring" | "drive";
+const ORDER_KIND_BY_CODE: LegacyOrderKind[] = ["move", "hunt", "evade", "gather", "scan", "brace", "ring", "drive"];
 
 const TRIAL_CODE: Record<TrialKind, number> = {
   hunt: 0,
@@ -293,28 +287,17 @@ export interface StageRecord {
 }
 
 /**
- * **사람이 내린 명령 하나(탭).** 재현의 마지막 빠진 조각이다.
- *
- * ⚠ 왜 필요했나(2026-08-09). 판 코드는 시드와 카드·구입을 담아 "판이 통째로 재현된다"고 적혀
- *   있었지만, **탭은 안 담겼다.** 그래서 사람이 실제로 플레이한 판을 되살리면 첫 단계부터
- *   개체 수가 갈렸고(기록 13 · 재현 22), 무엇이 다른지 알 길이 없었다. 조종이 기본이 된 지금
- *   탭은 카드만큼 판을 바꾼다 — 지시를 따르는 동안 무리는 먹지 않고, 방울을 주우러 새고,
- *   「피해라」는 기력을 문다.
- *
- * 담는 것은 **월드 좌표와 종류와 시각(틱)** 셋뿐이다. 화면 좌표·카메라는 안 담는다(파생이라
- * 재현에 필요 없고, 담으면 화면 크기가 다른 기기에서 거짓이 된다).
- * `tick` 은 **그 단계가 시작한 뒤 흐른 틱**이다 — 런 전체 누적으로 담으면 단계 하나가 밀릴 때
- * 뒤의 모든 탭이 함께 밀린다.
+ * **옛 탭 명령 하나(2026-08-09 ~ 2026-09-11).** 감독형 전환으로 게임에서 사라졌고 **읽기 호환용**으로만
+ * 남는다(위 `LegacyOrderKind` 주석). 재생기는 이 기록을 만나면 그대로 건너뛴다 · 옛 판의 탭을 되살릴
+ * 명령 경로가 이제 없으므로 그 판은 완전 재현이 아니다(디코더가 그 사실을 말한다).
  */
 export interface OrderRecord {
   t: "order";
-  /** 이 탭이 떨어진 단계(`entries` 안의 몇 번째 stage 인지가 아니라 그 단계의 순서 번호). */
   stage: number;
-  /** 단계 시작 후 흐른 틱. */
   tick: number;
   x: number;
   y: number;
-  kind: OrderKind;
+  kind: LegacyOrderKind;
 }
 
 /**
@@ -359,7 +342,8 @@ export interface RunCodeHeader {
   champions: number;
   everConquered: boolean;
   rerollUnlocked: boolean;
-  leadEnabled: boolean;
+  /** 단계당 경험치 상한이 켜져 있었는가(옛 이름 leadEnabled · 비트 자리는 그대로 · 재생이 같은 상한을 건다). */
+  stageXpCap: boolean;
   /** 은근한 보정이 켜져 있었는가(프로브는 끈다 · 켠 채 잰 난이도는 실제 난이도가 아니다). */
   assistEnabled: boolean;
 }
@@ -528,7 +512,7 @@ export function encodeRunCode(data: RunCodeData): string {
   w.u8(
     (h.everConquered ? 1 : 0) |
       (h.rerollUnlocked ? 2 : 0) |
-      (h.leadEnabled ? 4 : 0) |
+      (h.stageXpCap ? 4 : 0) |
       (h.assistEnabled ? 8 : 0),
   );
 
@@ -568,13 +552,13 @@ function writeEntry(w: ByteWriter, e: RunLogEntry): void {
     return;
   }
   if (e.t === "order") {
+    // 옛 탭 명령 · 새 판에서는 생기지 않는다. 옛 코드를 되풀어 다시 담는 경우를 위해 그대로 쓴다(왕복 보존).
     w.u8(TAG.order);
     w.varint(e.stage);
     w.varint(e.tick);
-    // 좌표는 정수 픽셀로 접는다 — 소수점은 재현에 필요 없다(탭은 손가락이 찍는 자리다).
     w.varint(Math.round(e.x));
     w.varint(Math.round(e.y));
-    w.u8(ORDER_KIND_CODE[e.kind] ?? 0);
+    w.u8(Math.max(0, ORDER_KIND_BY_CODE.indexOf(e.kind)));
     return;
   }
   if (e.t === "sheet") {
@@ -723,7 +707,7 @@ export function decodeRunCode(text: string): RunCodeDecode {
       champions,
       everConquered: (flags & 1) !== 0,
       rerollUnlocked: (flags & 2) !== 0,
-      leadEnabled: (flags & 4) !== 0,
+      stageXpCap: (flags & 4) !== 0,
       assistEnabled: (flags & 8) !== 0,
     };
 

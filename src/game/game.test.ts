@@ -1621,7 +1621,9 @@ describe("방울(유전자 점수) · 사건에서 나와 티어로 바뀐다", 
    * 세계는 **실제 플레이 치수**로 만든다(startRun 의 240x400 은 고리가 통째로 클램프돼 거리가 거짓이
    * 된다). 실측(2026-08-07 · 6시드)은 0.2~11.8초였고, 예산 900틱(약 30초)은 한 라운드 안이라는 뜻이다.
    */
-  it("방울로 보낸 무리가 실제로 줍는다 (명령 반경 64 vs 줍기 반경 16)", () => {
+  it("지침이 이동을 가져간 무리는 근처 방울을 먼저 줍는다 (방울 우선 · 줍기 반경 16)", () => {
+    // 옛 「탭으로 보낸 무리가 줍는다」 테스트의 후신(2026-09-11 · 탭 명령 → 지침 시트). 지침 「뭉친다」가
+    // 이동을 가져간 개체는 반경 안의 방울을 먼저 들른다(behavior 의 지침 블록 · 방울 우선).
     for (const seed of ["reach-a", "reach-b", "reach-c"]) {
       const g = new Game(MOBILE.width, MOBILE.height);
       g.fixedSeed = seed;
@@ -1629,26 +1631,37 @@ describe("방울(유전자 점수) · 사건에서 나와 티어로 바뀐다", 
       let guard = 0;
       while (g.phase === "draft" && guard++ < 12) g.pickCard(0);
       for (let i = 0; i < 30; i++) g.update(34); // 무리가 자리를 잡는다
+      expect(g.openTimeout(), `${seed}: 작전타임을 못 열었다`).toBe(true);
+      expect(g.setSheet([{ who: "all", when: "always", act: "gather" }])).toBe(true);
+      g.closeTimeout();
 
       const before = g.world.geneCollected;
       const bankBefore = g.geneBank;
-      expect(g.world.spawnGeneDropNear(3, "boss"), `${seed}: 방울을 아예 못 놨다`).toBe(true);
+      // 방울을 무리 무게중심에서 60px 떨어진 딛을 수 있는 자리에 놓는다 · 지침의 방울 우선은 **반경
+      // ORDER.geneRadius(160) 안**의 방울만 들르므로(이동을 가져간 개체 기준), 사건 방울처럼 멀리(200px+)
+      // 놓으면 지침으로는 못 닿는다(감독은 「저기로 가라」를 더는 못 한다 · 그건 이 테스트의 대상이 아니다).
+      const c = g.world.playerCentroid();
+      const tr = g.genome.traits;
+      const spot = g.world.terrain.nearestPassable(
+        c.x + 60,
+        c.y,
+        tr.swimming >= SIM.swimThreshold,
+        tr.swimming < SIM.aquaticOnlyThreshold,
+        tr.wings >= SIM.flyThreshold,
+      );
+      g.world.spawnGeneDrop(spot.x, spot.y, 3, "boss");
       const drop = g.world.geneDrops[g.world.geneDrops.length - 1];
       expect(drop).toBeDefined();
       if (drop === undefined) return;
-      expect(g.setHerdOrder(drop.x, drop.y, "move"), `${seed}: 그 자리로 보내는 명령이 거부됐다`).toBe(true);
 
-      // **보낸 그 방울**이 주워지는지를 본다 · 예전엔 "geneCollected 가 움직였는가"로 물었는데,
-      // 2026-08-09 「방울 우선」 이후로 무리가 가는 길의 **다른** 사건 방울도 알아서 주워서 그
-      // 조건이 먼저 참이 될 수 있다(그러면 정작 보낸 곳은 안 재게 된다).
+      // **놓은 그 방울**이 주워지는지를 본다 · geneCollected 만 보면 가는 길의 다른 방울로 먼저 참이 된다.
       let t = 0;
       while (!drop.taken && t < 900) {
         g.update(34);
         t++;
       }
-      expect(t, `${seed}: 보냈는데 30초 안에 아무도 못 주웠다`).toBeLessThan(900);
-      // 지갑은 **그사이 sim 이 센 만큼** 정확히 는다(상수 3 을 못 박지 않는다 · 위와 같은 이유로
-      // 다른 방울이 함께 주워질 수 있다). 못 박을 것은 숫자가 아니라 sim ↔ 지갑의 이음매다.
+      expect(t, `${seed}: 지침 아래 30초 안에 아무도 못 주웠다`).toBeLessThan(900);
+      // 지갑은 **그사이 sim 이 센 만큼** 정확히 는다(상수 3 을 못 박지 않는다 · 다른 방울이 함께 주워질 수 있다).
       expect(g.geneBank - bankBefore).toBe(g.world.geneCollected - before);
       expect(g.geneBank - bankBefore).toBeGreaterThanOrEqual(3);
     }

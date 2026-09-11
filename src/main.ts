@@ -5,7 +5,7 @@
 
 import { Application, Container, Graphics } from "pixi.js";
 import { chooseLayout, COLORS, uiScale } from "@/config";
-import { DEBUG, DEBUG_ACTIVE, TUNE, debugLabel } from "@/debug";
+import { DEBUG, DEBUG_ACTIVE, debugLabel } from "@/debug";
 import { setupViewport } from "@/render/viewport";
 import { WorldView } from "@/render/worldView";
 import { createGoalBar, survivalChip } from "@/ui/goalBar";
@@ -47,7 +47,6 @@ import {
   type Category,
 } from "@/sim/tiers";
 import type { Genome } from "@/sim/genome";
-import type { HerdOrder } from "@/sim/herdOrder";
 import { createManagerPanel, MANAGER_COLUMN_RESERVE_PX } from "@/ui/managerPanel";
 import { isPredatorBoss, bossRaidable } from "@/sim/boss";
 
@@ -59,114 +58,10 @@ import { isPredatorBoss, bossRaidable } from "@/sim/boss";
 // ── 카메라 추종 상수 셋 (2026-08-10 · 「시대가 갈수록 카메라가 어정쩡하게 움찔거린다」 실측 후) ──
 // 재는 법과 그때의 숫자는 `scripts/camera-probe.mjs` 주석에 있다. 셋을 따로 두는 이유는 각각 다른
 // 원인을 맡기 때문이다: 이징=따라붙는 속도 · 평활=목표점 자체의 잔떨림 · 데드존=안 움직여도 되는 범위.
-const LEAD_CAM_EASE = 10; // 지시 모드 카메라 이징(1/s · 시상수 100ms). 기본 3.5 는 286ms 라 물먹은 느낌
+const CAM_EASE = 10; // 카메라 이징(1/s · 시상수 100ms). 3.5 는 286ms 라 물먹은 느낌이었다
 const CAM_FOCUS_SMOOTH = 12; // 무리 초점 저역통과(1/s · 시상수 83ms) · 초점이 매 틱 떠는 것을 여기서 먹는다
 const CAM_DEADZONE = 22; // 카메라를 안 움직이는 창의 반지름(**논리 화면 px** · 540 폭 기준 ≈ 4%)
 const PEEK_RETURN_MS = 1500; // 훔쳐보기(드래그·미니맵·2손가락 팬) 입력이 끝나고 무리로 복귀까지의 시간
-
-// --- 탭 제스처의 계약 ---
-// ⚠ **탭 명령(가라·피해라·명령 휠·지휘봉 이양)은 2026-09-11 에 끊었다** (**[사용자 2026-09-11]** 감독형
-//   전환 · 알파 탭 조종 → 사전 지침 시트 + 작전타임 · docs/design/manager_instructions.md). 관전 중 탭은
-//   이제 훔쳐보기 해제뿐이다. 아래 순수 함수들(isDoubleTap·orderDenyLine·rewoundOrder·undoneOrder)은
-//   호출부가 사라졌고 테스트(main.tapOrder.test.ts)만 물고 있다 · 옛 명령 경로 삭제 조각에서 함께 지운다.
-const DOUBLE_TAP_MS = 300;
-const DOUBLE_TAP_PX = 44; // 손끝 굵기. 이보다 멀면 "다른 곳을 또 탭한 것"이다.
-
-/** 직전 탭의 시각(performance.now 기준 ms)과 화면 좌표. */
-interface TapMark {
-  readonly t: number;
-  readonly x: number;
-  readonly y: number;
-}
-
-/**
- * 이 탭이 **직전 탭과 한 쌍인가**(= 더블탭). 시간과 거리를 함께 본다: 빠르기만 하고 멀면 그건
- * "다른 곳을 또 탭한 것"이지 같은 자리를 두 번 두드린 게 아니다.
- */
-export function isDoubleTap(prev: TapMark, now: number, x: number, y: number): boolean {
-  return now - prev.t < DOUBLE_TAP_MS && Math.hypot(x - prev.x, y - prev.y) < DOUBLE_TAP_PX;
-}
-
-/** 명령 휠 한 칸의 상태 중 **거절 이유를 고르는 데 필요한 것만**(`game.orderWheel()` 원소가 그대로 맞는다). */
-export interface OrderSlotState {
-  readonly spec: { readonly label: string; readonly hint: string };
-  readonly unlocked: boolean;
-  readonly cdLeft: number;
-}
-
-/**
- * 거절된 명령의 **참인 이유 한 줄**. 이유를 모르면 `null` 을 내고 **아무 말도 안 한다.**
- *
- * ⚠ 2026-08-09 까지 이 자리는 잠김이 아니면 무조건 "아직 숨을 고르는 중입니다"로 떨어졌다. 그런데
- *   지휘 공백(알파가 막 쓰러졌다)으로 거절될 때도 여기까지 내려왔고, 그때 칸은 `unlocked=true` ·
- *   `cdLeft=0` 이라 **쿨타임도 아닌데 쿨타임이라고 말했다**(실측: 자연 판 6시드 중 셋에서 프레임의
- *   31~41%가 지휘 공백이었다). 게다가 이미 뜬 진짜 이유("무리가 잠시 흩어집니다")를 덮어썼다.
- *   이 저장소의 규칙("수치가 화면 표시와 다르면 그건 거짓말이다")에 맞추면, 모르는 이유를 지어내는
- *   것보다 **입을 다무는 쪽**이 맞다. 진짜 이유는 그것을 아는 자리(`issueOrder`)가 이미 말했다.
- *
- * 잠김 문구를 여기서 새로 쓰지 않고 **칸의 hint 를 그대로 쓴다** · 티어 조건은 `ORDER_SPECS` 한 곳에만
- * 적혀 있어야 한다("다리 1단"을 여기 또 적으면 조건이 바뀌는 날 화면이 조용히 거짓말한다).
- * 조사(은/는·을/를)가 이름에 따라 갈리므로 "「이름」 명령은" 꼴로 묶어 어느 칸에나 맞게 한다.
- */
-export function orderDenyLine(slot: OrderSlotState | undefined): string | null {
-  if (slot === undefined) return null;
-  if (!slot.unlocked) {
-    return slot.spec.hint === "" ? null : `「${slot.spec.label}」 명령은 ${slot.spec.hint}`;
-  }
-  if (slot.cdLeft > 0) return `「${slot.spec.label}」 명령은 아직 숨을 고르는 중입니다`;
-  return null;
-}
-
-/**
- * 덮여 있던 앞 명령을 **덮여 있던 시간만큼 흘려서** 되돌린다.
- *
- * 왜 그냥 되돌리지 않나: 「피해라」처럼 수명(ticks)이 있는 명령은 덮여 있는 동안 `tickOrders` 가
- * 안 깎는다. 그대로 꽂아 주면 덮였던 시간(최대 더블탭 창 0.3초)만큼 **공짜로 더 사는** 명령이 되고,
- * 그건 화면이 말한 4초와 다른 값이다. 수명이 그 사이에 다했으면 되살리지 않고 걷는다(null).
- * 「가라」는 무기한(ticks 0)이라 흘릴 시간이 없다.
- */
-export function rewoundOrder(prev: HerdOrder | null, elapsedTicks: number): HerdOrder | null {
-  if (prev === null) return null;
-  const t = prev.ticks;
-  if (t === undefined || t <= 0) return prev;
-  const left = t - Math.max(0, elapsedTicks);
-  if (left <= 0) return null;
-  return { ...prev, ticks: left };
-}
-
-/** 첫 탭이 밀어 넣은 「가라」와, 그것이 덮어쓴 앞 명령. 더블탭이 거절되면 이 기록으로 되돌린다. */
-export interface TapUndo {
-  /** 첫 탭이 실제로 꽂아 넣은 그 객체(동일성 비교용). */
-  readonly installed: HerdOrder;
-  /** 첫 탭 직전에 걸려 있던 뜻. 없었으면 null. */
-  readonly prev: HerdOrder | null;
-  /** 첫 탭 시점의 `world.tick`. */
-  readonly tick: number;
-}
-
-/**
- * 거절된 더블탭 뒤에 **무엇을 되돌려 놓아야 하는가.**
- * `undefined` = 손대지 않는다 · `HerdOrder | null` = 그 값으로 되돌린다.
- *
- * ⚠ 결함 D(2026-08-09 실측): 탭 처리는 단일 탭을 먼저 실행하므로, 더블탭의 첫 탭이 이미
- *   `setHerdOrder(x, y, "move")` 를 성공시킨다. 두 번째 탭의 「피해라」가 거절되면(다리 0단 ·
- *   쿨타임 · 지휘 공백) **아무도 그 「가라」를 걷지 않아서**, 포식자 위를 두 번 두드린 사람은
- *   "다리 1단이 되면…"이라는 안내를 보면서 무리가 그 포식자 쪽으로 걸어가는 것을 본다.
- *   기본 프리셋은 다리 0단이라 이것이 **기본 상태**였다.
- *
- * ⚠ 동일성(`current !== undo.installed`)을 왜 보나: 그 0.3초 사이에 **다른 것이 명령을 바꿨을 수
- *   있다.** 특히 알파가 죽으면 sim 이 `world.herdOrder = null` 로 걷어 간다(world.ts) · 그때 옛
- *   명령을 되살리면 지휘 공백인 무리에게 없던 뜻이 생긴다. 되돌리기는 **내가 방금 놓은 것이 그대로
- *   있을 때만** 한다. 「가라」는 ticks 0 이라 `tickOrders` 가 객체를 안 갈아 끼워, 이 비교가 성립한다.
- */
-export function undoneOrder(
-  undo: TapUndo | null,
-  current: HerdOrder | null,
-  tick: number,
-): HerdOrder | null | undefined {
-  if (undo === null || current !== undo.installed) return undefined;
-  return rewoundOrder(undo.prev, tick - undo.tick);
-}
 
 async function boot(): Promise<void> {
   const layout = chooseLayout();
@@ -302,17 +197,12 @@ async function boot(): Promise<void> {
   const seedParam = new URLSearchParams(window.location.search).get("seed");
   if (seedParam) game.fixedSeed = seedParam;
 
-  // 무리 지시(기본값) · URL·DOM 은 여기까지만 읽고, sim 에는 불리언 하나만 넘어간다.
-  // ?watch 로 끄면 game.leadEnabled 가 false 라 world.lead.leaderId 가 영영 -1 이고, 아래 조종 코드는
-  // 전부 첫 줄에서 빠진다 = 조작 없는 예전 관전 세계와 문자 그대로 동일하게 돈다(밸런스 비교용).
-  const leadMode = DEBUG.leadControl;
-  game.leadEnabled = leadMode;
+  // 단계당 경험치 상한 · 배포판은 늘 켠다(옛 조종 모드의 leadEnabled 가 걸던 것 그대로 · 테스트·프로브는
+  // Game 기본값 false). 감독형에서 이 상한의 근거가 약해진 것은 backlog(재측정 때 결정).
+  game.stageXpCapOn = true;
   // 보스·대멸종 단계는 자동 작전타임으로 시작한다(**[사용자 2026-09-11]** 고정 + 호출). 테스트·프로브가
-  // 멈추지 않게 Game 의 기본은 false 이고 화면이 있는 여기서만 켠다(leadEnabled 와 같은 선례).
+  // 멈추지 않게 Game 의 기본은 false 이고 화면이 있는 여기서만 켠다.
   game.autoTimeout = true;
-  // ?follow=<수> 로 "무리가 얼마나 따라오는가"를 배포 없이 폰에서 바로 바꿔 본다. 안 붙이면 NaN 이라
-  // sim 기본값(LEAD.followCohesion)을 그대로 쓴다.
-  if (leadMode && Number.isFinite(TUNE.leadFollow)) game.leadFollowWeight = TUNE.leadFollow;
 
   // 훔쳐보기 카메라 — 드래그·미니맵·2손가락 팬으로 잠깐 다른 곳을 본다. 입력이 끝나고
   // PEEK_RETURN_MS 지나면 무리에게 자동 복귀한다(카메라의 기본은 주 무리를 담는 것이다).
@@ -1296,7 +1186,6 @@ async function boot(): Promise<void> {
         0xf0f8ff,
       );
     }
-    view.setLead(null); // 앞장선 한 마리를 표시하던 자리 · 무리 지시에는 그런 개체가 없다
 
     updateCamera(ticker.deltaMS);
     // 미니맵 — 관전 중에만. 드래프트에선 캔버스 전체가 블러라 뭉갠 미니맵이 남으면 지저분하다.
@@ -1347,8 +1236,7 @@ async function boot(): Promise<void> {
 
   function updateCamera(dtMS: number): void {
     // 훔쳐보기 자동 복귀 · 입력(드래그·핀치·미니맵)이 끝나고 PEEK_RETURN_MS 지나면 무리로 돌아간다.
-    // 지시 모드에서만: ?watch 관전 세계에선 수동 조망을 그대로 두는 것이 관찰에 맞다.
-    if (leadMode && manualCam) {
+    if (manualCam) {
       // 손가락이 하나라도 화면에 붙어 있거나 미니맵을 쥐고 있으면 "보는 중"이다 — 핀치에서 한
       // 손가락만 뗀 상태·미니맵을 가만히 누르고 있는 상태에서 카메라가 손 위에서 튀지 않게.
       const peekHeld = activePointers.size > 0 || minimap.panHeld;
@@ -1424,8 +1312,7 @@ async function boot(): Promise<void> {
     // (예: 큰 맵에서 0.5 까지 물러난 채 새 런의 작은 첫 맵으로 오면 검은 바깥이 그대로 보인다).
     userZoom = clampUserZoom(userZoom);
     tz = Math.max(minUserZoom(), Math.min(5, tz * userZoom));
-    // 지시 모드에선 카메라가 무리에 바짝 붙는다(기본 3.5 는 시상수 286ms 라 화면이 물먹은 느낌이 된다).
-    const ease = leadMode ? LEAD_CAM_EASE : 3.5;
+    const ease = CAM_EASE;
     // ③ **프레임률 정확 보정.** 예전 식 `min(1, dt·ease)` 는 지수 감쇠의 1차 근사라 프레임이 길어질수록
     //    실제보다 세게 당긴다(dt 16.7ms 에서 +8%, 33.4ms 에서 +16%, 50ms 에서 +24%). 폰은 프레임 시간이
     //    고르지 않아 그 과다 보정이 프레임마다 다른 크기로 들어오고, 그것이 곧 「움찔」로 보인다.
@@ -1524,10 +1411,8 @@ function emberDots(n: number): string {
   return "●".repeat(k) + "○".repeat(GAME.emberMax - k);
 }
 
-// 브라우저에서만 부팅한다. 이 파일은 탭 판정의 순수 함수들(isDoubleTap·orderDenyLine·rewoundOrder·
-// undoneOrder)도 함께 내보내는데, 테스트가 그것들을 가져올 때 부팅까지 시작하면 window 가 없어
-// "부트 실패" 가 찍힌다. 동작에는 지장이 없지만, 테스트 출력에 상주하는 실패 로그는 **진짜 고장을
-// 가린다**. 실제 화면에는 window 가 늘 있으므로 이 조건이 부팅을 막는 일은 없다.
+// 브라우저에서만 부팅한다(테스트가 이 모듈을 import 할 때 window 없이 부팅을 시작하면 "부트 실패" 로그가
+// 진짜 고장을 가린다). 실제 화면에는 window 가 늘 있으므로 이 조건이 부팅을 막는 일은 없다.
 if (typeof window !== "undefined") {
   boot().catch((err: unknown) => {
     console.error("부트 실패:", err);

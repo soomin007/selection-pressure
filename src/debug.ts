@@ -24,10 +24,6 @@ export const DEBUG = {
   showAlpha: params.has("showalpha"),
   // ?dev — 화면 하단에 위협 소환 버튼 패널(각 보스/시련/대멸종을 즉시 띄워 반복 없이 확인).
   devSummon: params.has("dev"),
-  // 알파 조종이 이제 기본값이다. ?watch = 조작 없는 예전 관전 세계(밸런스 비교용 임시 탈출구) —
-  // sim 진입점(lead.leaderId)이 아예 안 열려 조종 이전과 완전히 동일하게 돈다.
-  // (?alpha 는 이제 무의미하지만 붙여도 에러는 아니다 — 그냥 무시된다.)
-  leadControl: !params.has("watch"),
 } as const;
 
 // 회전 떨림 튜닝(폰에서 URL 로 즉시 조절 → 한 번 배포로 여러 값을 시험).
@@ -36,10 +32,6 @@ export const TUNE = {
   rotEase: num("rotk", 0.2), // 데드존을 넘는 회전의 이징 세기.
   renderSmooth: num("smooth", 0.3), // 렌더 위치 평활(60fps 1프레임당). 작을수록 부드럽고 잔상↑. 1=끔.
   headingSmooth: num("head", 0.1), // 헤딩 벡터 저역통과(60fps 1프레임당). 작을수록 회전 안정·전환 느림. 1=끔.
-  // ?follow=<수> — 무리가 앞장선 자를 따르는 세기(×무리 성향). 조종 모드에서만 쓰인다.
-  // NaN 이면 안 붙인 것 → sim 기본값(LEAD.followCohesion)을 그대로 둔다. "따라오는 느낌"을 폰에서
-  // 배포 없이 바로 튜닝하려고 열어 둔 구멍이다. 0 이면 아무도 안 따라온다(무리 성향과 무관하게).
-  leadFollow: num("follow", NaN),
 } as const;
 
 const tuned =

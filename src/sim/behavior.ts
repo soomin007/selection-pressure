@@ -255,53 +255,6 @@ export function biteOutcome(
   };
 }
 
-/** 앞장선 개체(알파)에서 본 다른 개체와의 관계. 화면 표시와 조종 능력이 **둘 다 이 하나를 읽는다.** */
-export interface LeadRelation {
-  /** 저쪽이 나를 잡아먹을 수 있다 — 사냥하는 식성이고, 나를 물면 이빨이 박힌다. */
-  threat: boolean;
-  /** 내가 저쪽을 잡아먹을 수 있다 — 내가 사냥하는 식성이고, 물면 이빨이 박힌다. */
-  prey: boolean;
-  /**
-   * 노릴 수는 있는데 **이빨이 안 박히는** 상대(사냥하는 식성이지만 체급이 크게 밀린다 — "코끼리는 못 문다").
-   * prey 와 배타적이다.
-   *
-   * 왜 따로 두나: 이게 없으면 못 무는 상대는 화면에도 안 뜨고 사냥 버튼도 안 겨눠서, 플레이어가
-   * **"왜 안 되는지"를 영영 못 배운다**(없다는 것으로 가르치는 건 가장 약한 가르침이다).
-   * 노릴 수 있게 두고 물었을 때 튕기게 해야 몸으로 안다(world 의 "block" 사건).
-   */
-  tough: boolean;
-}
-
-/**
- * 알파와 다른 개체의 관계 — **"쟤가 날 잡아먹나 / 내가 쟤를 잡아먹나"의 단일 진실.**
- *
- * 왜 여기 있나: 이 판정은 두 곳이 쓴다. ① 화면(누구에게 위험 표식을 붙일까) ② 조종 능력(물기 버튼이
- * 저 개체에 통하나). 같은 규칙을 두 군데 적으면 조용히 어긋나고, 그러면 **화면이 거짓말한다** —
- * 이 저장소는 방금 그 사고를 겪었다(known_issues "화면 숫자를 규칙에서 다시 유도하지 마라").
- * herdShielded 를 렌더가 그대로 읽는 것과 같은 이유·같은 패턴이다.
- *
- * 판정은 시뮬이 실제로 쓰는 것 둘을 그대로 조합한다:
- *  · 사냥하는 식성인가 — `diet > SIM.dietHuntMin` (stepEntity 의 canHunt 와 같은 식)
- *  · 물면 박히는가 — `biteOutcome(...).ignored` 가 아닌가. **공격력 차와 몸집 차를 함께** 본다.
- *    그래서 같은 종이라도 개체마다 갈릴 수 있다(큰 개체는 못 문다). 그게 화면에 그대로 보여야 한다.
- *
- * 같은 종·친화 진영(친척)은 둘 다 false 다 — 서로 안 잡아먹는다.
- * ⚠ 무리 방어(herdShielded)는 **일부러 안 본다.** 그건 "AI 포식자가 표적으로 고르는가"의 규칙이지
- *   "물면 박히는가"가 아니다. 사람이 몰고 들어가 무는 것까지 막지는 않는다.
- * rng 미사용·순수 함수(테스트로 규칙을 못 박는다).
- */
-export function leadRelation(lead: Entity, other: Entity): LeadRelation {
-  if (lead.species.id === other.species.id || areFriends(lead.species, other.species)) {
-    return { threat: false, prey: false, tough: false };
-  }
-  const me = lead.genome.traits;
-  const it = other.genome.traits;
-  const threat = it.hunt > 0 && !biteOutcome(it.attack, me.defense, it.size, me.size).ignored;
-  const canHunt = me.hunt > 0;
-  const lands = !biteOutcome(me.attack, it.defense, me.size, it.size).ignored;
-  return { threat, prey: canHunt && lands, tough: canHunt && !lands };
-}
-
 /**
  * 무리 방어 규칙(순수 함수 — 테스트로 규칙을 못 박는다). 무리 성향이 임계를 넘고 곁에 같은 종이
  * 충분히 있으면 방패가 선다. 둘 다 있어야 한다: 형질만 높고 흩어져 있으면 방패가 없고(뭉쳐야 방어다),
@@ -593,90 +546,6 @@ function resolveBite(e: Entity, prey: Entity, world: World, ranged: boolean): vo
   if (prey.energy <= 0) devour(e, prey, world);
 }
 
-/**
- * 사람이 시킨 사냥의 **겨눔 반경**(px) — 사정거리와 감지 범위 중 넓은 쪽.
- * 사정거리(12px)만 보면 근접 종은 버튼이 사실상 안 켜진다(실측: 90초 동안 한 번도. 먹잇감 최근접이
- * 평균 90px 였다). 그러면 물기는 원거리 종만의 능력이 되고, 근접 종에겐 없는 기능이나 마찬가지다.
- * "볼 수 있으면 노릴 수 있다"가 맞는 규칙이고, 그래서 **시야 형질이 사냥 가능 범위를 정한다** —
- * 눈이 밝을수록 멀리서 표적을 잡는다(초음파 종은 사방으로). 노린다고 물리는 건 아니다: 실제 물기는
- * 여전히 사정거리 안에서만, 같은 판정·같은 쿨다운으로 일어난다.
- *
- * 함수로 뽑은 까닭: 렌더가 같은 값을 읽어 "이 밖은 못 겨눈다"(브래킷 흐림)를 그린다 — 겨눔 규칙의
- * 단일 진실이고, 식을 두 군데 적으면 화면과 실제가 조용히 어긋난다(복제 금지 원칙).
- * ⚠ leadBiteTarget 안에 있던 계산을 **한 글자도 안 바꾸고** 옮겼다. max 비교 순서·수식을 바꾸면
- *   부동소수점 마지막 자리가 달라져 golden 지문이 깨진다(attackRangeOf 의 주석과 같은 이유).
- * rng 미사용·순수 읽기.
- */
-export function leadTargetRange(lead: Entity, world: World): number {
-  const lt = lead.genome.traits;
-  return Math.max(
-    attackRangeOf(lt),
-    visionRadius(lt, world, lead.x, lead.y),
-    SIM.echoBase * (lt.echo / TRAIT_MAX),
-  );
-}
-
-/**
- * 사람이 물기를 눌렀을 때 **누가 물리는가** — 겨눔 반경(leadTargetRange) 안에서
- * `leadRelation(...).prey` 인 개체 중 가장 가까운 것. 거리가 같으면 **작은 id**(id 는 유일값이라
- * 동률이 원리적으로 없는 전순서다 → 격자 순회 순서와 무관하게 답이 하나다. rng 로 고르면 결정론이 깨진다).
- *
- * **지정 사냥(world.lead.orderTargetId ≥ 0)이면 그 개체만 본다.** 유효(생존 + prey|tough +
- * 겨눔 범위 안)하면 그것, 무효면 **null** — 자동 최근접으로 대체하지 않는다. 잠근 대상을 놓쳤는데
- * 옆의 다른 개체를 무는 사고를 막기 위해서다(명령은 "그 놈"이지 "아무나"가 아니다).
- *
- * ⚠ 조건을 여기서 다시 유도하지 않는다. "내가 쟤를 잡아먹을 수 있나"는 `leadRelation` 하나가 정하고,
- *   화면의 호박빛 브래킷(render/leadVision)도 같은 함수를 읽는다 → **브래킷이 뜬 개체 = 물리는 개체**가
- *   정의상 어긋날 수 없다(known_issues "화면에 뜨는 숫자를 규칙에서 다시 유도하지 마라").
- *   사거리도 AI 사냥이 쓰는 `attackRangeOf` 그대로다.
- *
- * 전체 순회가 아니라 격자 이웃만 훑는다(사거리는 12~60px 남짓이라 몇 칸이면 끝난다).
- * rng 미사용·순수 읽기 — 그래서 화면 표시용으로 매 틱 불러도 세계가 안 갈린다.
- */
-export function leadBiteTarget(lead: Entity, world: World): Entity | null {
-  const r = leadTargetRange(lead, world);
-  // 지정 사냥 — 이 분기는 명령에 targetId 가 실렸을 때만 밟힌다(orderTargetId 는 매 틱 명령 미러라,
-  // 명령을 한 번도 안 준 세계는 늘 -1 → 아래 자동 선택이 문자 그대로 기존 코드다. rng 미사용).
-  const orderId = world.lead.orderTargetId;
-  if (orderId >= 0) {
-    for (const o of world.entities) {
-      if (o.id !== orderId) continue;
-      if (o === lead || !o.alive) return null;
-      const rel = leadRelation(lead, o);
-      if (!rel.prey && !rel.tough) return null;
-      const d2 = (o.x - lead.x) ** 2 + (o.y - lead.y) ** 2;
-      // 범위 밖이어도 null — 잠금이 풀린 게 아니라 "지금은 못 겨눈다"다(명령은 레벨 입력이라
-      // 다시 범위에 들면 다음 틱에 저절로 되잡힌다).
-      return d2 <= r * r ? o : null;
-    }
-    return null; // 지정한 개체가 세상에 없다(이미 걷혔다) — 역시 자동 대체 없음
-  }
-  // **물리는 상대를 늘 먼저 고른다.** 못 무는 거구(tough)는 근처에 진짜 먹잇감이 하나도 없을 때만
-  // 겨눈다 — 그래야 코앞의 코끼리 때문에 저쪽 토끼를 놓치는 일이 없고, 동시에 "왜 안 되는지"를
-  // 배울 기회(물었을 때의 튕김)는 남는다. 정렬 키는 (물리는가, 거리², id) 순의 전순서라 답이 하나다.
-  let best: Entity | null = null;
-  let bestId = -1;
-  let bestD2 = Infinity;
-  let bestLands = false;
-  world.grid.forEachMatching(lead.x, lead.y, r, (o) => {
-    // 격자는 틱 시작에 만들어지므로 이번 틱에 이미 죽은 개체가 남아 있을 수 있다(AI 사냥도 alive 를 본다).
-    if (o === lead || !o.alive) return;
-    const rel = leadRelation(lead, o);
-    if (!rel.prey && !rel.tough) return;
-    const d2 = (o.x - lead.x) ** 2 + (o.y - lead.y) ** 2;
-    const better =
-      best === null ||
-      (rel.prey !== bestLands ? rel.prey : d2 < bestD2 || (d2 === bestD2 && o.id < bestId));
-    if (better) {
-      bestLands = rel.prey;
-      bestD2 = d2;
-      bestId = o.id;
-      best = o;
-    }
-  });
-  return best;
-}
-
 export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   const t = e.genome.traits;
   // **조건부 특성**(`sim/perks.ts`) — 카드가 주는 것의 절반. 이 개체의 맥락을 한 번 만들어 아래
@@ -711,21 +580,15 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 결정론 안전. 야생 포식자도 같은 리듬을 탄다(의도된 세계 변화 · 골든 지문 재기준선).
   const preyNow = e.targetPrey;
   const meleeHunter = t.ranged < SIM.rangedThreshold;
-  // **사람의 지시·조종을 받는 중인가** — 잠행(3막)은 자율 사냥의 리듬이지 명령의 리듬이 아니다.
-  // 이 게이트가 없으면 「가라」로 이동 중인 개체가 사냥감을 감지하는 순간 걸음이 0.62배로 죽어
-  // 조종감이 통째로 무너진다(실측: 벽 판 지시 도달 160 → 263px 후퇴 · 테스트가 잡았다).
-  const commanded =
-    e.species.isPlayer &&
-    ((world.herdOrder !== null && world.hearsOrder(e.x, e.y)) ||
-      (world.lead.cmd !== null && world.lead.cmd.throttle > 0 && e.id === world.lead.leaderId));
-  if (preyNow !== null && preyNow.alive && meleeHunter && !commanded) {
+  // (옛 탭 명령 아래에서는 3막을 접었다 · 2026-09-11 감독형 전환으로 그 게이트가 사라졌다. 지침 시트의
+  //  이동은 desired 만 섞으므로 잠행 감속이 그 위에 그대로 얹힌다 · 이 상호작용은 backlog.)
+  if (preyNow !== null && preyNow.alive && meleeHunter) {
     const d2p = dist2(e, preyNow);
     const enter2 = SIM.huntBurstRange * SIM.huntBurstRange;
     const keep2 = SIM.huntBurstKeep * SIM.huntBurstKeep;
     e.bursting = e.bursting ? d2p <= keep2 || preyNow.fleeing : d2p <= enter2 || preyNow.fleeing;
   } else {
-    // 명령 아래에서는 3막을 접는다 · 사람이 시킨 사냥은 예전처럼 곧장 전속이다(아래 sprint 도 같이).
-    e.bursting = preyNow !== null && preyNow.alive && commanded;
+    e.bursting = false;
   }
   // 사냥 스퍼트(질주형 육식): 순수 육식이 먹잇감을 **돌진 단계에서** 추격하면 속도가 오른다(치타의
   // 폭발적 추격). 잠행 중에는 안 붙는다 — 그게 3막의 뼈대다. 순수 육식일수록·추격 중일 때만이라
@@ -937,19 +800,8 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     // 무리 안(comfort)에선 cohesion 0 — COM 이 격자 양자화로 매 틱 튀어, 늘 적용하면 무리 종이
     // 제자리에서 떤다. 벗어난 정도에 비례해 서서히 세져(램프) 경계에서의 떨림도 없앤다.
     if (nb && nb.count > 1) {
-      // 알파 조종: **최근에 조종 입력이 있었던 동안만**(followTicks>0) 내 종은 3×3 무게중심 대신
-      // 앞장선 개체를 목표로 삼는다. 명령이 한 번도 없으면 followTicks 가 영원히 0 이라 아래는
-      // 문자 그대로 기존 코드다(무입력 동일성의 유일한 근거 — leaderId 만 보고 갈아타면 안 된다).
-      //
-      // 가중치는 손대지 않는다 → herding 0 이면 w=0 이라 **아무도 안 따라온다**(형질이 곧 규칙).
-      // ⚠ nb.comX/comY 는 종을 안 가린 혼합 무게중심이다(SpatialGrid.neighborhood 는 근처 야생도
-      //   센다). 알파로 갈아타는 것은 "추종을 더한 것"인 동시에 "그 야생 혼입을 지운 것"이기도 하다.
-      //   ON/OFF 를 견줄 때 이 차이를 버그로 오해하지 말 것.
-      const L = world.lead;
-      const follow =
-        L.followTicks > 0 && L.leaderId >= 0 && e.species.isPlayer && e.id !== L.leaderId;
-      const ax = follow ? L.x : nb.comX;
-      const ay = follow ? L.y : nb.comY;
+      const ax = nb.comX;
+      const ay = nb.comY;
       const hdx = ax - e.x;
       const hdy = ay - e.y;
       const hd = Math.hypot(hdx, hdy);
@@ -967,14 +819,13 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       // (안 그러면 실측 17%가 부풀었다). 나머지 조건(도망 아님·내 종·알파 본인 아님·herding>0·
       // 이웃 있음·followTicks>0)은 여기 닿은 시점에 전부 통과돼 있다 = 정의상 정확하다.
       // rng 를 안 건드리고 단순 합계라 개체 순회 순서와 무관하다.
-      if (follow && (near || reach)) L.followerCount += 1;
       if (reach) {
         const pull = Math.min(1, (hd - SIM.herdComfortRadius) / SIM.herdComfortRamp);
         // 앞장선 자를 따라갈 때만 더 센 가중치를 쓴다(L.followWeight). 무게중심 뭉침은 그대로
         // SIM.herdCohesion 이라 **기존 모드는 1비트도 안 바뀐다**. 왜 다른 값인지는 params.ts 의
         // LEAD.followCohesion 주석에 있다(무게중심은 권위 없는 평균, 앞장선 자는 사람이 정한 방향).
         // ⚠ herding01 은 그대로 곱한다 — 무리 성향 0 이면 여전히 아무도 안 따라온다(형질이 규칙).
-        const w = (follow ? L.followWeight : SIM.herdCohesion) * herding01 * pull;
+        const w = SIM.herdCohesion * herding01 * pull;
         const herd = scaleTo(hdx, hdy, maxSpeed);
         desired = {
           x: desired.x * (1 - w) + herd.x * w,
@@ -984,58 +835,12 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
     }
   }
 
-  // --- 알파 조종: 방향만 사람이 정한다 ---
-  // 위쪽 자율 판단(computeFlee·chooseGoal·navTo·wanderDesired·cohesion)은 **하나도 건너뛰지 않았다.**
-  // 배회 분기의 world.rng.range 한 번이 사라지면 난수 스트림이 통째로 밀린다(known_issues 의
-  // "쌍둥이" 함정과 같은 자리). 여기서는 결과값 desired·turn 만 덮어쓴다.
-  //
-  // maxSpeed 를 반드시 곱한다 — 속도 형질·몸집·험지 감속·비행·사냥 스퍼트가 전부 그 안에 있다.
-  // 상수 속도로 밀면 "형질이 손끝으로 읽힌다"는 목적 자체가 사라진다.
-  //
-  // turn 은 **기존 상수 SIM.fleeTurn 을 재사용**한다. 새 조향 상수를 만들지 않는 이유:
-  // 카드가 말하지 않는 물리(예: 몸집→회전반경)를 손끝에 지어내면 "표시와 실제가 다르다"와
-  // 같은 위반이다. 사람이 모는 개체는 도망칠 때처럼 즉각 반응한다 — 그게 이 값의 뜻이다.
-  //
-  // fleeing 플래그는 읽지도 쓰지도 않는다(끼임 감지·사냥·섭취 세 갈래가 거기 매달려 있어서,
-  // 알파만 예외로 만들면 "쫓기면서 먹는" 알파 전용 규칙이 생겨 권능이 는다).
-  // 덮어쓰기가 관성 앞에서 끝나야 아래 축분리 지형 차단과 경계 반사를 명령 벡터도 통과한다
-  // (수영 없이 물에 못 들어가고, 날개 없이 산을 못 넘고, 맵 밖으로 못 나간다).
-  const lcmd = world.lead.cmd;
-  if (lcmd !== null && lcmd.throttle > 0 && e.id === world.lead.leaderId) {
-    const push = maxSpeed * Math.min(1, lcmd.throttle);
-    desired = { x: lcmd.dx * push, y: lcmd.dy * push };
-    turn = SIM.fleeTurn;
-  }
-
-  // --- 무리 지시(신탁): 뜻은 분명하되 이행은 종의 천성이 정한다 (sim/herdOrder.ts) ---
-  // 위 자율 판단을 **하나도 건너뛰지 않는다** · 배회의 world.rng 소비가 사라지면 난수 스트림이 통째로
-  // 밀린다(known_issues 의 "쌍둥이" 함정). 여기서는 결과값 desired 만 섞는다. 지시가 없으면(null)
-  // 이 블록은 통째로 안 돌아, 명령을 한 번도 안 준 세계는 기존과 부동소수점까지 같다.
-  //
-  // 우선순위: 도망 > 사냥감 추적 > 방울 > **지시** > 배회. 먹이는 이제 이동을 못 가져간다.
-  // 행군 중에는 **발밑을 스치며 먹는다**(아래 섭취 블록의 스침 채집 · 걸음은 안 바꾼다).
-  // ⚠ 예전 조건은 targetFood/targetPrey 가 하나라도 있으면 지시를 통째로 무시했는데, 먹이를 쫓는
-  //   것은 예외적 사정이 아니라 **기본 상태**다(실측: 개체틱의 72.1%). 그래서 순종률이 7.5% 였고
-  //   사용자가 "내 말을 듣는다는 느낌이 전혀 안 든다"고 했다.
-  // ⚠ 그 뒤에 남겨 뒀던 「가는 길 먹이」 예외(지시 쪽·코앞이면 그것부터 먹고 간다)도 2026-08-12 에
-  //   걷어냈다 · 그 예외 하나가 순종률을 30.8%p 새게 했다(2026-08-08 실측 · 처방 셋의 ② ·
-  //   backlog 5번). 굶주림 보전은 예외 부활이 아니라 **스침 채집**이 맡는다(같은 처방의 ③).
-  //
-  // ★ chooseGoal 은 한 글자도 안 건드린다 · targetFood 는 그대로 세팅해 두고 **이동 벡터만** 덮는다.
-  //   순수 기하라 rng 를 한 번도 안 쓴다(스트림 불변).
-  //
-  // ★ **목소리가 닿는 데까지만 간다** (**[사용자 2026-08-06]** 확정). 명령은 알파에서 이 거리 안의
-  //   개체에게만 걸리고, 그 거리를 **무리 티어가 넓힌다**(520px → 4000px · 열쇠 「부름」이면 ×1.6).
-  //   그래서 무리를 안 판 종은 소수를 직접 데리고 다니는 손맛, 무리를 판 종은 대군을 한 번에 움직이는
-  //   맛이 된다 — **같은 게임에서 조작 감각이 둘로 갈린다.**
-  //   ⚠ 반경이 0 이하면(알파 없음·지휘 공백) 이 블록이 통째로 안 돈다 = 명령이 아예 안 통한다.
   // ── 금빛 짐승(황금 고블린) 쫓기 · **[사용자 2026-08-12]** "금빛 짐승을 내 종조차도 잡으려 하질
   //    않는데" — 처음 구현은 「무리를 몰아 밟게 한다」뿐이라, 방울은 알아서 줍는 무리가 금빛 짐승은
-  //    쳐다도 안 봤다. 방울과 같은 결로 고친다: **근처의 내 종은 스스로 덮친다.** 지시로 근처까지
-  //    몰면 무리가 알아서 에워싸고, 지시가 없어도 눈앞의 금빛은 쫓는다(내 종에게만 보이는 존재).
-  //    우선순위: 도망 > 물고 있는 사냥감 > **금빛 짐승** > 방울 > 지시 > 배회.
+  //    쳐다도 안 봤다. 방울과 같은 결로 고친다: **근처의 내 종은 스스로 덮친다.** 지침으로 근처까지
+  //    모이면 무리가 알아서 에워싸고, 지침이 없어도 눈앞의 금빛은 쫓는다(내 종에게만 보이는 존재).
+  //    우선순위: 도망 > 물고 있는 사냥감 > **금빛 짐승** > 방울 > 지침 > 배회.
   //     · 사냥감보다 아래: 물던 것을 놓게 하면 드문 사건(판에 5~10번)이 통째로 사라진다(방울과 같은 이유).
-  //     · 「회피」 명령보다 아래: 사람이 기력을 주고 산 도피를 금빛이 덮으면 안 된다(아래 게이트).
   //    순수 기하 · rng 0 · 시련이 안 걸린 라운드(goblin null)는 이 분기가 통째로 죽는다.
   const gbNear = world.goblin;
   const goblinChase =
@@ -1048,137 +853,6 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       ? gbNear
       : null;
 
-  const order = world.herdOrder;
-  const inVoice = world.hearsOrder(e.x, e.y);
-  if (order !== null && e.species.isPlayer && inVoice) {
-    const odx = order.x - e.x;
-    const ody = order.y - e.y;
-    const od2 = odx * odx + ody * ody;
-    if (order.kind === "evade") {
-      // ── 「피해라」(더블탭) · **탭한 자리의 반대 방향으로 달아난다** ────────────────────────
-      // 2026-08-09 이전에는 이 칸이 **정반대로 작동했다.** 휠에는 "반대 방향으로 흩어져 달아납니다"
-      // 라고 써 놓고, sim 에는 `order.kind` 를 읽는 분기가 **한 줄도 없어서** 「가라」와 똑같이
-      // **탭한 자리로 무리를 보냈다**(같은 시드에서 두 명령의 개체 좌표가 비트 단위로 같았다).
-      // 위험을 보고 더블탭하면 무리가 그리로 갔다 · 기본 조작이 정반대였다.
-      //
-      // 방향 계산은 **도망과 같은 함수**(clearFleeDir)를 쓴다. 새 회피 로직을 지어내면 "포식자에게서
-      // 달아나는 것"과 "시켜서 달아나는 것"이 다른 물리를 갖게 되고, 무엇보다 저 함수만이 막다른
-      // 반도·만으로 달아나는 것을 미리 피한다(probe 로 앞을 내다본다). 속도도 maxSpeed 그대로라
-      // 다리 형질이 그대로 손끝에 읽힌다.
-      //
-      // **누가 듣는가 = 누가 기력을 내는가.** 이 블록에 드는 개체 집합은 game 의 기력 소모가 무는
-      // 집합과 **같은 함수**(world.hearsOrder)로 정해진다 · 둘이 갈리면 "기력만 내고 안 움직인
-      // 개체"가 생긴다(2026-08-09 이전이 정확히 그랬다).
-      //
-      // 진짜 위험(도망)은 여전히 위다 · 포식자에게 쫓기는 개체를 탭 방향 기준으로 다시 틀면
-      // 포식자 쪽으로 밀어 넣을 수 있다. 우선순위는 문서 그대로 **도망 > 지시**다.
-      world.orderPending += 1;
-      if (!fleeing && od2 > 1e-12) {
-        const away = clearFleeDir(e, world, -odx, -ody, maxSpeed, canSwim, canLand, canFly);
-        desired = {
-          x: desired.x * (1 - ORDER.pull) + away.x * ORDER.pull,
-          y: desired.y * (1 - ORDER.pull) + away.y * ORDER.pull,
-        };
-        world.orderFollowers += 1;
-      }
-      // 「피해라」는 여기서 끝난다 · 아래 「가라」의 도착·먹이 예외는 뜻이 정반대라 안 밟는다.
-    } else {
-      // **해제는 거리가 아니라 "닿았는가"로 판정한다.** 직선거리만 재면 물 건너 코앞에서 놓인다:
-      // 호수가 U자로 감싼 자리(오목한 만)에 목표가 있으면, 무리가 맞은편 물가에 닿는 순간 이미 해제
-      // 반경 안이라 이 블록이 통째로 스킵되고 우회 길찾기(navTo)가 호출조차 안 된다. 그 자리에서
-      // orderPending 이 0 이 되니 화면은 「무리 도착」이라 말하고, 사람 눈에는 "명령은 먹혔다는데
-      // 안 들어간다"로 보인다(2026-08-08 사용자 제보).
-      // 실측(폭별 스윕 · 목표를 감싼 물 팔의 두께): 1타일(20px) 만에서 개체틱의 48%가 "막힌 채 해제"
-      // 였고 400틱 내내 아무도 주머니에 못 들어갔다(최근접 50px에서 얼어붙음). 2타일(40px) 이상이면
-      // 맞은편 물가가 해제 반경 밖이라 지시가 유지돼 저절로 돌아 들어갔다 · 즉 **해제 반경보다 얇은
-      // 물이 곧 함정**이다.
-      // 지형이 사이를 막고 있으면 아직 못 닿은 것이다 → 지시를 유지해 navTo 가 돌아가게 둔다.
-      //
-      // ⚠ 여기서 쓰는 것은 `lineOfSight` 가 아니라 **`walkableLine`**(대각 모서리를 안 뚫는 판정)이다.
-      //   lineOfSight 는 8연결이라 물 모서리 위에서 개체의 소수점 이동마다 참/거짓이 뒤집힌다. 그러면
-      //   이 게이트가 매 틱 "놓았다/잡았다"를 오가고, 개체는 놓인 틱엔 옆의 먹이로, 잡힌 틱엔 목표로
-      //   끌려 **서로 상쇄돼 제자리에 굳는다**(실측: 만 어귀 58px 앞에서 275틱 정지 · 속도 0.1~0.4px).
-      //   걷는 판정으로 물으면 그 자리에서 답이 한결같아 지시가 끊기지 않고 무리가 물가를 돌아 들어간다.
-      // 둘 다 순수 기하다(rng 미사용) · 지시가 없으면 이 블록 자체가 안 도므로 스트림 불변.
-      const nearOrder = od2 <= ORDER.releaseRadius * ORDER.releaseRadius;
-      const reached =
-        nearOrder && world.terrain.walkableLine(e.x, e.y, order.x, order.y, canSwim, canLand, canFly);
-      if (!reached) {
-        // 해제 반경 밖(또는 지형에 막혀 못 닿은 자리) = **아직 목표에 못 닿은** 개체. 화면의 "따르는 중 N/M" 분모가 이 수다.
-        // 도망 중이라 이번 틱 이동을 지시에 못 준 개체도 여기 센다(그래서 N < M 이 정상 상태다) ·
-        // 분모를 살아 있는 내 종 전부로 잡으면 이미 도착한 개체까지 불복종처럼 읽힌다(2026-08-05).
-        // 순수 기하 + 정수 합산뿐이라 rng 를 안 쓴다(지시가 없으면 이 블록이 통째로 안 돎 · 스트림 불변).
-        world.orderPending += 1;
-      }
-      if (!fleeing) {
-        // 물고 있는 사냥감은 **지시보다 위다**(예전 우선순위 그대로). 사냥은 라운드에 5~10번뿐인 드물고
-        // 값진 사건이고 표적이 달아나므로, 한 번 중단되면 그 사냥은 통째로 사라진다. 실측: 사냥감까지
-        // 지시로 덮으면 시험 계수가 사냥 9.0 → 2.5(합격선 5 미달) · 사냥꾼 프리셋은 새끼도 11.2 → 6.5 로
-        // 무너졌다. 쫓는 개체가 늘 소수라 순종률 손해는 작다(사냥꾼 프리셋이 여전히 가장 잘 따른다).
-        // 먹이(풀)는 다르다 · 한 라운드에 100번 넘게 일어나는 기본 행동이라 이걸 안 덮으면 지시가
-        // 사실상 아무 일도 안 한다(그게 이번 결함의 원인이었다: 개체틱의 72.1%가 먹이 추적).
-        const hunting = e.targetPrey !== null;
-        // ── **방울 우선** · **[사용자 2026-08-09]** "가라 명령 때 방울을 우선시해서 알아서 먹는다" ──
-        // 방울(유전자 점수)은 밟으면 주워지는데(반경 16px) **아무도 그것을 목표로 삼지 않아** 판마다
-        // 필드에 남았다. 지시를 따르는 개체가 근처(ORDER.geneRadius)의 아직 안 주운 방울을 만나면
-        // 그쪽을 먼저 들른다 · 주워지면(taken) 다음 틱에 저절로 지시로 돌아간다(상태를 안 들고 있다).
-        //
-        // 우선순위에서의 자리: 도망 > 사냥감 > **방울** > 가는 길의 먹이 > 지시 > 배회.
-        //  · 사냥감보다 아래인 이유: 사냥은 판에 5~10번뿐이라 끊으면 통째로 사라진다(위 문단의 실측).
-        //  · 먹이보다 위인 이유: 방울은 판당 스무 개 남짓이고 사람이 이미 **번 것**이라, 풀 한 포기와
-        //    같은 무게로 두면 영영 안 주워진다. 수가 적어 채집을 잡아먹을 여지도 없다.
-        // ⚠ **지시가 걸린 동안에만** 작동한다(이 블록 안이다) · 지시 없는 세계는 1비트도 안 바뀐다.
-        // ⚠ 도착(reached) 뒤에도 작동한다 · 그래야 목표 근방에 떨어진 방울을 무리가 알아서 줍는다.
-        //   대신 이 개체는 **순종(orderFollowers)에 안 센다** · 지시가 아니라 방울이 몰고 있는 것이라,
-        //   세면 화면의 "따르는 중 N/M" 이 부풀어 거짓말이 된다(가는 길 먹이와 같은 처리).
-        // ⚠ 통행 특성을 넘기는 이유: **걸어 닿을 수 있는 방울만** 고르게 하기 위해서다. 직선거리만
-        //   보던 시절에는 물 건너 방울이 뽑혀 개체가 물가에 머리를 박은 채 굶어 죽었다(2026-08-09 ·
-        //   `nearestFreeDrop` 주석에 실측이 있다). 이 개체가 갈 수 있는가는 이 개체의 게놈이 정한다.
-        // 금빛 짐승을 쫓는 중이면 방울·행군은 그 아래다(이동은 아래 금빛 블록이 가져간다 ·
-        // 순종(orderFollowers)에도 안 센다 — 지시가 아니라 금빛이 모는 것이라서, 방울과 같은 처리).
-        const drop = hunting || goblinChase !== null ? null : nearestFreeDrop(world, e.x, e.y, canSwim, canLand, canFly);
-        if (drop !== null) {
-          // 길찾기를 태우는 이유는 지시와 같다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다.
-          // 포기 신호(giveUp)면 안 끈다 — 길 없는 방울에 벽을 밀며 서 있는 것보다 평소대로 사는 게 낫다.
-          const nav = navTo(e, world, drop, canSwim, canLand, canFly, true);
-          if (!nav.giveUp) {
-            const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, 0);
-            desired = {
-              x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
-              y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
-            };
-          }
-        } else if (!reached && !hunting && goblinChase === null) {
-          // 「가는 길 먹이」 예외(지시 쪽·코앞이면 그것부터 먹고 간다)는 여기 있다가 2026-08-12 에
-          // 걷어냈다 · 그 예외 하나가 순종률을 30.8%p 새게 했다(2026-08-08 실측 · 처방 ②).
-          // 굶주림 보전은 예외 부활이 아니라 아래 섭취 블록의 **스침 채집**(처방 ③)이 맡는다.
-          //
-          // 격자 길찾기를 태운다 · 직선으로 끌면 물가·산자락에서 벽을 따라 미끄러지기만 한다
-          // (known_issues "반응형 벽 회피는 진동을 만든다 · 격자 BFS 가 정답").
-          // 도착 감속도 해제 반경 기준이다 · 게이트가 200 이던 시절엔 min(1, d/200)=1 이 항상 참이라
-          // 죽은 코드였고, 게이트를 64 로 줄이면서 처음 살아났다(문턱 근처에서 지나침·진동 방지).
-          const nav = navTo(e, world, { x: order.x, y: order.y }, canSwim, canLand, canFly, true);
-          // **길이 없으면 놓아 준다**(2026-08-12 · navTo 의 포기 카운터). 예전엔 직진 폴백이 영원해서
-          // 이 개체가 못 가는 목표에 벽을 밀며 굶었다(실측: 대양에서 개체틱 816 대 6). 놓아 주면
-          // 평소 삶(채집·배회)으로 돌아가고, 아래 follower 계수에서도 빠져 화면이 정직해진다
-          // (「따르는 중 N/M」의 분모에는 남는다 — 뜻은 유효한데 이 개체가 못 따르는 상태 그대로).
-          if (!nav.giveUp) {
-            const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? ORDER.releaseRadius : 0);
-            desired = {
-              x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
-              y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
-            };
-            // 순종의 질을 화면에 보여 주는 숫자는 **여기서**, 규칙이 판정된 그 자리에서 센다.
-            // 밖에서 조건을 다시 유도하면 화면과 실제가 갈린다(known_issues).
-            // 세는 것은 **지시가 이번 틱 이동을 가져간 개체**뿐이다 · 방울로 잠깐 새는 개체는 안 센다
-            // (그건 지시가 아니라 방울이 모는 것이라, 세면 순종이 부풀어 화면이 거짓말한다).
-            world.orderFollowers += 1;
-          }
-        }
-      }
-    }
-  }
-
   // ── 감독의 지침 시트 (**[사용자 2026-09-11]** 탭 조종 대체 · 어휘·평가기는 sim/instructions.ts) ──
   // 옛 지시 블록과 **같은 계약**: 위 자율 판단을 하나도 건너뛰지 않고 결과값 desired 만 섞는다 · 순수
   // 기하라 rng 0 · 시트가 null 이면 이 블록이 통째로 안 돌아 시트 없는 세계는 기존과 비트 단위로 같다.
@@ -1187,6 +861,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   // 이동을 가진 개체는 `sheetInstinct` 로 따로 센다 · 그래야 「발동했는데 왜 안 움직이나」가 화면에서 읽힌다.
   // 발동 집계는 **여기 한 자리에서만** 센다(known_issues 「화면에 뜨는 숫자를 규칙에서 다시 유도하지 마라」).
   const sheet = world.sheet;
+  let sheetMoving = false; // 이번 틱 지침이 이동을 가져갔나 · 아래 스침 채집이 읽는다
   if (sheet !== null && e.species.isPlayer) {
     const busy = fleeing || e.targetPrey !== null || goblinChase !== null;
     let firedRow = sheet.length; // 기본 = 보이지 않는 마지막 줄 「모두 · 늘 · 알아서 한다」
@@ -1229,16 +904,16 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
             x: desired.x * (1 - SHEET.pull) + go.x * SHEET.pull,
             y: desired.y * (1 - SHEET.pull) + go.y * SHEET.pull,
           };
+          sheetMoving = true;
         }
       }
     }
   }
 
   // ── 금빛 짐승에게 달려든다(위 goblinChase 게이트에서 정해졌다) ──────────────────────────────
-  // 「회피」 명령을 듣는 중인 개체만 예외 — 사람이 기력을 주고 산 도피를 금빛이 덮으면 안 된다.
   // 길찾기를 태우는 이유는 방울과 같다(직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다).
   // 잡기는 sim/goblin.ts 의 접촉 판정이 한다 — 여기는 다리만 움직인다(판정을 두 곳에 안 적는다).
-  if (goblinChase !== null && !(order !== null && inVoice && order.kind === "evade")) {
+  if (goblinChase !== null) {
     const nav = navTo(e, world, { x: goblinChase.x, y: goblinChase.y }, canSwim, canLand, canFly, true);
     if (!nav.giveUp) {
       const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, 0);
@@ -1304,44 +979,6 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
   if (e.limpTicks > 0) e.limpTicks -= 1;
   if (e.frozenTicks > 0) e.frozenTicks -= 1;
 
-  // --- 알파 조종: 사람이 시킨 물기 ---
-  // 알파가 능력을 새로 얻는 게 아니다. AI 가 사냥할 때 쓰는 바로 그 경로(resolveBite)를, 바로 그
-  // 사거리(atkRange)와 쿨다운(attackCd)으로 쓴다. 다른 것은 하나뿐이다 — **누구를 언제 물지를
-  // 사람이 정한다.** 대미지 보너스도, 늘어난 사거리도, 무조건 명중도 없다. 힘이 모자라면 못 문다.
-  //
-  // ★ 게이트는 반드시 `cmd !== null && cmd.bite` 다. `leaderId >= 0`(알파를 지정했나)으로 걸면
-  //   **명령을 한 번도 안 준 세계가 갈라진다** — leadBiteTarget 이 world.rng 를 안 쓰더라도, 물기가
-  //   한 번이라도 나가는 순간 rng.chance 가 스트림을 밀어 그 뒤 전부가 다른 세계가 된다.
-  //   같은 자리에서 이미 크리티컬 버그가 났었다(lead.test.ts 의 격리 테스트가 그 감지기다).
-  //
-  // 대상이 없으면 **아무 일도 안 일어난다 — 쿨다운도 안 돈다.** 헛손질에 벌을 주면 "안 되는 이유"가
-  // 화면에서 안 읽히는 벌이 된다(버튼은 대상이 있을 때만 켜지므로 헛손질 자체가 드물다).
-  //
-  // ⚠ 도망(fleeing) 중에도 나간다. AI 의 사냥·섭취는 `!fleeing` 에 걸려 있지만, "쫓길 때 맞설 것인가
-  //   달아날 것인가"는 이 모드에서 사람이 정하는 것이고(레이드의 전사/도망자와 같은 갈림길),
-  //   무엇보다 **화면에 켜진 버튼이 안 먹히면 그게 거짓말**이다. 이득은 없다 — 판정·피해·쿨다운은 그대로다.
-  const bcmd = world.lead.cmd;
-  if (bcmd !== null && bcmd.bite === true && e.id === world.lead.leaderId) {
-    const aim = leadBiteTarget(e, world);
-    if (aim !== null) {
-      // ① **표적을 붙든다** — AI 포식자가 사냥할 때 세우는 바로 그 상태(targetPrey)다. 이걸 안 세우면
-      //    사람이 모는 포식자가 AI 보다 **느리다**: 사냥 질주(huntSprintFactor)가 `targetPrey !== null`
-      //    에 걸려 있어서다. 도망치는 먹잇감을 질주 없이 12px 까지 손으로 몰아붙이는 건 사실상 불가능해,
-      //    실측에서 근접 종은 버튼이 90초 동안 한 번도 안 켜졌다. 표적을 세우면 질주가 붙고, 사정거리에
-      //    닿는 순간 아래 AI 경로가 알아서 문다 — 사람은 모는 데 집중한다.
-      //    새 능력이 아니다. AI 가 스스로 고르던 표적을 **사람이 대신 고르는 것**뿐이다.
-      // 「뱀의 응시」는 사람이 시킨 표적에도 걸린다(AI 채택과 같은 함수 · applyGaze 주석 참조).
-      applyGaze(e, aim);
-      e.targetPrey = aim;
-      // ② 이미 사정거리 안이면 지금 문다(같은 판정·같은 쿨다운). 쿨다운 중이면 아무 일도 안 일어난다.
-      const adx = aim.x - e.x;
-      const ady = aim.y - e.y;
-      if (e.attackCd <= 0 && adx * adx + ady * ady <= atkRange * atkRange) {
-        resolveBite(e, aim, world, t.ranged >= SIM.rangedThreshold);
-      }
-    }
-  }
-
   if (!fleeing && e.targetPrey && e.targetPrey.alive) {
     const prey = e.targetPrey;
     const dx = prey.x - e.x;
@@ -1352,11 +989,11 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       resolveBite(e, prey, world, t.ranged >= SIM.rangedThreshold);
     }
   } else if (!fleeing) {
-    // 무엇을 먹는가: 평소에는 **쫓던 목표**(targetFood)뿐이다. 지시 행군 중에는 거기에 **발밑의
-    // 아무 먹이**가 더해진다 · 스침 채집(2026-08-12 · 순종 처방 ③ · backlog 5번). 「가는 길 먹이」
-    // 예외를 걷어내(처방 ②) 행군이 먹이로 새지 않는 대신, 걸음을 안 바꾸고 지나치며 먹는다.
-    //  · 게이트가 지시 이동 블록과 같은 재료다(order · isPlayer · inVoice) → **지시 없는 세계와
-    //    야생종은 1비트도 안 바뀐다**(쫓던 목표 경로가 원래 조건 그대로 먼저 돈다).
+    // 무엇을 먹는가: 평소에는 **쫓던 목표**(targetFood)뿐이다. 지침이 이동을 가져간 틱에는 거기에
+    // **발밑의 아무 먹이**가 더해진다 · 스침 채집(2026-08-12 · 순종 처방 ③ · 옛 지시 행군의 규칙을
+    // 2026-09-11 지침 시트가 물려받았다). 행군이 먹이로 새지 않는 대신, 걸음을 안 바꾸고 지나치며 먹는다.
+    //  · 게이트가 지침 이동 블록의 결과(sheetMoving)다 → **시트 없는 세계와 야생종은 1비트도 안
+    //    바뀐다**(쫓던 목표 경로가 원래 조건 그대로 먼저 돈다).
     //  · canGraze 게이트: 채집 자격은 평소 규칙 그대로다(극단 육식은 스쳐도 못 먹는다).
     //  · FoodGrid.nearest 는 순수 탐색(rng 0) · 먹이 위치 불변 · 순회 순서 고정이라 결정론 안전.
     //  · 시야·부채꼴을 안 묻는 것이 핵심이다: 행군 중 targetFood 는 대개 등 뒤나 옆에 있어
@@ -1368,7 +1005,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       const dy = chased.y - e.y;
       if (dx * dx + dy * dy <= SIM.eatRadius * SIM.eatRadius) food = chased;
     }
-    if (food === null && order !== null && order.kind !== "evade" && e.species.isPlayer && inVoice && canGraze) {
+    if (food === null && sheetMoving && canGraze) {
       food = world.foodGrid.nearest(e.x, e.y, ORDER.brushRadius, (f) => f.available);
     }
     if (food !== null) {

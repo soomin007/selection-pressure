@@ -371,7 +371,7 @@ const KEY_CARDS: readonly [KeyName, string, string][] = [
   ["camo", "ky_camo", "흐린 무늬|풀빛에 몸이 녹아듭니다"],
   ["venom", "ky_venom", "독을 품은 이빨|한 번 물면 놓아도 됩니다"],
   ["barb", "ky_barb", "뻗는 뿔|닿지 않는 데서 칩니다"],
-  ["call", "ky_call", "멀리 가는 울음|무리 전체가 한 번에 듣습니다"],
+  ["call", "ky_call", "멀리 가는 울음|지침을 한 줄 더 씁니다"],
 ];
 
 const split = (s: string): [string, string] => {

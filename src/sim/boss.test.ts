@@ -58,6 +58,47 @@ function tune(over: Partial<Traits>): Genome {
 /** 능치를 하나도 안 건드린 기준선 종(= v7 의 기본 게놈과 같은 능치). */
 const BASE = (): Genome => tune({});
 
+/**
+ * **무리를 떼 쪽으로 미는 테스트 전용 손** · 옛 탭 명령(herdOrder)이 하던 「매 틱 떼 무게중심으로 지시」를
+ * 대신한다(2026-09-11 감독형 전환으로 명령 경로가 사라졌다). 살아 있는 내 종 하나하나를 떼 무게중심
+ * 쪽으로 `push` px 옮기되, 그 개체가 못 딛는 칸(물·산)이면 안 옮긴다. 세계의 rng 를 안 쓰고 위치만
+ * 바꾸는 순수 입력이라 결정론은 그대로다 · 재는 것은 「붙었을 때 깎이는가」이지 몰기 자체가 아니다.
+ */
+function driveToward(w: World, tx: number, ty: number, push: number): void {
+  for (const e of w.entities) {
+    if (!e.alive || !e.species.isPlayer) continue;
+    const dx = tx - e.x;
+    const dy = ty - e.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 1e-6) continue;
+    const step = Math.min(push, d);
+    const nx = e.x + (dx / d) * step;
+    const ny = e.y + (dy / d) * step;
+    const tr = e.genome.traits;
+    const canFly = tr.wings >= SIM.flyThreshold;
+    const canSwim = tr.swimming >= SIM.swimThreshold;
+    const canLand = tr.swimming < SIM.aquaticOnlyThreshold;
+    if (!w.terrain.isPassable(nx, ny, canSwim, canLand, canFly)) continue;
+    e.x = nx;
+    e.y = ny;
+  }
+}
+
+/** 떼(보스 members)의 무게중심 · 떼가 없으면 null. */
+function hordeCenter(members: readonly { x: number; y: number }[]): { x: number; y: number } | null {
+  if (members.length === 0) return null;
+  let mx = 0;
+  let my = 0;
+  for (const m of members) {
+    mx += m.x;
+    my += m.y;
+  }
+  return { x: mx / members.length, y: my / members.length };
+}
+
+/** 옛 지시가 `ORDER.pull`(0.9) × 최고 속도로 끌던 것의 근사 · 한 틱에 미는 거리(px). */
+const DRIVE_PUSH = 2.4;
+
 const FLYING = tune({ wings: 80 }); // 날개 ≥ flyThreshold(65) → 늘 하늘에 떠 있다
 const SWIMMER = tune({ swimming: 80 }); // 수륙양용 — 땅에도 물에도 있다
 
@@ -484,9 +525,8 @@ describe("시작 프리셋 x 약탈자 · 화면이 말하는 것과 실제가 �
   }
 
   /**
-   * 한 판 · **사람이 무리를 떼 쪽으로 계속 모는 상황**(매 틱 떼 무게중심으로 지시)을 흉내 낸다.
-   * 왜 몰기까지 넣나: 지시가 안 먹히던 것과 격퇴가 안 되던 것은 한 지점에서 만난다. 붙일 수 있어야
-   * 깎이고, 깎여야 "내가 한 것"이 된다. 몰아도 안 깎이면 그건 진짜로 못 깎는 종이다.
+   * 한 판 · **무리를 떼 쪽으로 계속 미는 상황**(매 틱 떼 무게중심으로 · 위 driveToward)을 흉내 낸다.
+   * 왜 밀기까지 넣나: 붙을 수 있어야 깎이고, 깎여야 "내가 한 것"이 된다. 밀어도 안 깎이면 그건 진짜로 못 깎는 종이다.
    */
   function raidWithDrive(
     genome: Genome,
@@ -496,9 +536,6 @@ describe("시작 프리셋 x 약탈자 · 화면이 말하는 것과 실제가 �
     ticks: number = ROUND,
   ): { melee: number; ranged: number; minRatio: number; maxHp: number; hp: number } {
     const w = new World(seed, GAME_W, GAME_H, genome, GAME_AREA, [], mapType);
-    // ⚠ v8: 명령은 **목소리가 닿는 데까지만** 간다. 이 값을 안 넣으면 아래 「몰기」가 통째로 무효라
-    //   "몰아붙여도 못 깎는다"가 거짓 초록불이 된다. 여기서는 몰기 자체를 재는 게 아니므로 넉넉히 준다.
-    w.voiceR = Math.hypot(GAME_W, GAME_H);
     for (let i = 0; i < 300; i++) w.step();
     w.boss = createBoss(type, GAME_W, GAME_H, w.terrain, 1, true);
     const maxHp = w.boss.maxHp;
@@ -508,16 +545,8 @@ describe("시작 프리셋 x 약탈자 · 화면이 말하는 것과 실제가 �
     for (let i = 0; i < ticks; i++) {
       const b = w.boss;
       if (b === null) break;
-      w.armLead(); // game 이 매 프레임 하는 것과 같다(목소리는 알파에서부터 잰다)
-      if (b.members.length > 0) {
-        let mx = 0;
-        let my = 0;
-        for (const m of b.members) {
-          mx += m.x;
-          my += m.y;
-        }
-        w.herdOrder = { x: mx / b.members.length, y: my / b.members.length };
-      }
+      const hc = hordeCenter(b.members);
+      if (hc !== null) driveToward(w, hc.x, hc.y, DRIVE_PUSH);
       w.step();
       melee = Math.max(melee, w.raidMeleeFighters);
       ranged = Math.max(ranged, w.raidRangedFighters);
@@ -587,22 +616,14 @@ describe("레이드 관측값 (world.raid* · entity.raidFighter)", () => {
    */
   function driveRound(genome: Genome, ticks: number, stopOnFighters = false): World {
     const w = new World("env-1", W, H, genome);
-    // v8: 목소리를 안 넣으면 아래 몰기가 통째로 무효다(위 raidWithDrive 주석 참조).
-    w.voiceR = Math.hypot(W, H);
     for (let i = 0; i < 600; i++) w.step();
     w.boss = createBoss("raider", W, H, w.terrain, 1, true);
     for (let i = 0; i < ticks; i++) {
       const b = w.boss;
       if (b === null) break;
       if (b.maxHp > 0 && b.hp <= 0) break;
-      w.armLead();
-      let mx = 0;
-      let my = 0;
-      for (const m of b.members) {
-        mx += m.x;
-        my += m.y;
-      }
-      if (b.members.length > 0) w.herdOrder = { x: mx / b.members.length, y: my / b.members.length };
+      const hc = hordeCenter(b.members);
+      if (hc !== null) driveToward(w, hc.x, hc.y, DRIVE_PUSH);
       w.step();
       // "보스가 살아 있고 전사가 서 있는" 첫 틱에서 멈추는 선택지(상태 기반). 고정 틱 수로 끝까지
       // 돌리면 무리가 빨라질 때마다 격퇴 완료 뒤(전사 0 이 정의상 맞는 상태 · 위 주석)를 재게 된다 ·

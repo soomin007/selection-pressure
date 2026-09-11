@@ -55,8 +55,8 @@ describe("sim 순수성 (정적 스캔)", () => {
   });
 
   it('src/sim 은 "@/debug" 를 import 하지 않는다', () => {
-    // ?alpha 같은 URL 플래그를 sim 이 직접 읽으면 "화면을 알아야 도는 시뮬"이 된다.
-    // 조종 모드가 sim 에 닿는 통로는 world.lead 필드 하나뿐이어야 한다.
+    // URL 플래그를 sim 이 직접 읽으면 "화면을 알아야 도는 시뮬"이 된다.
+    // 감독의 지침이 sim 에 닿는 통로는 world.sheet 필드 하나뿐이어야 한다.
     expect(offenders(NEEDLE_DEBUG)).toEqual([]);
   });
 

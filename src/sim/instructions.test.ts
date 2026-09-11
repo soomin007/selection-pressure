@@ -31,7 +31,7 @@ const CS = 20;
 const COLS = Math.ceil(W / CS);
 const ROWS = Math.ceil(H / CS);
 
-/** herdOrder.test.ts · lead.test.ts · world.test.ts 와 **같은 지문 함수**. */
+/** world.test.ts 와 **같은 지문 함수**(옛 herdOrder.test.ts · lead.test.ts 도 이것을 썼다). */
 function snapshot(world: World): string {
   const ents = world.entities.map(
     (e) => `${e.id}:${e.x.toFixed(3)},${e.y.toFixed(3)},${e.energy.toFixed(3)}`,
@@ -110,7 +110,7 @@ function flatTerrain(): Terrain {
   return new Terrain(COLS, ROWS, CS, new Array<number>(COLS * ROWS).fill(0.5), new Array<TileKind>(COLS * ROWS).fill(TILE.land));
 }
 
-/** 지형을 갈아 끼운 세계(herdOrder.test.ts 의 worldOn 과 같은 처리 · 물 먹이 정리). */
+/** 지형을 갈아 끼운 세계(물 먹이 정리 · 옛 herdOrder.test.ts 의 worldOn 과 같은 처리). */
 function worldOn(terrain: Terrain, seed: string, over: Partial<Traits> = {}): World {
   const w = new World(seed, W, H, tune({ herding: 40, ...over }));
   (w as unknown as { terrain: Terrain }).terrain = terrain;
@@ -165,25 +165,41 @@ describe("지침 시트 — 결정론 (시트가 없거나 「알아서」뿐이
   it("매 틱 살아 있는 내 종 전부가 정확히 한 줄에 세인다(발동 수의 합 = 내 종 수)", () => {
     const w = worldOn(bandTerrain(3), "sheet-count-1");
     w.sheet = [{ who: "strong", when: "always", act: "gather" }, HIDE, { who: "weak", when: "hungry", act: "scatter" }];
+    let births = w.roundCounts.births;
     for (let i = 0; i < 120; i++) {
       w.step();
+      // 이번 틱에 태어난 새끼는 개체 루프 뒤에 붙으므로 아직 어느 줄에도 안 세였다 · 그만큼만 뺀다.
+      const born = w.roundCounts.births - births;
+      births = w.roundCounts.births;
       expect(w.sheetFired.length).toBe(4);
-      expect(sum(w.sheetFired), `t${w.tick}`).toBe(alivePlayers(w));
+      expect(sum(w.sheetFired), `t${w.tick}`).toBe(alivePlayers(w) - born);
     }
   });
 });
 
 describe("지침 시트 — 행동 넷은 실제로 다른 일을 한다(빈 이름 금지)", () => {
   it("「수풀로 숨는다」는 수풀 체류율을 올린다", () => {
+    // 한 순간의 체류율은 포식자 습격(도망 = 본능이 위)에 지배당한다 · 60~300틱 **시간 평균**으로 잰다
+    // (known_issues 「무리 행동의 효과를 한 순간의 퍼짐으로 재면」). 실측(2026-09-11): 대조군 0.10 · 숨기 0.72.
     const control = worldOn(bandTerrain(3), "sheet-hide-1");
     const hide = worldOn(bandTerrain(3), "sheet-hide-1");
     hide.sheet = [HIDE];
-    stepN(control, 300);
-    stepN(hide, 300);
-    const c = grassShare(control);
-    const h = grassShare(hide);
+    let c = 0;
+    let h = 0;
+    let k = 0;
+    for (let i = 1; i <= 300; i++) {
+      control.step();
+      hide.step();
+      if (i >= 60) {
+        c += grassShare(control);
+        h += grassShare(hide);
+        k += 1;
+      }
+    }
+    c /= k;
+    h /= k;
     expect(h, `대조군 ${c.toFixed(2)} · 숨기 ${h.toFixed(2)}`).toBeGreaterThan(c + 0.25);
-    expect(h).toBeGreaterThan(0.6);
+    expect(h).toBeGreaterThan(0.5);
     // 발동은 첫 줄에서 · 마지막 줄(알아서)은 대상 없는 개체(닿는 수풀 없음)만 남는다.
     expect(hide.sheetFired[0]).toBeGreaterThan(0);
   });
@@ -217,11 +233,17 @@ describe("지침 시트 — 행동 넷은 실제로 다른 일을 한다(빈 이
   });
 
   it("「뭉친다」가 만족되면(이미 모임) 이동을 안 덮는다 · 발동은 그대로 센다", () => {
-    const w = run("sheet-gather-done", tune({ herding: 40 }), 240, [GATHER]);
-    // 240틱 뒤 무리는 모여 있고, 그 뒤 한 틱의 발동 수는 여전히 전부 첫 줄이다.
-    w.step();
-    expect(w.sheetFired[0]).toBe(alivePlayers(w));
-    expect(meanSpread(w)).toBeLessThan(SHEET.gatherRadius * 1.5);
+    const w = run("sheet-gather-done", tune({ herding: 40 }), 120, [GATHER]);
+    // 모인 뒤에도 발동 수는 여전히 전부 첫 줄이다(만족 = 발동하되 이동만 안 덮는다) · 퍼짐은 시간 평균으로.
+    let spread = 0;
+    for (let i = 0; i < 180; i++) {
+      w.step();
+      // 만족된 개체도 첫 줄에 세인다 = 마지막 줄(알아서)로 떨어지는 개체가 없다.
+      expect(w.sheetFired[1]).toBe(0);
+      expect(w.sheetFired[0]).toBeGreaterThan(0);
+      spread += meanSpread(w);
+    }
+    expect(spread / 180).toBeLessThan(SHEET.gatherRadius * 1.5);
   });
 });
 

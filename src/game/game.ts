@@ -63,18 +63,7 @@ import {
 } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
-import type { LeadCommand } from "@/sim/lead";
 import { sameSheet, sanitizeSheet, sheetRows, type Directive } from "@/sim/instructions";
-import {
-  ORDER_SPECS,
-  ORDER_SPEC_BY_KIND,
-  orderUnlocked,
-  vacuumTicks,
-  voiceRadius,
-  type HerdOrder,
-  type OrderKind,
-  type OrderSpec,
-} from "@/sim/herdOrder";
 
 /**
  * **은근한 보정의 상한.** 보정이 세면 게임이 저절로 굴러가고, 그러면 플레이어가 이룬 것이 가짜가 된다
@@ -239,15 +228,15 @@ export class Game {
   world: World;
   phase: Phase = "lobby";
   paused = false; // 멈춤 버튼
-  /** 알파 조종 모드. 기본 켜짐(main 이 true 로 세운다). `?watch` 관전 폴백에서만 false. */
-  leadEnabled = false;
   /**
-   * 무리가 앞장선 자를 따르는 세기(×무리 성향). null 이면 sim 기본값(LEAD.followCohesion).
-   * 폰에서 `?follow=<수>` 로 손끝 느낌을 배포 없이 튜닝하려고 열어 둔 구멍이다. 단계마다 새 월드가
-   * 생기므로 armLead 와 같은 자리에서 매번 다시 발라 준다.
+   * 단계당 경험치 상한(`GAME.leadStageXpCap`)을 거는가. **main 이 true 로 세운다**(배포판은 늘 켜짐) ·
+   * 테스트·프로브의 기본은 false 라 골든 지문에 안 걸린다.
+   * 옛 이름 `leadEnabled`(알파 조종 모드 · `?watch` 로 끄면 false)가 걸던 상한 그대로다. 조종이 사라진
+   * 감독형에서 「무리를 먹이에 붙이는 실력이 카드 장 수가 된다」는 근거는 약해졌지만, 상한을 빼면
+   * 카드 유입이 늘어 밸런스가 이동하므로 재측정과 함께 결정한다(backlog).
    */
-  leadFollowWeight: number | null = null;
-  /** 이번 단계에 이미 적립한 경험치(조종 모드 상한용). leadEnabled=false 면 아무 데도 안 쓰인다. */
+  stageXpCapOn = false;
+  /** 이번 단계에 이미 적립한 경험치(상한용). stageXpCapOn=false 면 아무 데도 안 쓰인다. */
   private stageXp = 0;
   speed = 1; // 관전 배속 1/2/3
   result: RunResult | null = null;
@@ -715,94 +704,6 @@ export class Game {
   }
 
   /**
-   * 입력 층이 매 프레임 부르는 조종 명령 세터. 관전 중·멈춤 아님일 때만 sim 에 닿는다.
-   * 드래프트·결과 화면에서 손가락이나 키가 눌린 채로 넘어가도 알파가 계속 달리지 않는다.
-   *
-   * ⚠ 알파 조종은 **더 이상 쓰지 않는다**(2026-08-04, 무리 지시로 전환). sim 의 능력은 남겨 두되
-   * main 이 이 세터를 안 부르므로 실제 게임에서는 한 번도 안 걸린다. 제거는 무리 지시가 폰에서
-   * 판정을 통과한 뒤에(backlog).
-   */
-  setLeadCommand(cmd: LeadCommand | null): void {
-    this.world.lead.cmd =
-      this.leadEnabled && this.phase === "watch" && !this.paused ? cmd : null;
-  }
-
-  /**
-   * 무리에게 뜻을 내린다(신탁). 월드 좌표 한 점 + 무엇을 하라는 것인가.
-   * 관전 중·멈춤 아님일 때만 닿는다 · 드래프트·결과 화면의 탭이 무리를 움직이지 않게.
-   *
-   * **[사용자 2026-08-06]** 조작 다양화. 「가라」(이동)에는 **쿨타임을 안 건다** — 기본 조작이 막히면
-   * 조종 감각 자체가 죽는다. 특수 명령에만 걸고, 회피는 기력도 함께 쓴다.
-   * 잠긴 칸은 여기서 막는다(화면에서도 회색으로 보이지만, 규칙은 한 곳에서만 판정한다).
-   */
-  setHerdOrder(x: number, y: number, kind: OrderKind = "move"): boolean {
-    if (this.phase !== "watch" || this.paused) return false;
-    // ⚠ 여기 있던 `if (world.leadVacuum > 0) return false`(지휘 공백)를 2026-08-10 에 걷었다 ·
-    //   **[사용자]** 「이끌던 개체 어쩌고 아예 없애줘」. 알파가 쓰러져도 명령은 계속 통한다.
-    const spec = ORDER_SPEC_BY_KIND.get(kind);
-    if (!spec) return false;
-    if (!orderUnlocked(spec, this.genome.pips)) return false;
-    if ((this.orderCd.get(kind) ?? 0) > 0) return false;
-    if (spec.cooldown > 0) this.orderCd.set(kind, spec.cooldown);
-    if (spec.energy > 0) {
-      // 회피처럼 몸을 쥐어짜는 명령은 무리의 기력을 쓴다 · **목소리가 닿는 개체만**.
-      // ⚠ 2026-08-09 까지 이 주석은 "목소리가 닿는 개체만"이라 적혀 있었는데 **코드에 그 조건이
-      //   없었다** · 「피해라」 한 번에 살아 있는 내 종 **전부**가 기력 −8 을 물었다(목소리 밖에서
-      //   명령을 듣지도 못한 개체까지). 판정을 sim 과 **같은 함수**(world.hearsOrder)로 옮겨,
-      //   「기력을 내는 개체」와 「실제로 달아나는 개체」가 정의상 같은 집합이 되게 한다.
-      for (const e of this.world.entities) {
-        if (!e.species.isPlayer || !e.alive) continue;
-        if (!this.world.hearsOrder(e.x, e.y)) continue;
-        e.energy = Math.max(1, e.energy - spec.energy);
-      }
-    }
-    const ticks = spec.kind === "move" ? 0 : Math.round(SIM.stepsPerSecond * 4);
-    // **탭 자리는 정수 픽셀로 접는다.** 손가락이 찍는 자리에 소수점은 뜻이 없고(해제 반경이 64px 다),
-    // 대신 이 한 줄이 **판을 정확히 재현 가능하게** 만든다: 판 분석 코드는 좌표를 정수로 담으므로,
-    // 게임이 소수점을 쓰면 되살린 판이 원판과 미세하게 다른 곳을 향하고 그 차이가 480틱 동안
-    // 눈덩이처럼 커진다(2026-08-09 · 자가 검사에서 실제로 그랬다 · 단계 1부터 갈렸다).
-    // 「기록된 값이 곧 게임이 쓴 값」이라야 재현이 성립한다.
-    const ox = Math.round(x);
-    const oy = Math.round(y);
-    this.world.herdOrder = { x: ox, y: oy, kind, ticks };
-    // 판 분석 코드에 남긴다 — **재현의 마지막 조각**이다(2026-08-09). 거절된 탭은 세계를 1비트도
-    // 안 바꾸므로 안 담는다 · 여기까지 온 것만이 실제로 일어난 명령이다.
-    // ⚠ 기록은 rng 를 안 쓰고 세계를 안 건드린다(runCode.ts 의 제약과 같은 계열).
-    this.runLog.push({ t: "order", stage: this.stageOrdinal, tick: this.stageTick, x: ox, y: oy, kind });
-    return true;
-  }
-
-  /** 내려 둔 뜻을 거둔다(무리는 그 자리에서 자율로 산다). 화면의 「현재 명령 한 줄」을 탭하면 여기로 온다. */
-  clearHerdOrder(): void {
-    this.world.herdOrder = null;
-  }
-
-  /**
-   * **방금 접수한 명령을 없던 일로 한다** — 세계의 뜻을 되돌리고 **기록에서도 지운다**.
-   *
-   * 더블탭이 거절될 때 첫 탭의 「가라」를 걷는 자리가 이걸 쓴다(main 의 `undoTapOrder`).
-   * ⚠ 예전에는 main 이 `world.herdOrder` 를 직접 되돌렸는데, 그러면 **세계는 원상복구되는데
-   *   판 분석 코드에는 그 탭이 남았다.** 되살릴 때 재현은 취소된 명령을 그대로 다시 내리고,
-   *   그 한 번으로 판이 갈라진다(2026-08-09 · 사용자 판 재생이 단계 1부터 어긋난 원인).
-   *   되돌리기는 새 명령이 아니라 **없던 일로 하는 것**이라, 세계와 기록이 같이 움직여야 한다.
-   *
-   * `back` 이 null 이면 명령을 거두고, 아니면 그 뜻으로 되돌린다.
-   */
-  undoHerdOrder(back: HerdOrder | null): void {
-    this.world.herdOrder = back;
-    for (let i = this.runLog.length - 1; i >= 0; i -= 1) {
-      const e = this.runLog[i];
-      if (e === undefined) continue;
-      if (e.t === "order") {
-        this.runLog.splice(i, 1);
-        return;
-      }
-      // 명령보다 나중에 적힌 것(단계 결과·구입 등)이 있으면 그건 「방금」이 아니다 · 손대지 않는다.
-      break;
-    }
-  }
-
-  /**
    * **방울 구입 화면을 연다 = 시간이 멈춘다.**
    *
    * **[사용자 2026-08-09]** "방울 업그레이드 고르는 중에는 시간이 안 멈추나? 그거 보다보니
@@ -849,7 +750,7 @@ export class Game {
 
   /** 쓸 수 있는 줄 수 · 무리 티어가 늘린다(`tiers.HERD_SHEET_ROWS`). */
   get maxSheetRows(): number {
-    return sheetRows(this.genome.pips);
+    return sheetRows(this.genome.pips, this.genome.keys);
   }
 
   /**
@@ -939,78 +840,6 @@ export class Game {
     return out;
   }
 
-  /** 지금 내려져 있는 뜻(화면에 표식을 그리는 데 쓴다). */
-  get herdOrder(): HerdOrder | null {
-    return this.world.herdOrder;
-  }
-
-  /**
-   * **명령 휠의 여덟 칸** — 지금 무엇이 열려 있고 무엇이 잠겨 있는가.
-   * 못 여는 칸은 회색으로 보인다 → 다음 판의 동기가 되고, **성장이 숫자가 아니라 손에서 읽힌다.**
-   */
-  orderWheel(): { spec: OrderSpec; unlocked: boolean; cdLeft: number }[] {
-    return ORDER_SPECS.map((spec) => ({
-      spec,
-      unlocked: orderUnlocked(spec, this.genome.pips),
-      cdLeft: this.orderCd.get(spec.kind) ?? 0,
-    }));
-  }
-
-  /** 지휘 공백이 남아 있는 초 — 이 동안은 아무도 명령을 안 듣는다(화면이 그 사실과 되돌리는 법을
-   *  알린다 · main 의 issueOrder). 0 이면 정상. */
-  get leadVacuumSeconds(): number {
-    return this.world.leadVacuum / SIM.stepsPerSecond;
-  }
-
-  /**
-   * **지휘봉을 넘긴다** — **[사용자 2026-08-06]** 알파는 특별한 개체가 아니라 옮길 수 있는 자리다
-   * (늑대 무리의 우두머리가 혈통이 아니라 지위인 것과 같다). 아무 개체나 탭하면 그 애가 알파가 된다.
-   * 진화 게임에서 특정 개체만 유전적으로 특별한 것은 말이 안 되므로, 알파에게 능력을 주지 않는다.
-   */
-  passBaton(entityId: number): boolean {
-    if (this.phase !== "watch" || this.paused) return false;
-    const e = this.world.entities.find((x) => x.id === entityId && x.alive && x.species.isPlayer);
-    if (!e) return false;
-    this.world.lead.leaderId = e.id;
-    this.world.lead.x = e.x;
-    this.world.lead.y = e.y;
-    this.world.lead.changedTick = this.world.tick;
-    this.world.leadVacuum = 0; // 사람이 직접 넘긴 것은 공백이 아니다
-    return true;
-  }
-
-  /** 명령별 남은 쿨타임(틱). 매 update 에서 줄인다. */
-  private readonly orderCd = new Map<OrderKind, number>();
-
-  /**
-   * 명령 쿨타임과 특수 명령의 지속 시간을 줄인다. **배속을 그대로 곱한다** — 2배속에서 쿨타임이
-   * 두 배로 길게 느껴지면 배속이 조작을 벌하는 것이 되고, 그건 플레이어가 배속을 안 쓰게 만든다.
-   */
-  private tickOrders(deltaMS: number): void {
-    const ticks = (deltaMS / 1000) * SIM.stepsPerSecond * this.speed;
-    for (const [k, v] of this.orderCd) {
-      const left = v - ticks;
-      if (left <= 0) this.orderCd.delete(k);
-      else this.orderCd.set(k, left);
-    }
-    const o = this.world.herdOrder;
-    if (o && o.ticks !== undefined && o.ticks > 0) {
-      const left = o.ticks - ticks;
-      // 특수 명령은 몇 초짜리다("피해라"가 영원히 유지되면 그건 명령이 아니라 상태다).
-      if (left <= 0) this.world.herdOrder = null;
-      else this.world.herdOrder = { ...o, ticks: left };
-    }
-  }
-
-  /**
-   * 무리 티어에서 나오는 지휘 값 둘을 sim 에 넣어 준다 — **sim 은 티어를 모른다**(받은 숫자만 쓴다).
-   * 세계를 새로 만들거나 도장이 바뀌는 모든 입구에서 부른다.
-   */
-  private syncCommandReach(): void {
-    this.world.voiceR = voiceRadius(this.genome.pips, this.genome.keys);
-    this.world.vacuumOnLeadDeath = vacuumTicks(this.genome.pips);
-  }
-
   update(deltaMS: number): void {
     if (this.paused) return;
     const stepMs = 1000 / SIM.stepsPerSecond;
@@ -1029,13 +858,6 @@ export class Game {
     }
 
     if (this.phase !== "watch") return;
-    // **알파(지휘봉)를 세운다.** 2026-08-04 에 무리 지시로 전환하면서 이 개념을 뺐는데,
-    // **[사용자 2026-08-06]** 이 다시 세웠다: 알파는 특별한 개체가 아니라 **옮길 수 있는 자리**이고,
-    // 명령은 그 자리에서 나가 목소리가 닿는 데까지만 간다. 카메라도 이 개체를 따라간다.
-    // (멱등이라 매 프레임 불러도 안전하다 · rng 미사용.)
-    this.world.armLead();
-    // 명령 쿨타임·지속 시간을 여기 한 자리에서만 줄인다(정수 카운터 · rng 미사용 → 스트림 불변).
-    this.tickOrders(deltaMS);
     this.acc += deltaMS;
     let guard = 0;
     while (this.acc >= stepMs && guard < 5) {
@@ -1115,9 +937,9 @@ export class Game {
     let gain = eaten - this.lastFoodEaten + (hunted - this.lastHuntKills) * GAME.huntXp;
     this.lastFoodEaten = eaten;
     this.lastHuntKills = hunted;
-    // 조종 모드에서만: 단계당 경험치 상한. 무리를 먹이에 붙이는 실력이 곧 카드 장 수가 되면
+    // 단계당 경험치 상한(stageXpCapOn 주석 참조). 무리를 먹이에 붙이는 실력이 곧 카드 장 수가 되면
     // "카드가 결과를 좌우한다"는 명제가 뒤에서 무너진다(관전형의 '누가 해도 비슷한 곡선' 붕괴).
-    if (this.leadEnabled) {
+    if (this.stageXpCapOn) {
       const room = Math.max(0, GAME.leadStageXpCap - this.stageXp);
       if (gain > room) gain = room;
       this.stageXp += gain;
@@ -1660,7 +1482,6 @@ export class Game {
       e.genome.pips[cat] += cost;
       refreshDerived(e.genome);
     }
-    this.syncCommandReach(); // 무리 도장이 올랐으면 목소리가 더 멀리 간다 · 즉시 반영
     this.newTiers.push({ cat, tier: tiersOf(this.genome.pips)[cat] });
     this.logEvent("card", `방울 · ${CATEGORY_LABELS[cat]} ${TIER_ROMAN[tiersOf(this.genome.pips)[cat]]}`);
     // 분석 기록 — 연대기 줄은 「이빨 II」라고만 말한다. 든 값(방울)과 순서는 여기에만 남는다.
@@ -1989,12 +1810,10 @@ export class Game {
    * 레벨업으로만), 위협만 흐른다. 예고(preview)는 stageLabel 과 함께 main 이 하이라이트로 띄운다.
    */
   private beginStage(): void {
-    this.stageOrdinal += 1; // 명령 기록이 "몇 번째 단계의 탭인가"를 적는 눈금
+    this.stageOrdinal += 1; // 지침 기록이 "몇 번째 단계의 시트인가"를 적는 눈금
     this.stageTick = 0; // 그 단계 안에서의 시각도 0 부터 다시
-    this.stageXp = 0; // 조종 모드 경험치 상한은 단계마다 새로 찬다(leadEnabled=false 면 안 읽힌다)
-    this.syncCommandReach(); // 무리 티어가 오르면 목소리가 더 멀리 간다 · 단계마다 다시 읽는다
-    this.orderCd.clear(); // 명령 쿨타임은 라운드 경계에서 씻는다(라운드 시작에 손이 묶여 있으면 답답하다)
-    this.world.resetRoundCounts(); // 새 단계 = 시험 계수 리셋 (뜻은 clearStageState 가 이미 거뒀다)
+    this.stageXp = 0; // 단계당 경험치 상한은 단계마다 새로 찬다(stageXpCapOn=false 면 안 읽힌다)
+    this.world.resetRoundCounts(); // 새 단계 = 시험 계수 리셋
     this.currentTrial = null;
     this.trialLockedValue = false; // 조기 합격 확정도 라운드 단위다
     this.trialPeak = 0;
@@ -2196,9 +2015,6 @@ export class Game {
     this.world.heat = 0;
     this.world.foodRegrowMultiplier = 1;
     this.world.plagueRate = 0;
-    // 내려 둔 뜻도 라운드와 함께 끝난다. beginStage 가 아니라 **여기서** 거두는 이유: 라운드가 끝나고
-    // 카드창이 열리는 동안 beginStage 는 아직 안 돈다 · 그 사이 낡은 좌표가 남아 있으면 안 된다.
-    this.world.herdOrder = null;
   }
 
   /** 저장본에서 메타(누적 경험치 → 레벨·리롤 해금 · 끝낸 런 수)를 다시 읽어 필드에 반영.
@@ -2504,7 +2320,7 @@ export class Game {
         champions: this.champions.length,
         everConquered: this.everConquered,
         rerollUnlocked: this.metaRerollUnlocked,
-        leadEnabled: this.leadEnabled,
+        stageXpCap: this.stageXpCapOn,
         assistEnabled: this.assistEnabled,
       },
       entries: this.runLog.slice(),
