@@ -206,6 +206,22 @@ function baseGenome(): Genome {
 }
 
 /** 내 종 개체 하나(없으면 테스트를 세운다). */
+/** 땅 종이 걸어 닿을 수 없는 물 자리 · 물 타일 중 사방이 물인 칸의 중심. 없으면 null. */
+function deepWaterSpot(w: World): { x: number; y: number } | null {
+  const terr = w.terrain;
+  const cs = terr.cellSize;
+  for (let cy = 1; cy < terr.rows - 1; cy++) {
+    for (let cx = 1; cx < terr.cols - 1; cx++) {
+      const px = (cx + 0.5) * cs;
+      const py = (cy + 0.5) * cs;
+      if (!terr.isWater(px, py)) continue;
+      if (!terr.isWater(px - cs, py) || !terr.isWater(px + cs, py) || !terr.isWater(px, py - cs) || !terr.isWater(px, py + cs)) continue;
+      return { x: px, y: py };
+    }
+  }
+  return null;
+}
+
 function anyPlayer(w: World): Entity {
   const e = w.entities.find((x) => x.species.isPlayer);
   if (e === undefined) throw new Error("내 종 개체가 없다 · 테스트 전제가 깨졌다");
@@ -280,17 +296,38 @@ describe("세계 안에서 줍기", () => {
     expect(w.events.filter((ev) => ev.kind === "gene").length).toBe(0);
   });
 
-  it("줍기는 rng 를 안 쓴다 · 방울이 있든 없든 세계의 전개가 1비트도 안 달라진다", () => {
+  it("놓기·줍기 판정은 rng 를 안 쓴다 · 아무도 닿을 수 없는 방울은 세계를 1비트도 안 바꾼다", () => {
+    // ⚠ 2026-09-11 부터 방울은 **내 종이 주우러 가는 목표**다(behavior 의 방울 기본 행동 · **[사용자 2026-09-11]**).
+    //   그래서 「방울이 있든 없든 세계가 같다」는 더는 참이 아니고 참이어서도 안 된다. 여기서 못 박는 것은
+    //   놓기·줍기 **판정 자체**가 rng 를 안 쓴다는 것 · 걸어 닿을 수 없는 자리(물 한가운데 · 땅 종)에 놓은
+    //   방울은 아무도 목표로 삼지 않으므로(nearestFreeDrop 의 canWalkTo) 세계가 그대로여야 한다.
     const fingerprint = (seed: string, withDrop: boolean): string => {
       const w = new World(seed, W, H, baseGenome());
       if (withDrop) {
-        const e = anyPlayer(w);
-        w.spawnGeneDrop(e.x, e.y, 3, "milestone");
+        const spot = deepWaterSpot(w);
+        if (spot === null) throw new Error("이 시드에는 땅 종이 못 닿는 물 자리가 없다");
+        w.spawnGeneDrop(spot.x, spot.y, 3, "milestone");
       }
       for (let i = 0; i < 300; i++) w.step();
       return w.entities.map((e) => `${e.id}:${e.x.toFixed(3)},${e.y.toFixed(3)}`).join(";");
     };
     expect(fingerprint("gene-nodrift", true)).toEqual(fingerprint("gene-nodrift", false));
+  });
+
+  it("반경 안의 닿는 방울은 내 종이 주우러 간다(기본 행동 · 시트 없음)", () => {
+    // 방울 우선의 감지기 · 밟아야만 줍던 옛 세계라면 60px 옆 방울이 300틱 안에 주워질 보장이 없다.
+    let taken = 0;
+    for (const seed of ["gene-seek-a", "gene-seek-b", "gene-seek-c"]) {
+      const w = new World(seed, W, H, baseGenome());
+      for (let i = 0; i < 30; i++) w.step();
+      const c = w.playerCentroid();
+      const spot = w.terrain.nearestPassable(c.x + 60, c.y, false, true, false);
+      w.spawnGeneDrop(spot.x, spot.y, 3, "milestone");
+      const drop = w.geneDrops[w.geneDrops.length - 1];
+      for (let i = 0; i < 300 && drop && !drop.taken; i++) w.step();
+      if (drop?.taken) taken += 1;
+    }
+    expect(taken, "세 시드 중 주워진 수").toBe(3);
   });
 });
 
@@ -316,13 +353,13 @@ describe("방울을 놓을 자리 (pickGeneDropSpot)", () => {
   });
 
   it("자리를 뽑아도 **메인 rng 를 안 건드린다**(야생 생태 밸런스 보존)", () => {
-    const fingerprint = (spawn: boolean): string => {
+    // 자리만 뽑고 놓지는 않는다 · 놓으면 내 종이 주우러 가서(기본 행동) 세계가 정당하게 갈린다.
+    const fingerprint = (pick: boolean): string => {
       const w = new World("gene-stream", W, H, baseGenome());
       for (let i = 0; i < 300; i++) {
         w.step();
-        if (spawn && i % 20 === 0) w.spawnGeneDropNear(2, "milestone");
+        if (pick && i % 20 === 0) pickGeneDropSpot(w.geneRng, w);
       }
-      // 방울을 안 주운 세계와 비교해야 하므로 좌표만 본다(주운 것은 geneCollected 로 갈린다).
       return w.entities.map((e) => `${e.id}:${e.x.toFixed(3)},${e.y.toFixed(3)}`).join(";");
     };
     expect(fingerprint(true)).toEqual(fingerprint(false));

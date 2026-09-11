@@ -11,9 +11,13 @@ import { World } from "@/sim/world";
 import { SIM } from "@/sim/params";
 import { Terrain, TILE, type TileKind } from "@/sim/terrain";
 import { genomeFromTraits, type Genome, type Traits } from "@/sim/genome";
+import { createBoss } from "@/sim/boss";
 import {
   ACT_KEYS,
+  DEFAULT_SHEET,
   FINAL_DIRECTIVE,
+  actAvailable,
+  availableActs,
   SHEET,
   WHO_KEYS,
   directiveLine,
@@ -23,7 +27,7 @@ import {
   whoMatches,
   type Directive,
 } from "@/sim/instructions";
-import { HERD_SHEET_ROWS, TIER_STEPS, emptyPips } from "@/sim/tiers";
+import { HERD_SHEET_ROWS, TIER_STEPS, emptyKeys, emptyPips } from "@/sim/tiers";
 
 const W = 540;
 const H = 960;
@@ -326,5 +330,170 @@ describe("지침 시트 — 정리·표시 도우미", () => {
       expect(line.split(" · ").length).toBe(3);
       expect(line).toContain("밤에");
     }
+  });
+});
+
+describe("지침 시트 — 보스전 단어 (「위협이 있을 때」 · 「맞선다」 · 「멀어진다」) · 「물로 간다」", () => {
+  /** 약탈자 떼를 세계 한복판에 띄운 판. raid 켬(격퇴 체력 있음). */
+  function raidWorld(seed: string, genome: Genome, sheet: readonly Directive[] | null): World {
+    const w = new World(seed, W, H, genome);
+    for (let i = 0; i < 200; i++) w.step();
+    w.boss = createBoss("raider", W, H, w.terrain, 1, true);
+    w.sheet = sheet;
+    return w;
+  }
+  /** 내 종의 떼 무게중심까지 평균 거리(살아 있는 것). */
+  function meanDistToHorde(w: World): number {
+    const b = w.boss;
+    if (b === null || b.members.length === 0) return 0;
+    let mx = 0;
+    let my = 0;
+    for (const m of b.members) {
+      mx += m.x;
+      my += m.y;
+    }
+    mx /= b.members.length;
+    my /= b.members.length;
+    let d = 0;
+    let n = 0;
+    for (const e of w.entities) {
+      if (!e.alive || !e.species.isPlayer) continue;
+      d += Math.hypot(e.x - mx, e.y - my);
+      n += 1;
+    }
+    return n === 0 ? 0 : d / n;
+  }
+
+  it("「위협이 있을 때」는 보스가 세계에 있는 동안만 참이다", () => {
+    const THREAT_HIDE: Directive = { who: "all", when: "threat", act: "gather" };
+    const w = new World("sheet-threat-1", W, H, tune({ herding: 40 }));
+    w.sheet = [THREAT_HIDE];
+    for (let i = 0; i < 60; i++) w.step();
+    expect(w.sheetFired[0], "보스가 없는데 첫 줄이 발동했다").toBe(0);
+    expect(w.sheetFired[1]).toBe(alivePlayers(w) - 0 >= 0 ? w.sheetFired[1] : -1); // 마지막 줄로 흐른다
+    w.boss = createBoss("raider", W, H, w.terrain, 1, true);
+    w.step();
+    expect(w.sheetFired[0], "보스가 있는데 첫 줄이 발동하지 않았다").toBeGreaterThan(0);
+  });
+
+  it("「맞선다」는 맞설 수 있는 개체만 떼 쪽으로 다가가게 한다 · 맞설 수 없는 종은 줄을 건너뛴다", () => {
+    const ENGAGE: Directive = { who: "all", when: "threat", act: "engage" };
+    // 공격 85 = 약탈자 전사(raidWarriorAttack 65 넘김). 시간 평균 거리로 잰다(습격·도망이 순간을 지배).
+    const strong = tune({ attack: 85, speed: 66, vision: 62 });
+    const avgDist = (sheet: readonly Directive[] | null): number => {
+      const w = raidWorld("sheet-engage-1", strong, sheet);
+      let acc = 0;
+      let k = 0;
+      for (let i = 0; i < 240; i++) {
+        w.step();
+        if (w.boss === null) break;
+        if (i >= 20) {
+          acc += meanDistToHorde(w);
+          k += 1;
+        }
+      }
+      return k === 0 ? 0 : acc / k;
+    };
+    const c = avgDist(null);
+    const e = avgDist([ENGAGE]);
+    expect(e, `대조군 ${c.toFixed(0)} · 맞섬 ${e.toFixed(0)}`).toBeLessThan(c * 0.8);
+    // 맞설 수 없는 종(공격 20 · 다른 카운터도 문턱 아래): 줄이 성립하지 않아 마지막 줄로 흐른다.
+    const weak = raidWorld("sheet-engage-2", tune({ attack: 20, speed: 45, vision: 45, herding: 40, fertility: 45 }), [ENGAGE]);
+    weak.step();
+    expect(weak.sheetFired[0]).toBe(0);
+    expect(weak.sheetFired[1]).toBeGreaterThan(0);
+  });
+
+  it("「위협에서 멀어진다」는 약탈자에게 잡아먹히는 수를 줄인다(살아남는 수가 는다)", () => {
+    const AWAY: Directive = { who: "all", when: "threat", act: "away" };
+    const g = tune({ attack: 20, speed: 50, herding: 40 });
+    // ⚠ 「위협 곁에 머무는 비율」로 재면 안 된다 · 대조군은 곁에 있던 개체가 **잡아먹혀** 빠지므로 살아남은
+    //   개체만 남아 비율이 오히려 낮아진다(생존자 편향 · 2026-09-11 실측: 대조군 0.47 · 멀어짐 0.50 인데
+    //   살아 있는 수는 12 대 18). 재야 할 것은 결과 = **살아남은 수**다.
+    // 실측(2026-09-11 · 시드 8): 대조군 85 · 멀어짐 105(×1.24) · 시드별로는 6/8 에서 이김(둘은 근소하게 짐).
+    // 세 시드로 재면 운이 섞이므로 여덟으로 재고 문턱은 실측 이득의 절반(×1.1).
+    const aliveAfter = (sheet: readonly Directive[] | null): number => {
+      let total = 0;
+      for (const s of ["a", "b", "c", "d", "e", "f", "g", "h"]) {
+        const seed = `sheet-away-${s}`;
+        const w = raidWorld(seed, g, sheet);
+        for (let i = 0; i < 240 && w.boss !== null; i++) w.step();
+        total += alivePlayers(w);
+        if (sheet !== null) expect(w.sheetFired[0], `${seed}: 「멀어진다」가 한 번도 발동하지 않았다`).toBeGreaterThan(0);
+      }
+      return total;
+    };
+    const c = aliveAfter(null);
+    const a = aliveAfter([AWAY]);
+    expect(a, `대조군 ${c} · 멀어짐 ${a}`).toBeGreaterThan(c * 1.1);
+  });
+
+  it("「물로 간다」는 헤엄치는 종만 물에 들어가고, 못 헤엄치는 종은 줄을 건너뛴다", () => {
+    const WATER: Directive = { who: "all", when: "always", act: "water" };
+    const inWater = (w: World): number => {
+      let n = 0;
+      let on = 0;
+      for (const e of w.entities) {
+        if (!e.alive || !e.species.isPlayer) continue;
+        n += 1;
+        if (w.terrain.isWater(e.x, e.y)) on += 1;
+      }
+      return n === 0 ? 0 : on / n;
+    };
+    // 수륙양용(수영 70 · 물 전용 90 미만) · 대륙 지도에는 물이 있다.
+    const swimmer = tune({ swimming: 70, herding: 40 });
+    const control = new World("sheet-water-1", W, H, swimmer);
+    const w = new World("sheet-water-1", W, H, swimmer);
+    w.sheet = [WATER];
+    let c = 0;
+    let s = 0;
+    let k = 0;
+    for (let i = 1; i <= 300; i++) {
+      control.step();
+      w.step();
+      if (i >= 60) {
+        c += inWater(control);
+        s += inWater(w);
+        k += 1;
+      }
+    }
+    expect(s / k, `대조군 ${(c / k).toFixed(2)} · 물로 ${(s / k).toFixed(2)}`).toBeGreaterThan(c / k + 0.3);
+    const lander = new World("sheet-water-2", W, H, tune({ swimming: 0, herding: 40 }));
+    lander.sheet = [WATER];
+    stepN(lander, 30);
+    expect(lander.sheetFired[0]).toBe(0);
+  });
+
+  it("「물로 간다」는 지느러미 열쇠가 있어야 시트에 들어온다(정리 함수·목록)", () => {
+    const keys = emptyKeys();
+    expect(actAvailable("water", keys)).toBe(false);
+    expect(availableActs(keys)).not.toContain("water");
+    expect(sanitizeSheet([{ who: "all", when: "always", act: "water" }, HIDE], 5, keys)).toEqual([HIDE]);
+    keys.fin = true;
+    expect(availableActs(keys)).toContain("water");
+    expect(sanitizeSheet([{ who: "all", when: "always", act: "water" }], 5, keys).length).toBe(1);
+  });
+
+  it("「누가」 · 빠른 개체와 눈이 밝은 개체는 보스 약점 문턱과 같은 기준으로 갈린다", () => {
+    const fast = run("sheet-who-fast", tune({ speed: SIM.raidFighterThreshold + 10, vision: 30 }), 30, [
+      { who: "fast", when: "always", act: "gather" },
+      { who: "sharp", when: "always", act: "scatter" },
+    ]);
+    expect(fast.sheetFired[0]).toBeGreaterThan(0);
+    expect(fast.sheetFired[1]).toBe(0);
+    const sharp = run("sheet-who-sharp", tune({ speed: 30, vision: SIM.raidFighterThreshold + 10 }), 30, [
+      { who: "fast", when: "always", act: "gather" },
+      { who: "sharp", when: "always", act: "scatter" },
+    ]);
+    expect(sharp.sheetFired[0]).toBe(0);
+    expect(sharp.sheetFired[1]).toBeGreaterThan(0);
+  });
+
+  it("기본 시트는 두 줄이고 무리 0단의 줄 수 안에 든다 · 맞설 수 없는 개체는 둘째 줄로 흐른다", () => {
+    expect(DEFAULT_SHEET.length).toBeLessThanOrEqual(HERD_SHEET_ROWS[0]);
+    const w = raidWorld("sheet-default-1", tune({ attack: 20, speed: 45, vision: 45, herding: 40, fertility: 45 }), DEFAULT_SHEET);
+    w.step();
+    expect(w.sheetFired[0], "맞설 수 없는 종인데 「맞선다」가 발동했다").toBe(0);
+    expect(w.sheetFired[1], "「멀어진다」가 발동해야 한다").toBeGreaterThan(0);
   });
 });

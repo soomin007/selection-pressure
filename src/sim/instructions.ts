@@ -20,11 +20,11 @@ import { HERD_SHEET_ROWS, tierOf, type Keys, type Pips } from "@/sim/tiers";
 // ─────────────────────────────── 어휘 ───────────────────────────────
 
 /** 누가 — 지침이 걸리는 개체의 갈래. 순서가 곧 판 코드에 저장되는 숫자다(재배열 금지 · 새 단어는 끝에만). */
-export const WHO_KEYS = ["all", "strong", "weak"] as const;
+export const WHO_KEYS = ["all", "strong", "weak", "fast", "sharp"] as const;
 export type Who = (typeof WHO_KEYS)[number];
 
 /** 무엇을 — 발동했을 때 하는 일. 순서가 곧 판 코드의 숫자다(재배열 금지 · 새 단어는 끝에만). */
-export const ACT_KEYS = ["auto", "hide", "gather", "scatter"] as const;
+export const ACT_KEYS = ["auto", "hide", "gather", "scatter", "engage", "away", "water"] as const;
 export type Act = (typeof ACT_KEYS)[number];
 
 /** 어떤 때 — 카드 특성의 조건을 그대로 쓴다. `PERK_WHENS` 의 순서가 판 코드의 숫자다. */
@@ -41,6 +41,10 @@ export const WHO_INFO: Record<Who, { label: string; desc: string }> = {
   all: { label: "모두", desc: "살아 있는 내 종 전부." },
   strong: { label: "이빨이 센 개체", desc: `무는 힘이 ${SIM.raidWarriorAttack} 이상인 개체. 보스전에서 맞서는 개체와 같은 기준.` },
   weak: { label: "그 밖의 개체", desc: "이빨이 센 개체가 아닌 나머지." },
+  // 보스 약점 형질의 문턱(raidFighterThreshold)과 같은 기준 · 「빠른 개체 · 위협이 있을 때 · 맞선다」처럼
+  // 보스 종류에 맞춰 팀을 짜게 한다(추격자·말벌·상어는 속도 · 매복자·큰수리는 시야).
+  fast: { label: "빠른 개체", desc: `빠르기가 ${SIM.raidFighterThreshold} 이상인 개체. 추격자·말벌 떼·상어에 맞서는 기준.` },
+  sharp: { label: "눈이 밝은 개체", desc: `보는 거리가 ${SIM.raidFighterThreshold} 이상인 개체. 그림자 매복자·하늘의 사냥꾼에 맞서는 기준.` },
 };
 
 export const ACT_INFO: Record<Act, { label: string; desc: string }> = {
@@ -48,7 +52,37 @@ export const ACT_INFO: Record<Act, { label: string; desc: string }> = {
   hide: { label: "수풀로 숨는다", desc: "걸어 닿는 가장 가까운 수풀로 간다. 닿는 수풀이 없으면 이 줄은 건너뛴다." },
   gather: { label: "뭉친다", desc: "무리의 한가운데로 모인다. 이미 모여 있으면 그대로 둔다." },
   scatter: { label: "흩어진다", desc: "무리의 한가운데에서 멀어진다. 이미 떨어져 있으면 그대로 둔다." },
+  engage: {
+    label: "맞선다",
+    desc: "맞설 수 있는 개체만 위협의 한가운데로 다가간다. 맞설 수 없거나 위협이 없으면 이 줄은 건너뛴다. 맞서는 개체는 달아나지 않는다.",
+  },
+  away: { label: "위협에서 멀어진다", desc: "위협이 보이기 전부터 반대쪽으로 빠진다. 위협이 없거나 이미 멀면 이 줄은 건너뛴다." },
+  water: { label: "물로 간다", desc: "걸어 닿는 가장 가까운 물로 들어간다. 땅 위협은 물속을 못 잡는다. 지느러미가 있어야 쓸 수 있다." },
 };
+
+/**
+ * 열쇠로 열리는 단어(**[사용자 2026-09-11]** "단어는 티어·카드로 늘어난다" · 첫 사례). 없는 열쇠의 단어는 시트에
+ * 못 들어오고(sanitizeSheet) 화면 목록에도 안 뜬다. 문구(`KEY_DESC`)와 한 쌍이다.
+ */
+export function actAvailable(act: Act, keys: Keys): boolean {
+  if (act === "water") return keys.fin;
+  return true;
+}
+
+/** 이 열쇠로 쓸 수 있는 단어 전부(화면 목록용). */
+export function availableActs(keys: Keys): Act[] {
+  return ACT_KEYS.filter((a) => actAvailable(a, keys));
+}
+
+/**
+ * 첫 시트 · 새 런마다 이것으로 시작한다(림월드의 기본 작업 우선순위처럼 · 감독이 안 적어도 팀이 이렇게 움직인다).
+ * 두 줄인 이유: 무리 0단의 줄 수가 2 다. 맞설 수 있는 개체는 위협에 다가가고, 나머지는 위협이 보이기 전부터 빠진다.
+ * 「맞선다」가 대상 없음(맞설 수 없는 개체)이면 다음 줄로 흐르므로, 「모두」로 적어도 둘이 저절로 갈린다.
+ */
+export const DEFAULT_SHEET: readonly Directive[] = [
+  { who: "all", when: "threat", act: "engage" },
+  { who: "all", when: "threat", act: "away" },
+];
 
 /** 「어떤 때」 화면 문구. 카드와 같은 말 · 「늘」만 카드에서는 빈 문자열이라 여기서 채운다. */
 export function whenLabel(when: PerkWhen): string {
@@ -78,6 +112,11 @@ export const SHEET = {
   gatherRadius: 80,
   /** 「흩어진다」 · 무게중심에서 이 거리(px) 밖이면 이미 흩어진 것. */
   scatterRadius: 160,
+  /**
+   * 「위협에서 멀어진다」 · 가장 가까운 위협 지점에서 이 거리(px) 밖이면 이미 멀어진 것.
+   * 본능의 도망 반경(즉사 반경 + fleeRadiusPad 46 · 최대 약 120)보다 넉넉히 바깥이라 **보이기 전부터** 빠진다.
+   */
+  awayRadius: 260,
 } as const;
 
 /**
@@ -93,9 +132,19 @@ export function sheetRows(pips: Pips, keys?: Keys): number {
 
 /** 「누가」 판정. 순수 · 개체의 게놈만 본다. */
 export function whoMatches(who: Who, e: Entity): boolean {
-  if (who === "all") return true;
-  const strong = e.genome.traits.attack >= SIM.raidWarriorAttack;
-  return who === "strong" ? strong : !strong;
+  const t = e.genome.traits;
+  switch (who) {
+    case "all":
+      return true;
+    case "strong":
+      return t.attack >= SIM.raidWarriorAttack;
+    case "weak":
+      return t.attack < SIM.raidWarriorAttack;
+    case "fast":
+      return t.speed >= SIM.raidFighterThreshold;
+    case "sharp":
+      return t.vision >= SIM.raidFighterThreshold;
+  }
 }
 
 /**
@@ -108,14 +157,15 @@ export function directiveApplies(d: Directive, e: Entity, ctx: PerkCtx): boolean
 }
 
 /**
- * 시트를 정리한다: 줄 수 상한 · 모르는 단어 제거. game 층이 받아들일 때 한 번 부른다(sim 은 믿고 읽는다).
- * 새 배열을 돌려준다(입력을 안 바꾼다).
+ * 시트를 정리한다: 줄 수 상한 · 모르는 단어 제거 · 열쇠가 없는 단어 제거. game 층이 받아들일 때 한 번 부른다
+ * (sim 은 믿고 읽는다). 새 배열을 돌려준다(입력을 안 바꾼다).
  */
-export function sanitizeSheet(rows: readonly Directive[], maxRows: number): Directive[] {
+export function sanitizeSheet(rows: readonly Directive[], maxRows: number, keys?: Keys): Directive[] {
   const out: Directive[] = [];
   for (const r of rows) {
     if (out.length >= maxRows) break;
     if (!WHO_KEYS.includes(r.who) || !WHEN_KEYS.includes(r.when) || !ACT_KEYS.includes(r.act)) continue;
+    if (keys !== undefined && !actAvailable(r.act, keys)) continue;
     out.push({ who: r.who, when: r.when, act: r.act });
   }
   return out;

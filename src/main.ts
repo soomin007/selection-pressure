@@ -1171,6 +1171,7 @@ async function boot(): Promise<void> {
       fired: gw.sheetFired,
       instinct: gw.sheetInstinct,
       canEdit: game.canEditSheet,
+      acts: game.sheetActs,
       inTimeout: game.phase === "timeout",
       timeoutIsAuto: game.timeoutIsAuto,
       timeoutsLeft: game.timeoutsLeft,

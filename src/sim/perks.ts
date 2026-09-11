@@ -132,6 +132,8 @@ export const PERK_WHENS = [
   "hunting",
   "fleeing",
   "wounded",
+  // ⚠ 새 조건은 **끝에만** 더한다 · 이 배열의 순서가 지침 시트의 판 코드 숫자다(instructions.WHEN_KEYS).
+  "threat",
 ] as const;
 export type PerkWhen = (typeof PERK_WHENS)[number];
 
@@ -185,6 +187,8 @@ export const PERK_WHEN_INFO: Record<PerkWhen, PerkWhenInfo> = {
   hunting: { label: "쫓는 동안", freq: 0.08, note: "추정 · 사냥은 판에 5~10번뿐인 드문 사건이다" },
   fleeing: { label: "달아나는 동안", freq: 0.1, note: "추정 · 미측정" },
   wounded: { label: "물린 뒤 얼마간", freq: 0.05, note: "추정 · woundTicks 가 살아 있는 동안" },
+  // 감독의 지침용(2026-09-11 · **[사용자 2026-09-11]** "보스전 자체를 가리키는 말이 없다"). 카드는 아직 안 쓴다.
+  threat: { label: "위협이 있을 때", freq: 0.49, note: "계산값 · 시대당 보스·재앙 단계 70초/142초(SCHEDULE) · 카드 미사용" },
 };
 
 // ─────────────────────────────── 조건 판정 ───────────────────────────────
@@ -250,6 +254,8 @@ const WHEN_TEST: Record<PerkWhen, (c: PerkCtx) => boolean> = {
   hunting: (c) => c.hunting,
   fleeing: (c) => c.fleeing,
   wounded: (c) => c.e.woundTicks > 0,
+  // 보스(개체형)든 재앙(독 안개)이든 world.boss 하나로 세계에 있다 · 대멸종(전역 환경)은 boss 가 아니라 여기 안 든다.
+  threat: (c) => c.world.boss !== null,
 };
 
 /** 이 조건이 지금 성립하는가. 화면(「지금 켜진 특성」)과 sim 이 **같은 함수**를 부른다. */

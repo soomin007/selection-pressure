@@ -131,7 +131,10 @@ describe("특성 목록의 무결성", () => {
     const axes = new Set(PERKS.map((p) => p.axis));
     const whens = new Set(PERKS.map((p) => p.when));
     for (const a of PERK_AXES) expect(axes.has(a), `축 ${a} 를 쓰는 특성이 없다`).toBe(true);
-    for (const w of PERK_WHENS) expect(whens.has(w), `조건 ${w} 을 쓰는 특성이 없다`).toBe(true);
+    // 「위협이 있을 때」(threat)는 카드가 아니라 감독의 지침 시트가 쓴다(2026-09-11) · 그 경로의 감지기는
+    // instructions.test.ts 다. 카드로도 쓸지는 카드 설계 결정(사용자)이라 여기서 강제하지 않는다.
+    const sheetOnly = new Set<string>(["threat"]);
+    for (const w of PERK_WHENS) if (!sheetOnly.has(w)) expect(whens.has(w), `조건 ${w} 을 쓰는 특성이 없다`).toBe(true);
   });
 
   it("특성은 **배수 아니면 규칙** 둘 중 하나다 — 둘 다이거나 둘 다 아닌 것은 없다", () => {

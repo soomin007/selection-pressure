@@ -348,7 +348,7 @@ const SCREENS = {
     },
   },
   watchManagerPick: {
-    label: "작전타임 · 단어 목록 팝오버(어떤 때 · 13개)",
+    label: "작전타임 · 단어 목록 팝오버(어떤 때 · 14개)",
     async go(page) {
       await toHud(page);
       await page.evaluate(() => {

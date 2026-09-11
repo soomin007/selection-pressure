@@ -63,7 +63,7 @@ import {
 } from "@/game/config";
 import { loadMeta, metaLevel, isPresetUnlocked, isRerollUnlockedAtLevel, recordRunComplete, debugSetMetaLevel, debugGrantMetaXp, debugResetProgress, loadChampions, saveChampion, type RunProgress, type Champion } from "@/game/meta";
 import { SIM } from "@/sim/params";
-import { sameSheet, sanitizeSheet, sheetRows, type Directive } from "@/sim/instructions";
+import { DEFAULT_SHEET, availableActs, sameSheet, sanitizeSheet, sheetRows, type Act, type Directive } from "@/sim/instructions";
 
 /**
  * **은근한 보정의 상한.** 보정이 세면 게임이 저절로 굴러가고, 그러면 플레이어가 이룬 것이 가짜가 된다
@@ -748,6 +748,11 @@ export class Game {
     return this.sheetRowsValue;
   }
 
+  /** 지금 열쇠로 쓸 수 있는 「무엇을」 단어(화면 목록용 · 「물로 간다」는 지느러미가 있어야). */
+  get sheetActs(): Act[] {
+    return availableActs(this.genome.keys);
+  }
+
   /** 쓸 수 있는 줄 수 · 무리 티어가 늘린다(`tiers.HERD_SHEET_ROWS`). */
   get maxSheetRows(): number {
     return sheetRows(this.genome.pips, this.genome.keys);
@@ -768,7 +773,7 @@ export class Game {
    */
   setSheet(rows: readonly Directive[]): boolean {
     if (!this.canEditSheet) return false;
-    this.sheetRowsValue = sanitizeSheet(rows, this.maxSheetRows);
+    this.sheetRowsValue = sanitizeSheet(rows, this.maxSheetRows, this.genome.keys);
     this.world.sheet = this.sheetRowsValue;
     return true;
   }
@@ -1367,7 +1372,9 @@ export class Game {
     this.trialSkipBroodBase = 0;
     this.pendingLevels = 0;
     this.boundaryDraft = false;
-    this.sheetRowsValue = []; // 새 혈통 = 빈 시트(마지막 줄 「알아서 한다」만) · 기록 기준도 빈 시트
+    // 새 혈통 = **기본 시트**(DEFAULT_SHEET · 감독이 안 적어도 팀이 위협에 맞서고 빠진다). 기록 기준은 빈 시트라
+    // 첫 단계 0틱에 기본 시트가 판 코드에 남는다(재현이 같은 시트로 시작하게).
+    this.sheetRowsValue = DEFAULT_SHEET.map((d) => ({ ...d }));
     this.sheetLogged = [];
     this.timeoutsLeftValue = 0;
     this.timeoutAutoValue = false;

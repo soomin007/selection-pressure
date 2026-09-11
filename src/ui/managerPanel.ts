@@ -17,7 +17,6 @@ import { registerKeyLayer } from "@/ui/keys";
 import type { ScheduleEntry } from "@/game/game";
 import {
   ACT_INFO,
-  ACT_KEYS,
   FINAL_DIRECTIVE,
   WHEN_KEYS,
   WHO_INFO,
@@ -58,6 +57,8 @@ export interface ManagerData {
   instinct: number;
   /** 지금 지침을 고칠 수 있는가(세계가 서 있는가). */
   canEdit: boolean;
+  /** 지금 열쇠로 쓸 수 있는 「무엇을」 단어(없는 열쇠의 단어는 목록에 안 뜬다). */
+  acts: readonly Act[];
   /** 작전타임 중인가. */
   inTimeout: boolean;
   /** 작전타임이 위협 시작의 자동 작전타임인가. */
@@ -185,7 +186,7 @@ export function createManagerPanel(cb: ManagerCallbacks): ManagerPanel {
     const title = el("div", "mgr-picker-title", slot === "who" ? "누가" : slot === "when" ? "어떤 때" : "무엇을 한다");
     picker.append(title);
     const cur = last.sheet[row];
-    const keys: readonly string[] = slot === "who" ? WHO_KEYS : slot === "when" ? WHEN_KEYS : ACT_KEYS;
+    const keys: readonly string[] = slot === "who" ? WHO_KEYS : slot === "when" ? WHEN_KEYS : last.acts;
     for (const k of keys) {
       const b = el("button", "mgr-pick");
       b.type = "button";
@@ -408,7 +409,7 @@ export function createManagerPanel(cb: ManagerCallbacks): ManagerPanel {
     const fin = d.fired[d.sheet.length] ?? 0;
     setText(finalCount, editing ? "" : String(fin));
     finalCount.classList.toggle("live", !editing && fin > 0);
-    setText(instinctLine, !editing && d.instinct > 0 ? `본능이 앞선 개체 ${d.instinct} (달아나거나 쫓는 중)` : "");
+    setText(instinctLine, !editing && d.instinct > 0 ? `본능이 앞선 개체 ${d.instinct} (달아나거나 쫓거나 방울 줍는 중)` : "");
   }
 
   function update(d: ManagerData): void {

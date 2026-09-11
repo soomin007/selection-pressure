@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 import { Game } from "@/game/game";
 import { GAME, SCHEDULE } from "@/game/config";
 import { HERD_SHEET_ROWS } from "@/sim/tiers";
-import type { Directive } from "@/sim/instructions";
+import { DEFAULT_SHEET, type Directive } from "@/sim/instructions";
 
 interface GamePriv {
   stageIndex: number;
@@ -179,7 +179,7 @@ describe("지침 시트 · game 층", () => {
     const g = makeForage() as Game;
     expect(g.canEditSheet).toBe(false);
     expect(g.setSheet([HIDE])).toBe(false);
-    expect(g.sheet.length).toBe(0);
+    expect(g.sheet).toEqual(DEFAULT_SHEET); // 관전 중 거절 → 기본 시트 그대로
     g.openTimeout();
     expect(g.canEditSheet).toBe(true);
     expect(g.setSheet([HIDE])).toBe(true);
@@ -222,7 +222,7 @@ describe("지침 시트 · game 층", () => {
     expect(g.runCodeData().entries.filter((e) => e.t === "sheet").length).toBe(before + 1);
   });
 
-  it("시대를 넘어도 시트는 새 세계를 따라간다 · 새 런에서는 비워진다", () => {
+  it("시대를 넘어도 시트는 새 세계를 따라간다 · 새 런은 기본 시트로 돌아간다", () => {
     const g = makeForage() as Game;
     g.openTimeout();
     g.setSheet([HIDE]);
@@ -232,14 +232,34 @@ describe("지침 시트 · game 층", () => {
     expect(g.sheet).toEqual([HIDE]);
     expect(g.world.sheet).toBe(g.sheet);
     g.beginRun();
-    expect(g.sheet.length).toBe(0);
-    expect(g.world.sheet).toEqual([]);
+    expect(g.sheet).toEqual(DEFAULT_SHEET);
+    expect(g.world.sheet).toEqual(DEFAULT_SHEET);
   });
 
-  it("빈 시트는 세계에 「알아서 한다」로 붙어 있다(발동 집계가 산다)", () => {
+  it("새 런은 기본 시트(위협에 맞선다 · 멀어진다)로 시작하고, 그것이 첫 단계 0틱에 판 코드에 남는다", () => {
     const g = makeForage() as Game;
     expect(g.world.sheet).not.toBeNull();
-    expect(g.world.sheetFired.length).toBe(1);
+    expect(g.world.sheetFired.length).toBe(DEFAULT_SHEET.length + 1);
+    const recs = g.runCodeData().entries.filter((e) => e.t === "sheet");
+    expect(recs.length).toBeGreaterThanOrEqual(1);
+    const first = recs[0];
+    expect(first && first.t === "sheet" ? first.rows : null).toEqual(DEFAULT_SHEET);
+    expect(first && first.t === "sheet" ? first.tick : -1).toBe(0);
+  });
+
+  it("열쇠가 없는 단어는 시트에 못 들어오고 목록에도 없다 · 지느러미가 있으면 「물로 간다」가 열린다", () => {
+    const g = makeForage() as Game;
+    expect(g.sheetActs).not.toContain("water");
+    g.openTimeout();
+    g.setSheet([{ who: "all", when: "always", act: "water" }, HIDE]);
+    expect(g.sheet).toEqual([HIDE]); // 물로 간다는 걸러졌다
+    g.closeTimeout();
+    g.genome.keys.fin = true;
+    expect(g.sheetActs).toContain("water");
+    g.openGeneShop(); // 작전타임 예산은 단계당 1 이라 두 번째 편집은 구입 화면(예산 없음)으로
+    expect(g.setSheet([{ who: "all", when: "always", act: "water" }])).toBe(true);
+    expect(g.sheet.length).toBe(1);
+    g.closeGeneShop();
   });
 });
 

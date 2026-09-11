@@ -853,17 +853,44 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       ? gbNear
       : null;
 
+  // ── 방울(진화 구슬) 줍기 · **종의 기본 행동** (**[사용자 2026-09-11]** "개체들이 일반 먹이보다 진화 구슬에
+  //    좀 더 높은 가중치를 가져야 게임이 진행될 것 같은데") ──────────────────────────────────────
+  //    옛 세계에서 방울 우선은 「가라」 명령 아래에서만 살았다(**[사용자 2026-08-09]**). 명령이 사라지자 방울을
+  //    주우러 가는 개체가 없어져 진행 연료(티어 구입)가 끊겼다. 감독이 「동전 주워라」까지 말하게 하지 않고
+  //    **종의 본능**으로 올린다(림월드의 운반 기본 일감과 같은 결) · 시트 유무와 무관.
+  //    우선순위: 도망 > 물고 있는 사냥감 > 금빛 짐승 > **방울** > 지침 > 먹이 · 배회.
+  //     · 먹이보다 위인 이유: 방울은 판당 스무 개 남짓이고 사람이 이미 번 것이라, 풀 한 포기와 같은 무게로
+  //       두면 영영 안 주워진다. 수가 적어 채집을 잡아먹을 여지도 없다(옛 지시 블록의 실측 근거).
+  //     · 반경은 ORDER.geneRadius(160) · **걸어 닿는** 방울만(물 건너 방울에 머리 박던 사고의 방지책 그대로).
+  //    ⚠ 시트 없는 세계가 바뀐다(의도된 세계 변화 · 2026-09-11 · 내 종 이동만 바뀌고 rng 소비 순서는 안 건드린다).
+  let dropMoving = false;
+  if (e.species.isPlayer && !fleeing && e.targetPrey === null && goblinChase === null) {
+    const drop = nearestFreeDrop(world, e.x, e.y, canSwim, canLand, canFly);
+    if (drop !== null) {
+      // 길찾기를 태운다(직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다) · 길이 없으면 놓아 준다.
+      const nav = navTo(e, world, drop, canSwim, canLand, canFly, true);
+      if (!nav.giveUp) {
+        const go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, 0);
+        desired = {
+          x: desired.x * (1 - ORDER.pull) + go.x * ORDER.pull,
+          y: desired.y * (1 - ORDER.pull) + go.y * ORDER.pull,
+        };
+        dropMoving = true;
+      }
+    }
+  }
+
   // ── 감독의 지침 시트 (**[사용자 2026-09-11]** 탭 조종 대체 · 어휘·평가기는 sim/instructions.ts) ──
   // 옛 지시 블록과 **같은 계약**: 위 자율 판단을 하나도 건너뛰지 않고 결과값 desired 만 섞는다 · 순수
   // 기하라 rng 0 · 시트가 null 이면 이 블록이 통째로 안 돌아 시트 없는 세계는 기존과 비트 단위로 같다.
-  // 우선순위(본능이 위): 도망 > 물고 있는 사냥감 > 금빛 짐승 > **지침** > 배회. 근거는 옛 지시 블록의
+  // 우선순위(본능이 위): 도망 > 물고 있는 사냥감 > 금빛 짐승 > 방울 > **지침** > 배회. 근거는 옛 지시 블록의
   // 실측 그대로(사냥감을 덮으면 사냥 9.0 → 2.5). 줄은 발동해서 세되(화면의 「N마리」), 본능이 이번 틱
   // 이동을 가진 개체는 `sheetInstinct` 로 따로 센다 · 그래야 「발동했는데 왜 안 움직이나」가 화면에서 읽힌다.
   // 발동 집계는 **여기 한 자리에서만** 센다(known_issues 「화면에 뜨는 숫자를 규칙에서 다시 유도하지 마라」).
   const sheet = world.sheet;
   let sheetMoving = false; // 이번 틱 지침이 이동을 가져갔나 · 아래 스침 채집이 읽는다
   if (sheet !== null && e.species.isPlayer) {
-    const busy = fleeing || e.targetPrey !== null || goblinChase !== null;
+    const busy = fleeing || e.targetPrey !== null || goblinChase !== null || dropMoving;
     let firedRow = sheet.length; // 기본 = 보이지 않는 마지막 줄 「모두 · 늘 · 알아서 한다」
     let aim: SheetAim = "done";
     for (let i = 0; i < sheet.length; i += 1) {
@@ -874,7 +901,7 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
         break;
       }
       // 이동 행동은 **대상이 있어야 성립한다**(FF12: 대상 없는 갬빗은 건너뛴다) · 없으면 다음 줄로.
-      const a = sheetAim(d.act, e, world, canSwim, canLand, canFly);
+      const a = sheetAim(d.act, e, world, canSwim, canLand, canFly, atkRangeBase);
       if (a === "none") continue;
       firedRow = i;
       aim = a;
@@ -885,14 +912,9 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
       if (busy) {
         world.sheetInstinct += 1;
       } else {
-        // 방울 우선 · 옛 지시 블록과 같은 규칙(**[사용자 2026-08-09]** "가라 명령 때 방울을 우선시") ·
-        // 지침이 이동을 가져간 동안에만 산다(auto 인 개체는 예전처럼 밟아야만 줍는다 = 기존 세계 불변).
-        const drop = nearestFreeDrop(world, e.x, e.y, canSwim, canLand, canFly);
+        // (방울 우선은 위 기본 행동이 먼저 가져간다 · 그 개체는 busy 로 세여 여기 안 온다.)
         let go: Vec | null = null;
-        if (drop !== null) {
-          const nav = navTo(e, world, drop, canSwim, canLand, canFly, true);
-          if (!nav.giveUp) go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, 0);
-        } else if (aim.nav) {
+        if (aim.nav) {
           // 길찾기를 태운다(직선으로 끌면 물가·산자락에서 벽을 따라 미끄러진다) · 길이 없으면 놓아 준다.
           const nav = navTo(e, world, aim, canSwim, canLand, canFly, true);
           if (!nav.giveUp) go = toward(nav.x - e.x, nav.y - e.y, maxSpeed, nav.final ? aim.arrive : 0);
@@ -2004,18 +2026,51 @@ function sheetAim(
   canSwim: boolean,
   canLand: boolean,
   canFly: boolean,
+  /** 원거리 사거리(보스전 사격은 atkRangeBase) · 「맞선다」의 원거리 개체가 멈추는 거리. */
+  atkRange: number,
 ): SheetAim {
   const terr = world.terrain;
-  if (act === "hide") {
-    const cs = terr.cellSize;
-    if (terr.isGrass(e.x, e.y)) {
-      // 이미 수풀 위 · 그 칸의 중심에 머문다(배회가 칸 밖으로 새지 않게 · 도착 감속 반경 = 한 칸).
+  const cs = terr.cellSize;
+  if (act === "hide" || act === "water") {
+    const here = act === "hide" ? terr.isGrass(e.x, e.y) : terr.isWater(e.x, e.y);
+    if (here) {
+      // 이미 그 위 · 그 칸의 중심에 머문다(배회가 칸 밖으로 새지 않게 · 도착 감속 반경 = 한 칸).
       const cx = Math.floor(e.x / cs);
       const cy = Math.floor(e.y / cs);
       return { x: (cx + 0.5) * cs, y: (cy + 0.5) * cs, nav: false, arrive: cs };
     }
-    const g = nearestReachableGrass(world, e.x, e.y, canSwim, canLand, canFly);
+    // 「물로 간다」는 헤엄칠 수 있어야 한다(열쇠 게이트는 game 이 걸지만 sim 도 제 기준으로 한 번 더 · 물 전용 종은 늘 물이다).
+    if (act === "water" && !canSwim) return "none";
+    const want = act === "hide" ? (x: number, y: number): boolean => terr.isGrass(x, y) : (x: number, y: number): boolean => terr.isWater(x, y);
+    const g = nearestReachableTile(world, e.x, e.y, want, canSwim, canLand, canFly);
     return g === null ? "none" : { x: g.x, y: g.y, nav: true, arrive: cs * 0.5 };
+  }
+  if (act === "engage" || act === "away") {
+    const boss = world.boss;
+    if (boss === null) return "none";
+    if (act === "engage") {
+      // 맞설 수 있는 개체만(공격·카운터 형질이 문턱을 넘고 · 층이 겹치고 · 격퇴 체력이 남은 보스) · 판정은 boss.ts 하나.
+      if (!isRaidFighter(boss, e, world)) return "none";
+      const tgt = bossRaidTargetFor(boss, e.x, e.y);
+      // 멈추는 거리: 원거리는 사거리 안(멈춰 쏜다 · kiting) · 근접은 반격 리듬 반경(그 안은 raidRhythm 이 몫이다 ·
+      // 지침이 덮으면 물러났다 붙는 리듬이 깨진다).
+      const stop = isRaidRangedFighter(boss, e, world) ? atkRange * 0.85 : boss.counterRadius * SIM.raidRecoilNear;
+      const dx = tgt.x - e.x;
+      const dy = tgt.y - e.y;
+      if (dx * dx + dy * dy <= stop * stop) return "done";
+      return { x: tgt.x, y: tgt.y, nav: true, arrive: stop };
+    }
+    // away · 가장 가까운 위협 지점(떼 개체 또는 보스 본체)에서 멀어진다. 전역 재앙(독 안개 · 자리 없음)은 대상 없음.
+    if (boss.killRadius <= 0 && boss.members.length === 0) return "none";
+    const tp = bossRaidTargetFor(boss, e.x, e.y);
+    const dx = e.x - tp.x;
+    const dy = e.y - tp.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= SHEET.awayRadius * SHEET.awayRadius) return "done";
+    const d = Math.sqrt(d2);
+    const ux = d < 1e-6 ? 1 : dx / d;
+    const uy = d < 1e-6 ? 0 : dy / d;
+    return { x: e.x + ux * SHEET.awayRadius, y: e.y + uy * SHEET.awayRadius, nav: false, arrive: 0 };
   }
   const c = world.teamCentroid;
   if (c.n < 2) return "none"; // 저 혼자면 뭉칠 무리도 흩어질 무리도 없다
@@ -2035,16 +2090,17 @@ function sheetAim(
 }
 
 /**
- * (x,y) 에서 **걸어 닿는** 가장 가까운 수풀 칸의 중심. 반경 `SHEET.hideRadiusTiles` 밖은 없는 것으로 친다.
+ * (x,y) 에서 **걸어 닿는** 가장 가까운 `want` 칸(수풀·물)의 중심. 반경 `SHEET.hideRadiusTiles` 밖은 없는 것으로 친다.
  * 고리(체비쇼프 거리)를 안쪽부터 넓혀 가며 훑고, 후보를 찾은 뒤에도 유클리드 거리로 이길 수 있는 고리까지는
  * 마저 본다(고리 r 의 모서리는 r√2 라 고리 r+1 의 변 중앙이 더 가까울 수 있다).
  * · 결정론: 고정 순회 순서 · 동률이면 먼저 나온 칸 · rng 0.
  * · 도달 판정은 `canWalkTo`(연결 영역 라벨 · 배열 읽기 둘) — 후보마다 BFS 를 돌리지 않는다.
  */
-function nearestReachableGrass(
+function nearestReachableTile(
   world: World,
   x: number,
   y: number,
+  want: (px: number, py: number) => boolean,
   canSwim: boolean,
   canLand: boolean,
   canFly: boolean,
@@ -2067,7 +2123,7 @@ function nearestReachableGrass(
         if (!onEdgeRow && cx !== ox - r && cx !== ox + r) continue; // 고리 안쪽은 이미 봤다
         const px = (cx + 0.5) * cs;
         const py = (cy + 0.5) * cs;
-        if (!terr.isGrass(px, py)) continue;
+        if (!want(px, py)) continue;
         const dx = px - x;
         const dy = py - y;
         const d2 = dx * dx + dy * dy;
