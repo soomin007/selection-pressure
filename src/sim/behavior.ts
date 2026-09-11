@@ -729,6 +729,18 @@ export function stepEntity(e: Entity, world: World, newborns: Entity[]): void {
             ? toward(bdx, bdy, maxSpeed * SIM.raidRecoilFactor, 0) // 물러나 이를 고른다
             : toward(-bdx, -bdy, maxSpeed, raidBoss.counterRadius * 0.4); // 다시 붙는다
       }
+    } else if (fighter && raidBoss !== null) {
+      // ── 원거리 전사의 kiting(2026-09-12) · 보스(또는 가장 가까운 떼 개체)가 즉사 반경 근처까지 오면 **물러나며 쏜다**.
+      //    사냥에서 원거리 종이 「사거리에서 멈춰 쏜다」는 규칙의 보스전 짝이다. 왜 지금 넣었나: 보스의 진동을
+      //    고치자(Mover.vx 주석) 추격자가 목표에 정확히 닿게 되어, 서서 쏘던 원거리 전사가 그 자리에서 잡혔다
+      //    (실측 · 원거리 85 vs 추격자 · 시드 8: 격퇴 2/8 → 0/8 · 사격 수 50~100 → 32~82). 진동이 우연히
+      //    원거리를 살려 주고 있었던 것이다. 물러나는 문턱은 즉사 반경 + 여유 · 사거리(≈63px) 안이라 계속 쏜다.
+      //    보스 없는 세계는 이 분기가 통째로 안 돈다 · rng 0.
+      const tgt = bossRaidTargetFor(raidBoss, e.x, e.y);
+      const bdx = e.x - tgt.x;
+      const bdy = e.y - tgt.y;
+      const back = raidBoss.killRadius + SIM.fleeRadiusPad * 0.5;
+      if (bdx * bdx + bdy * bdy <= back * back) raidRhythm = toward(bdx, bdy, maxSpeed, 0);
     }
     const goal =
       raidRhythm !== null

@@ -83,6 +83,15 @@ export function speciesLayers(traits: Traits): readonly Layer[] {
 interface Mover {
   x: number;
   y: number;
+  /**
+   * 관성 속도(px/틱). 2026-09-12 **[사용자]** "보스가 제자리에서 드드득거리는 건 진짜 뭐 고칠 방법이 없어?" —
+   * 석 달 지적의 원인은 **감속 없는 전속 이동**이었다: 목표까지 2px 남았는데 2.5px 를 가면 지나치고, 다음 틱에
+   * 되돌아온다. 계측(2026-09-12 · 내 종 30px 안): 틱당 방향 뒤집힘 40~80% · 평상시 이동은 2%.
+   * 처방 둘 = **도착 감속**(목표까지 남은 거리보다 더 안 간다) + **관성**(속도를 BOSS_TURN 만큼만 꺾는다).
+   * rng 0 · 결정론 안전. 렌더는 prev→now 보간뿐이라 sim 이 매끈하면 화면도 매끈하다.
+   */
+  vx: number;
+  vy: number;
   path: number[]; // 격자 BFS 경로(타일 인덱스). 비어 있으면 직진.
   pathGoalTile: number; // 그 경로가 향하던 목표 타일(바뀌면 재계산)
 }
@@ -180,6 +189,8 @@ interface Preset
     | "y"
     | "prevX"
     | "prevY"
+    | "vx"
+    | "vy"
     | "members"
     | "path"
     | "pathGoalTile"
@@ -495,7 +506,7 @@ export function createBoss(
     const grassSpots = type === "stalker" && terrain ? terrain.grassSpots(count) : [];
     if (grassSpots.length === count) {
       for (const s of grassSpots)
-        members.push({ x: s.x, y: s.y, prevX: s.x, prevY: s.y, path: [], pathGoalTile: -1 });
+        members.push({ x: s.x, y: s.y, prevX: s.x, prevY: s.y, vx: 0, vy: 0, path: [], pathGoalTile: -1 });
     } else {
       // 무리로 뭉쳐 한쪽(위 가장자리)에서 몰려온다 — 작은 원으로 모아 스폰(사방 분산은 "무리"로 안
       // 보이고 따로 논다). rng 무사용 → 결정론.
@@ -511,7 +522,7 @@ export function createBoss(
           mx = s.x;
           my = s.y;
         }
-        members.push({ x: mx, y: my, prevX: mx, prevY: my, path: [], pathGoalTile: -1 });
+        members.push({ x: mx, y: my, prevX: mx, prevY: my, vx: 0, vy: 0, path: [], pathGoalTile: -1 });
       }
     }
   }
@@ -522,6 +533,8 @@ export function createBoss(
     y,
     prevX: x,
     prevY: y,
+    vx: 0,
+    vy: 0,
     speed: p.speed,
     killRadius: p.killRadius * diffMul, // 즉사 반경 — 시대가 오를수록 넓어진다
     counterRadius: SIM.raidCounterRadius * diffMul, // 반격 반경 · 즉사 반경과 같은 계단으로 함께 커진다
@@ -926,6 +939,12 @@ function stepSingleBoss(boss: Boss, world: World): void {
 const SWARM_COHESION = 0.4; // 떼 무게중심으로 끌림 — 한 덩어리로 뭉쳐 몰려온다(뿔뿔이면 "무리"로 안 보임).
 const SWARM_SEPARATION = 0.7; // 너무 가까운 동료에서 밀어냄 — 겹쳐 한 점에 집중(전멸)하지 않고 넓은 대형으로.
 const SWARM_SEP_DIST = 34; // 이 거리보다 가까운 동료가 있으면 분리력이 작동(떼 대형의 개체 간격).
+/**
+ * 보스·떼 개체의 관성(한 틱에 원하는 속도로 꺾어 드는 비율). 내 종의 turn(0.2~fleeTurn)보다 세게 잡은 이유:
+ * 보스는 무서워야 하고 굼뜨면 안 된다 · 0.5 면 두 틱에 75% 가 실려 추격은 그대로이면서 틱마다 뒤집히는
+ * 진동만 먹는다(2026-09-12 계측 · 아래 표는 boss.test 「떨림」에 있다).
+ */
+const BOSS_TURN = 0.5;
 
 /**
  * 개체형 떼 시련 한 틱 — 떼 전체가 "하나의 목표"(무게중심에서 가장 가까운 **사냥 가능한** 개체)를 함께
@@ -1066,38 +1085,58 @@ function moveMember(
   if (speed <= 0) return;
   let vx = 0;
   let vy = 0;
-  // 사냥: 공통 목표 방향(단위 벡터) — 무리 전체가 같은 곳으로 몰려간다. 지형에 막히면 돌아간다.
+  // 사냥: 공통 목표 방향 — 무리 전체가 같은 곳으로 몰려간다. 지형에 막히면 돌아간다.
+  // **도착 감속**: 목표(경유점이 아니라 진짜 목표)까지 남은 거리가 한 틱 걸음보다 짧으면 그만큼만 간다 ·
+  // 지나쳤다 되돌아오는 진동(Mover.vx 주석)의 첫 원인이 여기였다.
+  let toTarget = Infinity;
   if (hasTarget) {
     const nav = bossNavTo(boss, world, m, tx, ty);
     const hx = nav.x - m.x;
     const hy = nav.y - m.y;
     const hd = Math.sqrt(hx * hx + hy * hy) || 1;
+    toTarget = Math.hypot(tx - m.x, ty - m.y);
     vx += hx / hd;
     vy += hy / hd;
   }
-  // 응집: 떼 무게중심 방향(단위 벡터)을 SWARM_COHESION 만큼.
-  const chx = herdCx - m.x;
-  const chy = herdCy - m.y;
-  const cd = Math.sqrt(chx * chx + chy * chy);
-  if (cd > 1) {
-    vx += (chx / cd) * SWARM_COHESION;
-    vy += (chy / cd) * SWARM_COHESION;
-  }
-  // 분리: SWARM_SEP_DIST 안의 동료에서 밀어냄(겹쳐 한 점 집중 방지 → 넓은 무리 대형).
-  const sep2 = SWARM_SEP_DIST * SWARM_SEP_DIST;
-  for (const o of boss.members) {
-    if (o === m) continue;
-    const ox = m.x - o.x;
-    const oy = m.y - o.y;
-    const od2 = ox * ox + oy * oy;
-    if (od2 > 0 && od2 < sep2) {
-      const od = Math.sqrt(od2);
-      vx += (ox / od) * SWARM_SEPARATION;
-      vy += (oy / od) * SWARM_SEPARATION;
+  // **덮치는 순간에는 대형을 푼다.** 목표가 분리 거리 안이면 응집·분리를 끄고 사냥 성분만 남긴다 · 안 그러면
+  // 여럿이 한 목표에 몰릴 때 분리력이 사냥을 눌러 떼가 목표 둘레(34px)를 맴돌며 즉사 반경(약탈자 4px)에
+  // 영영 못 든다. 옛 코드는 전속 지나치기(진동)로 우연히 그 안을 스쳐 갔다 · 진동을 없애면 이 규칙이 필요하다.
+  const closing = hasTarget && toTarget < SWARM_SEP_DIST;
+  if (!closing) {
+    // 응집: 떼 무게중심 방향(단위 벡터)을 SWARM_COHESION 만큼.
+    const chx = herdCx - m.x;
+    const chy = herdCy - m.y;
+    const cd = Math.sqrt(chx * chx + chy * chy);
+    if (cd > 1) {
+      vx += (chx / cd) * SWARM_COHESION;
+      vy += (chy / cd) * SWARM_COHESION;
+    }
+    // 분리: SWARM_SEP_DIST 안의 동료에서 밀어냄(겹쳐 한 점 집중 방지 → 넓은 무리 대형).
+    const sep2 = SWARM_SEP_DIST * SWARM_SEP_DIST;
+    for (const o of boss.members) {
+      if (o === m) continue;
+      const ox = m.x - o.x;
+      const oy = m.y - o.y;
+      const od2 = ox * ox + oy * oy;
+      if (od2 > 0 && od2 < sep2) {
+        const od = Math.sqrt(od2);
+        vx += (ox / od) * SWARM_SEPARATION;
+        vy += (oy / od) * SWARM_SEPARATION;
+      }
     }
   }
+  // 합력의 방향으로 전속 · 단 **목표를 지나치지 않는다**(한 틱 걸음을 남은 거리로 자른다 · 진동의 첫 원인).
+  // ⚠ 사냥 성분 자체를 줄이면 안 된다: 여럿이 한 목표에 몰릴 때 분리력이 사냥을 눌러 떼가 목표 둘레 34px 에
+  //   맴돌며 못 문다(실측 · 약탈자 vs 약한 무리 8시드 · 보스 사망 9 → 옛 세계 30 안팎). 방향은 그대로 두고
+  //   걸음 길이만 자른다.
   const vl = Math.sqrt(vx * vx + vy * vy) || 1;
-  moveWithin(boss, world, m, (vx / vl) * speed, (vy / vl) * speed);
+  const step = Math.min(speed, toTarget);
+  const dx = (vx / vl) * step;
+  const dy = (vy / vl) * step;
+  // **관성**: 원하는 속도로 한 번에 꺾지 않는다(내 종의 turn 과 같은 모양 · BOSS_TURN).
+  m.vx += (dx - m.vx) * BOSS_TURN;
+  m.vy += (dy - m.vy) * BOSS_TURN;
+  moveWithin(boss, world, m, m.vx, m.vy);
 }
 
 function moveTowardNearest(boss: Boss, world: World): void {
@@ -1125,5 +1164,9 @@ function moveTowardNearest(boss: Boss, world: World): void {
   const dx = nav.x - boss.x;
   const dy = nav.y - boss.y;
   const d = Math.sqrt(dx * dx + dy * dy) || 1;
-  moveWithin(boss, world, boss, (dx / d) * boss.speed, (dy / d) * boss.speed);
+  // 도착 감속 + 관성(떼 개체와 같은 처방 · Mover.vx 주석).
+  const want = Math.min(boss.speed, Math.hypot(tx - boss.x, ty - boss.y));
+  boss.vx += ((dx / d) * want - boss.vx) * BOSS_TURN;
+  boss.vy += ((dy / d) * want - boss.vy) * BOSS_TURN;
+  moveWithin(boss, world, boss, boss.vx, boss.vy);
 }

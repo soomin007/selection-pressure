@@ -151,6 +151,25 @@ export function createManagerPanel(cb: ManagerCallbacks): ManagerPanel {
   if (!isDesktop) root.append(handle);
   document.body.appendChild(root);
 
+  // ── 작전타임 베일 · 세계 위를 덮는다(왼쪽 열은 그 위에 남는다) ──
+  // **[사용자 2026-09-12]** "보스나 대멸종 직전에 작전타임 걸렸을 때 그게 작전타임 때문이라는 걸 좀 더 직관적으로
+  // 알 수 있게 · 지금은 그냥 갑자기 게임이 버그로 얼어서 죽어버린 느낌". 스포츠 중계의 TIMEOUT 자막 · 풋볼 매니저의
+  // 하프타임 화면처럼 **화면이 통째로 상태를 바꿔야** 멈춤이 의도라는 것이 읽힌다. 세계를 어둡게 덮고, 한가운데에
+  // 「작전타임」과 이유, 큰 「경기 재개」를 둔다. 왼쪽 열(z 11)은 베일(z 10) 위라 지침을 고칠 수 있다.
+  const veil = el("div", "mgr-veil");
+  veil.style.display = "none";
+  const veilBox = el("div", "mgr-veil-box");
+  const veilKicker = el("div", "mgr-veil-kicker", "작전타임");
+  const veilTitle = el("div", "mgr-veil-title", "");
+  const veilSub = el("div", "mgr-veil-sub", "");
+  const veilBtn = el("button", "mgr-veil-btn", "경기 재개");
+  veilBtn.type = "button";
+  const veilHint = el("div", "mgr-veil-hint", isDesktop ? "Enter 로도 재개합니다 · 지침은 왼쪽에서 고칩니다" : "지침은 아래 서랍에서 고칩니다");
+  veilBox.append(veilKicker, veilTitle, veilSub, veilBtn, veilHint);
+  veil.append(veilBox);
+  document.body.appendChild(veil);
+  veilBtn.addEventListener("click", () => cb.onResume());
+
   // ── 상태 ──
   let last: ManagerData | null = null;
   let rowSig = "";
@@ -412,6 +431,21 @@ export function createManagerPanel(cb: ManagerCallbacks): ManagerPanel {
     setText(instinctLine, !editing && d.instinct > 0 ? `본능이 앞선 개체 ${d.instinct} (달아나거나 쫓거나 방울 줍는 중)` : "");
   }
 
+  function renderVeil(d: ManagerData): void {
+    const on = d.visible && d.inTimeout;
+    veil.style.display = on ? "" : "none";
+    if (!on) return;
+    veil.dataset["auto"] = d.timeoutIsAuto ? "1" : "0";
+    if (d.timeoutIsAuto) {
+      // 위협 문구는 game 이 만든 것 그대로(「지금 위협 「…」 · 대응 힌트」) · 비어 있으면 일반 문구.
+      setText(veilTitle, "위협이 나타났습니다");
+      setText(veilSub, d.threatText || "경기가 멈췄습니다. 지침을 고친 뒤 재개하세요.");
+    } else {
+      setText(veilTitle, "감독이 부른 작전타임");
+      setText(veilSub, "경기가 멈췄습니다. 지침을 고친 뒤 재개하세요.");
+    }
+  }
+
   function update(d: ManagerData): void {
     const wasVisible = last !== null && last.visible;
     last = d;
@@ -423,6 +457,7 @@ export function createManagerPanel(cb: ManagerCallbacks): ManagerPanel {
     root.style.display = "";
     renderSchedule(d);
     renderSheet(d);
+    renderVeil(d);
     if (!d.canEdit && picking !== null) closePicker();
   }
 
@@ -525,6 +560,28 @@ function ensureManagerStyles(): void {
     border: 1px solid rgba(245, 195, 59, 0.5); background: rgba(245, 195, 59, 0.14); color: var(--amber); cursor: pointer; }
   .mgr-timeout:disabled { opacity: 0.45; cursor: default; }
   .mgr-timeout.resume { background: var(--lime); color: #1B2A0A; border-color: var(--limeD); }
+  /* 작전타임 베일 · 세계를 덮고 한가운데에 상태를 크게. 왼쪽 열(z 11)·구입(16) 아래, 목표 줄(z 9) 위. */
+  .mgr-veil { position: fixed; inset: 0; z-index: 10; pointer-events: auto; display: flex; align-items: center;
+    justify-content: center; background: rgba(6, 5, 3, 0.55); backdrop-filter: blur(1.5px); -webkit-backdrop-filter: blur(1.5px);
+    animation: mgr-veil-in 0.25s ease-out; }
+  .mgr-veil-box { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+    padding: 22px 28px; max-width: 420px; box-sizing: border-box;
+    background: var(--panel); border: 1px solid rgba(245, 195, 59, 0.55); border-radius: var(--r-focus);
+    box-shadow: 0 0 0 4px rgba(245, 195, 59, 0.12), 0 18px 50px rgba(0, 0, 0, 0.6);
+    animation: mgr-veil-pulse 1.6s ease-in-out infinite; }
+  .mgr-veil-kicker { font-family: var(--font-display); font-size: 34px; letter-spacing: 0.08em; color: var(--amber); }
+  .mgr-veil-title { font-family: var(--font-title); font-size: 18px; color: var(--ink); }
+  .mgr-veil[data-auto="1"] .mgr-veil-title { color: var(--red); }
+  .mgr-veil-sub { font-size: 13px; color: var(--sub); line-height: 1.5; }
+  .mgr-veil-btn { margin-top: 6px; font-family: var(--font-title); font-size: 17px; padding: 12px 28px; border: 0;
+    border-radius: var(--r-btn); background: var(--lime); color: #1B2A0A; cursor: pointer; border-bottom: 5px solid var(--limeD); }
+  .mgr-veil-btn:active { transform: translateY(4px); border-bottom-width: 1px; }
+  .mgr-veil-hint { font-size: 11px; color: var(--faint); }
+  @keyframes mgr-veil-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes mgr-veil-pulse { 0%, 100% { box-shadow: 0 0 0 4px rgba(245, 195, 59, 0.12), 0 18px 50px rgba(0, 0, 0, 0.6); }
+    50% { box-shadow: 0 0 0 10px rgba(245, 195, 59, 0.05), 0 18px 50px rgba(0, 0, 0, 0.6); } }
+  /* 폰: 서랍이 아래에 있으니 베일 상자를 위로 올려 서랍과 안 겹치게. */
+  .mgr-root[data-layout="mobile"] ~ .mgr-veil { align-items: flex-start; padding-top: 72px; }
   .mgr-handle { pointer-events: auto; font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 999px;
     border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
   /* 단어 목록 팝오버 · 패널 안 절대 좌표. */

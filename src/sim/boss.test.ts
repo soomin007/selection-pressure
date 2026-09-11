@@ -669,3 +669,56 @@ describe("레이드 관측값 (world.raid* · entity.raidFighter)", () => {
     expect(flagged).toBeGreaterThan(0);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// 떨림 · **[사용자 2026-09-12]** "보스가 제자리에서 드드득거리는 건 진짜 뭐 고칠 방법이 없어? 이 지적만 세 달은 한 것
+// 같은데". 원인은 감속 없는 전속 이동(Mover.vx 주석) · 이 표가 감지기다.
+//   실측(2026-09-12 · jit-2 · 내 종 30px 안 방향 뒤집힘/틱): 고치기 전 약탈자 0.40 · 추격자 0.76~0.80 → 고친 뒤 0.003 · 0.047.
+//   평상시 이동(접촉 없음)은 전후 모두 2% 아래라 여기서 안 잰다 · 잰 것은 **붙었을 때**다.
+// ────────────────────────────────────────────────────────────────────────────
+describe("보스 떨림 · 내 종에 붙었을 때 방향이 틱마다 뒤집히지 않는다", () => {
+  function contactFlipRate(type: BossType, attack: number): { rate: number; contact: number } {
+    const w = new World("jit-2", W, H, tune({ attack, speed: 66, vision: 62, herding: 40 }));
+    for (let i = 0; i < 200; i++) w.step();
+    w.boss = createBoss(type, W, H, w.terrain, 1, true);
+    const prevV = new Map<object, { x: number; y: number }>();
+    let nearSteps = 0;
+    let nearFlips = 0;
+    let contact = 0;
+    for (let t = 0; t < 400 && w.boss; t++) {
+      const b = w.boss;
+      const movers: { x: number; y: number }[] = b.members.length > 0 ? b.members : [b];
+      const before = movers.map((m) => ({ x: m.x, y: m.y }));
+      w.step();
+      let anyNear = false;
+      movers.forEach((m, i) => {
+        const v = { x: m.x - (before[i] as Vec).x, y: m.y - (before[i] as Vec).y };
+        let best = Infinity;
+        for (const e of w.entities) if (e.alive && e.species.isPlayer) best = Math.min(best, Math.hypot(e.x - m.x, e.y - m.y));
+        const near = best < 30;
+        if (near) anyNear = true;
+        const pv = prevV.get(m);
+        const flip = pv !== undefined && pv.x * v.x + pv.y * v.y < 0 && Math.hypot(v.x, v.y) > 0.3;
+        if (near) {
+          nearSteps += 1;
+          if (flip) nearFlips += 1;
+        }
+        prevV.set(m, v);
+      });
+      if (anyNear) contact += 1;
+    }
+    return { rate: nearSteps === 0 ? 0 : nearFlips / nearSteps, contact };
+  }
+
+  it("약탈자 떼 · 전사가 있는 무리에 붙어 싸우는 동안", () => {
+    const r = contactFlipRate("raider", 85);
+    expect(r.contact, "접촉이 한 번도 없어 잰 것이 없다").toBeGreaterThan(30);
+    expect(r.rate, `접촉 중 방향 뒤집힘 ${r.rate.toFixed(3)}/틱 (고치기 전 0.40)`).toBeLessThan(0.15);
+  });
+
+  it("추격자(단일 보스) · 전사에게 붙어 있는 동안", () => {
+    const r = contactFlipRate("chaser", 85);
+    expect(r.contact, "접촉이 한 번도 없어 잰 것이 없다").toBeGreaterThan(20);
+    expect(r.rate, `접촉 중 방향 뒤집힘 ${r.rate.toFixed(3)}/틱 (고치기 전 0.76)`).toBeLessThan(0.15);
+  });
+});
