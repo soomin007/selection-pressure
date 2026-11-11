@@ -11,7 +11,6 @@
 개발은 2026년 9월 12일 이후 멈춰 있다. 지금 올라와 있는 판은 그대로 플레이할 수 있다.
 
 - 플레이: https://soomin007.github.io/selection-pressure/
-- 게임 소개와 개발 일지: https://soomin007.github.io/g/selection-pressure/
 - 문서 지도: [`docs/INDEX.md`](docs/INDEX.md)
 - 개발 규칙: [`CLAUDE.md`](CLAUDE.md)
 
